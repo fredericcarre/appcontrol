@@ -1,0 +1,11 @@
+apiVersion: v2
+name: appcontrol
+description: AppControl - Enterprise Application Operational Mastery
+type: application
+version: 0.1.0
+appVersion: "4.0.0"
+keywords:
+  - application-control
+  - operational-mastery
+  - dag-orchestration
+  - it-resilience

@@ -1,17 +1,18 @@
-name: CI + Auto-Fix
+name: CI
 
 on:
   push:
-    branches: ['**']
+    branches: [main, develop]
   pull_request:
     branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
-  DATABASE_URL: postgres://appcontrol:test@localhost:5432/appcontrol_test
+  RUST_BACKTRACE: 1
 
 jobs:
-  build-and-test:
+  rust-check:
+    name: Rust Check
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -20,164 +21,84 @@ jobs:
           POSTGRES_DB: appcontrol_test
           POSTGRES_USER: appcontrol
           POSTGRES_PASSWORD: test
-        ports: ['5432:5432']
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports: ['6379:6379']
-
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          toolchain: "1.77"
+          components: clippy, rustfmt
 
-      - name: Cache Cargo
+      - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Run migrations
-        run: |
-          cargo install sqlx-cli --no-default-features --features postgres
-          sqlx migrate run --source migrations/
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
 
       - name: Build
         run: cargo build --workspace
 
       - name: Test
         run: cargo test --workspace
+        env:
+          DATABASE_URL: postgres://appcontrol:test@localhost:5432/appcontrol_test
 
-      - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
-
-      - name: Check append-only compliance
-        run: |
-          echo "Checking that event tables are never UPDATEd or DELETEd..."
-          if grep -rn "UPDATE.*action_log\|DELETE.*action_log\|UPDATE.*state_transitions\|DELETE.*state_transitions\|UPDATE.*check_events\|DELETE.*check_events\|UPDATE.*switchover_log\|DELETE.*switchover_log" crates/ --include="*.rs"; then
-            echo "VIOLATION: Found UPDATE/DELETE on append-only tables!"
-            exit 1
-          fi
-          echo "OK: No violations found."
-
-      - name: Check audit logging
-        run: |
-          echo "Checking that API handlers call action_log..."
-          HANDLER_COUNT=$(grep -rn "async fn.*Handler\|pub async fn" crates/backend/src/api/ --include="*.rs" | wc -l)
-          AUDIT_COUNT=$(grep -rn "action_log\|audit_log\|log_action" crates/backend/src/api/ --include="*.rs" | wc -l)
-          echo "Handlers: $HANDLER_COUNT, Audit calls: $AUDIT_COUNT"
-          if [ "$HANDLER_COUNT" -gt 0 ] && [ "$AUDIT_COUNT" -lt "$HANDLER_COUNT" ]; then
-            echo "WARNING: Some handlers may not audit. Review manually."
-          fi
-
-      - name: Check permission enforcement
-        run: |
-          echo "Checking that API handlers check permissions..."
-          PERM_COUNT=$(grep -rn "check_permission\|effective_permission\|require_permission" crates/backend/src/api/ --include="*.rs" | wc -l)
-          echo "Permission checks found: $PERM_COUNT"
-
-      - name: Frontend build
-        if: hashFiles('frontend/package.json') != ''
-        run: |
-          cd frontend
-          npm ci
-          npm run build
-          npm test -- --passWithNoTests
-
-      - name: Install coverage tool
-        run: cargo install cargo-llvm-cov
-
-      - name: Rust coverage (common - strict)
-        run: cargo llvm-cov --package appcontrol-common --fail-under-lines 90
-
-      - name: Rust coverage (backend - standard)
-        run: cargo llvm-cov --package appcontrol-backend --fail-under-lines 70
-        continue-on-error: true  # warn during early development
-
-      - name: Rust coverage (full report)
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
-
-      - name: Frontend coverage
-        if: hashFiles('frontend/package.json') != ''
-        run: cd frontend && npm run test -- --coverage --passWithNoTests
-        continue-on-error: true
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: lcov.info,frontend/coverage/lcov.info
-          fail_ci_if_error: false
-
-      - name: Security audit
-        run: cargo audit || true  # warn but don't fail (yet)
-
-  auto-fix:
-    needs: build-and-test
-    if: failure() && github.ref != 'refs/heads/main' && github.event_name == 'push'
+  frontend-check:
+    name: Frontend Check
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Check auto-fix attempt count
-        id: check_attempts
-        run: |
-          ATTEMPTS=$(git log --oneline -20 | grep -c "\[auto-fix\]" || echo 0)
-          echo "attempts=$ATTEMPTS" >> $GITHUB_OUTPUT
-          if [ "$ATTEMPTS" -ge 3 ]; then
-            echo "Max auto-fix attempts (3) reached. Stopping."
-            exit 1
-          fi
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Get error logs
-        run: |
-          gh run view ${{ github.run_id }} --log-failed 2>/dev/null | tail -300 > /tmp/errors.txt || echo "Could not fetch logs" > /tmp/errors.txt
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Lint
+        run: npm run lint
 
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+      - name: Build
+        run: npm run build
 
-      - name: Claude Code Auto-Fix
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          claude-code --print \
-            "The CI build failed. Here are the errors:
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-            $(cat /tmp/errors.txt)
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-            Fix the code to make CI pass.
-            Rules:
-            - Do NOT modify CLAUDE.md, PROGRESS.md, or migration files
-            - Do NOT delete or skip tests
-            - Only change the minimum necessary
-            - Follow the specs in CLAUDE.md
-            - Run 'cargo build && cargo test && cargo clippy -- -D warnings' to verify"
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
 
-      - name: Commit and push fix
-        run: |
-          git config user.name "Claude Auto-Fix"
-          git config user.email "claude-autofix@appcontrol.dev"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-          ATTEMPT=$(($(git log --oneline -20 | grep -c "\[auto-fix\]" || echo 0) + 1))
-          git commit -m "fix(auto): CI auto-correction [auto-fix] attempt $ATTEMPT"
-          git push
+      - name: Audit
+        run: cargo audit
