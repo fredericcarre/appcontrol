@@ -1,0 +1,79 @@
+# Docker Compose for running AppControl from the latest GitHub release.
+# No local build required — pulls pre-built images from GHCR.
+#
+# Usage:
+#   # Start the full stack
+#   docker compose -f docker/docker-compose.release.yaml up -d
+#
+#   # Use a specific version (default: latest)
+#   APPCONTROL_VERSION=0.2.0 docker compose -f docker/docker-compose.release.yaml up -d
+#
+#   # Tear down
+#   docker compose -f docker/docker-compose.release.yaml down -v
+
+version: "3.8"
+
+# Override the version with: APPCONTROL_VERSION=x.y.z docker compose ... up -d
+# Defaults to "latest" if not set.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: appcontrol
+      POSTGRES_USER: appcontrol
+      POSTGRES_PASSWORD: appcontrol_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appcontrol"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ghcr.io/fredericcarre/appcontrol-backend:${APPCONTROL_VERSION:-latest}
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://appcontrol:appcontrol_dev@postgres:5432/appcontrol
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret-change-in-production
+      RUST_LOG: info,appcontrol_backend=debug
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    image: ghcr.io/fredericcarre/appcontrol-frontend:${APPCONTROL_VERSION:-latest}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+
+  gateway:
+    image: ghcr.io/fredericcarre/appcontrol-gateway:${APPCONTROL_VERSION:-latest}
+    ports:
+      - "4443:4443"
+    environment:
+      BACKEND_URL: ws://backend:3000/ws
+      RUST_LOG: info,appcontrol_gateway=debug
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

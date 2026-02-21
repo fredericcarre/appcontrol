@@ -1,6 +1,6 @@
 # Quick Start - AppControl v4
 
-Get AppControl running in under 5 minutes.
+Get AppControl running in under 5 minutes — no build required.
 
 ## Prerequisites
 
@@ -8,30 +8,34 @@ Get AppControl running in under 5 minutes.
 |------|---------|---------|
 | Docker Desktop | 4.x | [docker.com](https://www.docker.com/products/docker-desktop/) |
 | Docker Compose | v2+ | Included with Docker Desktop |
-| Git | 2.x | `brew install git` (macOS) |
 
-For local development (optional):
+That's it. Everything else comes from pre-built images.
 
-| Tool | Version | Install |
-|------|---------|---------|
-| Rust | 1.77+ | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
-| Node.js | 22+ | `brew install node@22` (macOS) |
-| PostgreSQL client | 16 | `brew install libpq` (macOS) |
-
-## 1. Clone and start
+## 1. Download and start
 
 ```bash
-git clone https://github.com/fredericcarre/appcontrol.git
-cd appcontrol
+# Grab the latest release compose file + examples
+gh release download --repo fredericcarre/appcontrol --pattern 'docker-compose.release.yaml' --dir .
+gh release download --repo fredericcarre/appcontrol --pattern 'examples.tar.gz' --dir . && tar xzf examples.tar.gz
 
-# Start full stack (backend, frontend, gateway, postgres, redis)
-docker compose -f docker/docker-compose.yaml up -d
+# Or clone the repo (also gives you examples/, helm/, etc.)
+git clone https://github.com/fredericcarre/appcontrol.git && cd appcontrol
+```
+
+Start the full stack from pre-built images:
+
+```bash
+# Latest release
+docker compose -f docker/docker-compose.release.yaml up -d
+
+# Or pin to a specific version
+APPCONTROL_VERSION=0.2.0 docker compose -f docker/docker-compose.release.yaml up -d
 ```
 
 Wait for all services to be healthy:
 
 ```bash
-docker compose -f docker/docker-compose.yaml ps
+docker compose -f docker/docker-compose.release.yaml ps
 ```
 
 | Service | Port | URL |
@@ -69,30 +73,56 @@ curl -X POST http://localhost:3000/api/v1/apps/import \
 
 Then open http://localhost:8080 to see the maps.
 
-## 4. Register your first agent
+## 4. Download the CLI
 
-On the host you want to monitor:
+Download the pre-built `appctl` binary from the latest release:
 
 ```bash
-# Download and install the agent
-docker run -d --name appcontrol-agent \
-  -e GATEWAY_URL=wss://YOUR_SERVER:4443 \
-  -e AGENT_NAME=my-first-agent \
-  -e AGENT_LABELS='{"env":"dev","zone":"local"}' \
-  appcontrol/agent:latest
+# Linux (amd64)
+gh release download --repo fredericcarre/appcontrol --pattern 'appctl-linux-amd64' --dir /usr/local/bin
+chmod +x /usr/local/bin/appctl
+
+# macOS (Apple Silicon)
+gh release download --repo fredericcarre/appcontrol --pattern 'appctl-darwin-arm64' --dir /usr/local/bin
+chmod +x /usr/local/bin/appctl
+
+# macOS (Intel)
+gh release download --repo fredericcarre/appcontrol --pattern 'appctl-darwin-amd64' --dir /usr/local/bin
+chmod +x /usr/local/bin/appctl
 ```
 
-Or run natively for development:
+Configure the endpoint:
 
 ```bash
-cd crates/agent
-cargo run -- \
+export APPCONTROL_URL=http://localhost:3000
+```
+
+## 5. Register your first agent
+
+Download and run the agent from the release image:
+
+```bash
+docker run -d --name appcontrol-agent \
+  --network host \
+  ghcr.io/fredericcarre/appcontrol-agent:latest \
   --gateway-url wss://localhost:4443 \
-  --name dev-agent \
+  --name my-first-agent \
   --labels env=dev,zone=local
 ```
 
-## 5. Create your first application map
+Or pull the agent binary directly:
+
+```bash
+gh release download --repo fredericcarre/appcontrol --pattern 'appcontrol-agent-linux-amd64' --dir /usr/local/bin
+chmod +x /usr/local/bin/appcontrol-agent
+
+appcontrol-agent \
+  --gateway-url wss://YOUR_SERVER:4443 \
+  --name prod-agent \
+  --labels env=production,zone=PRD
+```
+
+## 6. Create your first application map
 
 ### Via the UI
 
@@ -147,55 +177,43 @@ curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/dependencies \
   -d "{\"from_component_id\": \"$WEB_ID\", \"to_component_id\": \"$DB_ID\"}"
 ```
 
-## 6. Operate your application
+## 7. Operate your application
 
 ```bash
 # Start full application (respects DAG order)
-curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/start
+appctl start $APP_ID --wait --timeout 120
 
 # Check status
-curl http://localhost:3000/api/v1/apps/$APP_ID/status
+appctl status $APP_ID
 
 # Stop application (reverse DAG order)
-curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/stop
+appctl stop $APP_ID --wait
 
 # Restart failed branch only
-curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/start-branch \
-  -d '{"component_id": "FAILED_COMPONENT_UUID"}'
+appctl start-branch $APP_ID --component $FAILED_COMPONENT_UUID --wait
 ```
 
-### Using the CLI
+Or use the API directly:
 
 ```bash
-# Build the CLI
-cargo build --release --bin appctl
-
-# Start an app and wait for it
-./target/release/appctl start $APP_ID --wait --timeout 120
-
-# Get application status
-./target/release/appctl status $APP_ID
-
-# Run diagnostics
-./target/release/appctl diagnose $APP_ID
+curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/start
+curl http://localhost:3000/api/v1/apps/$APP_ID/status
+curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/stop
 ```
 
-## 7. Run diagnostics
+## 8. Run diagnostics
 
 AppControl provides 3 diagnostic levels:
 
 ```bash
 # Level 1 (Health): Is the process alive?
-curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/diagnose \
-  -d '{"level": 1}'
+appctl diagnose $APP_ID --level 1
 
 # Level 2 (Integrity): Is the data consistent?
-curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/diagnose \
-  -d '{"level": 2}'
+appctl diagnose $APP_ID --level 2
 
 # Level 3 (Infrastructure): Is the OS/filesystem OK?
-curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/diagnose \
-  -d '{"level": 3}'
+appctl diagnose $APP_ID --level 3
 ```
 
 ## Troubleshooting
@@ -204,20 +222,22 @@ curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/diagnose \
 
 ```bash
 # Check logs
-docker compose -f docker/docker-compose.yaml logs backend
-docker compose -f docker/docker-compose.yaml logs postgres
+docker compose -f docker/docker-compose.release.yaml logs backend
+docker compose -f docker/docker-compose.release.yaml logs postgres
 
 # Reset everything
-docker compose -f docker/docker-compose.yaml down -v
-docker compose -f docker/docker-compose.yaml up -d
+docker compose -f docker/docker-compose.release.yaml down -v
+docker compose -f docker/docker-compose.release.yaml up -d
 ```
 
 ### Database migration issues
 
+Migrations run automatically on backend startup. If needed manually:
+
 ```bash
-# Run migrations manually
-DATABASE_URL=postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol \
-  sqlx migrate run --source migrations/
+# Run migrations via the backend container
+docker compose -f docker/docker-compose.release.yaml exec backend \
+  sqlx migrate run --source /app/migrations
 ```
 
 ### Agent can't connect to gateway
@@ -226,9 +246,37 @@ DATABASE_URL=postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol \
 - Check TLS certificates in the agent logs
 - Ensure the gateway URL is reachable from the agent host
 
+### Check release versions
+
+```bash
+# List all available releases
+gh release list --repo fredericcarre/appcontrol
+
+# See assets in a specific release
+gh release view v0.2.0 --repo fredericcarre/appcontrol
+```
+
+---
+
+## Building from source (for contributors)
+
+If you want to build locally instead of using release images, see [docker/docker-compose.yaml](docker/docker-compose.yaml) which builds from source, and [docker/dev-setup.sh](docker/dev-setup.sh) for the full dev environment setup:
+
+```bash
+# Dev infrastructure only (PostgreSQL + Redis)
+docker compose -f docker/docker-compose.dev.yaml up -d
+
+# Build everything
+./docker/dev-setup.sh
+
+# Or use the build compose (builds from Dockerfiles)
+docker compose -f docker/docker-compose.yaml up -d --build
+```
+
 ## Next steps
 
 - Read the [example maps](examples/) for real-world configurations
 - Set up [DR switchover](docs/) for multi-site resilience
 - Configure [OIDC/SAML authentication](docs/) for enterprise SSO
 - Deploy to Kubernetes with the [Helm chart](helm/)
+- See the [release procedure](RELEASE.md) for versioning and CI/CD
