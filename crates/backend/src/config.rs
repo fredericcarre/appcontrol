@@ -19,7 +19,7 @@ impl AppConfig {
             port: std::env::var("PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())
-                .unwrap_or(8080),
+                .unwrap_or(3000),
             jwt_secret: std::env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "dev-secret-change-in-production".to_string()),
             jwt_issuer: std::env::var("JWT_ISSUER").unwrap_or_else(|_| "appcontrol".to_string()),

@@ -28,7 +28,7 @@ mod test_agent_offline {
 
         // Verify state_transitions recorded: * → UNREACHABLE → (previous state)
         let transitions = ctx.get_state_transitions_for(app_id, "Oracle-DB").await;
-        assert!(transitions.iter().any(|t| t.new_state == "UNREACHABLE"));
+        assert!(transitions.iter().any(|t| t.to_state == "UNREACHABLE"));
 
         ctx.cleanup().await;
     }

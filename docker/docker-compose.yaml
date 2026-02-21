@@ -36,6 +36,7 @@ services:
     environment:
       DATABASE_URL: postgres://appcontrol:appcontrol_dev@postgres:5432/appcontrol
       REDIS_URL: redis://redis:6379
+      PORT: "3000"
       JWT_SECRET: dev-secret-change-in-production
       RUST_LOG: info,appcontrol_backend=debug
     depends_on:
@@ -56,11 +57,12 @@ services:
   gateway:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.agent
-    command: ["appcontrol-gateway"]
+      dockerfile: docker/Dockerfile.gateway
     ports:
       - "4443:4443"
     environment:
+      LISTEN_ADDR: "0.0.0.0"
+      LISTEN_PORT: "4443"
       BACKEND_URL: ws://backend:3000/ws
       RUST_LOG: info,appcontrol_gateway=debug
     depends_on:

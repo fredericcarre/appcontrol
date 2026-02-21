@@ -44,10 +44,10 @@ mod test_full_start_stop {
         // Verify state_transitions: Oracle-DB should have transitioned BEFORE Tomcat-App
         let transitions = ctx.get_state_transitions(app_id).await;
         let oracle_running_at = transitions.iter()
-            .find(|t| t.component_name == "Oracle-DB" && t.new_state == "RUNNING")
+            .find(|t| t.component_name == "Oracle-DB" && t.to_state == "RUNNING")
             .unwrap().created_at;
         let tomcat_starting_at = transitions.iter()
-            .find(|t| t.component_name == "Tomcat-App" && t.new_state == "STARTING")
+            .find(|t| t.component_name == "Tomcat-App" && t.to_state == "STARTING")
             .unwrap().created_at;
         assert!(oracle_running_at < tomcat_starting_at, "Oracle must be RUNNING before Tomcat starts");
 
@@ -71,10 +71,10 @@ mod test_full_start_stop {
         // Verify stop order: Apache-Front stopped BEFORE Oracle-DB
         let transitions = ctx.get_state_transitions(app_id).await;
         let apache_stopped = transitions.iter()
-            .find(|t| t.component_name == "Apache-Front" && t.new_state == "STOPPED")
+            .find(|t| t.component_name == "Apache-Front" && t.to_state == "STOPPED")
             .unwrap().created_at;
         let oracle_stopping = transitions.iter()
-            .find(|t| t.component_name == "Oracle-DB" && t.new_state == "STOPPING")
+            .find(|t| t.component_name == "Oracle-DB" && t.to_state == "STOPPING")
             .unwrap().created_at;
         assert!(apache_stopped < oracle_stopping, "Apache must stop before Oracle");
 
@@ -115,7 +115,7 @@ mod test_full_start_stop {
 
         let job_status = ctx.get_job_status(job_id).await;
         assert_eq!(job_status.state, "suspended", "Job should suspend on component failure");
-        assert_eq!(job_status.failed_component, "Tomcat-App");
+        assert_eq!(job_status.failed_component.as_deref(), Some("Tomcat-App"));
 
         // Oracle-DB should be RUNNING (level 0 completed)
         // Tomcat-App should be FAILED

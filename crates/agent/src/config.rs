@@ -38,9 +38,61 @@ fn default_reconnect_interval() -> u64 {
 }
 
 impl AgentConfig {
+    /// Load config from YAML file, then apply env var overrides.
+    /// If no config file exists, build entirely from env vars with defaults.
     pub fn load(path: &str) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let config: AgentConfig = serde_yaml::from_str(&content)?;
+        let mut config = if std::path::Path::new(path).exists() {
+            let content = std::fs::read_to_string(path)?;
+            serde_yaml::from_str(&content)?
+        } else {
+            tracing::info!("No config file at {}, using env vars / defaults", path);
+            AgentConfig {
+                agent: AgentSection {
+                    id: "auto".to_string(),
+                },
+                gateway: GatewaySection {
+                    url: "ws://localhost:4443/ws".to_string(),
+                    reconnect_interval_secs: default_reconnect_interval(),
+                },
+                tls: None,
+                labels: std::collections::HashMap::new(),
+            }
+        };
+
+        // Env var overrides
+        if let Ok(v) = std::env::var("AGENT_ID") {
+            config.agent.id = v;
+        }
+        if let Ok(v) = std::env::var("GATEWAY_URL") {
+            config.gateway.url = v;
+        }
+        if let Ok(v) = std::env::var("GATEWAY_RECONNECT_SECS") {
+            if let Ok(s) = v.parse() {
+                config.gateway.reconnect_interval_secs = s;
+            }
+        }
+        // TLS env var overrides
+        let tls_enabled = std::env::var("TLS_ENABLED")
+            .ok()
+            .map(|v| v == "true" || v == "1");
+        let tls_cert = std::env::var("TLS_CERT_FILE").ok();
+        let tls_key = std::env::var("TLS_KEY_FILE").ok();
+        let tls_ca = std::env::var("TLS_CA_FILE").ok();
+        if tls_enabled.is_some() || tls_cert.is_some() || tls_key.is_some() || tls_ca.is_some() {
+            let existing = config.tls.unwrap_or(TlsSection {
+                enabled: false,
+                cert_file: None,
+                key_file: None,
+                ca_file: None,
+            });
+            config.tls = Some(TlsSection {
+                enabled: tls_enabled.unwrap_or(existing.enabled),
+                cert_file: tls_cert.or(existing.cert_file),
+                key_file: tls_key.or(existing.key_file),
+                ca_file: tls_ca.or(existing.ca_file),
+            });
+        }
+
         Ok(config)
     }
 

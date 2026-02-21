@@ -74,8 +74,10 @@ mod test_diagnostic_rebuild {
 
         // Verify Oracle rebuilt BEFORE Tomcat (DAG order)
         let logs = ctx.get_action_log_for_type(app_id, "rebuild").await;
-        let oracle_rebuilt = logs.iter().find(|l| l.target_name == "Oracle").unwrap().created_at;
-        let tomcat_rebuilt = logs.iter().find(|l| l.target_name == "Tomcat").unwrap().created_at;
+        let oracle_rebuilt = logs.iter()
+            .find(|l| l.details["target_name"].as_str() == Some("Oracle")).unwrap().created_at;
+        let tomcat_rebuilt = logs.iter()
+            .find(|l| l.details["target_name"].as_str() == Some("Tomcat")).unwrap().created_at;
         assert!(oracle_rebuilt < tomcat_rebuilt, "Oracle must rebuild before Tomcat");
 
         ctx.cleanup().await;

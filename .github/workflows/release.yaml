@@ -36,6 +36,14 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-14  # Apple Silicon runner
             suffix: darwin-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            suffix: windows-amd64
+            ext: .exe
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            suffix: windows-arm64
+            ext: .exe
 
     steps:
       - uses: actions/checkout@v4
@@ -67,13 +75,23 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --bin appcontrol-gateway --bin appcontrol-agent --bin appctl
 
-      - name: Package binaries
+      - name: Package binaries (Unix)
+        if: runner.os != 'Windows'
         run: |
           mkdir -p dist
           for bin in appcontrol-backend appcontrol-gateway appcontrol-agent appctl; do
             cp target/${{ matrix.target }}/release/$bin dist/${bin}-${{ matrix.suffix }}
             chmod +x dist/${bin}-${{ matrix.suffix }}
           done
+
+      - name: Package binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          foreach ($bin in @("appcontrol-backend", "appcontrol-gateway", "appcontrol-agent", "appctl")) {
+            Copy-Item "target/${{ matrix.target }}/release/${bin}.exe" "dist/${bin}-${{ matrix.suffix }}.exe"
+          }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -245,6 +263,13 @@ jobs:
           chmod +x /usr/local/bin/appctl-darwin-arm64 && mv /usr/local/bin/appctl-darwin-arm64 /usr/local/bin/appctl
           ```
 
+          **Windows (PowerShell):**
+          ```powershell
+          gh release download ${{ github.ref_name }} --repo ${{ github.repository }} --pattern 'appctl-windows-amd64.exe' --dir $env:LOCALAPPDATA\appcontrol
+          Rename-Item "$env:LOCALAPPDATA\appcontrol\appctl-windows-amd64.exe" "appctl.exe"
+          # Add to PATH: [Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$env:LOCALAPPDATA\appcontrol", "User")
+          ```
+
           **Docker images:**
           ```bash
           docker pull ghcr.io/fredericcarre/appcontrol-backend:${{ steps.version.outputs.VERSION }}
@@ -257,10 +282,10 @@ jobs:
 
           | Asset | Description |
           |-------|-------------|
-          | `appctl-{os}-{arch}` | CLI binary |
-          | `appcontrol-agent-{os}-{arch}` | Agent binary (run natively without Docker) |
-          | `appcontrol-backend-{os}-{arch}` | Backend API server binary |
-          | `appcontrol-gateway-{os}-{arch}` | Gateway binary |
+          | `appctl-{os}-{arch}[.exe]` | CLI binary (Linux, macOS, Windows) |
+          | `appcontrol-agent-{os}-{arch}[.exe]` | Agent binary (run natively without Docker) |
+          | `appcontrol-backend-{os}-{arch}[.exe]` | Backend API server binary |
+          | `appcontrol-gateway-{os}-{arch}[.exe]` | Gateway binary |
           | `docker-compose.release.yaml` | Docker Compose for running from images |
           | `examples.tar.gz` | Example application maps |
           | `appcontrol-*.tgz` | Helm chart |
