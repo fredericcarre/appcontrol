@@ -266,15 +266,14 @@ pub async fn import_yaml_map(
         };
 
         let comp_id = Uuid::new_v4();
-        let group_id = comp
-            .group
-            .as_ref()
-            .and_then(|g| group_map.get(g))
-            .copied();
+        let group_id = comp.group.as_ref().and_then(|g| group_map.get(g)).copied();
 
         // Map component type from old format
         let comp_type = map_component_type(comp.component_type.as_deref());
-        let icon = comp.icon.as_deref().unwrap_or(default_icon_for_type(comp_type));
+        let icon = comp
+            .icon
+            .as_deref()
+            .unwrap_or(default_icon_for_type(comp_type));
 
         // Extract standard actions → core commands
         let check_cmd = find_action_cmd(&comp.actions, &["check", "status", "health"]);
@@ -466,13 +465,18 @@ fn map_component_type(old_type: Option<&str>) -> &str {
         Some("appserver") | Some("tomcat") | Some("jboss") | Some("wildfly") | Some("jetty") => {
             "appserver"
         }
-        Some("webfront") | Some("web") | Some("nginx") | Some("apache") | Some("iis") => {
-            "webfront"
-        }
+        Some("webfront") | Some("web") | Some("nginx") | Some("apache") | Some("iis") => "webfront",
         Some("service") | Some("api") | Some("microservice") => "service",
         Some("batch") | Some("job") | Some("cron") | Some("scheduler") => "batch",
-        Some("firewall") | Some("network") | Some("vm") | Some("azure") | Some("cloud")
-        | Some("backup") | Some("storage") | Some("infra") | Some("infrastructure") => "custom",
+        Some("firewall")
+        | Some("network")
+        | Some("vm")
+        | Some("azure")
+        | Some("cloud")
+        | Some("backup")
+        | Some("storage")
+        | Some("infra")
+        | Some("infrastructure") => "custom",
         _ => "custom",
     }
 }
@@ -514,8 +518,18 @@ fn find_action_cmd(actions: &[OldAction], keywords: &[&str]) -> Option<String> {
 fn is_standard_action(name: &str) -> bool {
     matches!(
         name,
-        "check" | "status" | "health" | "start" | "startup" | "launch" | "stop" | "shutdown"
-        | "halt" | "integrity" | "verify" | "validate"
+        "check"
+            | "status"
+            | "health"
+            | "start"
+            | "startup"
+            | "launch"
+            | "stop"
+            | "shutdown"
+            | "halt"
+            | "integrity"
+            | "verify"
+            | "validate"
     )
 }
 

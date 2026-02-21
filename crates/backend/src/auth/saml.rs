@@ -146,7 +146,11 @@ pub async fn saml_login(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SamlLoginQuery>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let saml = state.config.saml.as_ref().ok_or(StatusCode::NOT_IMPLEMENTED)?;
+    let saml = state
+        .config
+        .saml
+        .as_ref()
+        .ok_or(StatusCode::NOT_IMPLEMENTED)?;
 
     let request_id = format!("_appcontrol_{}", Uuid::new_v4());
     let issue_instant = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -194,32 +198,30 @@ pub async fn saml_acs(
     State(state): State<Arc<AppState>>,
     Form(form): Form<SamlAcsForm>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let saml = state.config.saml.as_ref().ok_or(StatusCode::NOT_IMPLEMENTED)?;
+    let saml = state
+        .config
+        .saml
+        .as_ref()
+        .ok_or(StatusCode::NOT_IMPLEMENTED)?;
 
     // Decode and parse the SAML response
-    let response_xml = base64_decode_saml_response(&form.saml_response)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let response_xml =
+        base64_decode_saml_response(&form.saml_response).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Validate signature and extract assertion
-    let assertion = parse_and_validate_saml_response(&response_xml, saml)
-        .map_err(|e| {
-            tracing::error!("SAML validation failed: {}", e);
-            StatusCode::UNAUTHORIZED
-        })?;
+    let assertion = parse_and_validate_saml_response(&response_xml, saml).map_err(|e| {
+        tracing::error!("SAML validation failed: {}", e);
+        StatusCode::UNAUTHORIZED
+    })?;
 
-    let email = assertion
-        .email
-        .as_deref()
-        .unwrap_or(&assertion.name_id);
-    let name = assertion
-        .display_name
-        .as_deref()
-        .unwrap_or(email);
+    let email = assertion.email.as_deref().unwrap_or(&assertion.name_id);
+    let name = assertion.display_name.as_deref().unwrap_or(email);
 
     // Determine role: admin if user is in the admin group
-    let is_admin = saml.admin_group.as_ref().is_some_and(|admin_group| {
-        assertion.groups.iter().any(|g| g == admin_group)
-    });
+    let is_admin = saml
+        .admin_group
+        .as_ref()
+        .is_some_and(|admin_group| assertion.groups.iter().any(|g| g == admin_group));
     let role = if is_admin { "admin" } else { "viewer" };
 
     // Find or create user
@@ -265,7 +267,11 @@ pub async fn saml_acs(
 pub async fn saml_metadata(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let saml = state.config.saml.as_ref().ok_or(StatusCode::NOT_IMPLEMENTED)?;
+    let saml = state
+        .config
+        .saml
+        .as_ref()
+        .ok_or(StatusCode::NOT_IMPLEMENTED)?;
 
     let metadata = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -404,7 +410,11 @@ async fn find_or_create_saml_user(
 
     if let Some((user_id, org_id, email, existing_role)) = existing {
         // Update SAML name_id and role if admin
-        let effective_role = if role == "admin" { "admin" } else { &existing_role };
+        let effective_role = if role == "admin" {
+            "admin"
+        } else {
+            &existing_role
+        };
         let _ = sqlx::query(
             "UPDATE users SET saml_name_id = $1, role = $2, display_name = $3 WHERE id = $4",
         )
@@ -455,7 +465,8 @@ async fn find_or_create_saml_user(
 
 fn base64_encode_saml_request(xml: &str) -> String {
     use std::io::Write;
-    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut encoder =
+        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(xml.as_bytes()).unwrap();
     let compressed = encoder.finish().unwrap();
     base64::engine::general_purpose::STANDARD.encode(&compressed)
@@ -560,7 +571,11 @@ fn extract_saml_attribute_values(xml: &str, attr_name: &str) -> Vec<String> {
 }
 
 fn extract_next_attribute_value(xml: &str) -> Option<(String, usize)> {
-    for tag in ["saml:AttributeValue", "AttributeValue", "saml2:AttributeValue"] {
+    for tag in [
+        "saml:AttributeValue",
+        "AttributeValue",
+        "saml2:AttributeValue",
+    ] {
         let open = format!("<{tag}");
         if let Some(start) = xml.find(&open) {
             // Find the end of the opening tag
@@ -690,7 +705,10 @@ pub async fn delete_group_mapping(
 pub fn saml_admin_routes() -> axum::Router<Arc<AppState>> {
     use axum::routing::{delete, get};
     axum::Router::new()
-        .route("/saml/group-mappings", get(list_group_mappings).post(create_group_mapping))
+        .route(
+            "/saml/group-mappings",
+            get(list_group_mappings).post(create_group_mapping),
+        )
         .route("/saml/group-mappings/{id}", delete(delete_group_mapping))
 }
 

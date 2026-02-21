@@ -48,10 +48,7 @@ pub struct UpdateInputParamRequest {
 }
 
 /// Resolve the application_id for a command through the component chain.
-async fn app_id_for_command(
-    db: &sqlx::PgPool,
-    command_id: Uuid,
-) -> Result<Uuid, StatusCode> {
+async fn app_id_for_command(db: &sqlx::PgPool, command_id: Uuid) -> Result<Uuid, StatusCode> {
     sqlx::query_scalar::<_, Uuid>(
         "SELECT c.application_id FROM component_commands cc \
          JOIN components c ON c.id = cc.component_id \
@@ -165,13 +162,12 @@ pub async fn delete_param(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let result =
-        sqlx::query("DELETE FROM command_input_params WHERE id = $1 AND command_id = $2")
-            .bind(param_id)
-            .bind(command_id)
-            .execute(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result = sqlx::query("DELETE FROM command_input_params WHERE id = $1 AND command_id = $2")
+        .bind(param_id)
+        .bind(command_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if result.rows_affected() == 0 {
         return Err(StatusCode::NOT_FOUND);
@@ -234,7 +230,12 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    fn make_param(name: &str, required: bool, default: Option<&str>, regex: Option<&str>) -> InputParamRow {
+    fn make_param(
+        name: &str,
+        required: bool,
+        default: Option<&str>,
+        regex: Option<&str>,
+    ) -> InputParamRow {
         InputParamRow {
             id: Uuid::new_v4(),
             command_id: Uuid::new_v4(),

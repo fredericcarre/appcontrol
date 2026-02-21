@@ -258,14 +258,12 @@ pub async fn export_pdf(
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
     // Get app name
-    let app_name = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM applications WHERE id = $1",
-    )
-    .bind(app_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .unwrap_or_else(|| "Unknown".to_string());
+    let app_name = sqlx::query_scalar::<_, String>("SELECT name FROM applications WHERE id = $1")
+        .bind(app_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .unwrap_or_else(|| "Unknown".to_string());
 
     // Availability summary
     let availability_stats = sqlx::query_as::<_, (i64, i64)>(
@@ -282,8 +280,7 @@ pub async fn export_pdf(
     .fetch_one(&state.db)
     .await
     .unwrap_or((0, 1));
-    let overall_availability =
-        (availability_stats.0 as f64 / availability_stats.1 as f64) * 100.0;
+    let overall_availability = (availability_stats.0 as f64 / availability_stats.1 as f64) * 100.0;
 
     // Incident count
     let incident_count = sqlx::query_scalar::<_, i64>(

@@ -40,8 +40,8 @@ impl OidcConfig {
         let discovery_url = std::env::var("OIDC_DISCOVERY_URL").ok()?;
         let client_id = std::env::var("OIDC_CLIENT_ID").ok()?;
         let client_secret = std::env::var("OIDC_CLIENT_SECRET").ok()?;
-        let redirect_uri =
-            std::env::var("OIDC_REDIRECT_URI").unwrap_or_else(|_| "/api/v1/auth/oidc/callback".to_string());
+        let redirect_uri = std::env::var("OIDC_REDIRECT_URI")
+            .unwrap_or_else(|_| "/api/v1/auth/oidc/callback".to_string());
         let scopes = std::env::var("OIDC_SCOPES")
             .unwrap_or_else(|_| "openid,profile,email".to_string())
             .split(',')
@@ -106,7 +106,11 @@ pub struct OidcLoginResponse {
 pub async fn oidc_login(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let oidc = state.config.oidc.as_ref().ok_or(StatusCode::NOT_IMPLEMENTED)?;
+    let oidc = state
+        .config
+        .oidc
+        .as_ref()
+        .ok_or(StatusCode::NOT_IMPLEMENTED)?;
 
     let scopes = oidc.scopes.join(" ");
     let auth_url = format!(
@@ -128,7 +132,11 @@ pub async fn oidc_callback(
     State(state): State<Arc<AppState>>,
     Query(query): Query<OidcCallbackQuery>,
 ) -> Result<Json<OidcLoginResponse>, StatusCode> {
-    let oidc = state.config.oidc.as_ref().ok_or(StatusCode::NOT_IMPLEMENTED)?;
+    let oidc = state
+        .config
+        .oidc
+        .as_ref()
+        .ok_or(StatusCode::NOT_IMPLEMENTED)?;
 
     // Discover token endpoint
     let discovery = discover(&oidc.discovery_url)
@@ -195,12 +203,7 @@ pub async fn oidc_callback(
 /// Discover OIDC endpoints from the discovery URL.
 async fn discover(discovery_url: &str) -> Result<OidcDiscovery, anyhow::Error> {
     let client = reqwest::Client::new();
-    let discovery: OidcDiscovery = client
-        .get(discovery_url)
-        .send()
-        .await?
-        .json()
-        .await?;
+    let discovery: OidcDiscovery = client.get(discovery_url).send().await?.json().await?;
     Ok(discovery)
 }
 
