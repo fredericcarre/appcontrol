@@ -41,3 +41,5 @@ mod test_app_crud;
 mod test_agent_management;
 mod test_incident_lifecycle;
 mod test_saml_auth;
+mod test_variables_groups;
+mod test_yaml_import;

@@ -14,7 +14,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { ComponentNode } from './ComponentNode';
 import { MapToolbar } from './MapToolbar';
-import { Component, Dependency } from '@/api/apps';
+import { Component, Dependency, ComponentGroup } from '@/api/apps';
 import { ComponentState, ComponentType, STATE_COLORS } from '@/lib/colors';
 
 const nodeTypes: NodeTypes = {
@@ -25,6 +25,7 @@ const nodeTypes: NodeTypes = {
 interface AppMapProps {
   components: Component[];
   dependencies: Dependency[];
+  groups?: ComponentGroup[];
   onSelectComponent: (id: string | null) => void;
   onStartAll?: () => void;
   onStopAll?: () => void;
@@ -39,11 +40,19 @@ interface AppMapProps {
 
 function buildNodes(
   components: Component[],
+  groups?: ComponentGroup[],
   onStart?: (id: string) => void,
   onStop?: (id: string) => void,
   onRestart?: (id: string) => void,
   onDiagnose?: (id: string) => void,
 ): Node[] {
+  const groupColorMap: Record<string, string> = {};
+  if (groups) {
+    for (const g of groups) {
+      groupColorMap[g.id] = g.color || '#6366F1';
+    }
+  }
+
   return components.map((c, i) => ({
     id: c.id,
     type: 'component',
@@ -53,6 +62,10 @@ function buildNodes(
     },
     data: {
       label: c.name,
+      displayName: c.display_name,
+      description: c.description,
+      icon: c.icon,
+      groupColor: c.group_id ? groupColorMap[c.group_id] : undefined,
       state: (c.state || 'UNKNOWN') as ComponentState,
       componentType: (c.component_type || 'service') as ComponentType,
       host: c.host,
@@ -79,6 +92,7 @@ function buildEdges(dependencies: Dependency[]): Edge[] {
 export function AppMap({
   components,
   dependencies,
+  groups,
   onSelectComponent,
   onStartAll,
   onStopAll,
@@ -91,8 +105,8 @@ export function AppMap({
   canOperate,
 }: AppMapProps) {
   const initialNodes = useMemo(
-    () => buildNodes(components, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent),
-    [components, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent],
+    () => buildNodes(components, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent),
+    [components, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent],
   );
   const initialEdges = useMemo(() => buildEdges(dependencies), [dependencies]);
 

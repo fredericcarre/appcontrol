@@ -155,3 +155,21 @@
 - [x] `tests/e2e/test_agent_management.rs` — Agent registration + status
 - [x] `tests/e2e/test_incident_lifecycle.rs` — Incident detection, branch restart, audit trail, cross-branch isolation
 - [x] `tests/e2e/test_saml_auth.rs` — SAML 2.0 E2E (metadata, login redirect, ACS, group mapping CRUD, group sync, admin group)
+- [x] `tests/e2e/test_variables_groups.rs` — Variables CRUD, secret masking, component groups, links, command input params
+- [x] `tests/e2e/test_yaml_import.rs` — YAML map import (old format → v4), links, command params, missing deps warning, audit trail
+
+## Phase 4: Feature Parity with Old AppControl
+
+### P4-1: Variables, Groups & Display Enhancements
+- [x] `migrations/V010__variables_groups_params.sql` — app_variables, component_groups, component_links, command_input_params, display fields
+- [x] `crates/backend/src/api/variables.rs` — CRUD variables + $(var) interpolation + secret masking
+- [x] `crates/backend/src/api/groups.rs` — CRUD component groups (color, display_order)
+- [x] `crates/backend/src/api/links.rs` — CRUD component links (documentation, CMDB, monitoring, log, runbook)
+- [x] `crates/backend/src/api/command_params.rs` — CRUD command input params + regex validation + interpolation
+- [x] `crates/backend/src/api/import.rs` — YAML map importer (old AppControl format → v4 model)
+- [x] `crates/backend/src/api/components.rs` — Updated with display_name, description, icon, group_id fields
+- [x] `frontend/src/api/apps.ts` — New hooks: useAppVariables, useComponentGroups, useComponentLinks, useImportYaml
+- [x] `frontend/src/components/maps/ComponentNode.tsx` — Custom icon, display_name, group color border, links overlay
+- [x] `frontend/src/components/maps/AppMap.tsx` — Group color mapping, pass groups to nodes
+- [x] `frontend/src/pages/ImportPage.tsx` — YAML import page with file upload + paste
+- [x] Tests: 15+ tests covering variables, groups, links, params, YAML import

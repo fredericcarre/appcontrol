@@ -10,6 +10,7 @@ import { ReportsPage } from '@/pages/ReportsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { OnboardingPage } from '@/pages/OnboardingPage';
 import { LoginPage } from '@/pages/LoginPage';
+import ImportPage from '@/pages/ImportPage';
 import { useUiStore } from '@/stores/ui';
 import { cn } from '@/lib/utils';
 
@@ -50,6 +51,7 @@ export default function App() {
       <Route path="/reports" element={<AuthLayout><ReportsPage /></AuthLayout>} />
       <Route path="/settings" element={<AuthLayout><SettingsPage /></AuthLayout>} />
       <Route path="/onboarding" element={<AuthLayout><OnboardingPage /></AuthLayout>} />
+      <Route path="/import" element={<AuthLayout><ImportPage /></AuthLayout>} />
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

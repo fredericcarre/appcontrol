@@ -1,17 +1,22 @@
 pub mod agents;
 pub mod apps;
+pub mod command_params;
 pub mod components;
 pub mod diagnostic;
+pub mod groups;
 pub mod health;
+pub mod import;
+pub mod links;
 pub mod orchestration;
 pub mod permissions;
 pub mod reports;
 pub mod switchover;
 pub mod teams;
+pub mod variables;
 
 use axum::{
     middleware as axum_middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use std::sync::Arc;
@@ -138,6 +143,44 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/orchestration/apps/{app_id}/wait-running",
             get(orchestration::wait_running),
         )
+        // Variables
+        .route(
+            "/apps/{app_id}/variables",
+            get(variables::list_variables).post(variables::create_variable),
+        )
+        .route(
+            "/apps/{app_id}/variables/{var_id}",
+            put(variables::update_variable).delete(variables::delete_variable),
+        )
+        // Component Groups
+        .route(
+            "/apps/{app_id}/groups",
+            get(groups::list_groups).post(groups::create_group),
+        )
+        .route(
+            "/apps/{app_id}/groups/{group_id}",
+            put(groups::update_group).delete(groups::delete_group),
+        )
+        // Component Links
+        .route(
+            "/components/{component_id}/links",
+            get(links::list_links).post(links::create_link),
+        )
+        .route(
+            "/components/{component_id}/links/{link_id}",
+            put(links::update_link).delete(links::delete_link),
+        )
+        // Command Input Parameters
+        .route(
+            "/commands/{command_id}/params",
+            get(command_params::list_params).post(command_params::create_param),
+        )
+        .route(
+            "/commands/{command_id}/params/{param_id}",
+            delete(command_params::delete_param),
+        )
+        // YAML Map Import
+        .route("/import/yaml", post(import::import_yaml_map))
         // Agents
         .route("/agents", get(agents::list_agents))
         .route("/agents/{id}", get(agents::get_agent))
