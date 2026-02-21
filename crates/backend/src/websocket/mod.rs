@@ -307,12 +307,22 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             )
             .bind(agent_id)
             .bind(&hostname)
-            .bind(serde_json::json!(ip_addresses))
+            .bind(serde_json::json!(&ip_addresses))
             .execute(&state.db)
             .await
             {
                 tracing::warn!(agent_id = %agent_id, "Failed to update agent registration: {}", e);
             }
+
+            // Resolve components that reference this host but have no agent_id yet
+            // (late binding: user created component before agent was online)
+            crate::api::components::resolve_components_for_agent(
+                &state.db,
+                agent_id,
+                &hostname,
+                &ip_addresses,
+            )
+            .await;
         }
     }
 }

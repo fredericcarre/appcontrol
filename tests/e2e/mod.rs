@@ -48,3 +48,4 @@ mod test_yaml_import;
 mod test_heartbeat_unreachable;
 mod test_agent_ip_addresses;
 mod test_workspace_access;
+mod test_host_resolution;

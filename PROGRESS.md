@@ -203,3 +203,13 @@
 - [x] Team membership grants site access (user in team → team in workspace → workspace has site)
 - [x] Audit: workspace creation logged to action_log
 - [x] Tests: 11 E2E tests covering CRUD, site binding, user/team members, access control, admin bypass, audit
+
+### P5-4: Host-Based Agent Resolution (No Multicast)
+- [x] `migrations/V012__component_host_field.sql` — `components.host VARCHAR(300)` for user-facing FQDN/IP
+- [x] `crates/backend/src/api/components.rs` — Accept `host` (and `hostname` alias) in create/update, return in responses
+- [x] `crates/backend/src/api/components.rs` — `resolve_host_to_agent()`: hostname match → IP match → None
+- [x] `crates/backend/src/api/components.rs` — `resolve_components_for_agent()`: late binding on agent register
+- [x] `crates/backend/src/websocket/mod.rs` — Call `resolve_components_for_agent` on agent Register
+- [x] No multicast: 1 component → 1 host → 1 agent (first match by created_at wins)
+- [x] Backward compat: `hostname` field accepted as alias for `host` in JSON API
+- [x] Tests: 8 E2E tests (host field, hostname alias, resolve by hostname/IP, late binding, no multicast)

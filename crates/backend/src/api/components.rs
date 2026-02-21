@@ -23,6 +23,12 @@ pub struct CreateComponentRequest {
     pub description: Option<String>,
     pub icon: Option<String>,
     pub group_id: Option<Uuid>,
+    /// Host as entered by user: FQDN or IP address.
+    /// Resolved to agent_id by matching agents.hostname or agents.ip_addresses.
+    pub host: Option<String>,
+    /// Alias for `host` — backward compatibility with old API callers.
+    #[serde(default)]
+    pub hostname: Option<String>,
     pub agent_id: Option<Uuid>,
     pub check_cmd: Option<String>,
     pub start_cmd: Option<String>,
@@ -44,6 +50,13 @@ pub struct CreateComponentRequest {
     pub tags: Option<Value>,
 }
 
+impl CreateComponentRequest {
+    /// Returns the effective host value (prefers `host`, falls back to `hostname` alias).
+    pub fn effective_host(&self) -> Option<&str> {
+        self.host.as_deref().or(self.hostname.as_deref())
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct UpdateComponentRequest {
@@ -53,6 +66,11 @@ pub struct UpdateComponentRequest {
     pub description: Option<String>,
     pub icon: Option<String>,
     pub group_id: Option<Uuid>,
+    /// Host as entered by user: FQDN or IP address.
+    pub host: Option<String>,
+    /// Alias for `host` — backward compatibility.
+    #[serde(default)]
+    pub hostname: Option<String>,
     pub agent_id: Option<Uuid>,
     pub check_cmd: Option<String>,
     pub start_cmd: Option<String>,
@@ -72,6 +90,13 @@ pub struct UpdateComponentRequest {
     pub position_y: Option<f32>,
     pub env_vars: Option<Value>,
     pub tags: Option<Value>,
+}
+
+impl UpdateComponentRequest {
+    /// Returns the effective host value (prefers `host`, falls back to `hostname` alias).
+    pub fn effective_host(&self) -> Option<&str> {
+        self.host.as_deref().or(self.hostname.as_deref())
+    }
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -84,6 +109,7 @@ pub struct ComponentRow {
     pub description: Option<String>,
     pub icon: Option<String>,
     pub group_id: Option<Uuid>,
+    pub host: Option<String>,
     pub agent_id: Option<Uuid>,
     pub check_cmd: Option<String>,
     pub start_cmd: Option<String>,
@@ -126,7 +152,7 @@ pub async fn list_components(
     let components = sqlx::query_as::<_, ComponentRow>(
         r#"
         SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
-               agent_id, check_cmd, start_cmd, stop_cmd,
+               host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
                position_x, position_y, created_at, updated_at
         FROM components WHERE application_id = $1 ORDER BY name
@@ -148,7 +174,7 @@ pub async fn get_component(
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
         SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
-               agent_id, check_cmd, start_cmd, stop_cmd,
+               host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
                position_x, position_y, created_at, updated_at
         FROM components WHERE id = $1
@@ -197,17 +223,30 @@ pub async fn create_component(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Use effective_host() to support both "host" and "hostname" JSON fields
+    let effective_host = body.effective_host().map(|s| s.to_string());
+
+    // Resolve host → agent_id if host is provided but agent_id is not.
+    // No multicast: one host matches exactly one agent.
+    let resolved_agent_id = if body.agent_id.is_some() {
+        body.agent_id
+    } else if let Some(ref host) = effective_host {
+        resolve_host_to_agent(&state.db, host).await
+    } else {
+        None
+    };
+
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
         INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id,
-                                agent_id, check_cmd, start_cmd, stop_cmd,
+                                host, agent_id, check_cmd, start_cmd, stop_cmd,
                                 check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
                                 position_x, position_y, env_vars, tags)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
         RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
-                  agent_id, check_cmd, start_cmd, stop_cmd,
-                  check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-                  position_x, position_y, created_at, updated_at
+               host, agent_id, check_cmd, start_cmd, stop_cmd,
+               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
+               position_x, position_y, created_at, updated_at
         "#,
     )
     .bind(comp_id)
@@ -218,7 +257,8 @@ pub async fn create_component(
     .bind(&body.description)
     .bind(body.icon.as_deref().unwrap_or("box"))
     .bind(body.group_id)
-    .bind(body.agent_id)
+    .bind(&effective_host)
+    .bind(resolved_agent_id)
     .bind(&body.check_cmd)
     .bind(&body.start_cmd)
     .bind(&body.stop_cmd)
@@ -268,6 +308,18 @@ pub async fn update_component(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Use effective_host() to support both "host" and "hostname" JSON fields
+    let effective_host = body.effective_host().map(|s| s.to_string());
+
+    // If host changed, re-resolve agent_id
+    let resolved_agent_id = if body.agent_id.is_some() {
+        body.agent_id
+    } else if let Some(ref host) = effective_host {
+        resolve_host_to_agent(&state.db, host).await
+    } else {
+        None
+    };
+
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
         UPDATE components SET
@@ -277,21 +329,23 @@ pub async fn update_component(
             description = COALESCE($5, description),
             icon = COALESCE($6, icon),
             group_id = COALESCE($7, group_id),
-            check_cmd = COALESCE($8, check_cmd),
-            start_cmd = COALESCE($9, start_cmd),
-            stop_cmd = COALESCE($10, stop_cmd),
-            check_interval_seconds = COALESCE($11, check_interval_seconds),
-            start_timeout_seconds = COALESCE($12, start_timeout_seconds),
-            stop_timeout_seconds = COALESCE($13, stop_timeout_seconds),
-            is_optional = COALESCE($14, is_optional),
-            position_x = COALESCE($15, position_x),
-            position_y = COALESCE($16, position_y),
+            host = COALESCE($8, host),
+            agent_id = COALESCE($9, agent_id),
+            check_cmd = COALESCE($10, check_cmd),
+            start_cmd = COALESCE($11, start_cmd),
+            stop_cmd = COALESCE($12, stop_cmd),
+            check_interval_seconds = COALESCE($13, check_interval_seconds),
+            start_timeout_seconds = COALESCE($14, start_timeout_seconds),
+            stop_timeout_seconds = COALESCE($15, stop_timeout_seconds),
+            is_optional = COALESCE($16, is_optional),
+            position_x = COALESCE($17, position_x),
+            position_y = COALESCE($18, position_y),
             updated_at = now()
         WHERE id = $1
         RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
-                  agent_id, check_cmd, start_cmd, stop_cmd,
-                  check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-                  position_x, position_y, created_at, updated_at
+               host, agent_id, check_cmd, start_cmd, stop_cmd,
+               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
+               position_x, position_y, created_at, updated_at
         "#,
     )
     .bind(id)
@@ -301,6 +355,8 @@ pub async fn update_component(
     .bind(&body.description)
     .bind(&body.icon)
     .bind(body.group_id)
+    .bind(&effective_host)
+    .bind(resolved_agent_id)
     .bind(&body.check_cmd)
     .bind(&body.start_cmd)
     .bind(&body.stop_cmd)
@@ -586,4 +642,96 @@ pub async fn delete_dependency(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Host → Agent resolution
+// ---------------------------------------------------------------------------
+
+/// Resolve a user-provided host (FQDN or IP) to an agent_id.
+///
+/// Match order:
+/// 1. Exact hostname match in agents table
+/// 2. IP address match in agents.ip_addresses JSONB array
+///
+/// No multicast: returns the first match only. If multiple agents
+/// share an IP, the first one (by created_at) wins.
+pub async fn resolve_host_to_agent(pool: &sqlx::PgPool, host: &str) -> Option<Uuid> {
+    // 1. Try exact hostname match
+    let by_hostname = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM agents WHERE hostname = $1 AND is_active = true ORDER BY created_at LIMIT 1",
+    )
+    .bind(host)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    if by_hostname.is_some() {
+        return by_hostname;
+    }
+
+    // 2. Try IP address match in JSONB array
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM agents WHERE ip_addresses ? $1 AND is_active = true ORDER BY created_at LIMIT 1",
+    )
+    .bind(host)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Called when an agent registers: resolve all components that reference
+/// this agent's hostname or IPs via the `host` field but have no agent_id yet.
+///
+/// This is the "late binding" path: user creates component with host="srv-oracle.prod",
+/// agent registers later with hostname="srv-oracle.prod" → agent_id is set automatically.
+pub async fn resolve_components_for_agent(
+    pool: &sqlx::PgPool,
+    agent_id: Uuid,
+    hostname: &str,
+    ip_addresses: &[String],
+) {
+    // Match components by hostname
+    let result = sqlx::query(
+        "UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL",
+    )
+    .bind(agent_id)
+    .bind(hostname)
+    .execute(pool)
+    .await;
+
+    if let Ok(r) = result {
+        if r.rows_affected() > 0 {
+            tracing::info!(
+                agent_id = %agent_id,
+                hostname = %hostname,
+                count = r.rows_affected(),
+                "Resolved components by hostname"
+            );
+        }
+    }
+
+    // Match components by any of the agent's IP addresses
+    for ip in ip_addresses {
+        let result = sqlx::query(
+            "UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL",
+        )
+        .bind(agent_id)
+        .bind(ip)
+        .execute(pool)
+        .await;
+
+        if let Ok(r) = result {
+            if r.rows_affected() > 0 {
+                tracing::info!(
+                    agent_id = %agent_id,
+                    ip = %ip,
+                    count = r.rows_affected(),
+                    "Resolved components by IP address"
+                );
+            }
+        }
+    }
 }
