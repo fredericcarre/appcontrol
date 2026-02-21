@@ -1,0 +1,70 @@
+# Docker Compose for local development on macOS
+# Usage: docker compose -f docker/docker-compose.dev.yaml up -d
+#
+# This starts only the infrastructure services (PostgreSQL + Redis).
+# You run backend, frontend, and agent natively for hot-reload.
+
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    platform: linux/arm64  # Native Apple Silicon, also works on Intel
+    environment:
+      POSTGRES_DB: appcontrol
+      POSTGRES_USER: appcontrol
+      POSTGRES_PASSWORD: appcontrol_dev
+      POSTGRES_INITDB_ARGS: "--locale=en_US.UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../migrations:/docker-entrypoint-initdb.d:ro  # Auto-run migrations on first start
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appcontrol"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    platform: linux/arm64
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Optional: pgAdmin for database inspection
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    platform: linux/amd64
+    profiles: ["tools"]  # Only starts with: docker compose --profile tools up
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@appcontrol.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Optional: RedisInsight for cache inspection
+  redisinsight:
+    image: redis/redisinsight:latest
+    platform: linux/amd64
+    profiles: ["tools"]
+    ports:
+      - "5540:5540"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
