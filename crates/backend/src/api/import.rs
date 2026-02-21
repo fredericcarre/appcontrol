@@ -1,0 +1,545 @@
+//! YAML Map Importer: converts old AppControl (v3) YAML maps to v4 model.
+//!
+//! The old format uses a YAML structure with:
+//! - `application.name` / `application.description`
+//! - `application.components[]` with actions, variables, groups, hypertext links
+//!
+//! This importer creates:
+//! - Application + site (if needed)
+//! - Component groups
+//! - Components with all commands
+//! - Dependencies
+//! - App variables
+//! - Component commands + input parameters
+//! - Component links (hypertext resources)
+
+use axum::{
+    extract::{Extension, State},
+    http::StatusCode,
+    response::Json,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::Arc;
+use uuid::Uuid;
+
+use crate::auth::AuthUser;
+use crate::middleware::audit::log_action;
+use crate::AppState;
+
+// ── Old YAML format structures ──────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct OldMap {
+    application: OldApplication,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct OldApplication {
+    name: Option<String>,
+    description: Option<String>,
+    #[serde(default)]
+    variables: Vec<OldVariable>,
+    #[serde(default)]
+    components: Vec<OldComponent>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct OldVariable {
+    name: Option<String>,
+    value: Option<String>,
+    description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct OldComponent {
+    name: Option<String>,
+    #[serde(alias = "displayName")]
+    display_name: Option<String>,
+    description: Option<String>,
+    #[serde(alias = "componentType", alias = "type")]
+    component_type: Option<String>,
+    group: Option<String>,
+    icon: Option<String>,
+    agent: Option<String>,
+    #[serde(alias = "dependsOn", alias = "depends_on", default)]
+    depends_on: Vec<String>,
+    #[serde(default)]
+    actions: Vec<OldAction>,
+    #[serde(alias = "hypertextLinks", alias = "hypertext_links", default)]
+    hypertext_links: Vec<OldHypertextLink>,
+    // Position hints
+    #[serde(alias = "positionX")]
+    position_x: Option<f32>,
+    #[serde(alias = "positionY")]
+    position_y: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct OldAction {
+    name: Option<String>,
+    #[serde(alias = "displayName")]
+    display_name: Option<String>,
+    command: Option<String>,
+    #[serde(alias = "actionType", alias = "type")]
+    action_type: Option<String>,
+    description: Option<String>,
+    #[serde(alias = "requiresConfirmation")]
+    requires_confirmation: Option<bool>,
+    #[serde(default)]
+    parameters: Vec<OldParameter>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct OldParameter {
+    name: Option<String>,
+    description: Option<String>,
+    #[serde(alias = "defaultValue")]
+    default_value: Option<String>,
+    #[serde(alias = "validationRegex", alias = "validation")]
+    validation_regex: Option<String>,
+    required: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct OldHypertextLink {
+    #[serde(alias = "displayName")]
+    label: Option<String>,
+    url: Option<String>,
+    #[serde(alias = "type")]
+    link_type: Option<String>,
+}
+
+// ── Import result ───────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+struct ImportResult {
+    application_id: Uuid,
+    application_name: String,
+    components_created: usize,
+    groups_created: usize,
+    variables_created: usize,
+    commands_created: usize,
+    dependencies_created: usize,
+    links_created: usize,
+    warnings: Vec<String>,
+}
+
+// ── Import endpoint ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ImportRequest {
+    pub yaml: String,
+    pub site_id: Uuid,
+}
+
+/// POST /api/v1/import/yaml
+/// Import an old AppControl YAML map into the v4 model.
+pub async fn import_yaml_map(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<ImportRequest>,
+) -> Result<(StatusCode, Json<Value>), StatusCode> {
+    // Parse YAML
+    let old_map: OldMap = serde_yaml::from_str(&body.yaml).map_err(|e| {
+        tracing::warn!("YAML parse error: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
+
+    let app_name = old_map
+        .application
+        .name
+        .as_deref()
+        .unwrap_or("Imported Application");
+    let app_desc = old_map.application.description.as_deref();
+
+    let app_id = Uuid::new_v4();
+    let mut warnings = Vec::new();
+
+    // Log import action
+    log_action(
+        &state.db,
+        user.user_id,
+        "import_yaml",
+        "application",
+        app_id,
+        json!({"name": app_name}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Create application
+    sqlx::query(
+        "INSERT INTO applications (id, name, description, organization_id, site_id) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(app_id)
+    .bind(app_name)
+    .bind(app_desc)
+    .bind(user.organization_id)
+    .bind(body.site_id)
+    .execute(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Grant owner to importing user
+    let _ = sqlx::query(
+        "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) VALUES ($1, $2, 'owner', $2)",
+    )
+    .bind(app_id)
+    .bind(user.user_id)
+    .execute(&state.db)
+    .await;
+
+    // ── Import variables ────────────────────────────────────────────
+    let mut variables_created = 0;
+    for var in &old_map.application.variables {
+        let name = match &var.name {
+            Some(n) => n,
+            None => {
+                warnings.push("Skipping variable with no name".to_string());
+                continue;
+            }
+        };
+        let value = var.value.as_deref().unwrap_or("");
+
+        sqlx::query(
+            "INSERT INTO app_variables (application_id, name, value, description) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(app_id)
+        .bind(name)
+        .bind(value)
+        .bind(var.description.as_deref())
+        .execute(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        variables_created += 1;
+    }
+
+    // ── Import groups ───────────────────────────────────────────────
+    let mut group_map: HashMap<String, Uuid> = HashMap::new();
+    let mut groups_created = 0;
+
+    // Collect unique groups from components
+    for comp in &old_map.application.components {
+        if let Some(ref group_name) = comp.group {
+            if !group_map.contains_key(group_name) {
+                let group_id = Uuid::new_v4();
+                sqlx::query(
+                    "INSERT INTO component_groups (id, application_id, name, display_order) VALUES ($1, $2, $3, $4)",
+                )
+                .bind(group_id)
+                .bind(app_id)
+                .bind(group_name)
+                .bind(groups_created as i32)
+                .execute(&state.db)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+                group_map.insert(group_name.clone(), group_id);
+                groups_created += 1;
+            }
+        }
+    }
+
+    // ── Import components ───────────────────────────────────────────
+    let mut comp_name_to_id: HashMap<String, Uuid> = HashMap::new();
+    let mut components_created = 0;
+    let mut commands_created = 0;
+    let mut links_created = 0;
+
+    for (idx, comp) in old_map.application.components.iter().enumerate() {
+        let comp_name = match &comp.name {
+            Some(n) => n,
+            None => {
+                warnings.push(format!("Skipping component at index {} with no name", idx));
+                continue;
+            }
+        };
+
+        let comp_id = Uuid::new_v4();
+        let group_id = comp.group.as_ref().and_then(|g| group_map.get(g)).copied();
+
+        // Map component type from old format
+        let comp_type = map_component_type(comp.component_type.as_deref());
+        let icon = comp
+            .icon
+            .as_deref()
+            .unwrap_or(default_icon_for_type(comp_type));
+
+        // Extract standard actions → core commands
+        let check_cmd = find_action_cmd(&comp.actions, &["check", "status", "health"]);
+        let start_cmd = find_action_cmd(&comp.actions, &["start", "startup", "launch"]);
+        let stop_cmd = find_action_cmd(&comp.actions, &["stop", "shutdown", "halt"]);
+        let integrity_cmd = find_action_cmd(&comp.actions, &["integrity", "verify", "validate"]);
+
+        // Calculate grid position if not specified
+        let pos_x = comp.position_x.unwrap_or((idx % 5) as f32 * 250.0);
+        let pos_y = comp.position_y.unwrap_or((idx / 5) as f32 * 200.0);
+
+        sqlx::query(
+            r#"INSERT INTO components (id, application_id, name, display_name, description, component_type,
+                icon, group_id, check_cmd, start_cmd, stop_cmd, integrity_check_cmd,
+                position_x, position_y)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
+        )
+        .bind(comp_id)
+        .bind(app_id)
+        .bind(comp_name)
+        .bind(comp.display_name.as_deref())
+        .bind(comp.description.as_deref())
+        .bind(comp_type)
+        .bind(icon)
+        .bind(group_id)
+        .bind(&check_cmd)
+        .bind(&start_cmd)
+        .bind(&stop_cmd)
+        .bind(&integrity_cmd)
+        .bind(pos_x)
+        .bind(pos_y)
+        .execute(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        comp_name_to_id.insert(comp_name.clone(), comp_id);
+        components_created += 1;
+
+        // ── Import custom commands (non-standard actions) ───────────
+        for action in &comp.actions {
+            let action_name = match &action.name {
+                Some(n) => n.to_lowercase(),
+                None => continue,
+            };
+
+            // Skip standard actions that are already mapped to core commands
+            if is_standard_action(&action_name) {
+                continue;
+            }
+
+            let cmd_text = match &action.command {
+                Some(c) => c,
+                None => continue,
+            };
+
+            let cmd_id = Uuid::new_v4();
+            let display = action.display_name.as_deref().unwrap_or(&action_name);
+
+            sqlx::query(
+                r#"INSERT INTO component_commands (id, component_id, name, command, description, requires_confirmation)
+                VALUES ($1, $2, $3, $4, $5, $6)"#,
+            )
+            .bind(cmd_id)
+            .bind(comp_id)
+            .bind(display)
+            .bind(cmd_text)
+            .bind(action.description.as_deref())
+            .bind(action.requires_confirmation.unwrap_or(false))
+            .execute(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            commands_created += 1;
+
+            // Import input parameters for this command
+            for (pidx, param) in action.parameters.iter().enumerate() {
+                let param_name = match &param.name {
+                    Some(n) => n,
+                    None => continue,
+                };
+
+                sqlx::query(
+                    r#"INSERT INTO command_input_params (command_id, name, description, default_value, validation_regex, required, display_order)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+                )
+                .bind(cmd_id)
+                .bind(param_name)
+                .bind(param.description.as_deref())
+                .bind(param.default_value.as_deref())
+                .bind(param.validation_regex.as_deref())
+                .bind(param.required.unwrap_or(true))
+                .bind(pidx as i32)
+                .execute(&state.db)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            }
+        }
+
+        // ── Import hypertext links ──────────────────────────────────
+        for link in &comp.hypertext_links {
+            let label = match &link.label {
+                Some(l) => l,
+                None => continue,
+            };
+            let url = match &link.url {
+                Some(u) => u,
+                None => continue,
+            };
+
+            let link_type = map_link_type(link.link_type.as_deref());
+
+            sqlx::query(
+                "INSERT INTO component_links (component_id, label, url, link_type) VALUES ($1, $2, $3, $4)",
+            )
+            .bind(comp_id)
+            .bind(label)
+            .bind(url)
+            .bind(link_type)
+            .execute(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            links_created += 1;
+        }
+    }
+
+    // ── Import dependencies ─────────────────────────────────────────
+    let mut dependencies_created = 0;
+    for comp in &old_map.application.components {
+        let comp_name = match &comp.name {
+            Some(n) => n,
+            None => continue,
+        };
+        let from_id = match comp_name_to_id.get(comp_name) {
+            Some(id) => *id,
+            None => continue,
+        };
+
+        for dep_name in &comp.depends_on {
+            let to_id = match comp_name_to_id.get(dep_name) {
+                Some(id) => *id,
+                None => {
+                    warnings.push(format!(
+                        "Component '{}' depends on '{}' which was not found",
+                        comp_name, dep_name
+                    ));
+                    continue;
+                }
+            };
+
+            sqlx::query(
+                "INSERT INTO dependencies (application_id, from_component_id, to_component_id) VALUES ($1, $2, $3)",
+            )
+            .bind(app_id)
+            .bind(from_id)
+            .bind(to_id)
+            .execute(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            dependencies_created += 1;
+        }
+    }
+
+    let result = ImportResult {
+        application_id: app_id,
+        application_name: app_name.to_string(),
+        components_created,
+        groups_created,
+        variables_created,
+        commands_created,
+        dependencies_created,
+        links_created,
+        warnings,
+    };
+
+    Ok((StatusCode::CREATED, Json(json!(result))))
+}
+
+// ── Helper functions ────────────────────────────────────────────────
+
+fn map_component_type(old_type: Option<&str>) -> &str {
+    match old_type.map(|s| s.to_lowercase()).as_deref() {
+        Some("database") | Some("db") | Some("sql") | Some("sqlserver") | Some("mysql")
+        | Some("postgresql") | Some("oracle") | Some("mongodb") => "database",
+        Some("middleware") | Some("mq") | Some("rabbitmq") | Some("kafka") | Some("redis") => {
+            "middleware"
+        }
+        Some("appserver") | Some("tomcat") | Some("jboss") | Some("wildfly") | Some("jetty") => {
+            "appserver"
+        }
+        Some("webfront") | Some("web") | Some("nginx") | Some("apache") | Some("iis") => "webfront",
+        Some("service") | Some("api") | Some("microservice") => "service",
+        Some("batch") | Some("job") | Some("cron") | Some("scheduler") => "batch",
+        Some("firewall")
+        | Some("network")
+        | Some("vm")
+        | Some("azure")
+        | Some("cloud")
+        | Some("backup")
+        | Some("storage")
+        | Some("infra")
+        | Some("infrastructure") => "custom",
+        _ => "custom",
+    }
+}
+
+fn default_icon_for_type(comp_type: &str) -> &str {
+    match comp_type {
+        "database" => "database",
+        "middleware" => "layers",
+        "appserver" => "server",
+        "webfront" => "globe",
+        "service" => "cog",
+        "batch" => "clock",
+        _ => "box",
+    }
+}
+
+fn find_action_cmd(actions: &[OldAction], keywords: &[&str]) -> Option<String> {
+    for action in actions {
+        if let Some(ref name) = action.name {
+            let lower = name.to_lowercase();
+            for kw in keywords {
+                if lower.contains(kw) {
+                    return action.command.clone();
+                }
+            }
+        }
+        if let Some(ref action_type) = action.action_type {
+            let lower = action_type.to_lowercase();
+            for kw in keywords {
+                if lower.contains(kw) {
+                    return action.command.clone();
+                }
+            }
+        }
+    }
+    None
+}
+
+fn is_standard_action(name: &str) -> bool {
+    matches!(
+        name,
+        "check"
+            | "status"
+            | "health"
+            | "start"
+            | "startup"
+            | "launch"
+            | "stop"
+            | "shutdown"
+            | "halt"
+            | "integrity"
+            | "verify"
+            | "validate"
+    )
+}
+
+fn map_link_type(old_type: Option<&str>) -> &str {
+    match old_type.map(|s| s.to_lowercase()).as_deref() {
+        Some("documentation") | Some("doc") | Some("docs") => "documentation",
+        Some("cmdb") => "cmdb",
+        Some("monitoring") | Some("grafana") | Some("prometheus") | Some("zabbix") => "monitoring",
+        Some("log") | Some("splunk") | Some("elk") | Some("kibana") => "log",
+        Some("runbook") | Some("procedure") => "runbook",
+        _ => "other",
+    }
+}

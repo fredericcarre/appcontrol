@@ -61,11 +61,12 @@ async fn handle_socket(socket: ws::WebSocket, state: Arc<AppState>, user_id: uui
         }
     });
 
-    // Process messages from client
+    // Process messages from client (frontend subscriptions) and agent messages (forwarded by gateway)
     let state_clone = state.clone();
     let recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if let ws::Message::Text(text) = msg {
+                // Try frontend client message first
                 if let Ok(client_msg) =
                     serde_json::from_str::<appcontrol_common::WsClientMessage>(&text)
                 {
@@ -76,6 +77,32 @@ async fn handle_socket(socket: ws::WebSocket, state: Arc<AppState>, user_id: uui
                         appcontrol_common::WsClientMessage::Unsubscribe { app_id } => {
                             state_clone.ws_hub.unsubscribe(conn_id, app_id);
                         }
+                    }
+                }
+                // Try agent message (forwarded by gateway)
+                else if let Ok(agent_msg) =
+                    serde_json::from_str::<appcontrol_common::AgentMessage>(&text)
+                {
+                    match agent_msg {
+                        appcontrol_common::AgentMessage::CheckResult(cr) => {
+                            if let Err(e) = crate::core::fsm::process_check_result(
+                                &state_clone,
+                                cr.component_id,
+                                cr.exit_code,
+                            )
+                            .await
+                            {
+                                tracing::warn!(
+                                    component_id = %cr.component_id,
+                                    exit_code = cr.exit_code,
+                                    "Failed to process check result: {}", e
+                                );
+                            }
+                        }
+                        appcontrol_common::AgentMessage::Heartbeat { agent_id, .. } => {
+                            tracing::trace!(agent_id = %agent_id, "Agent heartbeat received");
+                        }
+                        _ => {}
                     }
                 }
             }

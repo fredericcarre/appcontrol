@@ -1,3 +1,6 @@
+use crate::auth::oidc::OidcConfig;
+use crate::auth::saml::SamlConfig;
+
 /// Application configuration loaded from environment variables.
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -6,6 +9,10 @@ pub struct AppConfig {
     pub port: u16,
     pub jwt_secret: String,
     pub jwt_issuer: String,
+    /// OIDC configuration (optional — set OIDC_DISCOVERY_URL to enable)
+    pub oidc: Option<OidcConfig>,
+    /// SAML configuration (optional — set SAML_IDP_SSO_URL to enable)
+    pub saml: Option<SamlConfig>,
 }
 
 impl AppConfig {
@@ -23,6 +30,8 @@ impl AppConfig {
             jwt_secret: std::env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "dev-secret-change-in-production".to_string()),
             jwt_issuer: std::env::var("JWT_ISSUER").unwrap_or_else(|_| "appcontrol".to_string()),
+            oidc: OidcConfig::from_env(),
+            saml: SamlConfig::from_env(),
         }
     }
 }

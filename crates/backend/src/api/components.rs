@@ -19,6 +19,10 @@ use appcontrol_common::PermissionLevel;
 pub struct CreateComponentRequest {
     pub name: String,
     pub component_type: String,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub icon: Option<String>,
+    pub group_id: Option<Uuid>,
     pub agent_id: Option<Uuid>,
     pub check_cmd: Option<String>,
     pub start_cmd: Option<String>,
@@ -45,6 +49,10 @@ pub struct CreateComponentRequest {
 pub struct UpdateComponentRequest {
     pub name: Option<String>,
     pub component_type: Option<String>,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub icon: Option<String>,
+    pub group_id: Option<Uuid>,
     pub agent_id: Option<Uuid>,
     pub check_cmd: Option<String>,
     pub start_cmd: Option<String>,
@@ -72,6 +80,10 @@ pub struct ComponentRow {
     pub application_id: Uuid,
     pub name: String,
     pub component_type: String,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub icon: Option<String>,
+    pub group_id: Option<Uuid>,
     pub agent_id: Option<Uuid>,
     pub check_cmd: Option<String>,
     pub start_cmd: Option<String>,
@@ -113,7 +125,8 @@ pub async fn list_components(
 
     let components = sqlx::query_as::<_, ComponentRow>(
         r#"
-        SELECT id, application_id, name, component_type, agent_id, check_cmd, start_cmd, stop_cmd,
+        SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
+               agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
                position_x, position_y, created_at, updated_at
         FROM components WHERE application_id = $1 ORDER BY name
@@ -134,7 +147,8 @@ pub async fn get_component(
 ) -> Result<Json<Value>, StatusCode> {
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
-        SELECT id, application_id, name, component_type, agent_id, check_cmd, start_cmd, stop_cmd,
+        SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
+               agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
                position_x, position_y, created_at, updated_at
         FROM components WHERE id = $1
@@ -185,11 +199,13 @@ pub async fn create_component(
 
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
-        INSERT INTO components (id, application_id, name, component_type, agent_id, check_cmd, start_cmd, stop_cmd,
+        INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id,
+                                agent_id, check_cmd, start_cmd, stop_cmd,
                                 check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
                                 position_x, position_y, env_vars, tags)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-        RETURNING id, application_id, name, component_type, agent_id, check_cmd, start_cmd, stop_cmd,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
+                  agent_id, check_cmd, start_cmd, stop_cmd,
                   check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
                   position_x, position_y, created_at, updated_at
         "#,
@@ -198,6 +214,10 @@ pub async fn create_component(
     .bind(app_id)
     .bind(&body.name)
     .bind(&body.component_type)
+    .bind(&body.display_name)
+    .bind(&body.description)
+    .bind(body.icon.as_deref().unwrap_or("box"))
+    .bind(body.group_id)
     .bind(body.agent_id)
     .bind(&body.check_cmd)
     .bind(&body.start_cmd)
@@ -253,18 +273,23 @@ pub async fn update_component(
         UPDATE components SET
             name = COALESCE($2, name),
             component_type = COALESCE($3, component_type),
-            check_cmd = COALESCE($4, check_cmd),
-            start_cmd = COALESCE($5, start_cmd),
-            stop_cmd = COALESCE($6, stop_cmd),
-            check_interval_seconds = COALESCE($7, check_interval_seconds),
-            start_timeout_seconds = COALESCE($8, start_timeout_seconds),
-            stop_timeout_seconds = COALESCE($9, stop_timeout_seconds),
-            is_optional = COALESCE($10, is_optional),
-            position_x = COALESCE($11, position_x),
-            position_y = COALESCE($12, position_y),
+            display_name = COALESCE($4, display_name),
+            description = COALESCE($5, description),
+            icon = COALESCE($6, icon),
+            group_id = COALESCE($7, group_id),
+            check_cmd = COALESCE($8, check_cmd),
+            start_cmd = COALESCE($9, start_cmd),
+            stop_cmd = COALESCE($10, stop_cmd),
+            check_interval_seconds = COALESCE($11, check_interval_seconds),
+            start_timeout_seconds = COALESCE($12, start_timeout_seconds),
+            stop_timeout_seconds = COALESCE($13, stop_timeout_seconds),
+            is_optional = COALESCE($14, is_optional),
+            position_x = COALESCE($15, position_x),
+            position_y = COALESCE($16, position_y),
             updated_at = now()
         WHERE id = $1
-        RETURNING id, application_id, name, component_type, agent_id, check_cmd, start_cmd, stop_cmd,
+        RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
+                  agent_id, check_cmd, start_cmd, stop_cmd,
                   check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
                   position_x, position_y, created_at, updated_at
         "#,
@@ -272,6 +297,10 @@ pub async fn update_component(
     .bind(id)
     .bind(&body.name)
     .bind(&body.component_type)
+    .bind(&body.display_name)
+    .bind(&body.description)
+    .bind(&body.icon)
+    .bind(body.group_id)
     .bind(&body.check_cmd)
     .bind(&body.start_cmd)
     .bind(&body.stop_cmd)

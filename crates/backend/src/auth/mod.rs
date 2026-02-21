@@ -1,5 +1,7 @@
 pub mod api_key;
 pub mod jwt;
+pub mod oidc;
+pub mod saml;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
