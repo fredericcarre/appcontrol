@@ -14,6 +14,7 @@ pub mod reports;
 pub mod switchover;
 pub mod teams;
 pub mod variables;
+pub mod workspaces;
 
 use axum::{
     middleware as axum_middleware,
@@ -188,6 +189,32 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Agents
         .route("/agents", get(agents::list_agents))
         .route("/agents/:id", get(agents::get_agent))
+        // Workspaces (site/zone access control)
+        .route(
+            "/workspaces",
+            get(workspaces::list_workspaces).post(workspaces::create_workspace),
+        )
+        .route("/workspaces/:id", delete(workspaces::delete_workspace))
+        .route(
+            "/workspaces/:id/sites",
+            get(workspaces::list_workspace_sites).post(workspaces::add_workspace_site),
+        )
+        .route(
+            "/workspaces/:id/sites/:site_id",
+            delete(workspaces::remove_workspace_site),
+        )
+        .route(
+            "/workspaces/:id/members",
+            get(workspaces::list_workspace_members).post(workspaces::add_workspace_member),
+        )
+        .route(
+            "/workspaces/:id/members/:member_id",
+            delete(workspaces::remove_workspace_member),
+        )
+        .route(
+            "/workspaces/my-sites",
+            get(workspaces::my_accessible_sites),
+        )
         // SAML group mapping admin API (requires auth)
         .merge(crate::auth::saml::saml_admin_routes())
         // PDF report export

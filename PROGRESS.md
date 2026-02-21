@@ -173,3 +173,33 @@
 - [x] `frontend/src/components/maps/AppMap.tsx` — Group color mapping, pass groups to nodes
 - [x] `frontend/src/pages/ImportPage.tsx` — YAML import page with file upload + paste
 - [x] Tests: 15+ tests covering variables, groups, links, params, YAML import
+
+## Phase 5: Agent Connectivity, Heartbeat & Zone Access Control
+
+### P5-1: Agent IP Address Support
+- [x] `crates/common/src/protocol.rs` — Add `ip_addresses: Vec<String>` to `AgentMessage::Register` (with `serde(default)` for backward compat)
+- [x] `crates/agent/src/platform.rs` — `get_ip_addresses()` detects non-loopback IPs via sysinfo
+- [x] `crates/agent/src/connection.rs` — Include ip_addresses in Register message
+- [x] `migrations/V011__agent_ip_workspace_access_heartbeat.sql` — `agents.ip_addresses JSONB DEFAULT '[]'`
+- [x] `crates/backend/src/api/agents.rs` — Include ip_addresses in agent list/detail API responses
+- [x] `crates/backend/src/websocket/mod.rs` — Store ip_addresses + update last_heartbeat_at on Register and Heartbeat
+- [x] Tests: backward compat (old agents without ip_addresses), roundtrip, API response
+
+### P5-2: Heartbeat Timeout → UNREACHABLE State
+- [x] `crates/backend/src/core/heartbeat_monitor.rs` — Background task: detect stale agents, transition components to UNREACHABLE
+- [x] `crates/backend/src/main.rs` — Spawn heartbeat monitor on startup (30s check interval)
+- [x] `migrations/V011__agent_ip_workspace_access_heartbeat.sql` — `organizations.heartbeat_timeout_seconds INTEGER DEFAULT 180`
+- [x] FSM distinction: FAILED (check ran, returned error) vs UNREACHABLE (agent silent, unknown state)
+- [x] State transition details include `previous_state` and `agent_id` for recovery on reconnect
+- [x] STOPPED/STOPPING components are NOT transitioned to UNREACHABLE
+- [x] Tests: stale agent detection, active agent not marked, configurable timeout per org
+
+### P5-3: Workspace-Site Access Control (Zone Security)
+- [x] `migrations/V011__agent_ip_workspace_access_heartbeat.sql` — workspace_sites, workspace_members tables
+- [x] `crates/backend/src/core/permissions.rs` — `can_access_site()`, `can_operate_component()` functions
+- [x] `crates/backend/src/api/workspaces.rs` — Full CRUD: workspaces, site bindings, member bindings, my-sites
+- [x] `crates/backend/src/api/mod.rs` — Register workspace routes
+- [x] Workspace access model: org admin = implicit all, no config = open, with config = restricted
+- [x] Team membership grants site access (user in team → team in workspace → workspace has site)
+- [x] Audit: workspace creation logged to action_log
+- [x] Tests: 11 E2E tests covering CRUD, site binding, user/team members, access control, admin bypass, audit

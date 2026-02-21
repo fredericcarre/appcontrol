@@ -278,15 +278,41 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
         }
         appcontrol_common::AgentMessage::Heartbeat { agent_id, .. } => {
             tracing::trace!(agent_id = %agent_id, "Agent heartbeat");
+            // Update last_heartbeat_at in database
+            if let Err(e) = sqlx::query(
+                "UPDATE agents SET last_heartbeat_at = now() WHERE id = $1",
+            )
+            .bind(agent_id)
+            .execute(&state.db)
+            .await
+            {
+                tracing::warn!(agent_id = %agent_id, "Failed to update heartbeat: {}", e);
+            }
         }
         appcontrol_common::AgentMessage::Register {
-            agent_id, hostname, ..
+            agent_id,
+            hostname,
+            ip_addresses,
+            ..
         } => {
             tracing::info!(
                 agent_id = %agent_id,
                 hostname = %hostname,
+                ip_count = ip_addresses.len(),
                 "Agent registered via gateway"
             );
+            // Update agent record with hostname, IPs, and heartbeat
+            if let Err(e) = sqlx::query(
+                "UPDATE agents SET hostname = $2, ip_addresses = $3, last_heartbeat_at = now(), is_active = true WHERE id = $1",
+            )
+            .bind(agent_id)
+            .bind(&hostname)
+            .bind(serde_json::json!(ip_addresses))
+            .execute(&state.db)
+            .await
+            {
+                tracing::warn!(agent_id = %agent_id, "Failed to update agent registration: {}", e);
+            }
         }
     }
 }

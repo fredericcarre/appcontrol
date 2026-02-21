@@ -25,6 +25,8 @@ pub enum AgentMessage {
     Register {
         agent_id: Uuid,
         hostname: String,
+        #[serde(default)]
+        ip_addresses: Vec<String>,
         labels: serde_json::Value,
         version: String,
     },
@@ -211,7 +213,8 @@ mod tests {
     fn test_agent_message_register_roundtrip() {
         let msg = AgentMessage::Register {
             agent_id: Uuid::new_v4(),
-            hostname: "server01".to_string(),
+            hostname: "server01.prod.company.com".to_string(),
+            ip_addresses: vec!["10.0.1.42".to_string(), "172.16.0.5".to_string()],
             labels: serde_json::json!({"role": "database", "env": "prod"}),
             version: "0.1.0".to_string(),
         };
@@ -219,10 +222,27 @@ mod tests {
         let deserialized: AgentMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
             AgentMessage::Register {
-                hostname, version, ..
+                hostname,
+                ip_addresses,
+                version,
+                ..
             } => {
-                assert_eq!(hostname, "server01");
+                assert_eq!(hostname, "server01.prod.company.com");
+                assert_eq!(ip_addresses, vec!["10.0.1.42", "172.16.0.5"]);
                 assert_eq!(version, "0.1.0");
+            }
+            _ => panic!("Expected Register"),
+        }
+    }
+
+    #[test]
+    fn test_agent_message_register_backward_compat_no_ip() {
+        // Old agents may not send ip_addresses — serde(default) handles this
+        let json = r#"{"type":"Register","payload":{"agent_id":"550e8400-e29b-41d4-a716-446655440000","hostname":"server01","labels":{},"version":"0.1.0"}}"#;
+        let msg: AgentMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            AgentMessage::Register { ip_addresses, .. } => {
+                assert!(ip_addresses.is_empty());
             }
             _ => panic!("Expected Register"),
         }

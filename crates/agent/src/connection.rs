@@ -67,10 +67,11 @@ impl ConnectionManager {
         let (ws_stream, _) = connect_async(&self.gateway_url).await?;
         let (mut write, mut read) = ws_stream.split();
 
-        // Send registration message
+        // Send registration message with hostname and detected IPs
         let register = AgentMessage::Register {
             agent_id: self.agent_id,
             hostname: crate::platform::gethostname(),
+            ip_addresses: crate::platform::get_ip_addresses(),
             labels: serde_json::json!(self.labels),
             version: env!("CARGO_PKG_VERSION").to_string(),
         };

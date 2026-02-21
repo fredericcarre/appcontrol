@@ -25,6 +25,16 @@ async fn main() -> anyhow::Result<()> {
 
     let app = create_router(state.clone());
 
+    // Start heartbeat monitor background task (checks every 30s)
+    let monitor_state = state.clone();
+    tokio::spawn(async move {
+        appcontrol_backend::core::heartbeat_monitor::run_heartbeat_monitor(
+            monitor_state,
+            std::time::Duration::from_secs(30),
+        )
+        .await;
+    });
+
     let addr = format!("0.0.0.0:{}", state.config.port);
     tracing::info!("Starting AppControl backend on {}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await?;

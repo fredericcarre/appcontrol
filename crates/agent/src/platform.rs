@@ -17,3 +17,27 @@ pub fn gethostname() -> String {
             .unwrap_or_else(|_| "unknown".to_string())
     }
 }
+
+/// Detect all non-loopback IP addresses on this machine.
+/// Returns both IPv4 and IPv6 addresses as strings.
+/// Useful for Azure/cloud VMs where FQDN may not be meaningful.
+pub fn get_ip_addresses() -> Vec<String> {
+    let mut addresses = Vec::new();
+
+    // Use sysinfo network interfaces
+    let networks = sysinfo::Networks::new_with_refreshed_list();
+    for (_name, data) in &networks {
+        for ip in data.ip_networks() {
+            let addr = ip.addr;
+            // Skip loopback
+            if addr.is_loopback() {
+                continue;
+            }
+            addresses.push(addr.to_string());
+        }
+    }
+
+    addresses.sort();
+    addresses.dedup();
+    addresses
+}
