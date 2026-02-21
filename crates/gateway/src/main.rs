@@ -40,6 +40,57 @@ struct BackendSection {
     reconnect_interval_secs: u64,
 }
 
+impl GatewayConfig {
+    /// Load config from YAML file, then apply env var overrides.
+    /// If no config file exists, build entirely from env vars with defaults.
+    fn load(path: &str) -> anyhow::Result<Self> {
+        let mut config = if std::path::Path::new(path).exists() {
+            let content = std::fs::read_to_string(path)?;
+            serde_yaml::from_str(&content)?
+        } else {
+            tracing::info!("No config file at {}, using env vars / defaults", path);
+            GatewayConfig {
+                gateway: GatewaySection {
+                    id: "gateway-01".to_string(),
+                    zone: "default".to_string(),
+                    listen_addr: "0.0.0.0".to_string(),
+                    listen_port: 4443,
+                },
+                backend: BackendSection {
+                    url: "ws://localhost:3000/ws".to_string(),
+                    reconnect_interval_secs: 5,
+                },
+            }
+        };
+
+        // Env var overrides
+        if let Ok(v) = std::env::var("GATEWAY_ID") {
+            config.gateway.id = v;
+        }
+        if let Ok(v) = std::env::var("GATEWAY_ZONE") {
+            config.gateway.zone = v;
+        }
+        if let Ok(v) = std::env::var("LISTEN_ADDR") {
+            config.gateway.listen_addr = v;
+        }
+        if let Ok(v) = std::env::var("LISTEN_PORT") {
+            if let Ok(p) = v.parse() {
+                config.gateway.listen_port = p;
+            }
+        }
+        if let Ok(v) = std::env::var("BACKEND_URL") {
+            config.backend.url = v;
+        }
+        if let Ok(v) = std::env::var("BACKEND_RECONNECT_SECS") {
+            if let Ok(s) = v.parse() {
+                config.backend.reconnect_interval_secs = s;
+            }
+        }
+
+        Ok(config)
+    }
+}
+
 pub struct GatewayState {
     pub registry: AgentRegistry,
     pub router: MessageRouter,
@@ -57,8 +108,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
-    let config_str = std::fs::read_to_string(&args.config)?;
-    let config: GatewayConfig = serde_yaml::from_str(&config_str)?;
+    let config = GatewayConfig::load(&args.config)?;
 
     let registry = AgentRegistry::new();
     let router = MessageRouter::new();
