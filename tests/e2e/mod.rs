@@ -40,3 +40,4 @@ mod test_org_isolation;
 mod test_app_crud;
 mod test_agent_management;
 mod test_incident_lifecycle;
+mod test_saml_auth;

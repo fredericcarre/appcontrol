@@ -114,6 +114,8 @@ impl TestContext {
             port: addr.port(),
             jwt_secret: "test-jwt-secret".to_string(),
             jwt_issuer: "appcontrol-test".to_string(),
+            oidc: None,
+            saml: None,
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
@@ -153,6 +155,139 @@ impl TestContext {
             editor_token,
             _server_handle: server_handle,
         }
+    }
+
+    /// Create a TestContext with SAML enabled.
+    pub async fn new_with_saml(idp_sso_url: &str, sp_entity_id: &str) -> Self {
+        Self::new_with_saml_inner(idp_sso_url, sp_entity_id, None).await
+    }
+
+    /// Create a TestContext with SAML enabled and an admin group.
+    pub async fn new_with_saml_admin(idp_sso_url: &str, sp_entity_id: &str, admin_group: &str) -> Self {
+        Self::new_with_saml_inner(idp_sso_url, sp_entity_id, Some(admin_group.to_string())).await
+    }
+
+    async fn new_with_saml_inner(idp_sso_url: &str, sp_entity_id: &str, admin_group: Option<String>) -> Self {
+        let db_name = format!("test_{}", Uuid::new_v4().simple());
+        let admin_url = std::env::var("TEST_DATABASE_ADMIN_URL")
+            .unwrap_or_else(|_| "postgres://appcontrol:test@localhost:5432/postgres".to_string());
+
+        let admin_pool = PgPool::connect(&admin_url).await
+            .expect("Cannot connect to PostgreSQL. Is it running?");
+        sqlx::query(&format!("CREATE DATABASE {db_name}"))
+            .execute(&admin_pool).await
+            .expect("Failed to create temp database");
+
+        let db_url = format!("postgres://appcontrol:test@localhost:5432/{db_name}");
+        let pool = PgPool::connect(&db_url).await.unwrap();
+
+        sqlx::migrate!("../../migrations").run(&pool).await
+            .expect("Failed to run migrations");
+
+        let org_id = Uuid::new_v4();
+        let admin_id = Uuid::new_v4();
+        let operator_id = Uuid::new_v4();
+        let viewer_id = Uuid::new_v4();
+        let editor_id = Uuid::new_v4();
+
+        sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')")
+            .bind(org_id).execute(&pool).await.unwrap();
+
+        for (id, name, role) in [
+            (admin_id, "admin", "admin"),
+            (operator_id, "operator", "operator"),
+            (viewer_id, "viewer", "viewer"),
+            (editor_id, "editor", "editor"),
+        ] {
+            sqlx::query(
+                "INSERT INTO users (id, organization_id, external_id, display_name, role, email)
+                 VALUES ($1, $2, $3, $3, $4, $3 || '@test.local')"
+            )
+            .bind(id).bind(org_id).bind(name).bind(role)
+            .execute(&pool).await.unwrap();
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let api_url = format!("http://{addr}");
+        let ws_url = format!("ws://{addr}");
+
+        let config = appcontrol_backend::config::AppConfig {
+            database_url: db_url,
+            redis_url: std::env::var("TEST_REDIS_URL")
+                .unwrap_or_else(|_| "redis://localhost:6379".to_string()),
+            port: addr.port(),
+            jwt_secret: "test-jwt-secret".to_string(),
+            jwt_issuer: "appcontrol-test".to_string(),
+            oidc: None,
+            saml: Some(appcontrol_backend::auth::saml::SamlConfig {
+                idp_sso_url: idp_sso_url.to_string(),
+                idp_cert: "test-cert".to_string(),
+                sp_entity_id: sp_entity_id.to_string(),
+                sp_acs_url: format!("{api_url}/api/v1/auth/saml/acs"),
+                group_attribute: "memberOf".to_string(),
+                email_attribute: "email".to_string(),
+                name_attribute: "displayName".to_string(),
+                admin_group,
+                want_assertions_signed: false,
+            }),
+        };
+
+        let state = Arc::new(appcontrol_backend::AppState {
+            db: pool.clone(),
+            ws_hub: appcontrol_backend::websocket::Hub::new(),
+            config,
+        });
+
+        let app = appcontrol_backend::create_router(state);
+        let server_handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let admin_token = Self::make_jwt(admin_id, org_id, "admin", "test-jwt-secret");
+        let operator_token = Self::make_jwt(operator_id, org_id, "operator", "test-jwt-secret");
+        let viewer_token = Self::make_jwt(viewer_id, org_id, "viewer", "test-jwt-secret");
+        let editor_token = Self::make_jwt(editor_id, org_id, "editor", "test-jwt-secret");
+
+        Self {
+            db_pool: pool,
+            api_url,
+            ws_url,
+            admin_user_id: admin_id,
+            operator_user_id: operator_id,
+            viewer_user_id: viewer_id,
+            editor_user_id: editor_id,
+            organization_id: org_id,
+            db_name,
+            client: Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .unwrap(),
+            admin_token,
+            operator_token,
+            viewer_token,
+            editor_token,
+            _server_handle: server_handle,
+        }
+    }
+
+    /// Returns a reqwest Client that does NOT follow redirects.
+    pub fn client_no_redirect(&self) -> Client {
+        Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap()
+    }
+
+    /// POST a form (application/x-www-form-urlencoded) without authentication.
+    pub async fn post_form_anonymous(&self, path: &str, params: &[(&str, &str)]) -> Response {
+        self.client
+            .post(format!("{}{path}", self.api_url))
+            .form(params)
+            .send()
+            .await
+            .unwrap()
     }
 
     fn make_jwt(user_id: Uuid, org_id: Uuid, role: &str, secret: &str) -> String {

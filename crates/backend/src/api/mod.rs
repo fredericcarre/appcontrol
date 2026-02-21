@@ -141,6 +141,13 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Agents
         .route("/agents", get(agents::list_agents))
         .route("/agents/{id}", get(agents::get_agent))
+        // SAML group mapping admin API (requires auth)
+        .merge(crate::auth::saml::saml_admin_routes())
+        // PDF report export
+        .route(
+            "/apps/{app_id}/reports/export",
+            get(reports::export_pdf),
+        )
         .route_layer(axum_middleware::from_fn_with_state(
             state,
             crate::middleware::auth::auth_middleware,

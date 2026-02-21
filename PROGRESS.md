@@ -22,13 +22,14 @@
 - [x] `migrations/V006__teams_permissions.sql` — workspaces, teams, team_members, app_permissions_users, app_permissions_teams, app_share_links, user_favorites, saved_views
 - [x] `migrations/V007__api_keys_notifications.sql` — api_keys, notification_preferences
 - [x] `migrations/V008__materialized_views.sql` — component_daily_stats, indexes
+- [x] `migrations/V009__saml_oidc.sql` — SAML/OIDC columns (oidc_sub, saml_name_id), saml_group_mappings table
 - [ ] Validation: `sqlx migrate run` succeeds on clean PostgreSQL 16
 
 ### P0-3: Backend API Core
-- [x] `crates/backend/Cargo.toml` — axum, tokio, sqlx, serde, tracing, tower-http, jsonwebtoken
+- [x] `crates/backend/Cargo.toml` — axum, tokio, sqlx, serde, tracing, tower-http, jsonwebtoken, reqwest, base64, flate2, urlencoding
 - [x] `crates/backend/src/main.rs` — Axum server setup, router, middleware stack
 - [x] `crates/backend/src/db.rs` — PostgreSQL pool + Redis connection
-- [x] `crates/backend/src/auth/` — JWT RS256 validation, OIDC/SAML callback stubs, API key auth
+- [x] `crates/backend/src/auth/` — JWT RS256 validation, OIDC flow, SAML 2.0 SP-SSO, API key auth
 - [x] `crates/backend/src/middleware/` — auth middleware, permission check middleware, request logging
 - [x] `crates/backend/src/api/apps.rs` — CRUD applications (GET, POST, PUT, DELETE /apps)
 - [x] `crates/backend/src/api/components.rs` — CRUD components + dependencies
@@ -63,7 +64,7 @@
 
 ### P1-2: Backend WebSocket + Realtime
 - [x] `crates/backend/src/websocket/` — WebSocket server, subscription per app, permission-filtered events
-- [x] `crates/backend/src/core/check_processor.rs` — Process incoming check results, update state via FSM, push to WebSocket
+- [x] `crates/backend/src/websocket/mod.rs` — process_check_result wired: Agent CheckResult → FSM → state_transitions → WebSocket broadcast
 - [x] Tests: WebSocket subscription + event delivery test
 
 ### P1-3: Frontend MVP
@@ -83,11 +84,12 @@
 - [x] `frontend/src/pages/OnboardingPage.tsx` — Welcome wizard (7 steps)
 
 ### P1-4: RBAC + Auth
-- [x] `crates/backend/src/auth/oidc.rs` — OIDC flow
-- [x] `crates/backend/src/auth/saml.rs` — SAML flow
+- [x] `crates/backend/src/auth/oidc.rs` — OIDC Authorization Code Flow (discovery, token exchange, userinfo, auto-create user)
+- [x] `crates/backend/src/auth/saml.rs` — SAML 2.0 SP-Initiated SSO (AuthnRequest, ACS, metadata, group→team sync, admin group mapping)
 - [x] `crates/backend/src/api/permissions.rs` — Full permissions API (users, teams, share links, effective)
 - [x] `crates/backend/src/api/teams.rs` — Teams CRUD + members
 - [x] `crates/backend/src/core/permissions.rs` — Effective permission resolution (MAX of direct + teams)
+- [x] SAML group mapping admin API (CRUD /saml/group-mappings)
 - [x] Tests: ≥10 permission tests (all 6 levels, team resolution, expiry, org admin override)
 
 ## Phase 2: Advanced Operations (Week 5-6)
@@ -104,8 +106,8 @@
 - [x] Tests: Diagnostic + rebuild with protected components
 
 ### P2-3: DORA Reports
-- [x] `crates/backend/src/api/reports.rs` — 7 report endpoints (availability, incidents, switchovers, audit, compliance, rto, pdf)
-- [x] Tests: Report generation with test data
+- [x] `crates/backend/src/api/reports.rs` — 7 report endpoints (availability, incidents, switchovers, audit, compliance, rto, export/pdf)
+- [x] Tests: Report generation with test data (data-driven, seeds event tables, validates computed values)
 
 ### P2-4: MCP + Scheduler Integration
 - [x] `crates/backend/src/api/orchestration.rs` — Scheduler API (/start, /stop, /status, /wait-running)
@@ -128,12 +130,28 @@
 - [x] Protected files list, max 3 attempts, never on main
 
 ### P3-3: E2E Tests
-- [ ] `tests/e2e/test_full_start_stop.rs` — Full application start/stop sequence
-- [ ] `tests/e2e/test_branch_restart.rs` — Error branch detection + selective restart
-- [ ] `tests/e2e/test_switchover.rs` — DR switchover + rollback
-- [ ] `tests/e2e/test_diagnostic_rebuild.rs` — 3-level diagnostic + rebuild
-- [ ] `tests/e2e/test_custom_commands.rs` — Custom command execution + audit trail
-- [ ] `tests/e2e/test_permissions_sharing.rs` — Permission levels, team sharing, share links
-- [ ] `tests/e2e/test_audit_trail.rs` — Verify all actions logged, append-only respected
-- [ ] `tests/e2e/test_agent_offline.rs` — Agent disconnection + buffer + replay
-- [ ] `tests/e2e/test_scheduler_integration.rs` — appctl start --wait, API key auth
+- [x] `tests/e2e/common.rs` — TestContext with isolated DB, migrations, user seeding, SAML-enabled variants
+- [x] `tests/e2e/test_full_start_stop.rs` — Full application start/stop sequence
+- [x] `tests/e2e/test_branch_restart.rs` — Error branch detection + selective restart
+- [x] `tests/e2e/test_switchover.rs` — DR switchover + rollback
+- [x] `tests/e2e/test_diagnostic_rebuild.rs` — 3-level diagnostic + rebuild
+- [x] `tests/e2e/test_custom_commands.rs` — Custom command execution + audit trail
+- [x] `tests/e2e/test_permissions_sharing.rs` — Permission levels, team sharing, share links
+- [x] `tests/e2e/test_audit_trail.rs` — Verify all actions logged, append-only respected
+- [x] `tests/e2e/test_agent_and_scheduler.rs` — Agent management + scheduler integration
+- [x] `tests/e2e/test_dag_validation.rs` — DAG cycle detection, topological sort
+- [x] `tests/e2e/test_component_operations.rs` — Component CRUD + config snapshots
+- [x] `tests/e2e/test_websocket_events.rs` — WebSocket subscription + events
+- [x] `tests/e2e/test_reports.rs` — Data-driven report validation (availability%, incidents, RTO, DORA)
+- [x] `tests/e2e/test_teams_crud.rs` — Teams CRUD + member management
+- [x] `tests/e2e/test_share_links_advanced.rs` — Share links with expiry + max uses
+- [x] `tests/e2e/test_switchover_advanced.rs` — Advanced switchover scenarios
+- [x] `tests/e2e/test_diagnostic_advanced.rs` — Advanced diagnostic scenarios
+- [x] `tests/e2e/test_config_snapshots.rs` — Config version tracking (before/after JSONB)
+- [x] `tests/e2e/test_health_endpoints.rs` — Health + readiness probes
+- [x] `tests/e2e/test_orchestration_advanced.rs` — Scheduler integration scenarios
+- [x] `tests/e2e/test_org_isolation.rs` — Multi-org isolation
+- [x] `tests/e2e/test_app_crud.rs` — Application CRUD operations
+- [x] `tests/e2e/test_agent_management.rs` — Agent registration + status
+- [x] `tests/e2e/test_incident_lifecycle.rs` — Incident detection, branch restart, audit trail, cross-branch isolation
+- [x] `tests/e2e/test_saml_auth.rs` — SAML 2.0 E2E (metadata, login redirect, ACS, group mapping CRUD, group sync, admin group)
