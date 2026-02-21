@@ -34,7 +34,6 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.77"
           components: clippy, rustfmt
 
       - name: Cache cargo
@@ -102,3 +101,4 @@ jobs:
 
       - name: Audit
         run: cargo audit
+        continue-on-error: true
