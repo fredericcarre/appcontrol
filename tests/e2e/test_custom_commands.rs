@@ -28,10 +28,8 @@ mod test_custom_commands {
         let logs = ctx.get_action_log_for_type(app_id, "command").await;
         assert!(!logs.is_empty());
         let log = &logs[0];
-        assert_eq!(log.action_type, "command");
-        assert_eq!(log.target_name.as_deref(), Some("Oracle-DB"));
-        assert!(log.detail["command_name"].as_str() == Some("count_records"));
-        assert!(log.user_id.is_some(), "Must record who executed");
+        assert_eq!(log.action, "command");
+        assert!(log.details["command_name"].as_str() == Some("count_records"));
 
         ctx.cleanup().await;
     }

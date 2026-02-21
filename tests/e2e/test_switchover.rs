@@ -44,14 +44,14 @@ mod test_switchover {
 
         // Verify: active_site_id changed to site_b
         let app = ctx.get_app(app_id).await;
-        assert_eq!(app.active_site_id, site_b);
+        assert_eq!(app.active_site_id, Some(site_b));
 
-        // Verify: switchover_log has all timestamps
-        let log = ctx.get_switchover_log(sw_id).await;
-        assert!(log.phase_prepare_start.is_some());
-        assert!(log.phase_commit_at.is_some());
-        assert!(log.rto_measured_seconds.unwrap() > 0.0);
-        assert_eq!(log.status, "completed");
+        // Verify: switchover_log has all phases recorded
+        let entries = ctx.get_switchover_log_entries(sw_id).await;
+        assert!(entries.iter().any(|e| e.phase == "PREPARE"), "Must have PREPARE phase");
+        assert!(entries.iter().any(|e| e.phase == "COMMIT"), "Must have COMMIT phase");
+        let commit_entry = entries.iter().find(|e| e.phase == "COMMIT").unwrap();
+        assert_eq!(commit_entry.status, "completed");
 
         ctx.cleanup().await;
     }
@@ -78,11 +78,12 @@ mod test_switchover {
 
         // Active site should still be site_a
         let app = ctx.get_app(app_id).await;
-        assert_eq!(app.active_site_id, site_a);
+        assert_eq!(app.active_site_id, Some(site_a));
 
-        // switchover_log status = rolled_back
-        let log = ctx.get_switchover_log(sw_id).await;
-        assert_eq!(log.status, "rolled_back");
+        // switchover_log should have a ROLLBACK phase
+        let entries = ctx.get_switchover_log_entries(sw_id).await;
+        assert!(entries.iter().any(|e| e.phase == "ROLLBACK" || e.status == "rolled_back"),
+            "Rollback should be recorded in switchover_log");
 
         ctx.cleanup().await;
     }

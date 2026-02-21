@@ -149,7 +149,7 @@ mod test_permissions_sharing {
         ctx.grant_permission(app_id, ctx.viewer_user_id, "operate").await;
 
         let logs = ctx.get_action_log_for_type(app_id, "config_change").await;
-        assert!(logs.iter().any(|l| l.detail["permission_level"].as_str() == Some("operate")),
+        assert!(logs.iter().any(|l| l.details["permission_level"].as_str() == Some("operate")),
             "Permission grant must be audited");
 
         ctx.cleanup().await;

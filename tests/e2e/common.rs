@@ -567,38 +567,44 @@ impl TestContext {
 
     pub async fn get_state_transitions(&self, app_id: Uuid) -> Vec<StateTransition> {
         sqlx::query_as::<_, StateTransition>(
-            "SELECT component_name, previous_state, new_state, trigger_type, created_at
-             FROM state_transitions WHERE application_id = $1
-             ORDER BY created_at"
+            "SELECT st.component_id, c.name AS component_name,
+                    st.from_state, st.to_state, st.trigger, st.created_at
+             FROM state_transitions st
+             JOIN components c ON c.id = st.component_id
+             WHERE c.application_id = $1
+             ORDER BY st.created_at"
         )
         .bind(app_id).fetch_all(&self.db_pool).await.unwrap()
     }
 
     pub async fn get_state_transitions_for(&self, app_id: Uuid, name: &str) -> Vec<StateTransition> {
         sqlx::query_as::<_, StateTransition>(
-            "SELECT component_name, previous_state, new_state, trigger_type, created_at
-             FROM state_transitions WHERE application_id = $1 AND component_name = $2
-             ORDER BY created_at"
+            "SELECT st.component_id, c.name AS component_name,
+                    st.from_state, st.to_state, st.trigger, st.created_at
+             FROM state_transitions st
+             JOIN components c ON c.id = st.component_id
+             WHERE c.application_id = $1 AND c.name = $2
+             ORDER BY st.created_at"
         )
         .bind(app_id).bind(name).fetch_all(&self.db_pool).await.unwrap()
     }
 
-    pub async fn get_action_log(&self, app_id: Uuid, action_type: &str) -> Vec<ActionLog> {
-        self.get_action_log_for_type(app_id, action_type).await
+    pub async fn get_action_log(&self, app_id: Uuid, action: &str) -> Vec<ActionLog> {
+        self.get_action_log_for_type(app_id, action).await
     }
 
-    pub async fn get_action_log_for_type(&self, app_id: Uuid, action_type: &str) -> Vec<ActionLog> {
+    pub async fn get_action_log_for_type(&self, app_id: Uuid, action: &str) -> Vec<ActionLog> {
         sqlx::query_as::<_, ActionLog>(
-            "SELECT action_type, target_name, user_id, api_key_id, detail, created_at
-             FROM action_log WHERE application_id = $1 AND action_type = $2
+            "SELECT user_id, action, resource_type, resource_id, details, created_at
+             FROM action_log WHERE resource_id = $1 AND action = $2
              ORDER BY created_at"
         )
-        .bind(app_id).bind(action_type).fetch_all(&self.db_pool).await.unwrap()
+        .bind(app_id).bind(action).fetch_all(&self.db_pool).await.unwrap()
     }
 
     pub async fn get_all_action_logs(&self) -> Vec<ActionLog> {
         sqlx::query_as::<_, ActionLog>(
-            "SELECT action_type, target_name, user_id, api_key_id, detail, created_at
+            "SELECT user_id, action, resource_type, resource_id, details, created_at
              FROM action_log ORDER BY created_at"
         )
         .fetch_all(&self.db_pool).await.unwrap()
@@ -611,19 +617,20 @@ impl TestContext {
 
     pub async fn get_config_versions(&self, resource_type: &str, resource_id: Uuid) -> Vec<ConfigVersion> {
         sqlx::query_as::<_, ConfigVersion>(
-            "SELECT change_type, previous_value, new_value
+            "SELECT changed_by, before_snapshot, after_snapshot
              FROM config_versions WHERE resource_type = $1 AND resource_id = $2
              ORDER BY created_at"
         )
         .bind(resource_type).bind(resource_id).fetch_all(&self.db_pool).await.unwrap()
     }
 
-    pub async fn get_switchover_log(&self, switchover_id: Uuid) -> SwitchoverLog {
-        sqlx::query_as::<_, SwitchoverLog>(
-            "SELECT status, rto_measured_seconds, phase_prepare_start::text, phase_commit_at::text
-             FROM switchover_log WHERE id = $1"
+    pub async fn get_switchover_log_entries(&self, switchover_id: Uuid) -> Vec<SwitchoverLogEntry> {
+        sqlx::query_as::<_, SwitchoverLogEntry>(
+            "SELECT switchover_id, phase, status, details, created_at
+             FROM switchover_log WHERE switchover_id = $1
+             ORDER BY created_at"
         )
-        .bind(switchover_id).fetch_one(&self.db_pool).await.unwrap()
+        .bind(switchover_id).fetch_all(&self.db_pool).await.unwrap()
     }
 
     pub async fn get_job_status(&self, job_id: Uuid) -> JobStatus {
@@ -798,41 +805,44 @@ pub struct App {
     pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    pub active_site_id: Uuid,
+    #[serde(default)]
+    pub active_site_id: Option<Uuid>,
 }
 
 #[derive(Debug, serde::Deserialize, sqlx::FromRow)]
 pub struct StateTransition {
+    pub component_id: Uuid,
     pub component_name: String,
-    pub previous_state: String,
-    pub new_state: String,
-    pub trigger_type: String,
+    pub from_state: String,
+    pub to_state: String,
+    pub trigger: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, serde::Deserialize, sqlx::FromRow)]
 pub struct ActionLog {
-    pub action_type: String,
-    pub target_name: Option<String>,
-    pub user_id: Option<Uuid>,
-    pub api_key_id: Option<Uuid>,
-    pub detail: Value,
+    pub user_id: Uuid,
+    pub action: String,
+    pub resource_type: String,
+    pub resource_id: Uuid,
+    pub details: Value,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, serde::Deserialize, sqlx::FromRow)]
 pub struct ConfigVersion {
-    pub change_type: String,
-    pub previous_value: Option<Value>,
-    pub new_value: Option<Value>,
+    pub changed_by: Uuid,
+    pub before_snapshot: Option<Value>,
+    pub after_snapshot: Value,
 }
 
 #[derive(Debug, serde::Deserialize, sqlx::FromRow)]
-pub struct SwitchoverLog {
+pub struct SwitchoverLogEntry {
+    pub switchover_id: Uuid,
+    pub phase: String,
     pub status: String,
-    pub rto_measured_seconds: Option<f64>,
-    pub phase_prepare_start: Option<String>,
-    pub phase_commit_at: Option<String>,
+    pub details: Value,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, serde::Deserialize)]

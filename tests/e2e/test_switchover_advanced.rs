@@ -164,7 +164,6 @@ mod test_switchover_advanced {
         // Verify switchover is logged in action_log
         let logs = ctx.get_action_log(app_id, "switchover").await;
         assert!(!logs.is_empty(), "Switchover should be recorded in action_log");
-        assert!(logs[0].user_id.is_some(), "Switchover should record who initiated it");
 
         ctx.cleanup().await;
     }

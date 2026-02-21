@@ -161,8 +161,8 @@ mod test_diagnostic_advanced {
         tokio::time::sleep(Duration::from_secs(10)).await;
         let logs = ctx.get_action_log_for_type(app_id, "rebuild").await;
         if logs.len() >= 2 {
-            let oracle_log = logs.iter().find(|l| l.target_name.as_deref() == Some("Oracle"));
-            let tomcat_log = logs.iter().find(|l| l.target_name.as_deref() == Some("Tomcat"));
+            let oracle_log = logs.iter().find(|l| l.details["target_name"].as_str() == Some("Oracle"));
+            let tomcat_log = logs.iter().find(|l| l.details["target_name"].as_str() == Some("Tomcat"));
             if let (Some(o), Some(t)) = (oracle_log, tomcat_log) {
                 assert!(o.created_at <= t.created_at,
                     "Oracle must be rebuilt before Tomcat (DAG order)");

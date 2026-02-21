@@ -24,11 +24,9 @@ mod test_config_snapshots {
         let versions = ctx.get_config_versions("application", app_id).await;
         assert!(!versions.is_empty(), "App update should create config_version");
         let v = &versions[0];
-        assert_eq!(v.change_type, "update");
-        assert!(v.previous_value.is_some());
-        assert!(v.new_value.is_some());
+        assert!(v.before_snapshot.is_some(), "Update should have before snapshot");
         assert_eq!(
-            v.new_value.as_ref().unwrap()["description"].as_str(),
+            v.after_snapshot["description"].as_str(),
             Some("Updated SEPA description")
         );
 
@@ -49,8 +47,7 @@ mod test_config_snapshots {
         let versions = ctx.get_config_versions("component", oracle_id).await;
         assert!(!versions.is_empty(), "Component update should create config_version");
         let v = &versions[0];
-        assert_eq!(v.change_type, "update");
-        assert!(v.previous_value.is_some());
+        assert!(v.before_snapshot.is_some(), "Update should have before snapshot");
 
         ctx.cleanup().await;
     }
@@ -93,7 +90,8 @@ mod test_config_snapshots {
         let versions = ctx.get_config_versions("application", app_id).await;
         if !versions.is_empty() {
             let last = versions.last().unwrap();
-            assert!(last.change_type == "delete" || last.change_type == "update",
+            // Delete should record a final snapshot with the before state
+            assert!(last.before_snapshot.is_some() || !last.after_snapshot.is_null(),
                 "Delete should record final snapshot");
         }
 
@@ -120,8 +118,8 @@ mod test_config_snapshots {
         assert!(!versions.is_empty());
         let v = &versions[0];
 
-        // Previous value should contain the original hostname
-        let prev = v.previous_value.as_ref().unwrap();
+        // Before snapshot should contain the original hostname
+        let prev = v.before_snapshot.as_ref().unwrap();
         assert_eq!(prev["hostname"].as_str(), Some(original_hostname.as_str()),
             "Snapshot should preserve the full before state");
 

@@ -144,9 +144,8 @@ mod test_component_operations {
 
         let versions = ctx.get_config_versions("component", oracle_id).await;
         assert!(!versions.is_empty(), "Component update should create config_version");
-        assert_eq!(versions[0].change_type, "update");
-        assert!(versions[0].previous_value.is_some());
-        assert!(versions[0].new_value.is_some());
+        assert!(versions[0].before_snapshot.is_some(), "Update should have before snapshot");
+        assert!(!versions[0].after_snapshot.is_null(), "Update should have after snapshot");
 
         ctx.cleanup().await;
     }

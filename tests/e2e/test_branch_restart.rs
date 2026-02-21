@@ -62,12 +62,12 @@ mod test_branch_restart {
 
         // Verify: App-1 went through STARTING → RUNNING
         let transitions = ctx.get_state_transitions_for(app_id, "App-1").await;
-        assert!(transitions.iter().any(|t| t.new_state == "STARTING"));
-        assert!(transitions.iter().any(|t| t.new_state == "RUNNING"));
+        assert!(transitions.iter().any(|t| t.to_state == "STARTING"));
+        assert!(transitions.iter().any(|t| t.to_state == "RUNNING"));
 
         // Verify: App-2 was NEVER restarted (no STARTING transition)
         let app2_transitions = ctx.get_state_transitions_for(app_id, "App-2").await;
-        assert!(!app2_transitions.iter().any(|t| t.new_state == "STARTING"),
+        assert!(!app2_transitions.iter().any(|t| t.to_state == "STARTING"),
             "App-2 should not have been restarted");
 
         ctx.cleanup().await;
