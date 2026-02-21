@@ -62,7 +62,7 @@ impl ConnectionManager {
         // Send registration message
         let register = AgentMessage::Register {
             agent_id: self.agent_id,
-            hostname: gethostname(),
+            hostname: crate::platform::gethostname(),
             labels: serde_json::json!(self.labels),
             version: env!("CARGO_PKG_VERSION").to_string(),
         };
@@ -149,14 +149,4 @@ impl ConnectionManager {
             }
         }
     }
-}
-
-fn gethostname() -> String {
-    let mut buf = [0u8; 256];
-    let result = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
-    if result != 0 {
-        return "unknown".to_string();
-    }
-    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    String::from_utf8_lossy(&buf[..len]).to_string()
 }

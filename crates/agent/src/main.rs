@@ -3,6 +3,7 @@ mod config;
 mod connection;
 mod executor;
 mod native_commands;
+mod platform;
 mod scheduler;
 
 use clap::Parser;

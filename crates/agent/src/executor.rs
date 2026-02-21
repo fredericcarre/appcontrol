@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use nix::unistd::{fork, setsid, ForkResult};
 use std::process::Stdio;
 use std::time::Duration;
@@ -26,8 +27,18 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
     let start = std::time::Instant::now();
 
     let result = tokio::time::timeout(timeout, async {
+        #[cfg(unix)]
         let output = tokio::process::Command::new("sh")
             .arg("-c")
+            .arg(command)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await?;
+
+        #[cfg(windows)]
+        let output = tokio::process::Command::new("cmd")
+            .arg("/C")
             .arg(command)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -86,6 +97,7 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
 /// 6. Grandchild: exec() the command
 ///
 /// Result: grandchild is reparented to init/PID 1
+#[cfg(unix)]
 #[allow(dead_code)]
 pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
     // Use a pipe to communicate the grandchild PID back (using libc directly)
@@ -169,6 +181,7 @@ pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
     }
 }
 
+#[cfg(unix)]
 mod exec {
     use std::ffi::CString;
 
@@ -194,6 +207,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[cfg(unix)]
     async fn test_execute_sync_success() {
         let result = execute_sync("echo hello", Duration::from_secs(5))
             .await
@@ -203,6 +217,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(unix)]
     async fn test_execute_sync_failure() {
         let result = execute_sync("exit 42", Duration::from_secs(5))
             .await
@@ -211,6 +226,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(unix)]
     async fn test_execute_sync_timeout() {
         let result = execute_sync("sleep 60", Duration::from_millis(100))
             .await
@@ -220,6 +236,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_execute_async_detached() {
         let pid = execute_async_detached("sleep 1").unwrap();
         assert!(pid > 0);
