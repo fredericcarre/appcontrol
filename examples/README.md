@@ -71,6 +71,23 @@ Oracle RAC Node 2 → Oracle RAC Node 1
 - Integrity checks (DataGuard, ASM)
 - Long timeout values for enterprise middleware
 
+## Getting the Examples
+
+### From the latest release (recommended)
+
+```bash
+# Download the examples archive from the latest release
+gh release download --repo fredericcarre/appcontrol --pattern 'examples.tar.gz'
+tar xzf examples.tar.gz
+```
+
+### From a git clone
+
+```bash
+git clone https://github.com/fredericcarre/appcontrol.git
+# Examples are in appcontrol/examples/
+```
+
 ## How to Import
 
 ### Via API
