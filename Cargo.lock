@@ -188,6 +188,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "appcontrol-e2e-real"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "jsonwebtoken",
+ "libc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "appcontrol-e2e-tests"
 version = "0.1.0"
 dependencies = [

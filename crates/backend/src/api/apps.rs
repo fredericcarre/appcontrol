@@ -357,6 +357,27 @@ pub async fn start_branch(
         return Ok(Json(json!({ "dry_run": true, "branch": branch })));
     }
 
+    // Execute branch restart in background: the smart start handles pink branch logic
+    // by forcing the target component to be treated as needing restart
+    let state_clone = state.clone();
+    let component_id = body.component_id;
+    tokio::spawn(async move {
+        // Force the component to FAILED so the smart start picks it up as pink branch root
+        if let Err(e) = crate::core::fsm::transition_component(
+            &state_clone,
+            component_id,
+            appcontrol_common::ComponentState::Failed,
+        )
+        .await
+        {
+            tracing::warn!("Could not force component to FAILED for branch restart: {}", e);
+        }
+        // Then run the smart start which will handle the pink branch
+        if let Err(e) = crate::core::sequencer::execute_start(&state_clone, id).await {
+            tracing::error!("Failed to restart branch for app {}: {}", id, e);
+        }
+    });
+
     Ok(Json(
         json!({ "status": "starting_branch", "branch": branch }),
     ))

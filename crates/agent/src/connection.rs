@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::buffer::OfflineBuffer;
+use crate::scheduler::CheckScheduler;
 use appcontrol_common::{AgentMessage, BackendMessage};
 
 /// Manages the WebSocket connection to the gateway/backend.
@@ -11,6 +13,8 @@ pub struct ConnectionManager {
     agent_id: Uuid,
     labels: HashMap<String, String>,
     buffer: OfflineBuffer,
+    scheduler: Arc<CheckScheduler>,
+    msg_tx: mpsc::UnboundedSender<AgentMessage>,
 }
 
 impl ConnectionManager {
@@ -19,12 +23,16 @@ impl ConnectionManager {
         agent_id: Uuid,
         labels: HashMap<String, String>,
         buffer: OfflineBuffer,
+        scheduler: Arc<CheckScheduler>,
+        msg_tx: mpsc::UnboundedSender<AgentMessage>,
     ) -> Self {
         Self {
             gateway_url,
             agent_id,
             labels,
             buffer,
+            scheduler,
+            msg_tx,
         }
     }
 
@@ -95,7 +103,7 @@ impl ConnectionManager {
                     match ws_msg {
                         Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
                             if let Ok(backend_msg) = serde_json::from_str::<BackendMessage>(&text) {
-                                self.handle_backend_message(backend_msg).await;
+                                self.handle_backend_message(backend_msg);
                             }
                         }
                         Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
@@ -112,7 +120,9 @@ impl ConnectionManager {
         }
     }
 
-    async fn handle_backend_message(&self, msg: BackendMessage) {
+    /// Handle a message from the backend. Commands are spawned in separate tasks
+    /// to avoid blocking the WebSocket loop.
+    fn handle_backend_message(&self, msg: BackendMessage) {
         match msg {
             BackendMessage::ExecuteCommand {
                 request_id,
@@ -121,28 +131,55 @@ impl ConnectionManager {
                 timeout_seconds,
             } => {
                 tracing::info!(
-                    "Executing command for component {}: {}",
-                    component_id,
+                    request_id = %request_id,
+                    component_id = %component_id,
+                    "Executing command: {}",
                     command
                 );
 
+                let msg_tx = self.msg_tx.clone();
                 let timeout = std::time::Duration::from_secs(timeout_seconds as u64);
-                match crate::executor::execute_sync(&command, timeout).await {
-                    Ok(result) => {
-                        tracing::info!(
-                            "Command {} completed with exit code {}",
-                            request_id,
-                            result.exit_code
-                        );
+
+                // Spawn execution in a separate task — never block the WS loop
+                tokio::spawn(async move {
+                    let start = std::time::Instant::now();
+                    match crate::executor::execute_sync(&command, timeout).await {
+                        Ok(result) => {
+                            tracing::info!(
+                                request_id = %request_id,
+                                exit_code = result.exit_code,
+                                duration_ms = result.duration_ms,
+                                "Command completed"
+                            );
+                            // Send result back to backend
+                            let _ = msg_tx.send(AgentMessage::CommandResult {
+                                request_id,
+                                exit_code: result.exit_code,
+                                stdout: result.stdout,
+                                stderr: result.stderr,
+                                duration_ms: result.duration_ms,
+                            });
+                        }
+                        Err(e) => {
+                            let duration_ms = start.elapsed().as_millis() as u32;
+                            tracing::error!(request_id = %request_id, "Command failed: {}", e);
+                            let _ = msg_tx.send(AgentMessage::CommandResult {
+                                request_id,
+                                exit_code: -1,
+                                stdout: String::new(),
+                                stderr: format!("Agent execution error: {}", e),
+                                duration_ms,
+                            });
+                        }
                     }
-                    Err(e) => {
-                        tracing::error!("Command {} failed: {}", request_id, e);
-                    }
-                }
+                });
             }
             BackendMessage::UpdateConfig { components } => {
                 tracing::info!("Received config update for {} components", components.len());
-                // Update check scheduler with new component configs
+                let scheduler = self.scheduler.clone();
+                tokio::spawn(async move {
+                    scheduler.update_components(components).await;
+                });
             }
             BackendMessage::Ack { request_id } => {
                 tracing::debug!("Received ack for request {}", request_id);

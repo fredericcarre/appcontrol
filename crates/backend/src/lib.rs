@@ -30,6 +30,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Protected API routes (includes auth middleware layer)
         .nest("/api/v1", api::api_routes(state.clone()))
         .route("/ws", get(websocket::ws_handler))
+        .route("/ws/gateway", get(websocket::gateway_ws_handler))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state)

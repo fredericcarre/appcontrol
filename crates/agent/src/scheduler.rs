@@ -1,5 +1,6 @@
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -34,7 +35,7 @@ impl CheckScheduler {
         }
     }
 
-    pub async fn run(self) {
+    pub async fn run(self: Arc<Self>) {
         let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(60));
 
         loop {
