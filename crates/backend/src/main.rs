@@ -1,22 +1,7 @@
-mod api;
-mod auth;
-mod config;
-mod core;
-mod db;
-mod middleware;
-mod websocket;
-
-use axum::{routing::get, Router};
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
-use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-pub struct AppState {
-    pub db: sqlx::PgPool,
-    pub ws_hub: websocket::Hub,
-    pub config: config::AppConfig,
-}
+use appcontrol_backend::{config, create_router, db, websocket, AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,19 +31,4 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-pub fn create_router(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/health", get(api::health::health))
-        .route("/ready", get(api::health::ready))
-        // Auth routes (no auth middleware — these ARE the login endpoints)
-        .nest("/api/v1", auth::oidc::oidc_routes())
-        .nest("/api/v1", auth::saml::saml_routes())
-        // Protected API routes (includes auth middleware layer)
-        .nest("/api/v1", api::api_routes(state.clone()))
-        .route("/ws", get(websocket::ws_handler))
-        .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
-        .with_state(state)
 }

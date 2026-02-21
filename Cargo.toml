@@ -6,6 +6,7 @@ members = [
     "crates/gateway",
     "crates/backend",
     "crates/cli",
+    "crates/e2e-tests",
 ]
 
 [workspace.package]
