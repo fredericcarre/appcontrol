@@ -201,9 +201,10 @@ pub async fn start_single_component(
     .await
     .map_err(|e| SequencerError::Database(e.to_string()))?;
 
-    let (start_cmd, timeout_secs, _agent_id) = row;
+    let (start_cmd, timeout_secs, agent_id) = row;
+    let agent_id = agent_id.ok_or(SequencerError::NoAgent(component_id))?;
 
-    // Send start command to agent via gateway
+    // Send start command to the specific agent via its gateway
     if let Some(cmd) = start_cmd {
         let request_id = Uuid::new_v4();
         let message = BackendMessage::ExecuteCommand {
@@ -212,9 +213,10 @@ pub async fn start_single_component(
             command: cmd,
             timeout_seconds: timeout_secs as u32,
         };
-        state.ws_hub.send_to_agent(message);
+        state.ws_hub.send_to_agent(agent_id, message);
         tracing::info!(
             component_id = %component_id,
+            agent_id = %agent_id,
             request_id = %request_id,
             "Start command dispatched to agent"
         );
@@ -269,9 +271,10 @@ pub async fn stop_single_component(
     .await
     .map_err(|e| SequencerError::Database(e.to_string()))?;
 
-    let (stop_cmd, timeout_secs, _agent_id) = row;
+    let (stop_cmd, timeout_secs, agent_id) = row;
+    let agent_id = agent_id.ok_or(SequencerError::NoAgent(component_id))?;
 
-    // Send stop command to agent via gateway
+    // Send stop command to the specific agent via its gateway
     if let Some(cmd) = stop_cmd {
         let request_id = Uuid::new_v4();
         let message = BackendMessage::ExecuteCommand {
@@ -280,9 +283,10 @@ pub async fn stop_single_component(
             command: cmd,
             timeout_seconds: timeout_secs as u32,
         };
-        state.ws_hub.send_to_agent(message);
+        state.ws_hub.send_to_agent(agent_id, message);
         tracing::info!(
             component_id = %component_id,
+            agent_id = %agent_id,
             request_id = %request_id,
             "Stop command dispatched to agent"
         );

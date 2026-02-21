@@ -10,6 +10,7 @@ use clap::Parser;
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use appcontrol_common::{BackendMessage, GatewayEnvelope, GatewayMessage};
 use registry::AgentRegistry;
 use router::MessageRouter;
 
@@ -41,8 +42,6 @@ struct BackendSection {
 }
 
 impl GatewayConfig {
-    /// Load config from YAML file, then apply env var overrides.
-    /// If no config file exists, build entirely from env vars with defaults.
     fn load(path: &str) -> anyhow::Result<Self> {
         let mut config = if std::path::Path::new(path).exists() {
             let content = std::fs::read_to_string(path)?;
@@ -57,13 +56,12 @@ impl GatewayConfig {
                     listen_port: 4443,
                 },
                 backend: BackendSection {
-                    url: "ws://localhost:3000/ws".to_string(),
+                    url: "ws://localhost:3000/ws/gateway".to_string(),
                     reconnect_interval_secs: 5,
                 },
             }
         };
 
-        // Env var overrides
         if let Ok(v) = std::env::var("GATEWAY_ID") {
             config.gateway.id = v;
         }
@@ -95,6 +93,7 @@ pub struct GatewayState {
     pub registry: AgentRegistry,
     pub router: MessageRouter,
     pub config: GatewayConfig,
+    pub gateway_id: uuid::Uuid,
 }
 
 #[tokio::main]
@@ -110,6 +109,10 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config = GatewayConfig::load(&args.config)?;
 
+    // Derive a stable gateway_id from the configured ID (deterministic UUID v5)
+    let gateway_id =
+        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, config.gateway.id.as_bytes());
+
     let registry = AgentRegistry::new();
     let router = MessageRouter::new();
 
@@ -117,9 +120,10 @@ async fn main() -> anyhow::Result<()> {
         registry,
         router,
         config: config.clone(),
+        gateway_id,
     });
 
-    // Connect to backend in background
+    // Connect to backend in background with auto-reconnect
     let state_clone = state.clone();
     tokio::spawn(async move {
         loop {
@@ -127,6 +131,7 @@ async fn main() -> anyhow::Result<()> {
             if let Err(e) = connect_to_backend(&state_clone).await {
                 tracing::error!("Backend connection error: {}. Reconnecting...", e);
             }
+            state_clone.router.clear_backend_sender();
             tokio::time::sleep(std::time::Duration::from_secs(
                 state_clone.config.backend.reconnect_interval_secs,
             ))
@@ -136,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/ws", get(agent_ws_handler))
-        .route("/health", get(|| async { "ok" }))
+        .route("/health", get(health_handler))
         .with_state(state.clone());
 
     let addr = format!(
@@ -144,15 +149,30 @@ async fn main() -> anyhow::Result<()> {
         config.gateway.listen_addr, config.gateway.listen_port
     );
     tracing::info!(
-        "Gateway {} ({}) listening on {}",
+        "Gateway {} ({}) listening on {} [id={}]",
         config.gateway.id,
         config.gateway.zone,
-        addr
+        addr,
+        gateway_id
     );
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+async fn health_handler(State(state): State<Arc<GatewayState>>) -> String {
+    let agents = state.registry.connected_count();
+    let backend = if state.router.has_backend() {
+        "connected"
+    } else {
+        "disconnected"
+    };
+    let (buf_count, buf_bytes) = state.router.buffer_stats();
+    format!(
+        "ok agents={} backend={} buffer_msgs={} buffer_bytes={}",
+        agents, backend, buf_count, buf_bytes
+    )
 }
 
 async fn agent_ws_handler(
@@ -167,12 +187,14 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
 
     let (mut sender, mut receiver) = socket.split();
     let conn_id = uuid::Uuid::new_v4();
+    // agent_id will be set when the agent sends Register
+    let agent_id_cell: Arc<std::sync::Mutex<Option<uuid::Uuid>>> =
+        Arc::new(std::sync::Mutex::new(None));
 
-    // Register the connection for routing
+    // Channel for sending messages FROM backend TO this agent
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    state.router.add_agent_connection(conn_id, tx);
 
-    // Forward backend messages to agent
+    // Forward backend messages to agent WebSocket
     let send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if sender.send(ws::Message::Text(msg)).await.is_err() {
@@ -183,10 +205,11 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
 
     // Process agent messages
     let state_clone = state.clone();
+    let agent_id_clone = agent_id_cell.clone();
+    let tx_clone = tx.clone();
     let recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if let ws::Message::Text(text) = msg {
-                // Try to parse as AgentMessage to extract agent_id
                 if let Ok(agent_msg) =
                     serde_json::from_str::<appcontrol_common::AgentMessage>(&text)
                 {
@@ -194,19 +217,38 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
                         appcontrol_common::AgentMessage::Register {
                             agent_id, hostname, ..
                         } => {
+                            // Register in our local registry
                             state_clone
                                 .registry
                                 .register(conn_id, *agent_id, hostname.clone());
+
+                            // Register the agent's sender in the router (keyed by agent_id)
+                            state_clone.router.add_agent(*agent_id, tx_clone.clone());
+
+                            // Remember the agent_id for cleanup
+                            *agent_id_clone.lock().unwrap() = Some(*agent_id);
+
+                            // Notify backend that this agent is now connected
+                            let notification = GatewayMessage::AgentConnected {
+                                agent_id: *agent_id,
+                                hostname: hostname.clone(),
+                            };
+                            if let Ok(json) = serde_json::to_string(&notification) {
+                                state_clone.router.forward_to_backend(&json);
+                            }
                         }
-                        appcontrol_common::AgentMessage::Heartbeat { agent_id: _, .. } => {
+                        appcontrol_common::AgentMessage::Heartbeat { .. } => {
                             state_clone.registry.heartbeat(conn_id);
                         }
                         _ => {}
                     }
-                }
 
-                // Forward to backend
-                state_clone.router.forward_to_backend(&text);
+                    // Wrap in GatewayMessage and forward to backend
+                    let wrapped = GatewayMessage::AgentMessage(agent_msg);
+                    if let Ok(json) = serde_json::to_string(&wrapped) {
+                        state_clone.router.forward_to_backend(&json);
+                    }
+                }
             }
         }
     });
@@ -216,9 +258,26 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
         _ = recv_task => {},
     }
 
-    state.registry.unregister(conn_id);
-    state.router.remove_agent_connection(conn_id);
-    tracing::info!("Agent {} disconnected", conn_id);
+    // Cleanup: unregister agent from registry and router, notify backend
+    if let Some(info) = state.registry.unregister(conn_id) {
+        state.router.remove_agent(info.agent_id);
+
+        let notification = GatewayMessage::AgentDisconnected {
+            agent_id: info.agent_id,
+            hostname: info.hostname.clone(),
+        };
+        if let Ok(json) = serde_json::to_string(&notification) {
+            state.router.forward_to_backend(&json);
+        }
+        tracing::info!(
+            agent_id = %info.agent_id,
+            hostname = %info.hostname,
+            "Agent disconnected"
+        );
+    } else {
+        // Agent never registered (connected but never sent Register message)
+        tracing::debug!(conn_id = %conn_id, "Unregistered connection disconnected");
+    }
 }
 
 async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
@@ -230,7 +289,31 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
 
     tracing::info!("Connected to backend");
 
-    // Set up backend message forwarding
+    // Send gateway registration
+    let register_msg = GatewayMessage::Register {
+        gateway_id: state.gateway_id,
+        zone: state.config.gateway.zone.clone(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let register_json = serde_json::to_string(&register_msg)?;
+    write
+        .send(tokio_tungstenite::tungstenite::Message::Text(register_json))
+        .await?;
+
+    // Re-announce all currently connected agents to the backend
+    for agent_info in state.registry.list_agents() {
+        let notification = GatewayMessage::AgentConnected {
+            agent_id: agent_info.agent_id,
+            hostname: agent_info.hostname.clone(),
+        };
+        if let Ok(json) = serde_json::to_string(&notification) {
+            write
+                .send(tokio_tungstenite::tungstenite::Message::Text(json))
+                .await?;
+        }
+    }
+
+    // Set up the backend sender channel so the router can send messages
     let (backend_tx, mut backend_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     state.router.set_backend_sender(backend_tx);
 
@@ -240,12 +323,11 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
             Some(msg) = backend_rx.recv() => {
                 write.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await?;
             }
-            // Messages from backend to forward to agents
+            // Messages from backend to route to agents
             Some(ws_msg) = read.next() => {
                 match ws_msg {
                     Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
-                        // Route to appropriate agent
-                        state.router.forward_to_agent(&text);
+                        handle_backend_message(state, &text);
                     }
                     Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => return Ok(()),
                     Err(e) => return Err(e.into()),
@@ -253,6 +335,46 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
                 }
             }
             else => return Ok(()),
+        }
+    }
+}
+
+/// Parse and route a message from the backend.
+fn handle_backend_message(state: &Arc<GatewayState>, text: &str) {
+    match serde_json::from_str::<GatewayEnvelope>(text) {
+        Ok(GatewayEnvelope::ForwardToAgent {
+            target_agent_id,
+            message,
+        }) => {
+            // Serialize the inner BackendMessage (what the agent expects)
+            let inner_json = match serde_json::to_string(&message) {
+                Ok(j) => j,
+                Err(e) => {
+                    tracing::error!("Failed to serialize BackendMessage: {}", e);
+                    return;
+                }
+            };
+
+            if !state.router.forward_to_agent(target_agent_id, &inner_json) {
+                tracing::warn!(
+                    agent_id = %target_agent_id,
+                    "Failed to route command to agent — not connected to this gateway"
+                );
+            }
+        }
+        Err(e) => {
+            // Try to parse as raw BackendMessage for backwards compatibility
+            if let Ok(backend_msg) = serde_json::from_str::<BackendMessage>(text) {
+                tracing::warn!(
+                    "Received raw BackendMessage without envelope — cannot route without target_agent_id"
+                );
+                // Log the component_id for debugging
+                if let BackendMessage::ExecuteCommand { component_id, .. } = &backend_msg {
+                    tracing::warn!(component_id = %component_id, "Unroutable command");
+                }
+            } else {
+                tracing::warn!("Unknown message from backend: {}", e);
+            }
         }
     }
 }

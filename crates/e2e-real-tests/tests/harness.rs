@@ -4,7 +4,7 @@
 /// Creates a temporary PostgreSQL database with migrations.
 /// Seeds test data via HTTP API calls (not SQL).
 /// Provides helpers to wait for component states and verify transitions.
-#![allow(dead_code)]
+#[allow(dead_code)]
 
 use reqwest::Client;
 use serde_json::{json, Value};

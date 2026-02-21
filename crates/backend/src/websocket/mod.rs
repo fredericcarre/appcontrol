@@ -104,18 +104,19 @@ async fn handle_client_socket(
     state.ws_hub.remove_connection(conn_id);
 }
 
-/// Handle the gateway WebSocket connection.
-/// Receives agent messages (heartbeats, check results, command results) and
-/// forwards backend commands to agents.
+/// Handle a gateway WebSocket connection.
+/// The gateway identifies itself with a Register message, then relays agent messages.
 async fn handle_gateway_socket(socket: ws::WebSocket, state: Arc<AppState>) {
     use futures_util::{SinkExt, StreamExt};
 
     let (mut sender, mut receiver) = socket.split();
 
-    // Register the gateway sender so the Hub can push commands to agents
+    // Channel for sending commands from Hub to this gateway
     let (gw_tx, mut gw_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    state.ws_hub.set_gateway_sender(gw_tx);
-    tracing::info!("Gateway connected to backend");
+
+    // The gateway_id will be set when the gateway sends its Register message
+    let gateway_id: Arc<std::sync::Mutex<Option<uuid::Uuid>>> =
+        Arc::new(std::sync::Mutex::new(None));
 
     // Forward commands from hub to gateway
     let send_task = tokio::spawn(async move {
@@ -126,15 +127,33 @@ async fn handle_gateway_socket(socket: ws::WebSocket, state: Arc<AppState>) {
         }
     });
 
-    // Process agent messages forwarded by gateway
+    // Process messages from the gateway
     let state_clone = state.clone();
+    let gw_id_clone = gateway_id.clone();
+    let gw_tx_clone = gw_tx;
     let recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if let ws::Message::Text(text) = msg {
-                if let Ok(agent_msg) =
-                    serde_json::from_str::<appcontrol_common::AgentMessage>(&text)
-                {
-                    process_agent_message(&state_clone, agent_msg).await;
+                match serde_json::from_str::<appcontrol_common::GatewayMessage>(&text) {
+                    Ok(gw_msg) => {
+                        process_gateway_message(
+                            &state_clone,
+                            &gw_id_clone,
+                            &gw_tx_clone,
+                            gw_msg,
+                        )
+                        .await;
+                    }
+                    Err(_) => {
+                        // Backwards compatibility: try parsing as raw AgentMessage
+                        if let Ok(agent_msg) =
+                            serde_json::from_str::<appcontrol_common::AgentMessage>(&text)
+                        {
+                            process_agent_message(&state_clone, agent_msg).await;
+                        } else {
+                            tracing::warn!("Unknown message from gateway");
+                        }
+                    }
                 }
             }
         }
@@ -145,8 +164,77 @@ async fn handle_gateway_socket(socket: ws::WebSocket, state: Arc<AppState>) {
         _ = recv_task => {},
     }
 
-    state.ws_hub.clear_gateway_sender();
-    tracing::info!("Gateway disconnected from backend");
+    // Cleanup: unregister gateway and all its agent routes
+    let gw_id = gateway_id.lock().unwrap().take();
+    if let Some(id) = gw_id {
+        state.ws_hub.unregister_gateway(id);
+        tracing::info!(gateway_id = %id, "Gateway disconnected from backend");
+    } else {
+        tracing::info!("Unknown gateway disconnected (never registered)");
+    }
+}
+
+/// Process a typed GatewayMessage from a registered gateway.
+async fn process_gateway_message(
+    state: &Arc<AppState>,
+    gateway_id_cell: &Arc<std::sync::Mutex<Option<uuid::Uuid>>>,
+    gw_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+    msg: appcontrol_common::GatewayMessage,
+) {
+    match msg {
+        appcontrol_common::GatewayMessage::Register {
+            gateway_id,
+            zone,
+            version,
+        } => {
+            tracing::info!(
+                gateway_id = %gateway_id,
+                zone = %zone,
+                version = %version,
+                "Gateway registered"
+            );
+            // Store the gateway_id for this connection
+            *gateway_id_cell.lock().unwrap() = Some(gateway_id);
+            // Register in the hub with the sender channel
+            state
+                .ws_hub
+                .register_gateway(gateway_id, zone, gw_tx.clone());
+        }
+        appcontrol_common::GatewayMessage::AgentMessage(agent_msg) => {
+            process_agent_message(state, agent_msg).await;
+        }
+        appcontrol_common::GatewayMessage::AgentConnected {
+            agent_id,
+            hostname,
+        } => {
+            let gw_id = gateway_id_cell.lock().unwrap();
+            if let Some(gw_id) = *gw_id {
+                tracing::info!(
+                    agent_id = %agent_id,
+                    hostname = %hostname,
+                    gateway_id = %gw_id,
+                    "Agent connected via gateway"
+                );
+                state.ws_hub.register_agent_route(agent_id, gw_id);
+            } else {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    "AgentConnected received before gateway registration"
+                );
+            }
+        }
+        appcontrol_common::GatewayMessage::AgentDisconnected {
+            agent_id,
+            hostname,
+        } => {
+            tracing::info!(
+                agent_id = %agent_id,
+                hostname = %hostname,
+                "Agent disconnected from gateway"
+            );
+            state.ws_hub.unregister_agent_route(agent_id);
+        }
+    }
 }
 
 /// Process an incoming agent message: update FSM, record events, broadcast.
@@ -184,9 +272,6 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                 exit_code = exit_code,
                 "Command result received"
             );
-            // Command results are informational — the FSM transition happens
-            // when the next health check detects the new state.
-            // We still broadcast to frontend for real-time feedback.
             if !stdout.is_empty() || !stderr.is_empty() {
                 tracing::debug!(stdout = %stdout, stderr = %stderr, "Command output");
             }
