@@ -112,7 +112,7 @@ mod test_permissions_sharing {
             )
             .await;
         let eff: Value = resp.json().await.unwrap();
-        assert_eq!(eff["level"], "operate");
+        assert_eq!(eff["permission_level"], "operate");
 
         ctx.cleanup().await;
     }
@@ -138,7 +138,7 @@ mod test_permissions_sharing {
             )
             .await;
         let eff: Value = resp.json().await.unwrap();
-        assert_eq!(eff["level"], "operate");
+        assert_eq!(eff["permission_level"], "operate");
 
         ctx.cleanup().await;
     }

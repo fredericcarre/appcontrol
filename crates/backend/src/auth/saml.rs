@@ -709,7 +709,7 @@ pub fn saml_admin_routes() -> axum::Router<Arc<AppState>> {
             "/saml/group-mappings",
             get(list_group_mappings).post(create_group_mapping),
         )
-        .route("/saml/group-mappings/{id}", delete(delete_group_mapping))
+        .route("/saml/group-mappings/:id", delete(delete_group_mapping))
 }
 
 // Import base64 engine trait

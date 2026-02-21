@@ -164,7 +164,7 @@ mod test_teams_crud {
             )
             .await;
         let eff: Value = resp.json().await.unwrap();
-        assert_eq!(eff["level"], "operate");
+        assert_eq!(eff["permission_level"], "operate");
 
         // Remove operator from team
         ctx.delete_as(
@@ -182,7 +182,7 @@ mod test_teams_crud {
             .await;
         let eff: Value = resp.json().await.unwrap();
         assert_ne!(
-            eff["level"], "operate",
+            eff["permission_level"], "operate",
             "Operator should lose access after team removal"
         );
 

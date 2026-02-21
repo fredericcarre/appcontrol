@@ -111,7 +111,7 @@ mod test_component_operations {
         let ctx = TestContext::new().await;
 
         // Create app
-        let resp = ctx.post("/api/v1/apps", json!({"name": "CRUD-Test"})).await;
+        let resp = ctx.post("/api/v1/apps", json!({"name": "CRUD-Test", "site_id": ctx.default_site_id})).await;
         let app: Value = resp.json().await.unwrap();
         let app_id: Uuid = app["id"].as_str().unwrap().parse().unwrap();
 
@@ -208,7 +208,7 @@ mod test_component_operations {
     #[tokio::test]
     async fn test_component_with_metadata() {
         let ctx = TestContext::new().await;
-        let resp = ctx.post("/api/v1/apps", json!({"name": "Meta-Test"})).await;
+        let resp = ctx.post("/api/v1/apps", json!({"name": "Meta-Test", "site_id": ctx.default_site_id})).await;
         let app: Value = resp.json().await.unwrap();
         let app_id: Uuid = app["id"].as_str().unwrap().parse().unwrap();
 

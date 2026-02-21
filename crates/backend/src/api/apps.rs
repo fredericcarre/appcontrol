@@ -148,7 +148,14 @@ pub async fn create_app(
     .bind(body.tags.as_ref().unwrap_or(&json!([])))
     .fetch_one(&state.db)
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|e| {
+        if let sqlx::Error::Database(ref db_err) = e {
+            if db_err.code().as_deref() == Some("23505") {
+                return StatusCode::CONFLICT;
+            }
+        }
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     // Grant owner permission to creator
     let _ = sqlx::query(

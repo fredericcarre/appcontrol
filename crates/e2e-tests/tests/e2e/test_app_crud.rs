@@ -16,6 +16,7 @@ mod test_app_crud {
                     "name": "New-App",
                     "description": "A new application",
                     "tags": ["production", "tier-1"],
+                    "site_id": ctx.default_site_id,
                 }),
             )
             .await;
@@ -32,7 +33,7 @@ mod test_app_crud {
         let ctx = TestContext::new().await;
 
         let resp = ctx
-            .post("/api/v1/apps", json!({"name": "Owner-Test"}))
+            .post("/api/v1/apps", json!({"name": "Owner-Test", "site_id": ctx.default_site_id}))
             .await;
         let app: Value = resp.json().await.unwrap();
         let app_id: Uuid = app["id"].as_str().unwrap().parse().unwrap();
@@ -43,7 +44,7 @@ mod test_app_crud {
             .await;
         let eff: Value = resp.json().await.unwrap();
         assert_eq!(
-            eff["level"], "owner",
+            eff["permission_level"], "owner",
             "App creator should automatically get owner permission"
         );
 
@@ -57,8 +58,9 @@ mod test_app_crud {
 
         let resp = ctx.get("/api/v1/apps").await;
         assert_eq!(resp.status(), 200);
-        let apps: Value = resp.json().await.unwrap();
-        assert!(!apps.as_array().unwrap().is_empty());
+        let body: Value = resp.json().await.unwrap();
+        let apps = body["apps"].as_array().unwrap();
+        assert!(!apps.is_empty());
 
         ctx.cleanup().await;
     }
@@ -67,12 +69,12 @@ mod test_app_crud {
     async fn test_list_apps_with_search() {
         let ctx = TestContext::new().await;
         ctx.create_payments_app().await;
-        ctx.post("/api/v1/apps", json!({"name": "Other-App"})).await;
+        ctx.post("/api/v1/apps", json!({"name": "Other-App", "site_id": ctx.default_site_id})).await;
 
         // Search by name
         let resp = ctx.get("/api/v1/apps?search=Paiements").await;
-        let apps: Value = resp.json().await.unwrap();
-        let names: Vec<&str> = apps
+        let body: Value = resp.json().await.unwrap();
+        let names: Vec<&str> = body["apps"]
             .as_array()
             .unwrap()
             .iter()
@@ -93,19 +95,19 @@ mod test_app_crud {
 
         // Create 5 apps
         for i in 0..5 {
-            ctx.post("/api/v1/apps", json!({"name": format!("App-{i}")}))
+            ctx.post("/api/v1/apps", json!({"name": format!("App-{i}"), "site_id": ctx.default_site_id}))
                 .await;
         }
 
         // Page 1: limit=2, offset=0
         let resp = ctx.get("/api/v1/apps?limit=2&offset=0").await;
         let page1: Value = resp.json().await.unwrap();
-        assert_eq!(page1.as_array().unwrap().len(), 2);
+        assert_eq!(page1["apps"].as_array().unwrap().len(), 2);
 
         // Page 2: limit=2, offset=2
         let resp = ctx.get("/api/v1/apps?limit=2&offset=2").await;
         let page2: Value = resp.json().await.unwrap();
-        assert_eq!(page2.as_array().unwrap().len(), 2);
+        assert_eq!(page2["apps"].as_array().unwrap().len(), 2);
 
         ctx.cleanup().await;
     }
@@ -183,6 +185,7 @@ mod test_app_crud {
                 "/api/v1/apps",
                 json!({
                     "name": "Paiements-SEPA",
+                    "site_id": ctx.default_site_id,
                 }),
             )
             .await;

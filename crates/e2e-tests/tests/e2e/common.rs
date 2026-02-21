@@ -56,6 +56,7 @@ pub struct TestContext {
     pub viewer_user_id: Uuid,
     pub editor_user_id: Uuid,
     pub organization_id: Uuid,
+    pub default_site_id: Uuid,
     pub db_name: String,
     client: Client,
     pub admin_token: String,
@@ -98,7 +99,7 @@ impl TestContext {
         let viewer_id = Uuid::new_v4();
         let editor_id = Uuid::new_v4();
 
-        sqlx::query("INSERT INTO organizations (id, name) VALUES ($1, 'Test Org')")
+        sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')")
             .bind(org_id)
             .execute(&pool)
             .await
@@ -106,12 +107,12 @@ impl TestContext {
 
         for (id, name, role) in [
             (admin_id, "admin", "admin"),
-            (operator_id, "operator", "member"),
-            (viewer_id, "viewer", "member"),
-            (editor_id, "editor", "member"),
+            (operator_id, "operator", "operator"),
+            (viewer_id, "viewer", "viewer"),
+            (editor_id, "editor", "editor"),
         ] {
             sqlx::query(
-                "INSERT INTO users (id, organization_id, username, display_name, role, email)
+                "INSERT INTO users (id, organization_id, external_id, display_name, role, email)
                  VALUES ($1, $2, $3, $3, $4, $3 || '@test.local')",
             )
             .bind(id)
@@ -122,6 +123,17 @@ impl TestContext {
             .await
             .unwrap();
         }
+
+        // Create default site
+        let default_site_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')",
+        )
+        .bind(default_site_id)
+        .bind(org_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // Start backend on random port
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -153,9 +165,9 @@ impl TestContext {
 
         // Generate JWT tokens for each user
         let admin_token = Self::make_jwt(admin_id, org_id, "admin", "test-jwt-secret");
-        let operator_token = Self::make_jwt(operator_id, org_id, "member", "test-jwt-secret");
-        let viewer_token = Self::make_jwt(viewer_id, org_id, "member", "test-jwt-secret");
-        let editor_token = Self::make_jwt(editor_id, org_id, "member", "test-jwt-secret");
+        let operator_token = Self::make_jwt(operator_id, org_id, "operator", "test-jwt-secret");
+        let viewer_token = Self::make_jwt(viewer_id, org_id, "viewer", "test-jwt-secret");
+        let editor_token = Self::make_jwt(editor_id, org_id, "editor", "test-jwt-secret");
 
         Self {
             db_pool: pool,
@@ -166,6 +178,7 @@ impl TestContext {
             viewer_user_id: viewer_id,
             editor_user_id: editor_id,
             organization_id: org_id,
+            default_site_id,
             db_name,
             client: Client::builder()
                 .timeout(Duration::from_secs(30))
@@ -248,6 +261,17 @@ impl TestContext {
             .unwrap();
         }
 
+        // Create default site
+        let default_site_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')",
+        )
+        .bind(default_site_id)
+        .bind(org_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
         let api_url = format!("http://{addr}");
@@ -299,6 +323,7 @@ impl TestContext {
             viewer_user_id: viewer_id,
             editor_user_id: editor_id,
             organization_id: org_id,
+            default_site_id,
             db_name,
             client: Client::builder()
                 .timeout(Duration::from_secs(30))
@@ -333,11 +358,14 @@ impl TestContext {
 
     fn make_jwt(user_id: Uuid, org_id: Uuid, role: &str, secret: &str) -> String {
         use jsonwebtoken::{encode, EncodingKey, Header};
+        let now = chrono::Utc::now().timestamp();
         let claims = json!({
             "sub": user_id.to_string(),
-            "org_id": org_id.to_string(),
+            "org": org_id.to_string(),
+            "email": format!("{role}@test.local"),
             "role": role,
-            "exp": chrono::Utc::now().timestamp() + 3600,
+            "exp": now + 3600,
+            "iat": now,
             "iss": "appcontrol-test",
         });
         encode(
@@ -484,7 +512,8 @@ impl TestContext {
                 json!({
                     "name": "Paiements-SEPA",
                     "description": "SEPA payment processing",
-                    "tags": ["payments", "critical"]
+                    "tags": ["payments", "critical"],
+                    "site_id": self.default_site_id,
                 }),
             )
             .await;
@@ -587,7 +616,8 @@ impl TestContext {
                 "/api/v1/apps",
                 json!({
                     "name": "Multi-Branch-App",
-                    "description": "10-component app with two branches"
+                    "description": "10-component app with two branches",
+                    "site_id": self.default_site_id,
                 }),
             )
             .await;
@@ -605,7 +635,7 @@ impl TestContext {
                     &format!("/api/v1/apps/{app_id}/components"),
                     json!({
                         "name": name,
-                        "component_type": "generic",
+                        "component_type": "service",
                         "hostname": format!("srv-{}", name.to_lowercase()),
                         "check_cmd": format!("check_{}.sh", name.to_lowercase()),
                         "start_cmd": format!("start_{}.sh", name.to_lowercase()),
@@ -647,7 +677,7 @@ impl TestContext {
         let site_b = Uuid::new_v4();
 
         sqlx::query(
-            "INSERT INTO sites (id, organization_id, name, zone) VALUES ($1, $2, 'PRD', 'PRD')",
+            "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD')",
         )
         .bind(site_a)
         .bind(self.organization_id)
@@ -655,7 +685,7 @@ impl TestContext {
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO sites (id, organization_id, name, zone) VALUES ($1, $2, 'DR', 'DR')",
+            "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'DR', 'DR')",
         )
         .bind(site_b)
         .bind(self.organization_id)
@@ -682,7 +712,7 @@ impl TestContext {
                     &format!("/api/v1/apps/{app_id}/components"),
                     json!({
                         "name": format!("{name}-{suffix}"),
-                        "component_type": "generic",
+                        "component_type": "service",
                         "hostname": format!("srv-{}-{suffix}", name.to_lowercase()),
                         "site_id": site_id,
                         "check_cmd": "check.sh",
@@ -704,7 +734,8 @@ impl TestContext {
                 "/api/v1/apps",
                 json!({
                     "name": "Diag-App",
-                    "description": "App with diagnostic checks"
+                    "description": "App with diagnostic checks",
+                    "site_id": self.default_site_id,
                 }),
             )
             .await;
@@ -712,7 +743,7 @@ impl TestContext {
         let app_id: Uuid = app["id"].as_str().unwrap().parse().unwrap();
 
         for (name, comp_type) in [
-            ("Redis", "cache"),
+            ("Redis", "middleware"),
             ("Tomcat", "appserver"),
             ("Oracle", "database"),
             ("Apache", "webfront"),
@@ -753,22 +784,28 @@ impl TestContext {
     // ---- State helpers ----
 
     pub async fn set_all_running(&self, app_id: Uuid) {
-        sqlx::query("UPDATE components SET state = 'RUNNING' WHERE application_id = $1")
-            .bind(app_id)
+        let comp_ids = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM components WHERE application_id = $1",
+        )
+        .bind(app_id)
+        .fetch_all(&self.db_pool)
+        .await
+        .unwrap();
+        for cid in comp_ids {
+            sqlx::query(
+                "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
+                 VALUES ($1, 'UNKNOWN', 'RUNNING', 'test_setup')",
+            )
+            .bind(cid)
             .execute(&self.db_pool)
             .await
             .unwrap();
+        }
     }
 
-    pub async fn set_all_running_on_site(&self, app_id: Uuid, site_id: Uuid) {
-        sqlx::query(
-            "UPDATE components SET state = 'RUNNING' WHERE application_id = $1 AND site_id = $2",
-        )
-        .bind(app_id)
-        .bind(site_id)
-        .execute(&self.db_pool)
-        .await
-        .unwrap();
+    pub async fn set_all_running_on_site(&self, _app_id: Uuid, _site_id: Uuid) {
+        // Site overrides are per-component, not a column on components.
+        // For DR tests, use set_all_running or force_component_state per component.
     }
 
     pub async fn get_app_status(&self, app_id: Uuid) -> AppStatus {
@@ -784,13 +821,16 @@ impl TestContext {
     }
 
     pub async fn force_component_state(&self, app_id: Uuid, name: &str, state: &str) {
-        sqlx::query("UPDATE components SET state = $1 WHERE application_id = $2 AND name = $3")
-            .bind(state)
-            .bind(app_id)
-            .bind(name)
-            .execute(&self.db_pool)
-            .await
-            .unwrap();
+        let comp_id = self.component_id(app_id, name).await;
+        sqlx::query(
+            "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
+             VALUES ($1, 'UNKNOWN', $2, 'test_setup')",
+        )
+        .bind(comp_id)
+        .bind(state)
+        .execute(&self.db_pool)
+        .await
+        .unwrap();
     }
 
     pub async fn component_id(&self, app_id: Uuid, name: &str) -> Uuid {
@@ -1121,19 +1161,48 @@ impl TestContext {
     }
 
     pub async fn disconnect_agent(&self, hostname: &str) {
-        sqlx::query("UPDATE components SET state = 'UNREACHABLE' WHERE hostname = $1")
-            .bind(hostname)
+        // Find components linked to agents with this hostname and mark them UNREACHABLE
+        let comp_ids = sqlx::query_scalar::<_, Uuid>(
+            "SELECT c.id FROM components c
+             JOIN agents a ON c.agent_id = a.id
+             WHERE a.hostname = $1",
+        )
+        .bind(hostname)
+        .fetch_all(&self.db_pool)
+        .await
+        .unwrap();
+        for cid in comp_ids {
+            sqlx::query(
+                "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
+                 VALUES ($1, 'RUNNING', 'UNREACHABLE', 'agent_disconnect')",
+            )
+            .bind(cid)
             .execute(&self.db_pool)
             .await
             .unwrap();
+        }
     }
 
     pub async fn reconnect_agent(&self, hostname: &str) {
-        sqlx::query("UPDATE components SET state = 'RUNNING' WHERE hostname = $1")
-            .bind(hostname)
+        let comp_ids = sqlx::query_scalar::<_, Uuid>(
+            "SELECT c.id FROM components c
+             JOIN agents a ON c.agent_id = a.id
+             WHERE a.hostname = $1",
+        )
+        .bind(hostname)
+        .fetch_all(&self.db_pool)
+        .await
+        .unwrap();
+        for cid in comp_ids {
+            sqlx::query(
+                "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
+                 VALUES ($1, 'UNREACHABLE', 'RUNNING', 'agent_reconnect')",
+            )
+            .bind(cid)
             .execute(&self.db_pool)
             .await
             .unwrap();
+        }
     }
 
     /// Connect a WebSocket client for real-time event testing.
@@ -1152,13 +1221,13 @@ impl TestContext {
         let org2_id = Uuid::new_v4();
         let user2_id = Uuid::new_v4();
 
-        sqlx::query("INSERT INTO organizations (id, name) VALUES ($1, 'Other Org')")
+        sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'Other Org', 'other-org')")
             .bind(org2_id)
             .execute(&self.db_pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO users (id, organization_id, username, display_name, role, email)
+            "INSERT INTO users (id, organization_id, external_id, display_name, role, email)
              VALUES ($1, $2, 'other_admin', 'Other Admin', 'admin', 'other@test.local')",
         )
         .bind(user2_id)

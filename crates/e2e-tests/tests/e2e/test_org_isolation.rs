@@ -125,13 +125,21 @@ mod test_org_isolation {
         let ctx = TestContext::new().await;
 
         // Org1 creates app
-        let resp = ctx.post("/api/v1/apps", json!({"name": "Org1-App"})).await;
+        let resp = ctx.post("/api/v1/apps", json!({"name": "Org1-App", "site_id": ctx.default_site_id})).await;
         assert!(resp.status().is_success());
 
         // Org2 creates app with same name → should succeed (different org)
-        let (_, _, org2_token) = ctx.create_second_org().await;
+        let (org2_id, _, org2_token) = ctx.create_second_org().await;
+        // Create a site for org2
+        let org2_site_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Org2-Default', 'O2D')")
+            .bind(org2_site_id)
+            .bind(org2_id)
+            .execute(&ctx.db_pool)
+            .await
+            .unwrap();
         let resp = ctx
-            .post_with_token(&org2_token, "/api/v1/apps", json!({"name": "Org1-App"}))
+            .post_with_token(&org2_token, "/api/v1/apps", json!({"name": "Org1-App", "site_id": org2_site_id}))
             .await;
         assert!(
             resp.status().is_success(),

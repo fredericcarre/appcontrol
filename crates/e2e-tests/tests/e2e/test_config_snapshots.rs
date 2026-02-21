@@ -123,7 +123,8 @@ mod test_config_snapshots {
                 "/api/v1/apps",
                 json!({
                     "name": "Deletable-App",
-                    "description": "Will be deleted"
+                    "description": "Will be deleted",
+                    "site_id": ctx.default_site_id,
                 }),
             )
             .await;

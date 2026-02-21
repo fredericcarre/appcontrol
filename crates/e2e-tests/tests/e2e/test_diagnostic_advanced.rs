@@ -19,7 +19,8 @@ mod test_diagnostic_advanced {
                 "/api/v1/apps",
                 json!({
                     "name": "Matrix-Test",
-                    "description": "8-combination diagnostic test"
+                    "description": "8-combination diagnostic test",
+                    "site_id": ctx.default_site_id,
                 }),
             )
             .await;
@@ -42,7 +43,7 @@ mod test_diagnostic_advanced {
                 &format!("/api/v1/apps/{app_id}/components"),
                 json!({
                     "name": name,
-                    "component_type": "generic",
+                    "component_type": "service",
                     "hostname": format!("srv-{}", name.to_lowercase()),
                     "check_cmd": "check.sh",
                     "integrity_check_cmd": "integrity.sh",
