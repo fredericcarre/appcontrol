@@ -78,9 +78,16 @@ pub async fn create_team(
     Json(body): Json<CreateTeamRequest>,
 ) -> Result<(StatusCode, Json<Value>), StatusCode> {
     let team_id = Uuid::new_v4();
-    log_action(&state.db, user.user_id, "create_team", "team", team_id, json!({"name": body.name}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "create_team",
+        "team",
+        team_id,
+        json!({"name": body.name}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let team = sqlx::query_as::<_, TeamRow>(
         r#"
@@ -98,13 +105,12 @@ pub async fn create_team(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Add creator as team lead
-    let _ = sqlx::query(
-        "INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, 'lead')",
-    )
-    .bind(team_id)
-    .bind(user.user_id)
-    .execute(&state.db)
-    .await;
+    let _ =
+        sqlx::query("INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, 'lead')")
+            .bind(team_id)
+            .bind(user.user_id)
+            .execute(&state.db)
+            .await;
 
     Ok((StatusCode::CREATED, Json(json!(team))))
 }
@@ -115,9 +121,16 @@ pub async fn update_team(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateTeamRequest>,
 ) -> Result<Json<Value>, StatusCode> {
-    log_action(&state.db, user.user_id, "update_team", "team", id, json!({}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "update_team",
+        "team",
+        id,
+        json!({}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let team = sqlx::query_as::<_, TeamRow>(
         r#"
@@ -145,9 +158,16 @@ pub async fn delete_team(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, StatusCode> {
-    log_action(&state.db, user.user_id, "delete_team", "team", id, json!({}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "delete_team",
+        "team",
+        id,
+        json!({}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let result = sqlx::query("DELETE FROM teams WHERE id = $1")
         .bind(id)
@@ -189,9 +209,16 @@ pub async fn add_member(
     Path(id): Path<Uuid>,
     Json(body): Json<AddMemberRequest>,
 ) -> Result<(StatusCode, Json<Value>), StatusCode> {
-    log_action(&state.db, user.user_id, "add_team_member", "team", id, json!({"user_id": body.user_id}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "add_team_member",
+        "team",
+        id,
+        json!({"user_id": body.user_id}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let member_id = sqlx::query_scalar::<_, Uuid>(
         r#"
@@ -215,9 +242,16 @@ pub async fn remove_member(
     Extension(user): Extension<AuthUser>,
     Path((team_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, StatusCode> {
-    log_action(&state.db, user.user_id, "remove_team_member", "team", team_id, json!({"user_id": user_id}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "remove_team_member",
+        "team",
+        team_id,
+        json!({"user_id": user_id}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
         .bind(team_id)

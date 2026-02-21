@@ -1,6 +1,6 @@
+use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
-use serde_json::Value;
 
 use super::dag;
 use crate::AppState;
@@ -27,14 +27,12 @@ pub async fn build_start_plan(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Value
     for level in &levels {
         let mut level_info = Vec::new();
         for &comp_id in level {
-            let name = sqlx::query_scalar::<_, String>(
-                "SELECT name FROM components WHERE id = $1",
-            )
-            .bind(comp_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| SequencerError::Database(e.to_string()))?
-            .unwrap_or_else(|| comp_id.to_string());
+            let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
+                .bind(comp_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| SequencerError::Database(e.to_string()))?
+                .unwrap_or_else(|| comp_id.to_string());
 
             level_info.push(serde_json::json!({
                 "component_id": comp_id,
@@ -53,7 +51,11 @@ pub async fn execute_start(state: &Arc<AppState>, app_id: Uuid) -> Result<(), Se
     let levels = dag.topological_levels()?;
 
     for (level_idx, level) in levels.iter().enumerate() {
-        tracing::info!("Starting level {} with {} components", level_idx, level.len());
+        tracing::info!(
+            "Starting level {} with {} components",
+            level_idx,
+            level.len()
+        );
 
         // Start all components in this level in parallel
         let mut handles = Vec::new();
@@ -90,7 +92,11 @@ pub async fn execute_stop(state: &Arc<AppState>, app_id: Uuid) -> Result<(), Seq
     levels.reverse(); // Stop in reverse order
 
     for (level_idx, level) in levels.iter().enumerate() {
-        tracing::info!("Stopping level {} with {} components", level_idx, level.len());
+        tracing::info!(
+            "Stopping level {} with {} components",
+            level_idx,
+            level.len()
+        );
 
         let mut handles = Vec::new();
         for &comp_id in level {
@@ -117,19 +123,25 @@ pub async fn execute_stop(state: &Arc<AppState>, app_id: Uuid) -> Result<(), Seq
     Ok(())
 }
 
-async fn start_single_component(state: &Arc<AppState>, component_id: Uuid) -> Result<(), SequencerError> {
+async fn start_single_component(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+) -> Result<(), SequencerError> {
     // Transition to Starting
-    super::fsm::transition_component(state, component_id, appcontrol_common::ComponentState::Starting)
-        .await?;
+    super::fsm::transition_component(
+        state,
+        component_id,
+        appcontrol_common::ComponentState::Starting,
+    )
+    .await?;
 
     // Get start command
-    let start_cmd = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT start_cmd FROM components WHERE id = $1",
-    )
-    .bind(component_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SequencerError::Database(e.to_string()))?;
+    let start_cmd =
+        sqlx::query_scalar::<_, Option<String>>("SELECT start_cmd FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| SequencerError::Database(e.to_string()))?;
 
     if let Some(_cmd) = start_cmd {
         // Send command to agent via WebSocket
@@ -138,13 +150,12 @@ async fn start_single_component(state: &Arc<AppState>, component_id: Uuid) -> Re
     }
 
     // Wait for component to reach Running state (with timeout)
-    let timeout_secs = sqlx::query_scalar::<_, i32>(
-        "SELECT start_timeout_seconds FROM components WHERE id = $1",
-    )
-    .bind(component_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SequencerError::Database(e.to_string()))?;
+    let timeout_secs =
+        sqlx::query_scalar::<_, i32>("SELECT start_timeout_seconds FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| SequencerError::Database(e.to_string()))?;
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
 
@@ -172,37 +183,45 @@ async fn start_single_component(state: &Arc<AppState>, component_id: Uuid) -> Re
     }
 }
 
-async fn stop_single_component(state: &Arc<AppState>, component_id: Uuid) -> Result<(), SequencerError> {
+async fn stop_single_component(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+) -> Result<(), SequencerError> {
     let current = super::fsm::get_current_state(&state.db, component_id).await?;
 
     // Only stop if running or degraded
-    if !matches!(current, appcontrol_common::ComponentState::Running | appcontrol_common::ComponentState::Degraded) {
+    if !matches!(
+        current,
+        appcontrol_common::ComponentState::Running | appcontrol_common::ComponentState::Degraded
+    ) {
         return Ok(());
     }
 
-    super::fsm::transition_component(state, component_id, appcontrol_common::ComponentState::Stopping)
-        .await?;
-
-    let stop_cmd = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT stop_cmd FROM components WHERE id = $1",
+    super::fsm::transition_component(
+        state,
+        component_id,
+        appcontrol_common::ComponentState::Stopping,
     )
-    .bind(component_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SequencerError::Database(e.to_string()))?;
+    .await?;
+
+    let stop_cmd =
+        sqlx::query_scalar::<_, Option<String>>("SELECT stop_cmd FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| SequencerError::Database(e.to_string()))?;
 
     if let Some(_cmd) = stop_cmd {
         tracing::info!("Stop command sent for component {}", component_id);
     }
 
     // Wait for Stopped state
-    let timeout_secs = sqlx::query_scalar::<_, i32>(
-        "SELECT stop_timeout_seconds FROM components WHERE id = $1",
-    )
-    .bind(component_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SequencerError::Database(e.to_string()))?;
+    let timeout_secs =
+        sqlx::query_scalar::<_, i32>("SELECT stop_timeout_seconds FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| SequencerError::Database(e.to_string()))?;
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
 

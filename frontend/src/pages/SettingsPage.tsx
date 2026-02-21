@@ -2,8 +2,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
-import { Moon, Sun, User, Building } from 'lucide-react';
+import { Moon, Sun, User } from 'lucide-react';
 
 export function SettingsPage() {
   const user = useAuthStore((s) => s.user);

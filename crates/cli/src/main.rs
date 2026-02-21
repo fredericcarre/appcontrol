@@ -89,24 +89,29 @@ async fn main() {
     let client = build_client(&cli);
 
     let exit_code = match cli.command {
-        Commands::Start { app, wait, timeout, dry_run } => {
-            cmd_start(&client, &cli.url, &app, wait, timeout, dry_run).await
-        }
+        Commands::Start {
+            app,
+            wait,
+            timeout,
+            dry_run,
+        } => cmd_start(&client, &cli.url, &app, wait, timeout, dry_run).await,
         Commands::Stop { app, wait, timeout } => {
             cmd_stop(&client, &cli.url, &app, wait, timeout).await
         }
-        Commands::Status { app, format } => {
-            cmd_status(&client, &cli.url, &app, &format).await
-        }
-        Commands::Switchover { app, target_site, mode, wait } => {
-            cmd_switchover(&client, &cli.url, &app, &target_site, &mode, wait).await
-        }
-        Commands::Diagnose { app, format } => {
-            cmd_diagnose(&client, &cli.url, &app, &format).await
-        }
-        Commands::Rebuild { app, components, dry_run, wait } => {
-            cmd_rebuild(&client, &cli.url, &app, components, dry_run, wait).await
-        }
+        Commands::Status { app, format } => cmd_status(&client, &cli.url, &app, &format).await,
+        Commands::Switchover {
+            app,
+            target_site,
+            mode,
+            wait,
+        } => cmd_switchover(&client, &cli.url, &app, &target_site, &mode, wait).await,
+        Commands::Diagnose { app, format } => cmd_diagnose(&client, &cli.url, &app, &format).await,
+        Commands::Rebuild {
+            app,
+            components,
+            dry_run,
+            wait,
+        } => cmd_rebuild(&client, &cli.url, &app, components, dry_run, wait).await,
     };
 
     std::process::exit(exit_code);
@@ -127,7 +132,14 @@ fn build_client(cli: &Cli) -> reqwest::Client {
         .unwrap()
 }
 
-async fn cmd_start(client: &reqwest::Client, base: &str, app: &str, wait: bool, timeout: u64, dry_run: bool) -> i32 {
+async fn cmd_start(
+    client: &reqwest::Client,
+    base: &str,
+    app: &str,
+    wait: bool,
+    timeout: u64,
+    dry_run: bool,
+) -> i32 {
     let url = format!("{}/api/v1/orchestration/apps/{}/start", base, app);
     let body = serde_json::json!({ "dry_run": dry_run });
 
@@ -144,17 +156,38 @@ async fn cmd_start(client: &reqwest::Client, base: &str, app: &str, wait: bool, 
                     }
                     EXIT_SUCCESS
                 }
-                401 => { eprintln!("Authentication error"); EXIT_AUTH_ERROR }
-                403 => { eprintln!("Permission denied"); EXIT_PERMISSION_DENIED }
-                404 => { eprintln!("Application not found: {}", app); EXIT_NOT_FOUND }
-                _ => { eprintln!("Error: HTTP {}", status); EXIT_FAILURE }
+                401 => {
+                    eprintln!("Authentication error");
+                    EXIT_AUTH_ERROR
+                }
+                403 => {
+                    eprintln!("Permission denied");
+                    EXIT_PERMISSION_DENIED
+                }
+                404 => {
+                    eprintln!("Application not found: {}", app);
+                    EXIT_NOT_FOUND
+                }
+                _ => {
+                    eprintln!("Error: HTTP {}", status);
+                    EXIT_FAILURE
+                }
             }
         }
-        Err(e) => { eprintln!("Connection error: {}", e); EXIT_FAILURE }
+        Err(e) => {
+            eprintln!("Connection error: {}", e);
+            EXIT_FAILURE
+        }
     }
 }
 
-async fn cmd_stop(client: &reqwest::Client, base: &str, app: &str, wait: bool, timeout: u64) -> i32 {
+async fn cmd_stop(
+    client: &reqwest::Client,
+    base: &str,
+    app: &str,
+    wait: bool,
+    timeout: u64,
+) -> i32 {
     let url = format!("{}/api/v1/orchestration/apps/{}/stop", base, app);
 
     match client.post(&url).send().await {
@@ -191,7 +224,14 @@ async fn cmd_status(client: &reqwest::Client, base: &str, app: &str, format: &st
                 "json" => println!("{}", serde_json::to_string_pretty(&body).unwrap()),
                 "short" => {
                     if let Some(all_running) = body.get("all_running") {
-                        println!("{}", if all_running.as_bool().unwrap_or(false) { "RUNNING" } else { "NOT_RUNNING" });
+                        println!(
+                            "{}",
+                            if all_running.as_bool().unwrap_or(false) {
+                                "RUNNING"
+                            } else {
+                                "NOT_RUNNING"
+                            }
+                        );
                     }
                 }
                 _ => {
@@ -224,7 +264,14 @@ async fn cmd_status(client: &reqwest::Client, base: &str, app: &str, format: &st
     }
 }
 
-async fn cmd_switchover(client: &reqwest::Client, base: &str, app: &str, target_site: &str, mode: &str, _wait: bool) -> i32 {
+async fn cmd_switchover(
+    client: &reqwest::Client,
+    base: &str,
+    app: &str,
+    target_site: &str,
+    mode: &str,
+    _wait: bool,
+) -> i32 {
     let url = format!("{}/api/v1/apps/{}/switchover", base, app);
     let body = serde_json::json!({ "target_site_id": target_site, "mode": mode });
 
@@ -249,15 +296,27 @@ async fn cmd_diagnose(client: &reqwest::Client, base: &str, app: &str, format: &
                 "json" => println!("{}", serde_json::to_string_pretty(&body).unwrap()),
                 _ => {
                     let mut table = comfy_table::Table::new();
-                    table.set_header(vec!["Component", "Health", "Integrity", "Infrastructure", "Recommendation"]);
+                    table.set_header(vec![
+                        "Component",
+                        "Health",
+                        "Integrity",
+                        "Infrastructure",
+                        "Recommendation",
+                    ]);
                     if let Some(diagnosis) = body.get("diagnosis").and_then(|d| d.as_array()) {
                         for d in diagnosis {
                             table.add_row(vec![
-                                d.get("component_name").and_then(|n| n.as_str()).unwrap_or("?"),
+                                d.get("component_name")
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("?"),
                                 d.get("health").and_then(|h| h.as_str()).unwrap_or("?"),
                                 d.get("integrity").and_then(|i| i.as_str()).unwrap_or("?"),
-                                d.get("infrastructure").and_then(|i| i.as_str()).unwrap_or("?"),
-                                d.get("recommendation").and_then(|r| r.as_str()).unwrap_or("?"),
+                                d.get("infrastructure")
+                                    .and_then(|i| i.as_str())
+                                    .unwrap_or("?"),
+                                d.get("recommendation")
+                                    .and_then(|r| r.as_str())
+                                    .unwrap_or("?"),
                             ]);
                         }
                     }
@@ -270,7 +329,14 @@ async fn cmd_diagnose(client: &reqwest::Client, base: &str, app: &str, format: &
     }
 }
 
-async fn cmd_rebuild(client: &reqwest::Client, base: &str, app: &str, components: Option<Vec<String>>, dry_run: bool, _wait: bool) -> i32 {
+async fn cmd_rebuild(
+    client: &reqwest::Client,
+    base: &str,
+    app: &str,
+    components: Option<Vec<String>>,
+    dry_run: bool,
+    _wait: bool,
+) -> i32 {
     let url = format!("{}/api/v1/apps/{}/rebuild", base, app);
     let body = serde_json::json!({ "component_ids": components, "dry_run": dry_run });
 
@@ -285,15 +351,24 @@ async fn cmd_rebuild(client: &reqwest::Client, base: &str, app: &str, components
 }
 
 async fn wait_running(client: &reqwest::Client, base: &str, app: &str, timeout: u64) -> i32 {
-    let url = format!("{}/api/v1/orchestration/apps/{}/wait-running?timeout={}", base, app, timeout);
+    let url = format!(
+        "{}/api/v1/orchestration/apps/{}/wait-running?timeout={}",
+        base, app, timeout
+    );
 
     match client.get(&url).send().await {
         Ok(resp) if resp.status().is_success() => {
             let body: Value = resp.json().await.unwrap_or_default();
             match body.get("status").and_then(|s| s.as_str()) {
                 Some("running") => EXIT_SUCCESS,
-                Some("timeout") => { eprintln!("Timeout waiting for RUNNING"); EXIT_TIMEOUT }
-                Some("failed") => { eprintln!("Application failed"); EXIT_FAILURE }
+                Some("timeout") => {
+                    eprintln!("Timeout waiting for RUNNING");
+                    EXIT_TIMEOUT
+                }
+                Some("failed") => {
+                    eprintln!("Application failed");
+                    EXIT_FAILURE
+                }
                 _ => EXIT_FAILURE,
             }
         }
@@ -314,10 +389,12 @@ async fn wait_stopped(client: &reqwest::Client, base: &str, app: &str, timeout: 
             Ok(resp) if resp.status().is_success() => {
                 let body: Value = resp.json().await.unwrap_or_default();
                 if let Some(components) = body.get("components").and_then(|c| c.as_array()) {
-                    let all_stopped = components.iter().all(|c| {
-                        c.get("state").and_then(|s| s.as_str()) == Some("STOPPED")
-                    });
-                    if all_stopped { return EXIT_SUCCESS; }
+                    let all_stopped = components
+                        .iter()
+                        .all(|c| c.get("state").and_then(|s| s.as_str()) == Some("STOPPED"));
+                    if all_stopped {
+                        return EXIT_SUCCESS;
+                    }
                 }
             }
             _ => {}

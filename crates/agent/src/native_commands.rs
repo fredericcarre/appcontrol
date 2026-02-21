@@ -42,13 +42,18 @@ pub fn cpu() -> Value {
     std::thread::sleep(std::time::Duration::from_millis(200));
     sys.refresh_cpu_usage();
 
-    let cpus: Vec<Value> = sys.cpus().iter().enumerate().map(|(i, cpu)| {
-        json!({
-            "id": i,
-            "usage_pct": cpu.cpu_usage(),
-            "name": cpu.name(),
+    let cpus: Vec<Value> = sys
+        .cpus()
+        .iter()
+        .enumerate()
+        .map(|(i, cpu)| {
+            json!({
+                "id": i,
+                "usage_pct": cpu.cpu_usage(),
+                "name": cpu.name(),
+            })
         })
-    }).collect();
+        .collect();
 
     let load = System::load_average();
     json!({
@@ -62,7 +67,9 @@ pub fn process_check(name: &str) -> Value {
     let mut sys = System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
-    let matching: Vec<Value> = sys.processes().iter()
+    let matching: Vec<Value> = sys
+        .processes()
+        .iter()
         .filter(|(_, p)| {
             let proc_name = p.name().to_string_lossy();
             proc_name.contains(name)
@@ -89,11 +96,9 @@ pub fn process_check(name: &str) -> Value {
 pub fn tcp_port(port: u16) -> Value {
     use std::net::TcpStream;
     let addr = format!("127.0.0.1:{}", port);
-    let is_open = TcpStream::connect_timeout(
-        &addr.parse().unwrap(),
-        std::time::Duration::from_secs(2),
-    )
-    .is_ok();
+    let is_open =
+        TcpStream::connect_timeout(&addr.parse().unwrap(), std::time::Duration::from_secs(2))
+            .is_ok();
 
     json!({
         "port": port,

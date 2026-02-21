@@ -2,8 +2,8 @@ import { useCallback } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { Button } from '@/components/ui/button';
 import {
-  ZoomIn, ZoomOut, Maximize, Play, Square, RotateCcw,
-  GitBranch, Share2, Download,
+  ZoomIn, ZoomOut, Maximize, Play, Square,
+  GitBranch, Share2,
 } from 'lucide-react';
 
 interface MapToolbarProps {

@@ -155,7 +155,12 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: AgentMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
-            AgentMessage::CommandResult { exit_code, stdout, stderr, .. } => {
+            AgentMessage::CommandResult {
+                exit_code,
+                stdout,
+                stderr,
+                ..
+            } => {
                 assert_eq!(exit_code, 1);
                 assert_eq!(stdout, "output");
                 assert_eq!(stderr, "error");
@@ -175,7 +180,9 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: AgentMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
-            AgentMessage::Register { hostname, version, .. } => {
+            AgentMessage::Register {
+                hostname, version, ..
+            } => {
                 assert_eq!(hostname, "server01");
                 assert_eq!(version, "0.1.0");
             }
@@ -194,7 +201,11 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: BackendMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
-            BackendMessage::ExecuteCommand { command, timeout_seconds, .. } => {
+            BackendMessage::ExecuteCommand {
+                command,
+                timeout_seconds,
+                ..
+            } => {
                 assert_eq!(command, "systemctl start nginx");
                 assert_eq!(timeout_seconds, 60);
             }

@@ -30,9 +30,16 @@ pub async fn diagnose(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "diagnose", "application", app_id, json!({}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "diagnose",
+        "application",
+        app_id,
+        json!({}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let diagnosis = crate::core::diagnostic::diagnose_app(&state.db, app_id)
         .await
@@ -54,14 +61,21 @@ pub async fn rebuild(
 
     let dry_run = body.dry_run.unwrap_or(false);
 
-    log_action(&state.db, user.user_id, "rebuild", "application", app_id,
-        json!({"component_ids": body.component_ids, "dry_run": dry_run}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "rebuild",
+        "application",
+        app_id,
+        json!({"component_ids": body.component_ids, "dry_run": dry_run}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let plan = crate::core::rebuild::build_rebuild_plan(&state.db, app_id, body.component_ids.as_deref())
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let plan =
+        crate::core::rebuild::build_rebuild_plan(&state.db, app_id, body.component_ids.as_deref())
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if dry_run {
         return Ok(Json(json!({ "dry_run": true, "plan": plan })));

@@ -1,9 +1,9 @@
+mod buffer;
 mod config;
 mod connection;
 mod executor;
-mod scheduler;
-mod buffer;
 mod native_commands;
+mod scheduler;
 
 use clap::Parser;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -23,8 +23,10 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| "appcontrol_agent=debug".into()))
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "appcontrol_agent=debug".into()),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 

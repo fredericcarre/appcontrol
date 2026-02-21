@@ -15,7 +15,7 @@ export function AgentsPage() {
     );
   }
 
-  const agentList = (agents as any[]) || [];
+  const agentList = (agents as Array<Record<string, unknown>>) || [];
 
   return (
     <div className="space-y-6">
@@ -41,7 +41,7 @@ export function AgentsPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                agentList.map((agent: any) => (
+                agentList.map((agent: Record<string, unknown>) => (
                   <TableRow key={agent.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">

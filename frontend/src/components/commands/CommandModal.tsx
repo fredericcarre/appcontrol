@@ -4,7 +4,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Play, Terminal } from 'lucide-react';
 
 interface CommandModalProps {
@@ -43,15 +42,17 @@ export function CommandModal({ componentId, open, onOpenChange }: CommandModalPr
         args: customArgs ? customArgs.split(' ') : undefined,
       });
 
+      const res = result as Record<string, unknown>;
       setOutput((prev) => [
         ...prev,
-        { text: (result as any).output || 'Command completed', timestamp: new Date().toISOString(), type: 'stdout' },
-        { text: `Exit code: ${(result as any).exit_code ?? 'N/A'}`, timestamp: new Date().toISOString(), type: 'info' },
+        { text: (res.output as string) || 'Command completed', timestamp: new Date().toISOString(), type: 'stdout' },
+        { text: `Exit code: ${res.exit_code ?? 'N/A'}`, timestamp: new Date().toISOString(), type: 'info' },
       ]);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Command failed';
       setOutput((prev) => [
         ...prev,
-        { text: err.message || 'Command failed', timestamp: new Date().toISOString(), type: 'stderr' },
+        { text: message, timestamp: new Date().toISOString(), type: 'stderr' },
       ]);
     }
   };

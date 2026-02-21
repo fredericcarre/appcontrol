@@ -18,7 +18,10 @@ impl OfflineBuffer {
 
     /// Store a message in the buffer (for offline mode).
     pub fn push(&self, msg: &AgentMessage) -> anyhow::Result<()> {
-        let key = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0).to_be_bytes();
+        let key = chrono::Utc::now()
+            .timestamp_nanos_opt()
+            .unwrap_or(0)
+            .to_be_bytes();
         let value = serde_json::to_vec(msg)?;
 
         // Check size and evict if needed

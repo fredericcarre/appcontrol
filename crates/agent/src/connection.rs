@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use appcontrol_common::{AgentMessage, BackendMessage};
 use crate::buffer::OfflineBuffer;
+use appcontrol_common::{AgentMessage, BackendMessage};
 
 /// Manages the WebSocket connection to the gateway/backend.
 pub struct ConnectionManager {
@@ -68,13 +68,17 @@ impl ConnectionManager {
         };
 
         let msg = serde_json::to_string(&register)?;
-        write.send(tokio_tungstenite::tungstenite::Message::Text(msg.into())).await?;
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(msg.into()))
+            .await?;
 
         // Replay buffered messages
         let buffered = self.buffer.drain()?;
         for msg in buffered {
             let json = serde_json::to_string(&msg)?;
-            write.send(tokio_tungstenite::tungstenite::Message::Text(json.into())).await?;
+            write
+                .send(tokio_tungstenite::tungstenite::Message::Text(json.into()))
+                .await?;
         }
 
         tracing::info!("Connected and registered as agent {}", self.agent_id);
@@ -110,13 +114,26 @@ impl ConnectionManager {
 
     async fn handle_backend_message(&self, msg: BackendMessage) {
         match msg {
-            BackendMessage::ExecuteCommand { request_id, component_id, command, timeout_seconds } => {
-                tracing::info!("Executing command for component {}: {}", component_id, command);
+            BackendMessage::ExecuteCommand {
+                request_id,
+                component_id,
+                command,
+                timeout_seconds,
+            } => {
+                tracing::info!(
+                    "Executing command for component {}: {}",
+                    component_id,
+                    command
+                );
 
                 let timeout = std::time::Duration::from_secs(timeout_seconds as u64);
                 match crate::executor::execute_sync(&command, timeout).await {
                     Ok(result) => {
-                        tracing::info!("Command {} completed with exit code {}", request_id, result.exit_code);
+                        tracing::info!(
+                            "Command {} completed with exit code {}",
+                            request_id,
+                            result.exit_code
+                        );
                     }
                     Err(e) => {
                         tracing::error!("Command {} failed: {}", request_id, e);

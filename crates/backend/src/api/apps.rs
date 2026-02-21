@@ -122,9 +122,16 @@ pub async fn create_app(
 ) -> Result<(StatusCode, Json<Value>), StatusCode> {
     // Log before execute
     let app_id = Uuid::new_v4();
-    log_action(&state.db, user.user_id, "create_app", "application", app_id, json!({ "name": body.name }))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "create_app",
+        "application",
+        app_id,
+        json!({ "name": body.name }),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let app = sqlx::query_as::<_, AppRow>(
         r#"
@@ -166,9 +173,16 @@ pub async fn update_app(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "update_app", "application", id, json!({"changes": body.name}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "update_app",
+        "application",
+        id,
+        json!({"changes": body.name}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let app = sqlx::query_as::<_, AppRow>(
         r#"
@@ -206,9 +220,16 @@ pub async fn delete_app(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "delete_app", "application", id, json!({}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "delete_app",
+        "application",
+        id,
+        json!({}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
         .bind(id)
@@ -237,9 +258,16 @@ pub async fn start_app(
 
     let dry_run = body.and_then(|b| b.dry_run).unwrap_or(false);
 
-    log_action(&state.db, user.user_id, "start_app", "application", id, json!({"dry_run": dry_run}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "start_app",
+        "application",
+        id,
+        json!({"dry_run": dry_run}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let plan = crate::core::sequencer::build_start_plan(&state.db, id)
         .await
@@ -270,9 +298,16 @@ pub async fn stop_app(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "stop_app", "application", id, json!({}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "stop_app",
+        "application",
+        id,
+        json!({}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let state_clone = state.clone();
     tokio::spawn(async move {
@@ -295,9 +330,16 @@ pub async fn start_branch(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "start_branch", "application", id, json!({"component_id": body.component_id}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "start_branch",
+        "application",
+        id,
+        json!({"component_id": body.component_id}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let branch = crate::core::branch::detect_error_branch(&state.db, id, body.component_id)
         .await
@@ -308,5 +350,7 @@ pub async fn start_branch(
         return Ok(Json(json!({ "dry_run": true, "branch": branch })));
     }
 
-    Ok(Json(json!({ "status": "starting_branch", "branch": branch })))
+    Ok(Json(
+        json!({ "status": "starting_branch", "branch": branch }),
+    ))
 }

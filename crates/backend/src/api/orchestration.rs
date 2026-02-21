@@ -37,9 +37,16 @@ pub async fn start(
 
     let dry_run = body.and_then(|b| b.dry_run).unwrap_or(false);
 
-    log_action(&state.db, user.user_id, "orchestration_start", "application", app_id, json!({"dry_run": dry_run}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "orchestration_start",
+        "application",
+        app_id,
+        json!({"dry_run": dry_run}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let plan = crate::core::sequencer::build_start_plan(&state.db, app_id)
         .await
@@ -54,7 +61,9 @@ pub async fn start(
         });
     }
 
-    Ok(Json(json!({ "status": if dry_run { "dry_run" } else { "starting" }, "plan": plan })))
+    Ok(Json(
+        json!({ "status": if dry_run { "dry_run" } else { "starting" }, "plan": plan }),
+    ))
 }
 
 pub async fn stop(
@@ -67,9 +76,16 @@ pub async fn stop(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "orchestration_stop", "application", app_id, json!({}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "orchestration_stop",
+        "application",
+        app_id,
+        json!({}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let state_clone = state.clone();
     tokio::spawn(async move {
@@ -105,9 +121,10 @@ pub async fn status(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let data: Vec<Value> = components.iter().map(|(id, name, state)| {
-        json!({"component_id": id, "name": name, "state": state})
-    }).collect();
+    let data: Vec<Value> = components
+        .iter()
+        .map(|(id, name, state)| json!({"component_id": id, "name": name, "state": state}))
+        .collect();
 
     let all_running = components.iter().all(|(_, _, s)| s == "RUNNING");
 

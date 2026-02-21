@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   ReactFlow,
   Background,
@@ -18,6 +18,7 @@ import { Component, Dependency } from '@/api/apps';
 import { ComponentState, ComponentType, STATE_COLORS } from '@/lib/colors';
 
 const nodeTypes: NodeTypes = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   component: ComponentNode as any,
 };
 
@@ -95,8 +96,8 @@ export function AppMap({
   );
   const initialEdges = useMemo(() => buildEdges(dependencies), [dependencies]);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, , onNodesChange] = useNodesState(initialNodes);
+  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use appcontrol_common::{ComponentState, is_valid_transition};
 use crate::AppState;
+use appcontrol_common::{is_valid_transition, ComponentState};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FsmError {
@@ -15,7 +15,10 @@ pub enum FsmError {
 }
 
 /// Get the current state of a component from the latest state_transition record.
-pub async fn get_current_state(pool: &sqlx::PgPool, component_id: Uuid) -> Result<ComponentState, FsmError> {
+pub async fn get_current_state(
+    pool: &sqlx::PgPool,
+    component_id: Uuid,
+) -> Result<ComponentState, FsmError> {
     let state_str = sqlx::query_scalar::<_, String>(
         "SELECT to_state FROM state_transitions WHERE component_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
@@ -60,14 +63,13 @@ pub async fn transition_component(
     .map_err(|e| FsmError::Database(e.to_string()))?;
 
     // Get app_id for WebSocket notification
-    let app_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT application_id FROM components WHERE id = $1",
-    )
-    .bind(component_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| FsmError::Database(e.to_string()))?
-    .ok_or(FsmError::ComponentNotFound(component_id))?;
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?
+            .ok_or(FsmError::ComponentNotFound(component_id))?;
 
     // Push WebSocket event
     state.ws_hub.broadcast(

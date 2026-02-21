@@ -49,8 +49,10 @@ pub struct GatewayState {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| "appcontrol_gateway=debug".into()))
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "appcontrol_gateway=debug".into()),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
@@ -61,7 +63,11 @@ async fn main() -> anyhow::Result<()> {
     let registry = AgentRegistry::new();
     let router = MessageRouter::new();
 
-    let state = Arc::new(GatewayState { registry, router, config: config.clone() });
+    let state = Arc::new(GatewayState {
+        registry,
+        router,
+        config: config.clone(),
+    });
 
     // Connect to backend in background
     let state_clone = state.clone();
@@ -83,8 +89,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(|| async { "ok" }))
         .with_state(state.clone());
 
-    let addr = format!("{}:{}", config.gateway.listen_addr, config.gateway.listen_port);
-    tracing::info!("Gateway {} ({}) listening on {}", config.gateway.id, config.gateway.zone, addr);
+    let addr = format!(
+        "{}:{}",
+        config.gateway.listen_addr, config.gateway.listen_port
+    );
+    tracing::info!(
+        "Gateway {} ({}) listening on {}",
+        config.gateway.id,
+        config.gateway.zone,
+        addr
+    );
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
 
@@ -123,10 +137,16 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
         while let Some(Ok(msg)) = receiver.next().await {
             if let ws::Message::Text(text) = msg {
                 // Try to parse as AgentMessage to extract agent_id
-                if let Ok(agent_msg) = serde_json::from_str::<appcontrol_common::AgentMessage>(&text) {
+                if let Ok(agent_msg) =
+                    serde_json::from_str::<appcontrol_common::AgentMessage>(&text)
+                {
                     match &agent_msg {
-                        appcontrol_common::AgentMessage::Register { agent_id, hostname, .. } => {
-                            state_clone.registry.register(conn_id, *agent_id, hostname.clone());
+                        appcontrol_common::AgentMessage::Register {
+                            agent_id, hostname, ..
+                        } => {
+                            state_clone
+                                .registry
+                                .register(conn_id, *agent_id, hostname.clone());
                         }
                         appcontrol_common::AgentMessage::Heartbeat { agent_id, .. } => {
                             state_clone.registry.heartbeat(conn_id);

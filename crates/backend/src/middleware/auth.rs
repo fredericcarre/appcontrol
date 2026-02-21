@@ -24,8 +24,9 @@ pub async fn auth_middleware(
     let auth_user = match auth_header {
         Some(ref header) if header.starts_with("Bearer ") => {
             let token = &header[7..];
-            let claims = jwt::validate_token(token, &state.config.jwt_secret, &state.config.jwt_issuer)
-                .map_err(|_| StatusCode::UNAUTHORIZED)?;
+            let claims =
+                jwt::validate_token(token, &state.config.jwt_secret, &state.config.jwt_issuer)
+                    .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
             let user_id: uuid::Uuid = claims.sub.parse().map_err(|_| StatusCode::UNAUTHORIZED)?;
             let org_id: uuid::Uuid = claims.org.parse().map_err(|_| StatusCode::UNAUTHORIZED)?;

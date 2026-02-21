@@ -24,13 +24,24 @@ impl AgentRegistry {
 
     pub fn register(&self, conn_id: Uuid, agent_id: Uuid, hostname: String) {
         let now = chrono::Utc::now();
-        self.agents.insert(conn_id, AgentInfo {
+        self.agents.insert(
+            conn_id,
+            AgentInfo {
+                agent_id,
+                hostname,
+                last_heartbeat: now,
+                connected_at: now,
+            },
+        );
+        tracing::info!(
+            "Agent {} ({}) registered as connection {}",
             agent_id,
-            hostname,
-            last_heartbeat: now,
-            connected_at: now,
-        });
-        tracing::info!("Agent {} ({}) registered as connection {}", agent_id, self.agents.get(&conn_id).map(|a| a.hostname.clone()).unwrap_or_default(), conn_id);
+            self.agents
+                .get(&conn_id)
+                .map(|a| a.hostname.clone())
+                .unwrap_or_default(),
+            conn_id
+        );
     }
 
     pub fn unregister(&self, conn_id: Uuid) {
@@ -50,11 +61,15 @@ impl AgentRegistry {
     }
 
     pub fn list_agents(&self) -> Vec<AgentInfo> {
-        self.agents.iter().map(|entry| entry.value().clone()).collect()
+        self.agents
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
     }
 
     pub fn get_conn_id_for_agent(&self, agent_id: Uuid) -> Option<Uuid> {
-        self.agents.iter()
+        self.agents
+            .iter()
             .find(|entry| entry.value().agent_id == agent_id)
             .map(|entry| *entry.key())
     }

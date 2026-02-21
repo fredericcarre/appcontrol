@@ -1,4 +1,3 @@
-import { useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { useWebSocketStore } from '@/stores/websocket';

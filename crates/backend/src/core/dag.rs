@@ -123,13 +123,12 @@ impl Dag {
 
 /// Build a DAG from the dependencies table for a given application.
 pub async fn build_dag(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Dag, DagError> {
-    let components = sqlx::query_as::<_, (Uuid,)>(
-        "SELECT id FROM components WHERE application_id = $1",
-    )
-    .bind(app_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| DagError::Database(e.to_string()))?;
+    let components =
+        sqlx::query_as::<_, (Uuid,)>("SELECT id FROM components WHERE application_id = $1")
+            .bind(app_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| DagError::Database(e.to_string()))?;
 
     let deps = sqlx::query_as::<_, (Uuid, Uuid)>(
         "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
@@ -235,7 +234,10 @@ mod tests {
         dag.add_edge(c, b);
         dag.add_edge(a, c); // creates cycle
 
-        assert!(matches!(dag.topological_levels(), Err(DagError::CycleDetected)));
+        assert!(matches!(
+            dag.topological_levels(),
+            Err(DagError::CycleDetected)
+        ));
     }
 
     #[test]

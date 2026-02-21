@@ -24,12 +24,20 @@ impl Hub {
         }
     }
 
-    pub fn add_connection(&self, conn_id: Uuid, user_id: Uuid, sender: mpsc::UnboundedSender<String>) {
-        self.connections.insert(conn_id, Connection {
-            user_id,
-            sender,
-            subscriptions: HashSet::new(),
-        });
+    pub fn add_connection(
+        &self,
+        conn_id: Uuid,
+        user_id: Uuid,
+        sender: mpsc::UnboundedSender<String>,
+    ) {
+        self.connections.insert(
+            conn_id,
+            Connection {
+                user_id,
+                sender,
+                subscriptions: HashSet::new(),
+            },
+        );
     }
 
     pub fn remove_connection(&self, conn_id: Uuid) {

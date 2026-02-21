@@ -31,7 +31,9 @@ pub async fn availability(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let from = params.from.unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+    let from = params
+        .from
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
     let stats = sqlx::query_as::<_, (Uuid, String, i64, i64)>(
@@ -71,7 +73,9 @@ pub async fn incidents(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let from = params.from.unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+    let from = params
+        .from
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
     let incidents = sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
@@ -142,7 +146,9 @@ pub async fn audit(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let from = params.from.unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+    let from = params
+        .from
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
     let logs = sqlx::query_as::<_, (Uuid, Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
@@ -181,13 +187,12 @@ pub async fn compliance(
     }
 
     // Check DORA compliance metrics
-    let action_count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM action_log WHERE resource_id = $1",
-    )
-    .bind(app_id)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0);
+    let action_count =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM action_log WHERE resource_id = $1")
+            .bind(app_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
 
     Ok(Json(json!({
         "report": "compliance",

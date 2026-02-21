@@ -157,7 +157,9 @@ mod tests {
 
     #[test]
     fn test_any_to_unreachable() {
-        for state in [Running, Stopped, Starting, Stopping, Failed, Degraded, Unknown] {
+        for state in [
+            Running, Stopped, Starting, Stopping, Failed, Degraded, Unknown,
+        ] {
             assert!(
                 is_valid_transition(state, Unreachable),
                 "{state} → Unreachable should be valid"
@@ -167,7 +169,9 @@ mod tests {
 
     #[test]
     fn test_unreachable_to_previous() {
-        for state in [Running, Stopped, Starting, Stopping, Failed, Degraded, Unknown] {
+        for state in [
+            Running, Stopped, Starting, Stopping, Failed, Degraded, Unknown,
+        ] {
             assert!(
                 is_valid_transition(Unreachable, state),
                 "Unreachable → {state} should be valid"

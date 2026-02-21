@@ -9,6 +9,7 @@ export function useWebSocket() {
   const addMessage = useWebSocketStore((s) => s.addMessage);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const reconnectDelay = useRef(1000);
+  const connectRef = useRef<() => void>();
 
   const connect = useCallback(() => {
     if (!token) return;
@@ -39,7 +40,7 @@ export function useWebSocket() {
       setConnected(false);
       reconnectTimer.current = setTimeout(() => {
         reconnectDelay.current = Math.min(reconnectDelay.current * 2, 60000);
-        connect();
+        connectRef.current?.();
       }, reconnectDelay.current);
     };
 
@@ -49,6 +50,10 @@ export function useWebSocket() {
 
     wsRef.current = ws;
   }, [token, setConnected, addMessage]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  });
 
   const subscribe = useCallback((appId: string) => {
     useWebSocketStore.getState().addSubscription(appId);

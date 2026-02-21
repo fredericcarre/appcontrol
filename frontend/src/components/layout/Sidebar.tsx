@@ -1,9 +1,8 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import { useUiStore } from '@/stores/ui';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard,
-  Map,
   Users,
   Server,
   BarChart3,

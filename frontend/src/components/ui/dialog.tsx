@@ -21,7 +21,7 @@ export function Dialog({ open, onOpenChange, children }: { open?: boolean; onOpe
   );
 }
 
-export function DialogTrigger({ children, asChild, ...props }: { children: ReactNode; asChild?: boolean } & HTMLAttributes<HTMLButtonElement>) {
+export function DialogTrigger({ children, ...props }: { children: ReactNode; asChild?: boolean } & HTMLAttributes<HTMLButtonElement>) {
   const { setOpen } = useContext(DialogContext);
   return (
     <button onClick={() => setOpen(true)} {...props}>

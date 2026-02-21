@@ -1,8 +1,8 @@
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use sha2::{Sha256, Digest};
 
 use appcontrol_common::{AgentMessage, CheckResult, CheckType, ComponentConfig};
 

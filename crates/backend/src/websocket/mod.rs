@@ -2,14 +2,14 @@ pub mod hub;
 pub use hub::Hub;
 
 use axum::{
-    extract::{ws, State, Query},
+    extract::{ws, Query, State},
     response::IntoResponse,
 };
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::AppState;
 use crate::auth::jwt;
+use crate::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct WsQuery {
@@ -22,7 +22,11 @@ pub async fn ws_handler(
     Query(query): Query<WsQuery>,
 ) -> impl IntoResponse {
     // Validate JWT
-    let claims = match jwt::validate_token(&query.token, &state.config.jwt_secret, &state.config.jwt_issuer) {
+    let claims = match jwt::validate_token(
+        &query.token,
+        &state.config.jwt_secret,
+        &state.config.jwt_issuer,
+    ) {
         Ok(c) => c,
         Err(_) => {
             return axum::http::StatusCode::UNAUTHORIZED.into_response();
@@ -62,7 +66,9 @@ async fn handle_socket(mut socket: ws::WebSocket, state: Arc<AppState>, user_id:
     let recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if let ws::Message::Text(text) = msg {
-                if let Ok(client_msg) = serde_json::from_str::<appcontrol_common::WsClientMessage>(&text) {
+                if let Ok(client_msg) =
+                    serde_json::from_str::<appcontrol_common::WsClientMessage>(&text)
+                {
                     match client_msg {
                         appcontrol_common::WsClientMessage::Subscribe { app_id } => {
                             state_clone.ws_hub.subscribe(conn_id, app_id);

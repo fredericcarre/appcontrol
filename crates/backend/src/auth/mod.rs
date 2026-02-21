@@ -1,5 +1,5 @@
-pub mod jwt;
 pub mod api_key;
+pub mod jwt;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

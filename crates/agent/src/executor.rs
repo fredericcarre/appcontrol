@@ -1,6 +1,6 @@
-use std::time::Duration;
 use nix::unistd::{fork, setsid, ForkResult};
 use std::process::Stdio;
+use std::time::Duration;
 
 /// Command execution mode.
 pub enum CommandMode {
@@ -43,8 +43,16 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             // Truncate to 4KB
-            let stdout = if stdout.len() > 4096 { stdout[..4096].to_string() } else { stdout };
-            let stderr = if stderr.len() > 4096 { stderr[..4096].to_string() } else { stderr };
+            let stdout = if stdout.len() > 4096 {
+                stdout[..4096].to_string()
+            } else {
+                stdout
+            };
+            let stderr = if stderr.len() > 4096 {
+                stderr[..4096].to_string()
+            } else {
+                stderr
+            };
 
             Ok(ExecResult {
                 exit_code: output.status.code().unwrap_or(-1),
@@ -88,11 +96,17 @@ pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
     match unsafe { fork()? } {
         ForkResult::Parent { child } => {
             // Parent: close write end, read grandchild PID
-            unsafe { libc::close(write_fd); }
+            unsafe {
+                libc::close(write_fd);
+            }
 
             let mut buf = [0u8; 4];
-            unsafe { libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, 4); }
-            unsafe { libc::close(read_fd); }
+            unsafe {
+                libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, 4);
+            }
+            unsafe {
+                libc::close(read_fd);
+            }
 
             // Wait for intermediate child to exit
             nix::sys::wait::waitpid(child, None)?;
@@ -102,7 +116,9 @@ pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
         }
         ForkResult::Child => {
             // Intermediate child
-            unsafe { libc::close(read_fd); }
+            unsafe {
+                libc::close(read_fd);
+            }
 
             // Create new session
             setsid().ok();
@@ -111,17 +127,25 @@ pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
                 Ok(ForkResult::Parent { child }) => {
                     // Write grandchild PID to parent
                     let pid_bytes = (child.as_raw() as u32).to_le_bytes();
-                    unsafe { libc::write(write_fd, pid_bytes.as_ptr() as *const libc::c_void, 4); }
-                    unsafe { libc::close(write_fd); }
+                    unsafe {
+                        libc::write(write_fd, pid_bytes.as_ptr() as *const libc::c_void, 4);
+                    }
+                    unsafe {
+                        libc::close(write_fd);
+                    }
                     // Intermediate child exits
                     std::process::exit(0);
                 }
                 Ok(ForkResult::Child) => {
                     // Grandchild: detached process
-                    unsafe { libc::close(write_fd); }
+                    unsafe {
+                        libc::close(write_fd);
+                    }
 
                     // Redirect stdin/stdout/stderr to /dev/null
-                    let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDWR) };
+                    let devnull = unsafe {
+                        libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDWR)
+                    };
                     if devnull >= 0 {
                         unsafe {
                             libc::dup2(devnull, 0); // stdin
@@ -169,20 +193,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_sync_success() {
-        let result = execute_sync("echo hello", Duration::from_secs(5)).await.unwrap();
+        let result = execute_sync("echo hello", Duration::from_secs(5))
+            .await
+            .unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "hello");
     }
 
     #[tokio::test]
     async fn test_execute_sync_failure() {
-        let result = execute_sync("exit 42", Duration::from_secs(5)).await.unwrap();
+        let result = execute_sync("exit 42", Duration::from_secs(5))
+            .await
+            .unwrap();
         assert_eq!(result.exit_code, 42);
     }
 
     #[tokio::test]
     async fn test_execute_sync_timeout() {
-        let result = execute_sync("sleep 60", Duration::from_millis(100)).await.unwrap();
+        let result = execute_sync("sleep 60", Duration::from_millis(100))
+            .await
+            .unwrap();
         assert_eq!(result.exit_code, -1);
         assert!(result.stderr.contains("timed out"));
     }
@@ -195,11 +225,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
 
         // Verify process exists
-        let exists = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(pid as i32),
-            None,
-        )
-        .is_ok();
+        let exists = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok();
         assert!(exists, "Detached process should be running");
 
         // Clean up

@@ -1,6 +1,6 @@
+use serde_json::Value;
 use std::collections::HashSet;
 use uuid::Uuid;
-use serde_json::Value;
 
 use super::dag;
 
@@ -26,7 +26,8 @@ pub async fn detect_error_branch(
     affected.insert(failed_component_id);
 
     // Build reverse adjacency (who depends on whom)
-    let mut dependents: std::collections::HashMap<Uuid, HashSet<Uuid>> = std::collections::HashMap::new();
+    let mut dependents: std::collections::HashMap<Uuid, HashSet<Uuid>> =
+        std::collections::HashMap::new();
     for (&node, deps) in &dag.adjacency {
         for &dep in deps {
             dependents.entry(dep).or_default().insert(node);
@@ -50,14 +51,12 @@ pub async fn detect_error_branch(
     // Get component details
     let mut branch_components = Vec::new();
     for &comp_id in &affected {
-        let name = sqlx::query_scalar::<_, String>(
-            "SELECT name FROM components WHERE id = $1",
-        )
-        .bind(comp_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| BranchError::Database(e.to_string()))?
-        .unwrap_or_default();
+        let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
+            .bind(comp_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BranchError::Database(e.to_string()))?
+            .unwrap_or_default();
 
         let state = sqlx::query_scalar::<_, String>(
             "SELECT COALESCE((SELECT to_state FROM state_transitions WHERE component_id = $1 ORDER BY created_at DESC LIMIT 1), 'UNKNOWN')",

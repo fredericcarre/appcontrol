@@ -37,7 +37,10 @@ pub fn compute_recommendation(
     use CheckStatus::*;
     use DiagnosticRecommendation::*;
 
-    if matches!(health, NotAvailable) && matches!(integrity, NotAvailable) && matches!(infrastructure, NotAvailable) {
+    if matches!(health, NotAvailable)
+        && matches!(integrity, NotAvailable)
+        && matches!(infrastructure, NotAvailable)
+    {
         return Unknown;
     }
 
@@ -59,7 +62,10 @@ pub fn compute_recommendation(
 }
 
 /// Run 3-level diagnosis for all components of an application.
-pub async fn diagnose_app(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Vec<ComponentDiagnosis>, DiagnosticError> {
+pub async fn diagnose_app(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+) -> Result<Vec<ComponentDiagnosis>, DiagnosticError> {
     let components = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
     )
@@ -160,6 +166,9 @@ mod tests {
 
     #[test]
     fn test_all_na_unknown() {
-        assert_eq!(compute_recommendation(NotAvailable, NotAvailable, NotAvailable), Unknown);
+        assert_eq!(
+            compute_recommendation(NotAvailable, NotAvailable, NotAvailable),
+            Unknown
+        );
     }
 }

@@ -76,10 +76,16 @@ pub async fn grant_user_permission(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "grant_permission", "application", app_id,
-        json!({"target_user": body.user_id, "level": body.permission_level}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "grant_permission",
+        "application",
+        app_id,
+        json!({"target_user": body.user_id, "level": body.permission_level}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let id = sqlx::query_scalar::<_, Uuid>(
         r#"
@@ -98,7 +104,10 @@ pub async fn grant_user_permission(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok((StatusCode::CREATED, Json(json!({"id": id, "status": "granted"}))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({"id": id, "status": "granted"})),
+    ))
 }
 
 pub async fn list_team_permissions(
@@ -142,10 +151,16 @@ pub async fn grant_team_permission(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "grant_team_permission", "application", app_id,
-        json!({"team_id": body.team_id, "level": body.permission_level}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "grant_team_permission",
+        "application",
+        app_id,
+        json!({"team_id": body.team_id, "level": body.permission_level}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let id = sqlx::query_scalar::<_, Uuid>(
         r#"
@@ -164,7 +179,10 @@ pub async fn grant_team_permission(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok((StatusCode::CREATED, Json(json!({"id": id, "status": "granted"}))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({"id": id, "status": "granted"})),
+    ))
 }
 
 pub async fn list_share_links(
@@ -177,7 +195,17 @@ pub async fn list_share_links(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let links = sqlx::query_as::<_, (Uuid, String, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>(
+    let links = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<i32>,
+            i32,
+        ),
+    >(
         r#"
         SELECT id, token, permission_level, expires_at, max_uses, use_count
         FROM app_share_links
@@ -212,9 +240,16 @@ pub async fn create_share_link(
 
     let token = uuid::Uuid::new_v4().to_string().replace('-', "");
 
-    log_action(&state.db, user.user_id, "create_share_link", "application", app_id, json!({"level": body.permission_level}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "create_share_link",
+        "application",
+        app_id,
+        json!({"level": body.permission_level}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let id = sqlx::query_scalar::<_, Uuid>(
         r#"
@@ -242,5 +277,7 @@ pub async fn get_effective_permission(
     Path(app_id): Path<Uuid>,
 ) -> Result<Json<Value>, StatusCode> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
-    Ok(Json(json!({ "permission_level": format!("{:?}", perm).to_lowercase() })))
+    Ok(Json(
+        json!({ "permission_level": format!("{:?}", perm).to_lowercase() }),
+    ))
 }

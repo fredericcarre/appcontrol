@@ -17,7 +17,7 @@ use appcontrol_common::PermissionLevel;
 #[derive(Debug, Deserialize)]
 pub struct StartSwitchoverRequest {
     pub target_site_id: Uuid,
-    pub mode: String, // FULL, SELECTIVE, PROGRESSIVE
+    pub mode: String,                     // FULL, SELECTIVE, PROGRESSIVE
     pub component_ids: Option<Vec<Uuid>>, // for SELECTIVE mode
 }
 
@@ -32,18 +32,31 @@ pub async fn start_switchover(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "start_switchover", "application", app_id,
-        json!({"target_site": body.target_site_id, "mode": body.mode}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let switchover_id = crate::core::switchover::start_switchover(
-        &state.db, app_id, body.target_site_id, &body.mode, body.component_ids, user.user_id,
+    log_action(
+        &state.db,
+        user.user_id,
+        "start_switchover",
+        "application",
+        app_id,
+        json!({"target_site": body.target_site_id, "mode": body.mode}),
     )
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(json!({ "switchover_id": switchover_id, "phase": "PREPARE", "status": "in_progress" })))
+    let switchover_id = crate::core::switchover::start_switchover(
+        &state.db,
+        app_id,
+        body.target_site_id,
+        &body.mode,
+        body.component_ids,
+        user.user_id,
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(
+        json!({ "switchover_id": switchover_id, "phase": "PREPARE", "status": "in_progress" }),
+    ))
 }
 
 pub async fn next_phase(
@@ -56,9 +69,16 @@ pub async fn next_phase(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "switchover_next_phase", "application", app_id, json!({}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "switchover_next_phase",
+        "application",
+        app_id,
+        json!({}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let result = crate::core::switchover::advance_phase(&state.db, app_id)
         .await
@@ -77,9 +97,16 @@ pub async fn rollback(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "switchover_rollback", "application", app_id, json!({}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "switchover_rollback",
+        "application",
+        app_id,
+        json!({}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let result = crate::core::switchover::rollback(&state.db, app_id)
         .await
@@ -98,9 +125,16 @@ pub async fn commit(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    log_action(&state.db, user.user_id, "switchover_commit", "application", app_id, json!({}))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    log_action(
+        &state.db,
+        user.user_id,
+        "switchover_commit",
+        "application",
+        app_id,
+        json!({}),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let result = crate::core::switchover::commit(&state.db, app_id)
         .await
