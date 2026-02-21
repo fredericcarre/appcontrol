@@ -10,7 +10,7 @@ AppControl is an enterprise platform for **operational mastery and IT system res
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
-| Agent | Rust + Tokio + sysinfo + nix | Rust 1.84+, Tokio 1 |
+| Agent | Rust + Tokio + sysinfo + nix | Rust 1.85+, Tokio 1 |
 | Gateway | Rust + Axum + rustls | Axum 0.7 |
 | Backend API | Rust + Axum + Tokio + sqlx | sqlx 0.7 (postgres, runtime-tokio, tls-rustls, uuid, chrono, json) |
 | Database | PostgreSQL | 16 |
