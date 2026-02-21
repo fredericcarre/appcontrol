@@ -89,6 +89,11 @@ appcontrol/
    - `cargo clippy --workspace -- -D warnings`
    - `cd frontend && npm run build && npm test` (when working on frontend)
 5. **Update `PROGRESS.md`** — check off completed tasks, note any blockers
+6. **After every `git push`**, monitor the CI build:
+   - Use `gh run list --branch <branch> --limit 1` to find the latest run
+   - Wait for it to complete with `gh run watch <run-id>`
+   - If it fails, fetch logs with `gh run view <run-id> --log-failed`, fix the errors, and push again
+   - Repeat until CI is green. Do NOT leave a broken build.
 
 ## Coding Conventions
 

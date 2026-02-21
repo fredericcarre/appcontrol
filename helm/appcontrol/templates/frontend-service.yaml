@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-frontend
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  type: {{ .Values.frontend.service.type }}
+  ports:
+    - port: {{ .Values.frontend.service.port }}
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "appcontrol.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
