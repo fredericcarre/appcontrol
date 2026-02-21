@@ -25,6 +25,7 @@ impl CheckScheduler {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn update_components(&self, configs: Vec<ComponentConfig>) {
         let mut components = self.components.write().await;
         components.clear();

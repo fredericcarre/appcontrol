@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct AgentConfig {
     pub agent: AgentSection,
     pub gateway: GatewaySection,
@@ -16,6 +17,7 @@ pub struct AgentSection {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct GatewaySection {
     pub url: String,
     #[serde(default = "default_reconnect_interval")]
@@ -23,6 +25,7 @@ pub struct GatewaySection {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct TlsSection {
     pub enabled: bool,
     pub cert_file: Option<String>,

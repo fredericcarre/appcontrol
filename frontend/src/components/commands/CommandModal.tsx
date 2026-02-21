@@ -42,11 +42,10 @@ export function CommandModal({ componentId, open, onOpenChange }: CommandModalPr
         args: customArgs ? customArgs.split(' ') : undefined,
       });
 
-      const res = result as Record<string, unknown>;
       setOutput((prev) => [
         ...prev,
-        { text: (res.output as string) || 'Command completed', timestamp: new Date().toISOString(), type: 'stdout' },
-        { text: `Exit code: ${res.exit_code ?? 'N/A'}`, timestamp: new Date().toISOString(), type: 'info' },
+        { text: result.output || 'Command completed', timestamp: new Date().toISOString(), type: 'stdout' },
+        { text: `Exit code: ${result.exit_code ?? 'N/A'}`, timestamp: new Date().toISOString(), type: 'info' },
       ]);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Command failed';

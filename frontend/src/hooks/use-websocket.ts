@@ -9,7 +9,7 @@ export function useWebSocket() {
   const addMessage = useWebSocketStore((s) => s.addMessage);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const reconnectDelay = useRef(1000);
-  const connectRef = useRef<() => void>();
+  const connectRef = useRef<(() => void) | undefined>(undefined);
 
   const connect = useCallback(() => {
     if (!token) return;

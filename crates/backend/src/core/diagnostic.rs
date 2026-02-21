@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use uuid::Uuid;
 
 use appcontrol_common::{CheckStatus, DiagnosticRecommendation};
@@ -55,7 +54,6 @@ pub fn compute_recommendation(
         (Fail, Ok, Ok) => Restart,
         (Fail, Ok, NotAvailable) => Restart,
         (Fail, NotAvailable, Ok) => Restart,
-        (Fail, NotAvailable, Fail) => InfraRebuild,
         (Fail, NotAvailable, NotAvailable) => Unknown,
         (NotAvailable, _, _) => Unknown,
     }

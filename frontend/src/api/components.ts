@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from './client';
 
-interface CommandExecution {
+export interface CommandExecution {
   id: string;
   component_id: string;
   command_type: string;

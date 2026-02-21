@@ -3,6 +3,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 /// Command execution mode.
+#[allow(dead_code)]
 pub enum CommandMode {
     /// Sync: agent waits for result (checks, diagnostics).
     Sync { timeout: Duration },
@@ -12,6 +13,7 @@ pub enum CommandMode {
 
 /// Result of a synchronous command execution.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ExecResult {
     pub exit_code: i32,
     pub stdout: String,
@@ -84,6 +86,7 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
 /// 6. Grandchild: exec() the command
 ///
 /// Result: grandchild is reparented to init/PID 1
+#[allow(dead_code)]
 pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
     // Use a pipe to communicate the grandchild PID back (using libc directly)
     let mut pipe_fds = [0i32; 2];
@@ -143,9 +146,7 @@ pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
                     }
 
                     // Redirect stdin/stdout/stderr to /dev/null
-                    let devnull = unsafe {
-                        libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDWR)
-                    };
+                    let devnull = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDWR) };
                     if devnull >= 0 {
                         unsafe {
                             libc::dup2(devnull, 0); // stdin
@@ -171,6 +172,7 @@ pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
 mod exec {
     use std::ffi::CString;
 
+    #[allow(dead_code)]
     pub fn execvp(program: &str, args: &[&str]) -> std::io::Error {
         let program = CString::new(program).unwrap();
         let args: Vec<CString> = args.iter().map(|a| CString::new(*a).unwrap()).collect();

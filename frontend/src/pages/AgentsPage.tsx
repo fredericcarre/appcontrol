@@ -1,4 +1,4 @@
-import { useAgents } from '@/api/reports';
+import { useAgents, type Agent } from '@/api/reports';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -15,7 +15,7 @@ export function AgentsPage() {
     );
   }
 
-  const agentList = (agents as Array<Record<string, unknown>>) || [];
+  const agentList: Agent[] = agents || [];
 
   return (
     <div className="space-y-6">
@@ -41,7 +41,7 @@ export function AgentsPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                agentList.map((agent: Record<string, unknown>) => (
+                agentList.map((agent) => (
                   <TableRow key={agent.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">

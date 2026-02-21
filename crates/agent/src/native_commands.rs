@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use sysinfo::System;
 
 /// Built-in native commands that don't require external scripts.
-
+#[allow(dead_code)]
 pub fn disk_space(path: &str) -> Value {
     let disks = sysinfo::Disks::new_with_refreshed_list();
 
@@ -22,6 +22,7 @@ pub fn disk_space(path: &str) -> Value {
     json!({"error": "path not found"})
 }
 
+#[allow(dead_code)]
 pub fn memory() -> Value {
     let mut sys = System::new();
     sys.refresh_memory();
@@ -36,6 +37,7 @@ pub fn memory() -> Value {
     })
 }
 
+#[allow(dead_code)]
 pub fn cpu() -> Value {
     let mut sys = System::new();
     sys.refresh_cpu_usage();
@@ -63,6 +65,7 @@ pub fn cpu() -> Value {
     })
 }
 
+#[allow(dead_code)]
 pub fn process_check(name: &str) -> Value {
     let mut sys = System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
@@ -93,6 +96,7 @@ pub fn process_check(name: &str) -> Value {
     })
 }
 
+#[allow(dead_code)]
 pub fn tcp_port(port: u16) -> Value {
     use std::net::TcpStream;
     let addr = format!("127.0.0.1:{}", port);
@@ -107,6 +111,7 @@ pub fn tcp_port(port: u16) -> Value {
     })
 }
 
+#[allow(dead_code)]
 pub fn http_check(url: &str) -> Value {
     json!({
         "url": url,
@@ -114,6 +119,7 @@ pub fn http_check(url: &str) -> Value {
     })
 }
 
+#[allow(dead_code)]
 pub fn load_average() -> Value {
     let loadavg = System::load_average();
     json!({

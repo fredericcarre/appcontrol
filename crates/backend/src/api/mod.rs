@@ -11,7 +11,7 @@ pub mod teams;
 
 use axum::{
     middleware as axum_middleware,
-    routing::{delete, get, post, put},
+    routing::{delete, get, post},
     Router,
 };
 use std::sync::Arc;

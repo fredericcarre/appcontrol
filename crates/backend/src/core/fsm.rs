@@ -87,6 +87,7 @@ pub async fn transition_component(
 }
 
 /// Process an incoming check result and update state if needed.
+#[allow(dead_code)]
 pub async fn process_check_result(
     state: &Arc<AppState>,
     component_id: Uuid,

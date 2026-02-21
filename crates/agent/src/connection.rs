@@ -69,7 +69,7 @@ impl ConnectionManager {
 
         let msg = serde_json::to_string(&register)?;
         write
-            .send(tokio_tungstenite::tungstenite::Message::Text(msg.into()))
+            .send(tokio_tungstenite::tungstenite::Message::Text(msg))
             .await?;
 
         // Replay buffered messages
@@ -77,7 +77,7 @@ impl ConnectionManager {
         for msg in buffered {
             let json = serde_json::to_string(&msg)?;
             write
-                .send(tokio_tungstenite::tungstenite::Message::Text(json.into()))
+                .send(tokio_tungstenite::tungstenite::Message::Text(json))
                 .await?;
         }
 
@@ -88,7 +88,7 @@ impl ConnectionManager {
                 // Messages from scheduler to send
                 Some(agent_msg) = msg_rx.recv() => {
                     let json = serde_json::to_string(&agent_msg)?;
-                    write.send(tokio_tungstenite::tungstenite::Message::Text(json.into())).await?;
+                    write.send(tokio_tungstenite::tungstenite::Message::Text(json)).await?;
                 }
                 // Messages from backend
                 Some(ws_msg) = read.next() => {

@@ -6,6 +6,7 @@ use uuid::Uuid;
 use appcontrol_common::WsEvent;
 
 /// A connection entry in the hub.
+#[allow(dead_code)]
 struct Connection {
     user_id: Uuid,
     sender: mpsc::UnboundedSender<String>,

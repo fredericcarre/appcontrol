@@ -13,6 +13,7 @@ pub struct Claims {
     pub iss: String,
 }
 
+#[allow(dead_code)]
 pub fn create_token(
     user_id: Uuid,
     org_id: Uuid,

@@ -42,7 +42,7 @@ pub async fn ws_handler(
         .into_response()
 }
 
-async fn handle_socket(mut socket: ws::WebSocket, state: Arc<AppState>, user_id: uuid::Uuid) {
+async fn handle_socket(socket: ws::WebSocket, state: Arc<AppState>, user_id: uuid::Uuid) {
     use futures_util::{SinkExt, StreamExt};
 
     let (mut sender, mut receiver) = socket.split();
@@ -55,7 +55,7 @@ async fn handle_socket(mut socket: ws::WebSocket, state: Arc<AppState>, user_id:
     // Forward messages from hub to client
     let send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if sender.send(ws::Message::Text(msg.into())).await.is_err() {
+            if sender.send(ws::Message::Text(msg)).await.is_err() {
                 break;
             }
         }

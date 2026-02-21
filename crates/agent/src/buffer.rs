@@ -1,5 +1,6 @@
 use appcontrol_common::AgentMessage;
 
+#[allow(dead_code)]
 const MAX_BUFFER_SIZE: u64 = 100 * 1024 * 1024; // 100MB
 
 /// Offline buffer using sled embedded database.
@@ -17,6 +18,7 @@ impl OfflineBuffer {
     }
 
     /// Store a message in the buffer (for offline mode).
+    #[allow(dead_code)]
     pub fn push(&self, msg: &AgentMessage) -> anyhow::Result<()> {
         let key = chrono::Utc::now()
             .timestamp_nanos_opt()
@@ -59,10 +61,12 @@ impl OfflineBuffer {
     }
 
     /// Get the number of buffered messages.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.db.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.db.is_empty()
     }

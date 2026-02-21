@@ -14,6 +14,7 @@ use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CreateComponentRequest {
     pub name: String,
@@ -39,6 +40,7 @@ pub struct CreateComponentRequest {
     pub tags: Option<Value>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct UpdateComponentRequest {
     pub name: Option<String>,
@@ -196,7 +198,7 @@ pub async fn create_component(
     .bind(app_id)
     .bind(&body.name)
     .bind(&body.component_type)
-    .bind(&body.agent_id)
+    .bind(body.agent_id)
     .bind(&body.check_cmd)
     .bind(&body.start_cmd)
     .bind(&body.stop_cmd)
@@ -477,13 +479,14 @@ pub async fn create_dependency(
     }
 
     // Check for cycles before inserting
-    if let Err(_) = crate::core::dag::validate_no_cycle(
+    if crate::core::dag::validate_no_cycle(
         &state.db,
         app_id,
         body.from_component_id,
         body.to_component_id,
     )
     .await
+    .is_err()
     {
         return Err(StatusCode::CONFLICT);
     }

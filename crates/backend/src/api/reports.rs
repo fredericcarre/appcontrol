@@ -13,6 +13,7 @@ use crate::core::permissions::effective_permission;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ReportQuery {
     pub from: Option<chrono::DateTime<chrono::Utc>>,

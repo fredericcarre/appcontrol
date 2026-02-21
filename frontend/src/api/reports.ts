@@ -64,11 +64,19 @@ export function useComplianceReport(appId: string) {
   });
 }
 
+export interface Agent {
+  id: string;
+  hostname: string;
+  status: string;
+  version: string;
+  last_heartbeat: string;
+}
+
 export function useAgents() {
   return useQuery({
     queryKey: ['agents'],
     queryFn: async () => {
-      const { data } = await client.get('/agents');
+      const { data } = await client.get<Agent[]>('/agents');
       return data;
     },
   });

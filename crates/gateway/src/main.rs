@@ -21,7 +21,7 @@ struct Args {
 }
 
 #[derive(Debug, serde::Deserialize, Clone)]
-struct GatewayConfig {
+pub struct GatewayConfig {
     gateway: GatewaySection,
     backend: BackendSection,
 }
@@ -125,7 +125,7 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
     // Forward backend messages to agent
     let send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if sender.send(ws::Message::Text(msg.into())).await.is_err() {
+            if sender.send(ws::Message::Text(msg)).await.is_err() {
                 break;
             }
         }
@@ -148,7 +148,7 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
                                 .registry
                                 .register(conn_id, *agent_id, hostname.clone());
                         }
-                        appcontrol_common::AgentMessage::Heartbeat { agent_id, .. } => {
+                        appcontrol_common::AgentMessage::Heartbeat { agent_id: _, .. } => {
                             state_clone.registry.heartbeat(conn_id);
                         }
                         _ => {}
@@ -188,7 +188,7 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
         tokio::select! {
             // Messages from agents to forward to backend
             Some(msg) = backend_rx.recv() => {
-                write.send(tokio_tungstenite::tungstenite::Message::Text(msg.into())).await?;
+                write.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await?;
             }
             // Messages from backend to forward to agents
             Some(ws_msg) = read.next() => {
