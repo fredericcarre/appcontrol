@@ -98,29 +98,7 @@ cargo audit
 cd frontend && npm audit && cd ..
 ```
 
-### 5. Build Docker images
-
-```bash
-# Set version tag
-VERSION=X.Y.Z
-
-# Build all images
-docker build -t appcontrol/backend:$VERSION -f docker/Dockerfile.backend .
-docker build -t appcontrol/frontend:$VERSION -f docker/Dockerfile.frontend .
-docker build -t appcontrol/agent:$VERSION -f docker/Dockerfile.agent .
-
-# Also tag as latest
-docker tag appcontrol/backend:$VERSION appcontrol/backend:latest
-docker tag appcontrol/frontend:$VERSION appcontrol/frontend:latest
-docker tag appcontrol/agent:$VERSION appcontrol/agent:latest
-
-# Test the full stack with production images
-docker compose -f docker/docker-compose.yaml up -d
-curl http://localhost:3000/health
-docker compose -f docker/docker-compose.yaml down
-```
-
-### 6. Create PR and merge
+### 5. Create PR and merge
 
 ```bash
 git add -A
@@ -137,8 +115,6 @@ gh pr create --title "Release vX.Y.Z" --body "$(cat <<'EOF'
 - [ ] Versions bumped (Cargo.toml, package.json, Chart.yaml)
 - [ ] CHANGELOG.md updated
 - [ ] All CI checks pass
-- [ ] Docker images build successfully
-- [ ] Full stack tested with docker compose
 EOF
 )"
 ```
@@ -150,7 +126,7 @@ git checkout main
 git pull origin main
 ```
 
-### 7. Tag and GitHub Release
+### 6. Tag — everything else is automated
 
 ```bash
 VERSION=X.Y.Z
@@ -158,52 +134,37 @@ VERSION=X.Y.Z
 # Create annotated tag
 git tag -a "v$VERSION" -m "Release v$VERSION"
 git push origin "v$VERSION"
-
-# Create GitHub release
-gh release create "v$VERSION" \
-  --title "AppControl v$VERSION" \
-  --notes-file CHANGELOG.md \
-  --latest
 ```
 
-### 8. Push Docker images to registry
+Pushing the tag triggers [`.github/workflows/release.yaml`](.github/workflows/release.yaml), which automatically:
+
+1. **Builds Rust binaries** for 4 targets (linux-amd64, linux-arm64, darwin-amd64, darwin-arm64)
+2. **Builds and pushes Docker images** to `ghcr.io/fredericcarre/appcontrol-{backend,frontend,gateway,agent}` tagged `:VERSION` and `:latest`
+3. **Packages the Helm chart** as an OCI artifact
+4. **Packages examples** as `examples.tar.gz`
+5. **Creates a GitHub Release** with all binaries, compose file, examples, Helm chart, and SHA-256 checksums
+
+**Release assets generated:**
+
+| Asset | Description |
+|-------|-------------|
+| `appctl-{os}-{arch}` | CLI binary for each platform |
+| `appcontrol-agent-{os}-{arch}` | Agent binary for native install |
+| `appcontrol-backend-{os}-{arch}` | Backend binary |
+| `appcontrol-gateway-{os}-{arch}` | Gateway binary |
+| `docker-compose.release.yaml` | Compose file for running from pre-built images |
+| `examples.tar.gz` | Example application maps |
+| `appcontrol-*.tgz` | Helm chart |
+| `checksums-sha256.txt` | SHA-256 checksums for verification |
+
+Monitor the release:
 
 ```bash
-VERSION=X.Y.Z
-REGISTRY=ghcr.io/fredericcarre  # or your registry
-
-# Login
-echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
-
-# Tag for registry
-docker tag appcontrol/backend:$VERSION $REGISTRY/appcontrol-backend:$VERSION
-docker tag appcontrol/frontend:$VERSION $REGISTRY/appcontrol-frontend:$VERSION
-docker tag appcontrol/agent:$VERSION $REGISTRY/appcontrol-agent:$VERSION
-
-docker tag appcontrol/backend:$VERSION $REGISTRY/appcontrol-backend:latest
-docker tag appcontrol/frontend:$VERSION $REGISTRY/appcontrol-frontend:latest
-docker tag appcontrol/agent:$VERSION $REGISTRY/appcontrol-agent:latest
-
-# Push
-docker push $REGISTRY/appcontrol-backend:$VERSION
-docker push $REGISTRY/appcontrol-backend:latest
-docker push $REGISTRY/appcontrol-frontend:$VERSION
-docker push $REGISTRY/appcontrol-frontend:latest
-docker push $REGISTRY/appcontrol-agent:$VERSION
-docker push $REGISTRY/appcontrol-agent:latest
+gh run list --workflow release.yaml --limit 1
+gh run watch <run-id>
 ```
 
-### 9. Helm chart release (optional)
-
-```bash
-# Package the chart
-helm package helm/appcontrol --version $VERSION --app-version $VERSION
-
-# Push to OCI registry
-helm push appcontrol-$VERSION.tgz oci://$REGISTRY/charts
-```
-
-### 10. Post-release
+### 7. Post-release
 
 ```bash
 # Bump to next dev version
@@ -212,20 +173,6 @@ git checkout -b chore/post-release-vX.Y.Z
 # Update package.json to X.Y.(Z+1)
 git commit -am "chore: bump to next dev version"
 gh pr create --title "chore: post-release version bump"
-```
-
-## CI-Driven Release (Future)
-
-The release process can be fully automated via GitHub Actions:
-
-```yaml
-# .github/workflows/release.yaml (planned)
-on:
-  push:
-    tags: ["v*"]
-jobs:
-  release:
-    # Build images → push to registry → create GH release → push Helm chart
 ```
 
 ## Hotfix Process

@@ -1,0 +1,281 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+  REGISTRY: ghcr.io/fredericcarre
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build Rust binaries for each target
+  # ---------------------------------------------------------------------------
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            suffix: linux-amd64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            suffix: linux-arm64
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            suffix: darwin-amd64
+          - target: aarch64-apple-darwin
+            os: macos-14  # Apple Silicon runner
+            suffix: darwin-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-release-
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --bin appcontrol-gateway --bin appcontrol-agent --bin appctl
+
+      - name: Package binaries
+        run: |
+          mkdir -p dist
+          for bin in appcontrol-backend appcontrol-gateway appcontrol-agent appctl; do
+            cp target/${{ matrix.target }}/release/$bin dist/${bin}-${{ matrix.suffix }}
+            chmod +x dist/${bin}-${{ matrix.suffix }}
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.suffix }}
+          path: dist/
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Build and push Docker images to GHCR
+  # ---------------------------------------------------------------------------
+  build-docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    needs: []  # runs in parallel with binaries
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/appcontrol-backend:${{ steps.version.outputs.VERSION }}
+            ${{ env.REGISTRY }}/appcontrol-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/appcontrol-frontend:${{ steps.version.outputs.VERSION }}
+            ${{ env.REGISTRY }}/appcontrol-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push agent
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.agent
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/appcontrol-agent:${{ steps.version.outputs.VERSION }}
+            ${{ env.REGISTRY }}/appcontrol-agent:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push gateway
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.gateway
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/appcontrol-gateway:${{ steps.version.outputs.VERSION }}
+            ${{ env.REGISTRY }}/appcontrol-gateway:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Package Helm chart
+  # ---------------------------------------------------------------------------
+  helm-package:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package chart
+        run: helm package helm/appcontrol --version ${{ steps.version.outputs.VERSION }} --app-version ${{ steps.version.outputs.VERSION }} --destination dist/
+
+      - name: Upload chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart
+          path: dist/*.tgz
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Create GitHub Release with all assets
+  # ---------------------------------------------------------------------------
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-binaries, build-docker, helm-package]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          pattern: binaries-*
+          merge-multiple: true
+
+      - name: Download Helm chart
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-chart
+          path: artifacts/
+
+      - name: Package examples
+        run: tar czf artifacts/examples.tar.gz examples/
+
+      - name: Copy release compose file
+        run: cp docker/docker-compose.release.yaml artifacts/docker-compose.release.yaml
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum * > checksums-sha256.txt
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          cat > /tmp/release-notes.md <<'NOTES_EOF'
+          ## AppControl ${{ github.ref_name }}
+
+          ### Installation
+
+          **Docker Compose (recommended):**
+          ```bash
+          # Download compose file
+          gh release download ${{ github.ref_name }} --repo ${{ github.repository }} --pattern 'docker-compose.release.yaml'
+
+          # Start the full stack
+          APPCONTROL_VERSION=${{ steps.version.outputs.VERSION }} docker compose -f docker-compose.release.yaml up -d
+          ```
+
+          **CLI binary:**
+          ```bash
+          # Linux (amd64)
+          gh release download ${{ github.ref_name }} --repo ${{ github.repository }} --pattern 'appctl-linux-amd64' --dir /usr/local/bin
+          chmod +x /usr/local/bin/appctl-linux-amd64 && mv /usr/local/bin/appctl-linux-amd64 /usr/local/bin/appctl
+
+          # macOS (Apple Silicon)
+          gh release download ${{ github.ref_name }} --repo ${{ github.repository }} --pattern 'appctl-darwin-arm64' --dir /usr/local/bin
+          chmod +x /usr/local/bin/appctl-darwin-arm64 && mv /usr/local/bin/appctl-darwin-arm64 /usr/local/bin/appctl
+          ```
+
+          **Docker images:**
+          ```bash
+          docker pull ghcr.io/fredericcarre/appcontrol-backend:${{ steps.version.outputs.VERSION }}
+          docker pull ghcr.io/fredericcarre/appcontrol-frontend:${{ steps.version.outputs.VERSION }}
+          docker pull ghcr.io/fredericcarre/appcontrol-gateway:${{ steps.version.outputs.VERSION }}
+          docker pull ghcr.io/fredericcarre/appcontrol-agent:${{ steps.version.outputs.VERSION }}
+          ```
+
+          ### Assets
+
+          | Asset | Description |
+          |-------|-------------|
+          | `appctl-{os}-{arch}` | CLI binary |
+          | `appcontrol-agent-{os}-{arch}` | Agent binary (run natively without Docker) |
+          | `appcontrol-backend-{os}-{arch}` | Backend API server binary |
+          | `appcontrol-gateway-{os}-{arch}` | Gateway binary |
+          | `docker-compose.release.yaml` | Docker Compose for running from images |
+          | `examples.tar.gz` | Example application maps |
+          | `appcontrol-*.tgz` | Helm chart |
+          | `checksums-sha256.txt` | SHA-256 checksums for all assets |
+
+          **Full changelog:** https://github.com/${{ github.repository }}/compare/.../${{ github.ref_name }}
+          NOTES_EOF
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --title "AppControl ${{ github.ref_name }}" \
+            --notes-file /tmp/release-notes.md \
+            --latest \
+            artifacts/*
