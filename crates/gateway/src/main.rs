@@ -4,6 +4,7 @@ mod router;
 
 use axum::{
     extract::{ws, State},
+    http::HeaderMap,
     routing::get,
     Router,
 };
@@ -14,7 +15,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use appcontrol_common::{BackendMessage, GatewayEnvelope, GatewayMessage};
 use rate_limit::AgentRateLimiter;
 use registry::AgentRegistry;
-use router::MessageRouter;
+use router::{MessageRouter, AGENT_CHANNEL_CAPACITY, CHANNEL_CAPACITY};
 
 #[derive(Parser)]
 #[command(name = "appcontrol-gateway", about = "AppControl Gateway")]
@@ -180,13 +181,29 @@ async fn health_handler(State(state): State<Arc<GatewayState>>) -> String {
 }
 
 async fn agent_ws_handler(
+    headers: HeaderMap,
     ws: ws::WebSocketUpgrade,
     State(state): State<Arc<GatewayState>>,
 ) -> impl axum::response::IntoResponse {
-    ws.on_upgrade(move |socket| handle_agent_connection(socket, state))
+    // Extract mTLS fingerprint from proxy header (set by nginx/envoy TLS termination).
+    // When a TLS-terminating proxy (nginx, envoy, HAProxy) handles mTLS, it can
+    // pass the client certificate fingerprint via a trusted header. This allows the
+    // gateway to verify agent identity even when TLS is terminated upstream.
+    // If the header is not present, we fall back to the fingerprint the agent sends
+    // in its Register message.
+    let cert_fingerprint = headers
+        .get("x-client-cert-fingerprint")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    ws.on_upgrade(move |socket| handle_agent_connection(socket, state, cert_fingerprint))
 }
 
-async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>) {
+async fn handle_agent_connection(
+    socket: ws::WebSocket,
+    state: Arc<GatewayState>,
+    proxy_cert_fingerprint: Option<String>,
+) {
     use futures_util::{SinkExt, StreamExt};
 
     let (mut sender, mut receiver) = socket.split();
@@ -195,8 +212,8 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
     let agent_id_cell: Arc<std::sync::Mutex<Option<uuid::Uuid>>> =
         Arc::new(std::sync::Mutex::new(None));
 
-    // Channel for sending messages FROM backend TO this agent
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // Channel for sending messages FROM backend TO this agent (bounded)
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(AGENT_CHANNEL_CAPACITY);
 
     // Forward backend messages to agent WebSocket
     let send_task = tokio::spawn(async move {
@@ -211,6 +228,7 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
     let state_clone = state.clone();
     let agent_id_clone = agent_id_cell.clone();
     let tx_clone = tx.clone();
+    let proxy_fp = proxy_cert_fingerprint.clone();
     let recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if let ws::Message::Text(text) = msg {
@@ -236,12 +254,27 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
                             cert_fingerprint,
                             ..
                         } => {
+                            // Use the proxy-provided cert fingerprint if available (trusted
+                            // header from TLS-terminating proxy), otherwise fall back to
+                            // the fingerprint the agent self-reports in the Register message.
+                            // The proxy fingerprint is more trustworthy because it comes from
+                            // actual mTLS verification performed by the infrastructure layer.
+                            let effective_fingerprint = if proxy_fp.is_some() {
+                                tracing::debug!(
+                                    agent_id = %agent_id,
+                                    "Using proxy-provided mTLS cert fingerprint (X-Client-Cert-Fingerprint header)"
+                                );
+                                proxy_fp.clone()
+                            } else {
+                                cert_fingerprint.clone()
+                            };
+
                             // Register in our local registry (with cert fingerprint for re-announce)
                             state_clone.registry.register(
                                 conn_id,
                                 *agent_id,
                                 hostname.clone(),
-                                cert_fingerprint.clone(),
+                                effective_fingerprint.clone(),
                             );
 
                             // Register the agent's sender in the router (keyed by agent_id)
@@ -250,13 +283,13 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
                             // Remember the agent_id for cleanup
                             *agent_id_clone.lock().unwrap() = Some(*agent_id);
 
-                            // Forward agent's cert fingerprint from Register message to backend.
-                            // The agent includes its own certificate fingerprint in the Register
-                            // message when mTLS is configured. This binds agent identity to cert.
+                            // Forward agent's cert fingerprint to backend.
+                            // The effective fingerprint may come from either the proxy header
+                            // (mTLS termination) or the agent's self-reported value.
                             let notification = GatewayMessage::AgentConnected {
                                 agent_id: *agent_id,
                                 hostname: hostname.clone(),
-                                cert_fingerprint: cert_fingerprint.clone(),
+                                cert_fingerprint: effective_fingerprint,
                                 cert_cn: Some(hostname.clone()),
                             };
                             if let Ok(json) = serde_json::to_string(&notification) {
@@ -341,8 +374,8 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
         }
     }
 
-    // Set up the backend sender channel so the router can send messages
-    let (backend_tx, mut backend_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // Set up the backend sender channel so the router can send messages (bounded)
+    let (backend_tx, mut backend_rx) = tokio::sync::mpsc::channel::<String>(CHANNEL_CAPACITY);
     state.router.set_backend_sender(backend_tx);
 
     loop {

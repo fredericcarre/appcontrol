@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -47,10 +48,10 @@ pub async fn list_variables(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let variables = sqlx::query_as::<_, VariableRow>(
@@ -59,8 +60,7 @@ pub async fn list_variables(
     )
     .bind(app_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     // Mask secret values for users below Edit level
     let variables: Vec<Value> = variables
@@ -101,11 +101,15 @@ pub async fn create_variable(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Json(body): Json<CreateVariableRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
+
+    // Input validation
+    validate_length("name", &body.name, 1, 200)?;
+    validate_optional_length("description", &body.description, 2000)?;
 
     let var_id = Uuid::new_v4();
     log_action(
@@ -116,8 +120,7 @@ pub async fn create_variable(
         var_id,
         json!({"name": body.name, "app_id": app_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let variable = sqlx::query_as::<_, VariableRow>(
         r#"
@@ -133,8 +136,7 @@ pub async fn create_variable(
     .bind(&body.description)
     .bind(body.is_secret.unwrap_or(false))
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok((StatusCode::CREATED, Json(json!(variable))))
 }
@@ -145,11 +147,14 @@ pub async fn update_variable(
     Extension(user): Extension<AuthUser>,
     Path((app_id, var_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<UpdateVariableRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
+
+    // Input validation
+    validate_optional_length("description", &body.description, 2000)?;
 
     log_action(
         &state.db,
@@ -159,8 +164,7 @@ pub async fn update_variable(
         var_id,
         json!({"app_id": app_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let variable = sqlx::query_as::<_, VariableRow>(
         r#"
@@ -179,9 +183,8 @@ pub async fn update_variable(
     .bind(&body.description)
     .bind(body.is_secret)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_not_found()?;
 
     Ok(Json(json!(variable)))
 }
@@ -191,10 +194,10 @@ pub async fn delete_variable(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path((app_id, var_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -205,18 +208,16 @@ pub async fn delete_variable(
         var_id,
         json!({"app_id": app_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result = sqlx::query("DELETE FROM app_variables WHERE id = $1 AND application_id = $2")
         .bind(var_id)
         .bind(app_id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::NotFound);
     }
 
     Ok(StatusCode::NO_CONTENT)

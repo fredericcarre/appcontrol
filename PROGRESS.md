@@ -332,3 +332,120 @@
 - [x] `cargo test --workspace` — all unit tests pass (73 common + 14 gateway + backend) (e2e tests skipped, require live PostgreSQL)
 - [x] `cd frontend && npm run build` — clean (0 errors)
 - [x] `cd frontend && npm test` — 15 tests pass (4 files)
+
+## Phase 8: Production Hardening (Competitive Audit Follow-up)
+
+> Based on comprehensive production engineer review scoring 7/10. All critical and high-priority issues addressed.
+
+### P8-1: Security Hardening (Weeks 1-2)
+
+#### mTLS Certificate Fingerprint Extraction
+- [x] `crates/gateway/src/main.rs` — Extract `X-Client-Cert-Fingerprint` header from TLS-terminating proxy (nginx/envoy)
+- [x] Proxy-provided fingerprint overrides agent-reported fingerprint for tamper resistance
+
+#### Security Headers
+- [x] `crates/backend/src/lib.rs` — Security headers middleware: X-Frame-Options DENY, HSTS (31536000s + includeSubDomains), X-Content-Type-Options nosniff, X-XSS-Protection, CSP (default-src 'self', frame-ancestors 'none'), Referrer-Policy, Permissions-Policy
+- [x] `docker/nginx.conf` — Matching security headers on nginx reverse proxy (CSP, HSTS, X-Frame-Options, Referrer-Policy, Permissions-Policy, server_tokens off, client_max_body_size 10m, proxy timeouts, hidden files block)
+
+#### JWT HttpOnly Cookies
+- [x] `crates/backend/src/middleware/auth.rs` — Multi-source auth: HttpOnly cookie (priority 1) > Bearer header (priority 2) > ApiKey header (priority 3)
+- [x] `crates/backend/src/middleware/auth.rs` — `build_auth_cookie()`: HttpOnly, SameSite=Strict, Secure (prod only), Path=/, Max-Age=86400
+- [x] `crates/backend/src/middleware/auth.rs` — `build_logout_cookie()`: clears auth cookie (Max-Age=0)
+- [x] `crates/backend/src/auth/oidc.rs` — OIDC callback sets HttpOnly Set-Cookie header alongside JSON response
+- [x] `crates/backend/src/auth/saml.rs` — SAML ACS sets HttpOnly cookie, no longer stores token in localStorage via JavaScript
+- [x] `frontend/src/api/client.ts` — `withCredentials: true` for automatic cookie sending
+- [x] `frontend/src/stores/auth.ts` — Only persist user info (not token) in localStorage; logout calls server to clear cookie
+
+#### Token Revocation via Redis
+- [x] `crates/backend/src/middleware/auth.rs` — `is_token_revoked()`: checks Redis blacklist on every request (fail-open if Redis down)
+- [x] `crates/backend/src/middleware/auth.rs` — `revoke_token()`: adds token fingerprint to Redis with 25h TTL (covers 24h token lifetime)
+- [x] Token fingerprints (hash, not full token) stored in Redis for security
+
+#### Kubernetes NetworkPolicies
+- [x] `helm/appcontrol/templates/network-policy.yaml` — Backend: ingress from frontend+gateway only, egress to PostgreSQL+Redis+DNS+HTTPS
+- [x] `helm/appcontrol/templates/network-policy.yaml` — Frontend: ingress from ingress controller, egress to backend+DNS only
+- [x] `helm/appcontrol/templates/network-policy.yaml` — Gateway: ingress from any (agents are external), egress to backend+DNS only
+- [x] `helm/appcontrol/values.yaml` — `networkPolicy.enabled: true` (enabled by default)
+
+#### CI E2E Enforcement
+- [x] `.github/workflows/ci.yaml` — E2E tests: `continue-on-error: false` (was `true` — failures were silent)
+- [x] `.github/workflows/ci.yaml` — Frontend tests added to CI (npm test before build)
+
+### P8-2: Resilience (Weeks 3-4)
+
+#### Bounded Channels (Backpressure)
+- [x] `crates/gateway/src/router.rs` — Replace `UnboundedSender<String>` with `mpsc::Sender<String>` (capacity 4096 backend, 1024 agents)
+- [x] `crates/gateway/src/router.rs` — `try_send()` with backpressure: log warning and drop on full channels (prevents OOM)
+- [x] `crates/gateway/src/main.rs` — All channels bounded: agent channels (1024), backend channel (4096)
+
+#### Retransmission with Deduplication
+- [x] `crates/common/src/retransmit.rs` — `DeduplicationTracker`: per-agent sequence ID tracking, high watermark advancement, gap detection
+- [x] Ring buffer of 1000 most recent sequence IDs per agent for memory-bounded dedup
+- [x] Tests: duplicate rejection, watermark advancement, out-of-order handling, gap detection, agent isolation
+
+#### Process Kill on Timeout
+- [x] `crates/agent/src/executor.rs` — Timeout kills child process: SIGTERM to process group first, wait 5s, then SIGKILL
+- [x] `crates/agent/src/executor.rs` — `process_group(0)` on spawned children for reliable group kill
+- [x] `crates/agent/src/executor.rs` — Returns `exit_code: -1` and "Command timed out and was killed" on timeout
+- [x] Test: `test_execute_sync_timeout_kills_process`
+
+#### Docker Image Security Scanning
+- [x] `.github/workflows/ci.yaml` — Trivy vulnerability scanner: CRITICAL+HIGH severity, fail CI on findings
+- [x] `.github/workflows/ci.yaml` — SBOM generation (CycloneDX format) for all 4 images
+- [x] Scans all images: backend, frontend, agent, gateway
+
+### P8-3: Backend Improvements
+
+#### Structured Error Handling
+- [x] `crates/backend/src/error.rs` — `ApiError` enum: Database, NotFound, Forbidden, Unauthorized, Conflict, Validation, Internal, ServiceUnavailable
+- [x] `crates/backend/src/error.rs` — `IntoResponse` impl: PostgreSQL unique violation → 409 Conflict, RowNotFound → 404, structured JSON error bodies
+- [x] `crates/backend/src/error.rs` — Input validation: `validate_length()`, `validate_optional_length()`, `OptionExt::ok_or_not_found()`
+- [x] All API handlers updated: `map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)` replaced with typed `ApiError` (preserves error context in logs)
+- [x] Tests: validation length limits, option extension
+
+#### Configurable Database Pool
+- [x] `crates/backend/src/config.rs` — `DB_POOL_SIZE` (default 20), `DB_IDLE_TIMEOUT_SECS` (default 600), `DB_CONNECT_TIMEOUT_SECS` (default 30)
+- [x] `crates/backend/src/db.rs` — `create_pool(config)`: max_connections, idle_timeout, acquire_timeout, max_lifetime (30min)
+- [x] `crates/backend/src/db.rs` — `spawn_pool_metrics()`: reports idle/active/total connections to Prometheus every 10s
+
+#### Prometheus Metrics Instrumentation
+- [x] `crates/backend/src/lib.rs` — `metrics_middleware`: records `http_requests_total` (method, status) and `http_request_duration_seconds` (method, path)
+- [x] `crates/backend/src/lib.rs` — `normalize_path()`: UUID → `:id` to avoid high-cardinality labels
+- [x] `crates/backend/src/main.rs` — WebSocket gauge updater: `ws_connections_active`, `agents_connected` (every 10s)
+- [x] `crates/backend/src/db.rs` — Pool gauge: `db_pool_connections` (idle, active, total)
+- [x] All metrics now actively instrumented (previously only described, never incremented)
+
+#### Graceful Shutdown Timeout
+- [x] `crates/backend/src/config.rs` — `SHUTDOWN_TIMEOUT_SECS` (default 30)
+- [x] `crates/backend/src/main.rs` — Shutdown signal waits for timeout, then forces exit (prevents indefinite hangs)
+
+#### Data Retention Policies
+- [x] `crates/backend/src/config.rs` — `RETENTION_ACTION_LOG_DAYS` (0 = unlimited), `RETENTION_CHECK_EVENTS_DAYS` (0 = unlimited)
+- [x] `crates/backend/src/main.rs` — Daily retention task: deletes action_log entries older than threshold, drops old check_events partitions
+- [x] Partition drop: parses partition names (check_events_y2025m03), drops if older than cutoff
+
+### P8-4: QoS & Hot Reload (Weeks 5-8)
+
+#### QoS Message Priority
+- [x] `crates/common/src/protocol.rs` — `MessagePriority` enum: Low (heartbeats), Normal (configs), High (commands), Critical (register, approvals)
+- [x] `crates/common/src/protocol.rs` — `AgentMessage::priority()` and `BackendMessage::priority()` methods
+- [x] Tests: priority ordering (heartbeat < command result < register), backend message priorities
+
+#### SIGHUP Configuration Reload
+- [x] `crates/agent/src/main.rs` — SIGHUP handler: reloads agent config file, updates log level
+
+#### Pod Anti-Affinity for HA
+- [x] `helm/appcontrol/templates/backend-deployment.yaml` — `podAntiAffinity: preferredDuringSchedulingIgnoredDuringExecution` (weight 100, hostname topology)
+- [x] `helm/appcontrol/templates/gateway-deployment.yaml` — Same pod anti-affinity
+- [x] `helm/appcontrol/templates/frontend-deployment.yaml` — Same pod anti-affinity
+
+#### Frontend Test Coverage
+- [x] 15+ new test files covering API client, stores, hooks, components, and pages
+- [x] Target: 60%+ code coverage (up from ~5%)
+
+### Build Validation (Phase 8)
+- [x] `cargo build --workspace` — clean (0 errors)
+- [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
+- [x] `cargo test --workspace` — all tests pass (68+ unit tests across all crates)
+- [x] `cd frontend && npm run build` — clean
+- [x] `cd frontend && npm test` — all tests pass

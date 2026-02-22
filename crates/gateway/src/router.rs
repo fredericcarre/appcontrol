@@ -8,12 +8,18 @@ use uuid::Uuid;
 /// Maximum total bytes buffered when the backend is disconnected.
 const MAX_BUFFER_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
+/// Channel capacity for the backend sender (router → backend forwarder).
+pub const CHANNEL_CAPACITY: usize = 4096;
+
+/// Channel capacity for agent senders (router → agent WebSocket writer).
+pub const AGENT_CHANNEL_CAPACITY: usize = 1024;
+
 /// Routes messages between agents and backend with targeted delivery.
 pub struct MessageRouter {
     /// agent_id → sender channel (one per connected agent)
-    agent_senders: DashMap<Uuid, mpsc::UnboundedSender<String>>,
+    agent_senders: DashMap<Uuid, mpsc::Sender<String>>,
     /// Backend sender (single upstream connection, may be absent)
-    backend_sender: RwLock<Option<mpsc::UnboundedSender<String>>>,
+    backend_sender: RwLock<Option<mpsc::Sender<String>>>,
     /// Messages buffered while backend is disconnected, with total size tracking
     buffer: Mutex<MessageBuffer>,
 }
@@ -70,7 +76,7 @@ impl MessageRouter {
     }
 
     /// Register an agent's send channel, keyed by agent_id.
-    pub fn add_agent(&self, agent_id: Uuid, sender: mpsc::UnboundedSender<String>) {
+    pub fn add_agent(&self, agent_id: Uuid, sender: mpsc::Sender<String>) {
         self.agent_senders.insert(agent_id, sender);
     }
 
@@ -80,7 +86,7 @@ impl MessageRouter {
     }
 
     /// Set (or replace) the backend sender. Replays any buffered messages.
-    pub fn set_backend_sender(&self, sender: mpsc::UnboundedSender<String>) {
+    pub fn set_backend_sender(&self, sender: mpsc::Sender<String>) {
         // Replay buffered messages first
         let buffered = {
             let mut buf = self.buffer.lock().unwrap();
@@ -94,7 +100,9 @@ impl MessageRouter {
         };
 
         for msg in buffered {
-            let _ = sender.send(msg);
+            if sender.try_send(msg).is_err() {
+                tracing::warn!("Backend channel full during replay — message dropped");
+            }
         }
 
         *self.backend_sender.write().unwrap() = Some(sender);
@@ -110,11 +118,17 @@ impl MessageRouter {
     pub fn forward_to_backend(&self, message: &str) {
         let guard = self.backend_sender.read().unwrap();
         if let Some(sender) = guard.as_ref() {
-            if sender.send(message.to_string()).is_err() {
-                drop(guard);
-                // Sender failed — backend just disconnected. Buffer.
-                self.clear_backend_sender();
-                self.buffer.lock().unwrap().push(message.to_string());
+            match sender.try_send(message.to_string()) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    tracing::warn!("Backend channel full — dropping message (backpressure)");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    drop(guard);
+                    // Sender failed — backend just disconnected. Buffer.
+                    self.clear_backend_sender();
+                    self.buffer.lock().unwrap().push(message.to_string());
+                }
             }
         } else {
             drop(guard);
@@ -126,15 +140,24 @@ impl MessageRouter {
     /// Returns true if the message was delivered, false if the agent is unknown.
     pub fn forward_to_agent(&self, target_agent_id: Uuid, message: &str) -> bool {
         if let Some(sender) = self.agent_senders.get(&target_agent_id) {
-            if sender.send(message.to_string()).is_ok() {
-                return true;
+            match sender.try_send(message.to_string()) {
+                Ok(()) => return true,
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    tracing::warn!(
+                        agent_id = %target_agent_id,
+                        "Agent channel full — dropping message (backpressure)"
+                    );
+                    return false;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    tracing::warn!(
+                        agent_id = %target_agent_id,
+                        "Agent channel closed, removing stale sender"
+                    );
+                    drop(sender);
+                    self.agent_senders.remove(&target_agent_id);
+                }
             }
-            tracing::warn!(
-                agent_id = %target_agent_id,
-                "Agent channel closed, removing stale sender"
-            );
-            drop(sender);
-            self.agent_senders.remove(&target_agent_id);
         } else {
             tracing::warn!(
                 agent_id = %target_agent_id,
@@ -168,8 +191,8 @@ mod tests {
         let agent_a = Uuid::new_v4();
         let agent_b = Uuid::new_v4();
 
-        let (tx_a, mut rx_a) = mpsc::unbounded_channel();
-        let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+        let (tx_a, mut rx_a) = mpsc::channel(AGENT_CHANNEL_CAPACITY);
+        let (tx_b, mut rx_b) = mpsc::channel(AGENT_CHANNEL_CAPACITY);
         router.add_agent(agent_a, tx_a);
         router.add_agent(agent_b, tx_b);
 
@@ -209,7 +232,7 @@ mod tests {
         router.forward_to_backend("buffered1");
         router.forward_to_backend("buffered2");
 
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
         router.set_backend_sender(tx);
 
         // Buffered messages replayed
@@ -247,7 +270,7 @@ mod tests {
     fn test_remove_agent_prevents_delivery() {
         let router = MessageRouter::new();
         let agent_id = Uuid::new_v4();
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(AGENT_CHANNEL_CAPACITY);
         router.add_agent(agent_id, tx);
 
         assert!(router.forward_to_agent(agent_id, "before"));

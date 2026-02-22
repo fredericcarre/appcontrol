@@ -1,0 +1,142 @@
+{{- if .Values.networkPolicy.enabled }}
+# Backend NetworkPolicy: only allow traffic from frontend (nginx) and gateway
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-backend
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "appcontrol.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from frontend (nginx proxy)
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "appcontrol.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: frontend
+      ports:
+        - port: 3000
+          protocol: TCP
+    # Allow from gateway (WebSocket)
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "appcontrol.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: gateway
+      ports:
+        - port: 3000
+          protocol: TCP
+    # Allow Prometheus scraping
+    - from: []
+      ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    # Allow to PostgreSQL
+    - to: []
+      ports:
+        - port: 5432
+          protocol: TCP
+    # Allow to Redis
+    - to: []
+      ports:
+        - port: 6379
+          protocol: TCP
+    # Allow DNS
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow OIDC/SAML IDP connectivity (HTTPS)
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+---
+# Frontend NetworkPolicy: only allow ingress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-frontend
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "appcontrol.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from ingress controller
+    - from: []
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    # Allow to backend (API proxy)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "appcontrol.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: backend
+      ports:
+        - port: 3000
+          protocol: TCP
+    # Allow DNS
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# Gateway NetworkPolicy: allow agents (external) and backend connectivity
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-gateway
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "appcontrol.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow agents to connect (from any source — agents are external)
+    - from: []
+      ports:
+        - port: 4443
+          protocol: TCP
+  egress:
+    # Allow to backend (WebSocket upstream)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "appcontrol.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: backend
+      ports:
+        - port: 3000
+          protocol: TCP
+    # Allow DNS
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}

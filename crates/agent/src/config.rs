@@ -8,6 +8,9 @@ pub struct AgentConfig {
     pub tls: Option<TlsSection>,
     #[serde(default)]
     pub labels: HashMap<String, String>,
+    /// Log level filter string (e.g. "info", "appcontrol_agent=debug").
+    #[serde(default = "default_log_level")]
+    pub log_level: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -39,6 +42,10 @@ pub struct TlsSection {
     pub cert_file: Option<String>,
     pub key_file: Option<String>,
     pub ca_file: Option<String>,
+}
+
+fn default_log_level() -> Option<String> {
+    Some("appcontrol_agent=debug".to_string())
 }
 
 fn default_reconnect_interval() -> u64 {
@@ -75,6 +82,7 @@ impl AgentConfig {
                 },
                 tls: None,
                 labels: std::collections::HashMap::new(),
+                log_level: default_log_level(),
             }
         };
 
@@ -156,6 +164,13 @@ impl AgentConfig {
 
     pub fn buffer_path(&self) -> String {
         format!("/var/lib/appcontrol/buffer-{}", self.agent_id())
+    }
+
+    /// Returns the configured log level filter string.
+    pub fn log_level(&self) -> String {
+        self.log_level
+            .clone()
+            .unwrap_or_else(|| "appcontrol_agent=debug".to_string())
     }
 }
 

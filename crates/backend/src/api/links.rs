@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::error::{validate_length, ApiError, OptionExt};
 use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -46,18 +47,17 @@ pub async fn list_links(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(component_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+            .await?
+            .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let links = sqlx::query_as::<_, LinkRow>(
@@ -66,8 +66,7 @@ pub async fn list_links(
     )
     .bind(component_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({ "links": links })))
 }
@@ -78,19 +77,22 @@ pub async fn create_link(
     Extension(user): Extension<AuthUser>,
     Path(component_id): Path<Uuid>,
     Json(body): Json<CreateLinkRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let app_id =
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+            .await?
+            .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
+
+    // Input validation
+    validate_length("label", &body.label, 1, 200)?;
+    validate_length("url", &body.url, 1, 2000)?;
 
     let link_id = Uuid::new_v4();
     log_action(
@@ -101,8 +103,7 @@ pub async fn create_link(
         link_id,
         json!({"label": body.label, "component_id": component_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let link = sqlx::query_as::<_, LinkRow>(
         r#"
@@ -118,8 +119,7 @@ pub async fn create_link(
     .bind(body.link_type.as_deref().unwrap_or("documentation"))
     .bind(body.display_order.unwrap_or(0))
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok((StatusCode::CREATED, Json(json!(link))))
 }
@@ -130,18 +130,25 @@ pub async fn update_link(
     Extension(user): Extension<AuthUser>,
     Path((component_id, link_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<UpdateLinkRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+            .await?
+            .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
+    }
+
+    // Input validation
+    if let Some(ref label) = body.label {
+        validate_length("label", label, 1, 200)?;
+    }
+    if let Some(ref url) = body.url {
+        validate_length("url", url, 1, 2000)?;
     }
 
     log_action(
@@ -152,8 +159,7 @@ pub async fn update_link(
         link_id,
         json!({"component_id": component_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let link = sqlx::query_as::<_, LinkRow>(
         r#"
@@ -173,9 +179,8 @@ pub async fn update_link(
     .bind(&body.link_type)
     .bind(body.display_order)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_not_found()?;
 
     Ok(Json(json!(link)))
 }
@@ -185,18 +190,17 @@ pub async fn delete_link(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path((component_id, link_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+            .await?
+            .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -207,18 +211,16 @@ pub async fn delete_link(
         link_id,
         json!({"component_id": component_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result = sqlx::query("DELETE FROM component_links WHERE id = $1 AND component_id = $2")
         .bind(link_id)
         .bind(component_id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::NotFound);
     }
 
     Ok(StatusCode::NO_CONTENT)

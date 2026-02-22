@@ -3,6 +3,7 @@ pub mod auth;
 pub mod config;
 pub mod core;
 pub mod db;
+pub mod error;
 pub mod middleware;
 pub mod websocket;
 
@@ -10,6 +11,7 @@ pub mod websocket;
 mod mcp;
 
 use axum::{
+    http::{header, HeaderValue},
     routing::{get, post},
     Router,
 };
@@ -28,7 +30,7 @@ pub struct AppState {
 
 /// Build a CORS layer based on configuration.
 fn build_cors_layer(config: &config::AppConfig) -> CorsLayer {
-    use axum::http::{HeaderValue, Method};
+    use axum::http::Method;
 
     if config.cors_origins.is_empty() {
         if config.app_env == "production" {
@@ -60,6 +62,99 @@ fn build_cors_layer(config: &config::AppConfig) -> CorsLayer {
     }
 }
 
+/// Security headers middleware — CSP, HSTS, X-Frame-Options, X-Content-Type-Options.
+fn security_headers_layer() -> tower_http::set_header::SetResponseHeaderLayer<HeaderValue> {
+    tower_http::set_header::SetResponseHeaderLayer::overriding(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    )
+}
+
+/// Axum middleware that adds security headers to every response.
+async fn security_headers_middleware(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::STRICT_TRANSPORT_SECURITY,
+        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
+    headers.insert(
+        header::X_XSS_PROTECTION,
+        HeaderValue::from_static("1; mode=block"),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data:; connect-src 'self' wss: ws:; frame-ancestors 'none'",
+        ),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+    if let Ok(val) = HeaderValue::from_str("camera=(), microphone=(), geolocation=()") {
+        headers.insert(
+            axum::http::HeaderName::from_static("permissions-policy"),
+            val,
+        );
+    }
+
+    response
+}
+
+/// Axum middleware that records HTTP metrics (requests total, duration histogram).
+async fn metrics_middleware(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let start = std::time::Instant::now();
+    let method = request.method().to_string();
+    let path = request.uri().path().to_string();
+
+    let response = next.run(request).await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let status = response.status().as_u16().to_string();
+
+    metrics::counter!(
+        "http_requests_total",
+        "method" => method.clone(),
+        "status" => status
+    )
+    .increment(1);
+    metrics::histogram!(
+        "http_request_duration_seconds",
+        "method" => method,
+        "path" => normalize_path(&path)
+    )
+    .record(duration);
+
+    response
+}
+
+/// Normalize API paths to avoid high-cardinality labels in Prometheus.
+/// /api/v1/apps/550e8400-... -> /api/v1/apps/:id
+fn normalize_path(path: &str) -> String {
+    let parts: Vec<&str> = path.split('/').collect();
+    let normalized: Vec<&str> = parts
+        .iter()
+        .map(|p| {
+            if p.len() == 36 && p.chars().filter(|c| *c == '-').count() == 4 {
+                ":id"
+            } else {
+                p
+            }
+        })
+        .collect();
+    normalized.join("/")
+}
+
 pub fn create_router(state: Arc<AppState>) -> Router {
     let cors = build_cors_layer(&state.config);
 
@@ -80,7 +175,36 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .nest("/api/v1", api::api_routes(state.clone()))
         .route("/ws", get(websocket::ws_handler))
         .route("/ws/gateway", get(websocket::gateway_ws_handler))
+        .layer(axum::middleware::from_fn(metrics_middleware))
+        .layer(axum::middleware::from_fn(security_headers_middleware))
+        .layer(security_headers_layer())
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_path_replaces_uuids() {
+        assert_eq!(
+            normalize_path("/api/v1/apps/550e8400-e29b-41d4-a716-446655440000"),
+            "/api/v1/apps/:id"
+        );
+    }
+
+    #[test]
+    fn test_normalize_path_preserves_non_uuid() {
+        assert_eq!(normalize_path("/api/v1/apps"), "/api/v1/apps");
+    }
+
+    #[test]
+    fn test_normalize_path_nested_uuids() {
+        assert_eq!(
+            normalize_path("/api/v1/apps/550e8400-e29b-41d4-a716-446655440000/components"),
+            "/api/v1/apps/:id/components"
+        );
+    }
 }

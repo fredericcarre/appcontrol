@@ -26,6 +26,18 @@ pub struct AppConfig {
     pub cors_origins: Vec<String>,
     /// Log format: "text" (default) or "json" for structured JSON logging
     pub log_format: String,
+    /// Database pool maximum connections
+    pub db_pool_size: u32,
+    /// Database pool idle connection timeout in seconds
+    pub db_idle_timeout_secs: u64,
+    /// Database pool connection acquisition timeout in seconds
+    pub db_connect_timeout_secs: u64,
+    /// Graceful shutdown timeout in seconds
+    pub shutdown_timeout_secs: u64,
+    /// Data retention: days to keep action_log entries (0 = unlimited)
+    pub retention_action_log_days: u32,
+    /// Data retention: days to keep check_events partitions (0 = unlimited)
+    pub retention_check_events_days: u32,
 }
 
 impl AppConfig {
@@ -36,7 +48,6 @@ impl AppConfig {
         // JWT_SECRET: required in production, fallback in dev
         let jwt_secret = match std::env::var("JWT_SECRET") {
             Ok(secret) => {
-                // Warn if secret looks insecure
                 if secret.contains("dev") || secret.contains("change") || secret.len() < 32 {
                     tracing::warn!(
                         "JWT_SECRET appears insecure (contains 'dev'/'change' or < 32 chars). \
@@ -125,6 +136,30 @@ impl AppConfig {
             redis_url: std::env::var("REDIS_URL").ok(),
             cors_origins,
             log_format: std::env::var("LOG_FORMAT").unwrap_or_else(|_| "text".to_string()),
+            db_pool_size: std::env::var("DB_POOL_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(20),
+            db_idle_timeout_secs: std::env::var("DB_IDLE_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(600),
+            db_connect_timeout_secs: std::env::var("DB_CONNECT_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30),
+            shutdown_timeout_secs: std::env::var("SHUTDOWN_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30),
+            retention_action_log_days: std::env::var("RETENTION_ACTION_LOG_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            retention_check_events_days: std::env::var("RETENTION_CHECK_EVENTS_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
         }
     }
 }

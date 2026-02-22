@@ -25,6 +25,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
 
@@ -147,11 +148,11 @@ pub async fn import_yaml_map(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Json(body): Json<ImportRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     // Parse YAML
     let old_map: OldMap = serde_yaml::from_str(&body.yaml).map_err(|e| {
         tracing::warn!("YAML parse error: {}", e);
-        StatusCode::BAD_REQUEST
+        ApiError::Validation(format!("Invalid YAML: {}", e))
     })?;
 
     let app_name = old_map
@@ -173,8 +174,7 @@ pub async fn import_yaml_map(
         app_id,
         json!({"name": app_name}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     // Create application
     sqlx::query(
@@ -186,8 +186,7 @@ pub async fn import_yaml_map(
     .bind(user.organization_id)
     .bind(body.site_id)
     .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     // Grant owner to importing user
     let _ = sqlx::query(
@@ -218,8 +217,7 @@ pub async fn import_yaml_map(
         .bind(value)
         .bind(var.description.as_deref())
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
         variables_created += 1;
     }
@@ -241,8 +239,7 @@ pub async fn import_yaml_map(
                 .bind(group_name)
                 .bind(groups_created as i32)
                 .execute(&state.db)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                .await?;
 
                 group_map.insert(group_name.clone(), group_id);
                 groups_created += 1;
@@ -306,8 +303,7 @@ pub async fn import_yaml_map(
         .bind(pos_x)
         .bind(pos_y)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
         comp_name_to_id.insert(comp_name.clone(), comp_id);
         components_created += 1;
@@ -343,8 +339,7 @@ pub async fn import_yaml_map(
             .bind(action.description.as_deref())
             .bind(action.requires_confirmation.unwrap_or(false))
             .execute(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .await?;
 
             commands_created += 1;
 
@@ -367,8 +362,7 @@ pub async fn import_yaml_map(
                 .bind(param.required.unwrap_or(true))
                 .bind(pidx as i32)
                 .execute(&state.db)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                .await?;
             }
         }
 
@@ -393,8 +387,7 @@ pub async fn import_yaml_map(
             .bind(url)
             .bind(link_type)
             .execute(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .await?;
 
             links_created += 1;
         }
@@ -431,8 +424,7 @@ pub async fn import_yaml_map(
             .bind(from_id)
             .bind(to_id)
             .execute(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .await?;
 
             dependencies_created += 1;
         }

@@ -245,22 +245,23 @@ pub async fn saml_acs(
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Return as HTML with auto-redirect (SAML uses POST binding, can't return JSON directly)
+    // Set HttpOnly cookie and redirect (SAML uses POST binding, can't return JSON directly).
+    // No longer uses localStorage for the token — HttpOnly cookies prevent XSS token theft.
     let relay_state = form.relay_state.unwrap_or_else(|| "/".to_string());
+    let is_production = state.config.app_env == "production";
+    let cookie = crate::middleware::auth::build_auth_cookie(&jwt_token, is_production);
+
     let html = format!(
         r#"<!DOCTYPE html>
 <html><head><title>SAML Login</title></head>
 <body>
-<script>
-  localStorage.setItem('token', '{}');
-  window.location.href = '{}';
-</script>
+<script>window.location.href = '{}';</script>
 <noscript>Login successful. <a href="{}">Click here to continue.</a></noscript>
 </body></html>"#,
-        jwt_token, relay_state, relay_state,
+        relay_state, relay_state,
     );
 
-    Ok(Html(html))
+    Ok(([(axum::http::header::SET_COOKIE, cookie)], Html(html)))
 }
 
 /// GET /api/v1/auth/saml/metadata — SP Metadata for IdP configuration.

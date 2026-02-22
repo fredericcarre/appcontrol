@@ -9,6 +9,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::error::{validate_length, ApiError};
 use crate::middleware::audit::log_action;
 use crate::AppState;
 
@@ -23,7 +24,10 @@ pub async fn create_api_key(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Json(body): Json<CreateApiKeyRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    // Input validation
+    validate_length("name", &body.name, 1, 200)?;
+
     let key_id = Uuid::new_v4();
     let raw_key = format!("ac_{}", Uuid::new_v4().simple());
     let key_prefix = &raw_key[..10];
@@ -42,8 +46,7 @@ pub async fn create_api_key(
         key_id,
         json!({"name": body.name}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     sqlx::query(
         r#"
@@ -59,8 +62,7 @@ pub async fn create_api_key(
     .bind(&scopes)
     .bind(body.expires_at)
     .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -77,7 +79,7 @@ pub async fn create_api_key(
 pub async fn list_api_keys(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let keys = sqlx::query_as::<
         _,
         (
@@ -99,8 +101,7 @@ pub async fn list_api_keys(
     )
     .bind(user.user_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let data: Vec<Value> = keys
         .iter()
@@ -124,17 +125,16 @@ pub async fn delete_api_key(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     let result =
         sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1 AND user_id = $2")
             .bind(id)
             .bind(user.user_id)
             .execute(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::NotFound);
     }
 
     Ok(StatusCode::NO_CONTENT)

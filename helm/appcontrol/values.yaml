@@ -86,6 +86,9 @@ ingress:
           pathType: Prefix
   tls: []
 
+networkPolicy:
+  enabled: true
+
 openshift:
   enabled: false
   route:

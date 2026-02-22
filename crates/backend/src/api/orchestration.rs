@@ -1,6 +1,5 @@
 use axum::{
     extract::{Extension, Path, Query, State},
-    http::StatusCode,
     response::Json,
 };
 use serde::Deserialize;
@@ -10,6 +9,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -29,10 +29,10 @@ pub async fn start(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Json(body): Json<Option<StartRequest>>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let dry_run = body.and_then(|b| b.dry_run).unwrap_or(false);
@@ -45,12 +45,11 @@ pub async fn start(
         app_id,
         json!({"dry_run": dry_run}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let plan = crate::core::sequencer::build_start_plan(&state.db, app_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if !dry_run {
         let state_clone = state.clone();
@@ -70,10 +69,10 @@ pub async fn stop(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -84,8 +83,7 @@ pub async fn stop(
         app_id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let state_clone = state.clone();
     tokio::spawn(async move {
@@ -101,10 +99,10 @@ pub async fn status(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let components = sqlx::query_as::<_, (Uuid, String, String)>(
@@ -118,8 +116,7 @@ pub async fn status(
     )
     .bind(app_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let data: Vec<Value> = components
         .iter()
@@ -140,10 +137,10 @@ pub async fn wait_running(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Query(params): Query<WaitQuery>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let timeout = std::time::Duration::from_secs(params.timeout.unwrap_or(300));
@@ -162,8 +159,7 @@ pub async fn wait_running(
         )
         .bind(app_id)
         .fetch_all(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
         let all_running = components.iter().all(|(s,)| s == "RUNNING");
         let any_failed = components.iter().any(|(s,)| s == "FAILED");

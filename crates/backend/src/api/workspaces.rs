@@ -14,6 +14,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::error::{validate_length, validate_optional_length, ApiError};
 use crate::AppState;
 
 // ---------------------------------------------------------------------------
@@ -63,15 +64,14 @@ fn default_role() -> String {
 pub async fn list_workspaces(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let workspaces = sqlx::query_as::<_, WorkspaceRow>(
         "SELECT id, organization_id, name, description, created_at
          FROM workspaces WHERE organization_id = $1 ORDER BY name",
     )
     .bind(user.organization_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({ "workspaces": workspaces })))
 }
@@ -81,10 +81,14 @@ pub async fn create_workspace(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Json(body): Json<CreateWorkspace>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
+
+    // Input validation
+    validate_length("name", &body.name, 1, 200)?;
+    validate_optional_length("description", &body.description, 2000)?;
 
     let id = Uuid::new_v4();
     sqlx::query(
@@ -95,8 +99,7 @@ pub async fn create_workspace(
     .bind(&body.name)
     .bind(&body.description)
     .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::CONFLICT)?;
+    .await?;
 
     // Audit log
     let _ = sqlx::query(
@@ -124,20 +127,19 @@ pub async fn delete_workspace(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let result = sqlx::query("DELETE FROM workspaces WHERE id = $1 AND organization_id = $2")
         .bind(id)
         .bind(user.organization_id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::NotFound);
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -152,7 +154,7 @@ pub async fn list_workspace_sites(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(workspace_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     // Verify workspace belongs to user's org
     let exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND organization_id = $2)",
@@ -160,11 +162,10 @@ pub async fn list_workspace_sites(
     .bind(workspace_id)
     .bind(user.organization_id)
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     if !exists {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::NotFound);
     }
 
     let sites = sqlx::query_as::<_, (Uuid, String, String)>(
@@ -178,8 +179,7 @@ pub async fn list_workspace_sites(
     )
     .bind(workspace_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let sites_json: Vec<Value> = sites
         .iter()
@@ -195,9 +195,9 @@ pub async fn add_workspace_site(
     Extension(user): Extension<AuthUser>,
     Path(workspace_id): Path<Uuid>,
     Json(body): Json<AddWorkspaceSite>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     sqlx::query(
@@ -206,8 +206,7 @@ pub async fn add_workspace_site(
     .bind(workspace_id)
     .bind(body.site_id)
     .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(StatusCode::CREATED)
 }
@@ -217,17 +216,16 @@ pub async fn remove_workspace_site(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path((workspace_id, site_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     sqlx::query("DELETE FROM workspace_sites WHERE workspace_id = $1 AND site_id = $2")
         .bind(workspace_id)
         .bind(site_id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -241,7 +239,7 @@ pub async fn list_workspace_members(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(workspace_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     // Verify workspace belongs to user's org
     let exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND organization_id = $2)",
@@ -249,11 +247,10 @@ pub async fn list_workspace_members(
     .bind(workspace_id)
     .bind(user.organization_id)
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     if !exists {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::NotFound);
     }
 
     let members = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<Uuid>, String)>(
@@ -266,8 +263,7 @@ pub async fn list_workspace_members(
     )
     .bind(workspace_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let members_json: Vec<Value> = members
         .iter()
@@ -290,13 +286,15 @@ pub async fn add_workspace_member(
     Extension(user): Extension<AuthUser>,
     Path(workspace_id): Path<Uuid>,
     Json(body): Json<AddWorkspaceMember>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     if body.user_id.is_none() && body.team_id.is_none() {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(ApiError::Validation(
+            "Either user_id or team_id must be provided".to_string(),
+        ));
     }
 
     sqlx::query(
@@ -309,8 +307,7 @@ pub async fn add_workspace_member(
     .bind(body.team_id)
     .bind(&body.role)
     .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(StatusCode::CREATED)
 }
@@ -320,17 +317,16 @@ pub async fn remove_workspace_member(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path((workspace_id, member_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     sqlx::query("DELETE FROM workspace_members WHERE id = $1 AND workspace_id = $2")
         .bind(member_id)
         .bind(workspace_id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -339,7 +335,7 @@ pub async fn remove_workspace_member(
 pub async fn my_accessible_sites(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     if user.is_admin() {
         // Admin sees all sites
         let sites = sqlx::query_as::<_, (Uuid, String, String)>(
@@ -347,8 +343,7 @@ pub async fn my_accessible_sites(
         )
         .bind(user.organization_id)
         .fetch_all(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
         let sites_json: Vec<Value> = sites
             .iter()
@@ -364,8 +359,7 @@ pub async fn my_accessible_sites(
     )
     .bind(user.organization_id)
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     if !has_any {
         // Feature not configured → return all sites
@@ -374,8 +368,7 @@ pub async fn my_accessible_sites(
         )
         .bind(user.organization_id)
         .fetch_all(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
         let sites_json: Vec<Value> = sites
             .iter()
@@ -403,8 +396,7 @@ pub async fn my_accessible_sites(
     .bind(user.organization_id)
     .bind(user.user_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let sites_json: Vec<Value> = sites
         .iter()
