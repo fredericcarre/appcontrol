@@ -21,6 +21,9 @@ pub enum AgentMessage {
         stdout: String,
         stderr: String,
         duration_ms: u32,
+        /// Monotonic sequence ID for reliable delivery (ack/retransmit).
+        #[serde(default)]
+        sequence_id: Option<u64>,
     },
     Register {
         agent_id: Uuid,
@@ -29,6 +32,15 @@ pub enum AgentMessage {
         ip_addresses: Vec<String>,
         labels: serde_json::Value,
         version: String,
+        /// SHA-256 fingerprint of the agent's TLS client certificate.
+        /// Populated by the gateway after extracting from the TLS handshake.
+        #[serde(default)]
+        cert_fingerprint: Option<String>,
+    },
+    /// Agent requests certificate renewal by sending a CSR.
+    CertificateRenewal {
+        agent_id: Uuid,
+        csr_pem: String,
     },
 }
 
@@ -41,13 +53,40 @@ pub enum BackendMessage {
         component_id: Uuid,
         command: String,
         timeout_seconds: u32,
+        /// Execution mode: "sync" (wait for result) or "detached" (double-fork).
+        #[serde(default = "default_exec_mode")]
+        exec_mode: String,
     },
     UpdateConfig {
         components: Vec<ComponentConfig>,
     },
     Ack {
         request_id: Uuid,
+        /// Echo back the sequence_id for correlation.
+        #[serde(default)]
+        sequence_id: Option<u64>,
     },
+    /// Command the agent to update its binary.
+    UpdateAgent {
+        binary_url: String,
+        checksum_sha256: String,
+        target_version: String,
+    },
+    /// Deliver a signed certificate in response to a CertificateRenewal CSR.
+    CertificateResponse {
+        cert_pem: String,
+        ca_chain_pem: String,
+        expires_at: DateTime<Utc>,
+    },
+    /// Request the agent to report its current approval-pending operations.
+    ApprovalResult {
+        request_id: Uuid,
+        approved: bool,
+    },
+}
+
+fn default_exec_mode() -> String {
+    "sync".to_string()
 }
 
 /// WebSocket events pushed to frontend clients.
@@ -122,6 +161,12 @@ pub enum GatewayMessage {
     AgentConnected {
         agent_id: Uuid,
         hostname: String,
+        /// TLS certificate fingerprint extracted by gateway during handshake.
+        #[serde(default)]
+        cert_fingerprint: Option<String>,
+        /// TLS certificate CN extracted by gateway during handshake.
+        #[serde(default)]
+        cert_cn: Option<String>,
     },
     /// An agent disconnected from this gateway.
     AgentDisconnected {
@@ -191,6 +236,7 @@ mod tests {
             stdout: "output".to_string(),
             stderr: "error".to_string(),
             duration_ms: 100,
+            sequence_id: Some(42),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: AgentMessage = serde_json::from_str(&json).unwrap();
@@ -199,11 +245,25 @@ mod tests {
                 exit_code,
                 stdout,
                 stderr,
+                sequence_id,
                 ..
             } => {
                 assert_eq!(exit_code, 1);
                 assert_eq!(stdout, "output");
                 assert_eq!(stderr, "error");
+                assert_eq!(sequence_id, Some(42));
+            }
+            _ => panic!("Expected CommandResult"),
+        }
+    }
+
+    #[test]
+    fn test_command_result_backward_compat_no_sequence_id() {
+        let json = r#"{"type":"CommandResult","payload":{"request_id":"550e8400-e29b-41d4-a716-446655440000","exit_code":0,"stdout":"ok","stderr":"","duration_ms":10}}"#;
+        let msg: AgentMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            AgentMessage::CommandResult { sequence_id, .. } => {
+                assert_eq!(sequence_id, None);
             }
             _ => panic!("Expected CommandResult"),
         }
@@ -217,6 +277,7 @@ mod tests {
             ip_addresses: vec!["10.0.1.42".to_string(), "172.16.0.5".to_string()],
             labels: serde_json::json!({"role": "database", "env": "prod"}),
             version: "0.1.0".to_string(),
+            cert_fingerprint: Some("sha256:abc123".to_string()),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: AgentMessage = serde_json::from_str(&json).unwrap();
@@ -225,11 +286,13 @@ mod tests {
                 hostname,
                 ip_addresses,
                 version,
+                cert_fingerprint,
                 ..
             } => {
                 assert_eq!(hostname, "server01.prod.company.com");
                 assert_eq!(ip_addresses, vec!["10.0.1.42", "172.16.0.5"]);
                 assert_eq!(version, "0.1.0");
+                assert_eq!(cert_fingerprint, Some("sha256:abc123".to_string()));
             }
             _ => panic!("Expected Register"),
         }
@@ -255,6 +318,7 @@ mod tests {
             component_id: Uuid::new_v4(),
             command: "systemctl start nginx".to_string(),
             timeout_seconds: 60,
+            exec_mode: "detached".to_string(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: BackendMessage = serde_json::from_str(&json).unwrap();
@@ -262,10 +326,24 @@ mod tests {
             BackendMessage::ExecuteCommand {
                 command,
                 timeout_seconds,
+                exec_mode,
                 ..
             } => {
                 assert_eq!(command, "systemctl start nginx");
                 assert_eq!(timeout_seconds, 60);
+                assert_eq!(exec_mode, "detached");
+            }
+            _ => panic!("Expected ExecuteCommand"),
+        }
+    }
+
+    #[test]
+    fn test_execute_command_backward_compat_default_exec_mode() {
+        let json = r#"{"type":"ExecuteCommand","payload":{"request_id":"550e8400-e29b-41d4-a716-446655440000","component_id":"550e8400-e29b-41d4-a716-446655440001","command":"echo hi","timeout_seconds":30}}"#;
+        let msg: BackendMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            BackendMessage::ExecuteCommand { exec_mode, .. } => {
+                assert_eq!(exec_mode, "sync");
             }
             _ => panic!("Expected ExecuteCommand"),
         }
@@ -305,14 +383,40 @@ mod tests {
     #[test]
     fn test_backend_message_ack_roundtrip() {
         let rid = Uuid::new_v4();
-        let msg = BackendMessage::Ack { request_id: rid };
+        let msg = BackendMessage::Ack {
+            request_id: rid,
+            sequence_id: Some(99),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: BackendMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
-            BackendMessage::Ack { request_id } => {
+            BackendMessage::Ack {
+                request_id,
+                sequence_id,
+            } => {
                 assert_eq!(request_id, rid);
+                assert_eq!(sequence_id, Some(99));
             }
             _ => panic!("Expected Ack"),
+        }
+    }
+
+    #[test]
+    fn test_update_agent_message_roundtrip() {
+        let msg = BackendMessage::UpdateAgent {
+            binary_url: "https://releases.appcontrol.io/agent/0.3.0/linux-amd64".to_string(),
+            checksum_sha256: "abc123def456".to_string(),
+            target_version: "0.3.0".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: BackendMessage = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            BackendMessage::UpdateAgent {
+                target_version, ..
+            } => {
+                assert_eq!(target_version, "0.3.0");
+            }
+            _ => panic!("Expected UpdateAgent"),
         }
     }
 
@@ -324,6 +428,7 @@ mod tests {
             component_id: Uuid::new_v4(),
             command: "systemctl start nginx".to_string(),
             timeout_seconds: 60,
+            exec_mode: "sync".to_string(),
         };
         let envelope = super::GatewayEnvelope::ForwardToAgent {
             target_agent_id: agent_id,
@@ -374,6 +479,8 @@ mod tests {
         let msg = super::GatewayMessage::AgentConnected {
             agent_id: aid,
             hostname: "server01".to_string(),
+            cert_fingerprint: Some("sha256:deadbeef".to_string()),
+            cert_cn: Some("agent-server01".to_string()),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: super::GatewayMessage = serde_json::from_str(&json).unwrap();
@@ -381,9 +488,31 @@ mod tests {
             super::GatewayMessage::AgentConnected {
                 agent_id,
                 hostname,
+                cert_fingerprint,
+                cert_cn,
             } => {
                 assert_eq!(agent_id, aid);
                 assert_eq!(hostname, "server01");
+                assert_eq!(cert_fingerprint, Some("sha256:deadbeef".to_string()));
+                assert_eq!(cert_cn, Some("agent-server01".to_string()));
+            }
+            _ => panic!("Expected AgentConnected"),
+        }
+    }
+
+    #[test]
+    fn test_gateway_message_agent_connected_backward_compat() {
+        // Old gateways may not send cert_fingerprint/cert_cn
+        let json = r#"{"type":"AgentConnected","payload":{"agent_id":"550e8400-e29b-41d4-a716-446655440000","hostname":"server01"}}"#;
+        let msg: super::GatewayMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            super::GatewayMessage::AgentConnected {
+                cert_fingerprint,
+                cert_cn,
+                ..
+            } => {
+                assert_eq!(cert_fingerprint, None);
+                assert_eq!(cert_cn, None);
             }
             _ => panic!("Expected AgentConnected"),
         }

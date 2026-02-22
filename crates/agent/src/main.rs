@@ -49,14 +49,23 @@ async fn main() -> anyhow::Result<()> {
     let (msg_tx, msg_rx) = tokio::sync::mpsc::unbounded_channel();
     let check_scheduler = Arc::new(scheduler::CheckScheduler::new(agent_id, msg_tx.clone()));
 
-    // Initialize connection manager
+    // Initialize connection manager with multi-gateway failover support
+    let gateway_urls = config.gateway_urls();
     let connection = connection::ConnectionManager::new(
-        config.gateway_url().to_string(),
+        gateway_urls.clone(),
+        config.gateway.failover_strategy.clone(),
+        config.gateway.primary_retry_secs,
         agent_id,
         config.labels.clone(),
         buffer.clone(),
         check_scheduler.clone(),
         msg_tx,
+    );
+
+    tracing::info!(
+        "Gateway failover: {} URLs configured (strategy={})",
+        gateway_urls.len(),
+        config.gateway.failover_strategy
     );
 
     // Start all subsystems

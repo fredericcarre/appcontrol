@@ -232,6 +232,8 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
                             let notification = GatewayMessage::AgentConnected {
                                 agent_id: *agent_id,
                                 hostname: hostname.clone(),
+                                cert_fingerprint: None, // TODO: extract from TLS handshake
+                                cert_cn: None,          // TODO: extract from TLS handshake
                             };
                             if let Ok(json) = serde_json::to_string(&notification) {
                                 state_clone.router.forward_to_backend(&json);
@@ -305,6 +307,8 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
         let notification = GatewayMessage::AgentConnected {
             agent_id: agent_info.agent_id,
             hostname: agent_info.hostname.clone(),
+            cert_fingerprint: None, // TODO: store and forward from TLS handshake
+            cert_cn: None,
         };
         if let Ok(json) = serde_json::to_string(&notification) {
             write

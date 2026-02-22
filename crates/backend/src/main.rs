@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use appcontrol_backend::{config, create_router, db, websocket, AppState};
+use appcontrol_backend::{config, create_router, db, middleware, websocket, AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -21,6 +21,7 @@ async fn main() -> anyhow::Result<()> {
         db: pool,
         ws_hub,
         config,
+        rate_limiter: middleware::rate_limit::RateLimitState::new(),
     });
 
     let app = create_router(state.clone());
@@ -33,6 +34,18 @@ async fn main() -> anyhow::Result<()> {
             std::time::Duration::from_secs(30),
         )
         .await;
+    });
+
+    // Rate limiter cleanup task (every 5 minutes)
+    let rl_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            rl_state.rate_limiter.auth.cleanup();
+            rl_state.rate_limiter.operations.cleanup();
+            rl_state.rate_limiter.reads.cleanup();
+        }
     });
 
     let addr = format!("0.0.0.0:{}", state.config.port);

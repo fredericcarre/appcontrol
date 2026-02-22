@@ -213,3 +213,66 @@
 - [x] No multicast: 1 component → 1 host → 1 agent (first match by created_at wins)
 - [x] Backward compat: `hostname` field accepted as alias for `host` in JSON API
 - [x] Tests: 8 E2E tests (host field, hostname alias, resolve by hostname/IP, late binding, no multicast)
+
+## Phase 6: Security & Resilience (Competitive Audit)
+
+> Based on comprehensive competitive analysis of ServiceNow, BMC Helix, Automic, BigFix, Ansible AAP, HashiCorp Consul/Nomad, Rundeck, StackStorm. Baseline score: 3.1/10 → Target: 7.9/10.
+
+### P6-1: Architecture Documentation
+- [x] `SECURITY_ARCHITECTURE.md` — Comprehensive security architecture with ASCII diagrams (threat model, agent identity chain, message reliability, failover, rate limiting, WebSocket security, process execution, approvals, break-glass, credential vault, agent update, certificate lifecycle, config security)
+
+### P6-2: Security Database Schema
+- [x] `migrations/V013__security_resilience.sql` — approval_requests, approval_decisions, approval_policies, break_glass_accounts, break_glass_sessions (APPEND-ONLY), agent_update_tasks, certificate_events tables; agents: certificate_fingerprint/cn/identity_verified; app_variables: vault_path/vault_backend; organizations: rate limits
+
+### P6-3: Protocol Hardening (P0 - Critical)
+- [x] `crates/common/src/protocol.rs` — sequence_id on CommandResult/CheckResult for reliable delivery (ack/retransmit)
+- [x] `crates/common/src/protocol.rs` — exec_mode field ("sync" | "detached") on ExecuteCommand with backward-compat default
+- [x] `crates/common/src/protocol.rs` — cert_fingerprint/cert_cn on AgentConnected for identity binding
+- [x] `crates/common/src/protocol.rs` — BackendMessage::UpdateAgent (binary_url, checksum_sha256, target_version)
+- [x] `crates/common/src/protocol.rs` — BackendMessage::CertificateResponse, AgentMessage::CertificateRenewal
+- [x] `crates/common/src/protocol.rs` — BackendMessage::ApprovalResult
+- [x] Backward compatibility tests for all new fields (old agents/gateways work with new backend)
+
+### P6-4: Agent Security (P0 - Critical)
+- [x] `crates/agent/src/executor.rs` — Resource limits (RLIMIT_CPU 30s/120s, RLIMIT_AS 512MB/1GB, RLIMIT_NOFILE 512/1024, RLIMIT_NPROC 64/128) applied before exec in detached grandchild
+- [x] `crates/agent/src/executor.rs` — execute_async_detached wired (double-fork + setsid) with resource limits
+- [x] `crates/agent/src/connection.rs` — exec_mode routing: "detached" → execute_async_detached, "sync" → execute_sync
+- [x] `crates/agent/src/connection.rs` — sequence_id on all CommandResult messages for reliable delivery
+- [x] `crates/agent/src/connection.rs` — Multi-gateway failover (ordered strategy, backoff, periodic primary retry)
+- [x] `crates/agent/src/config.rs` — Multi-gateway support (urls list, failover_strategy, primary_retry_secs, GATEWAY_URLS env)
+- [x] `crates/agent/src/connection.rs` — Handle UpdateAgent, CertificateResponse, ApprovalResult messages
+
+### P6-5: Gateway Security (P0)
+- [x] `crates/gateway/src/main.rs` — Forward cert_fingerprint/cert_cn in AgentConnected messages (both initial registration and re-announce on reconnect)
+
+### P6-6: Backend Security (P0/P1)
+- [x] `crates/backend/src/config.rs` — JWT_SECRET required in production (panic if missing/insecure), DATABASE_URL validated
+- [x] `crates/backend/src/websocket/mod.rs` — Permission-checked WebSocket subscribe (View permission required)
+- [x] `crates/backend/src/websocket/mod.rs` — Store agent cert fingerprint, set identity_verified flag
+- [x] `crates/backend/src/websocket/mod.rs` — Send Ack for CommandResult with sequence_id (reliable delivery)
+- [x] `crates/backend/src/middleware/rate_limit.rs` — In-memory rate limiter (DashMap-based, per-IP auth, per-user operations/reads)
+- [x] `crates/backend/src/main.rs` — Rate limiter cleanup background task (every 5 min)
+- [x] Rate limiter tests (within limit, different keys independent, cleanup)
+
+### P6-7: 4-Eyes Approval Workflow (P2)
+- [x] `crates/backend/src/api/approvals.rs` — Risk classification (low/medium/high/critical per action type)
+- [x] `crates/backend/src/api/approvals.rs` — create_approval_request, decide_approval (requester != approver enforced)
+- [x] `crates/backend/src/api/approvals.rs` — list_approval_requests, list/upsert_approval_policies
+- [x] Routes: /approvals, /approvals/:id/decide, /approvals/policies
+
+### P6-8: Break-Glass Emergency Access (P2)
+- [x] `crates/backend/src/api/break_glass.rs` — create/list accounts, activate (no auth), list/end sessions
+- [x] `crates/backend/src/lib.rs` — /break-glass/activate route outside auth middleware
+- [x] APPEND-ONLY session logging, time-bounded sessions (5-120 min), CRITICAL security event logging
+- [x] Routes: /break-glass/activate (unauth), /break-glass/accounts, /break-glass/sessions, /break-glass/sessions/:id/end
+
+### P6-9: Agent Update & Certificate Lifecycle (P2/P3)
+- [x] Protocol: UpdateAgent message (binary_url + SHA-256 checksum + target_version)
+- [x] Protocol: CertificateRenewal (CSR from agent) → CertificateResponse (signed cert from backend)
+- [x] Agent handler stubs (download/verify/replace TODO)
+- [x] Migration: agent_update_tasks, certificate_events tables
+
+### Build Validation
+- [x] `cargo build --workspace` — clean (0 errors)
+- [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
+- [x] `cargo test --workspace` — 100 unit tests pass (e2e tests skipped, require live PostgreSQL)

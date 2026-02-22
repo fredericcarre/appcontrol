@@ -64,10 +64,16 @@ impl Hub {
         self.connections.remove(&conn_id);
     }
 
+    /// Subscribe to app events. Caller must check permissions first.
     pub fn subscribe(&self, conn_id: Uuid, app_id: Uuid) {
         if let Some(mut conn) = self.connections.get_mut(&conn_id) {
             conn.subscriptions.insert(app_id);
         }
+    }
+
+    /// Get the user_id associated with a connection (for permission checking).
+    pub fn get_connection_user_id(&self, conn_id: Uuid) -> Option<Uuid> {
+        self.connections.get(&conn_id).map(|c| c.user_id)
     }
 
     pub fn unsubscribe(&self, conn_id: Uuid, app_id: Uuid) {
@@ -250,6 +256,7 @@ mod tests {
         // Send to agent_a → should go to gw1
         let msg = BackendMessage::Ack {
             request_id: Uuid::new_v4(),
+            sequence_id: None,
         };
         assert!(hub.send_to_agent(agent_a, msg));
         assert!(rx1.try_recv().is_ok());
@@ -258,6 +265,7 @@ mod tests {
         // Send to agent_b → should go to gw2
         let msg = BackendMessage::Ack {
             request_id: Uuid::new_v4(),
+            sequence_id: None,
         };
         assert!(hub.send_to_agent(agent_b, msg));
         assert!(rx1.try_recv().is_err());
@@ -270,6 +278,7 @@ mod tests {
         let unknown = Uuid::new_v4();
         let msg = BackendMessage::Ack {
             request_id: Uuid::new_v4(),
+            sequence_id: None,
         };
         assert!(!hub.send_to_agent(unknown, msg));
     }
@@ -309,6 +318,7 @@ mod tests {
             component_id: Uuid::new_v4(),
             command: "start".to_string(),
             timeout_seconds: 30,
+            exec_mode: "sync".to_string(),
         };
         hub.send_to_agent(agent_id, cmd);
 

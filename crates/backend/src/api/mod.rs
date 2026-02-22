@@ -1,6 +1,8 @@
 pub mod agents;
 pub mod api_keys;
+pub mod approvals;
 pub mod apps;
+pub mod break_glass;
 pub mod command_params;
 pub mod components;
 pub mod diagnostic;
@@ -214,6 +216,32 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/workspaces/my-sites",
             get(workspaces::my_accessible_sites),
+        )
+        // Approval Workflows (4-eyes principle)
+        .route(
+            "/approvals",
+            get(approvals::list_approval_requests).post(approvals::create_approval_request),
+        )
+        .route(
+            "/approvals/:id/decide",
+            post(approvals::decide_approval),
+        )
+        .route(
+            "/approvals/policies",
+            get(approvals::list_approval_policies).post(approvals::upsert_approval_policy),
+        )
+        // Break-Glass Emergency Access (admin endpoints)
+        .route(
+            "/break-glass/accounts",
+            get(break_glass::list_break_glass_accounts).post(break_glass::create_break_glass_account),
+        )
+        .route(
+            "/break-glass/sessions",
+            get(break_glass::list_break_glass_sessions),
+        )
+        .route(
+            "/break-glass/sessions/:id/end",
+            post(break_glass::end_break_glass_session),
         )
         // SAML group mapping admin API (requires auth)
         .merge(crate::auth::saml::saml_admin_routes())

@@ -212,13 +212,14 @@ pub async fn start_single_component(
             component_id,
             command: cmd,
             timeout_seconds: timeout_secs as u32,
+            exec_mode: "detached".to_string(),
         };
         state.ws_hub.send_to_agent(agent_id, message);
         tracing::info!(
             component_id = %component_id,
             agent_id = %agent_id,
             request_id = %request_id,
-            "Start command dispatched to agent"
+            "Start command dispatched to agent (detached)"
         );
     }
 
@@ -282,6 +283,7 @@ pub async fn stop_single_component(
             component_id,
             command: cmd,
             timeout_seconds: timeout_secs as u32,
+            exec_mode: "detached".to_string(),
         };
         state.ws_hub.send_to_agent(agent_id, message);
         tracing::info!(

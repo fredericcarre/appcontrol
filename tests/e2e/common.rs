@@ -116,12 +116,17 @@ impl TestContext {
             jwt_issuer: "appcontrol-test".to_string(),
             oidc: None,
             saml: None,
+            app_env: "development".to_string(),
+            rate_limit_auth: 100,
+            rate_limit_operations: 100,
+            rate_limit_reads: 1000,
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
             db: pool.clone(),
             ws_hub: appcontrol_backend::websocket::Hub::new(),
             config,
+            rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
         });
 
         let app = appcontrol_backend::create_router(state);
@@ -231,12 +236,17 @@ impl TestContext {
                 admin_group,
                 want_assertions_signed: false,
             }),
+            app_env: "development".to_string(),
+            rate_limit_auth: 100,
+            rate_limit_operations: 100,
+            rate_limit_reads: 1000,
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
             db: pool.clone(),
             ws_hub: appcontrol_backend::websocket::Hub::new(),
             config,
+            rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
         });
 
         let app = appcontrol_backend::create_router(state);
