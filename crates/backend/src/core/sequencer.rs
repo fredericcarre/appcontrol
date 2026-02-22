@@ -214,6 +214,10 @@ pub async fn start_single_component(
             timeout_seconds: timeout_secs as u32,
             exec_mode: "detached".to_string(),
         };
+
+        // Record dispatch in command_executions for audit trail
+        record_command_dispatch(&state.db, request_id, component_id, agent_id, "start").await;
+
         state.ws_hub.send_to_agent(agent_id, message);
         tracing::info!(
             component_id = %component_id,
@@ -284,6 +288,10 @@ pub async fn stop_single_component(
             timeout_seconds: timeout_secs as u32,
             exec_mode: "detached".to_string(),
         };
+
+        // Record dispatch in command_executions for audit trail
+        record_command_dispatch(&state.db, request_id, component_id, agent_id, "stop").await;
+
         state.ws_hub.send_to_agent(agent_id, message);
         tracing::info!(
             component_id = %component_id,
@@ -307,6 +315,66 @@ pub async fn stop_single_component(
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Command execution tracking (audit trail)
+// ---------------------------------------------------------------------------
+
+/// Record a dispatched command in the command_executions table.
+async fn record_command_dispatch(
+    pool: &sqlx::PgPool,
+    request_id: Uuid,
+    component_id: Uuid,
+    agent_id: Uuid,
+    command_type: &str,
+) {
+    if let Err(e) = sqlx::query(
+        "INSERT INTO command_executions (request_id, component_id, agent_id, command_type, status)
+         VALUES ($1, $2, $3, $4, 'dispatched')
+         ON CONFLICT (request_id) DO NOTHING",
+    )
+    .bind(request_id)
+    .bind(component_id)
+    .bind(agent_id)
+    .bind(command_type)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(
+            request_id = %request_id,
+            "Failed to record command dispatch: {}", e
+        );
+    }
+}
+
+/// Record a command result in the command_executions table.
+pub async fn record_command_result(
+    pool: &sqlx::PgPool,
+    request_id: Uuid,
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+) {
+    let status = if exit_code == 0 { "completed" } else { "failed" };
+    if let Err(e) = sqlx::query(
+        "UPDATE command_executions
+         SET exit_code = $2, stdout = $3, stderr = $4, status = $5, completed_at = now()
+         WHERE request_id = $1",
+    )
+    .bind(request_id)
+    .bind(exit_code as i16)
+    .bind(stdout)
+    .bind(stderr)
+    .bind(status)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(
+            request_id = %request_id,
+            "Failed to record command result: {}", e
+        );
     }
 }
 

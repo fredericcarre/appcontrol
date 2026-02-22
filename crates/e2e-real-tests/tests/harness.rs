@@ -110,7 +110,6 @@ impl TestHarness {
         // Start backend
         let backend_process = Command::new(target_dir.join("appcontrol-backend"))
             .env("DATABASE_URL", &db_url)
-            .env("REDIS_URL", "redis://localhost:6379")
             .env("PORT", backend_port.to_string())
             .env("JWT_SECRET", "e2e-test-secret")
             .env("JWT_ISSUER", "appcontrol-e2e")

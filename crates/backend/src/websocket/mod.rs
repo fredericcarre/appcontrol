@@ -339,6 +339,17 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             if !stdout.is_empty() || !stderr.is_empty() {
                 tracing::debug!(stdout = %stdout, stderr = %stderr, "Command output");
             }
+
+            // Record result in command_executions for audit trail
+            crate::core::sequencer::record_command_result(
+                &state.db,
+                request_id,
+                exit_code,
+                &stdout,
+                &stderr,
+            )
+            .await;
+
             // Send Ack back to agent if sequence_id was provided.
             // Uses the request_id → agent_id mapping recorded when ExecuteCommand was dispatched.
             if let Some(seq) = sequence_id {
