@@ -18,6 +18,7 @@ pub struct AgentRow {
     pub organization_id: Uuid,
     pub gateway_id: Option<Uuid>,
     pub labels: Value,
+    pub ip_addresses: Value,
     pub version: Option<String>,
     pub last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
     pub is_active: bool,
@@ -30,7 +31,7 @@ pub async fn list_agents(
 ) -> Result<Json<Value>, StatusCode> {
     let agents = sqlx::query_as::<_, AgentRow>(
         r#"
-        SELECT id, hostname, organization_id, gateway_id, labels, version, last_heartbeat_at, is_active, created_at
+        SELECT id, hostname, organization_id, gateway_id, labels, ip_addresses, version, last_heartbeat_at, is_active, created_at
         FROM agents
         WHERE organization_id = $1
         ORDER BY hostname
@@ -51,7 +52,7 @@ pub async fn get_agent(
 ) -> Result<Json<Value>, StatusCode> {
     let agent = sqlx::query_as::<_, AgentRow>(
         r#"
-        SELECT id, hostname, organization_id, gateway_id, labels, version, last_heartbeat_at, is_active, created_at
+        SELECT id, hostname, organization_id, gateway_id, labels, ip_addresses, version, last_heartbeat_at, is_active, created_at
         FROM agents
         WHERE id = $1 AND organization_id = $2
         "#,

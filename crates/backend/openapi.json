@@ -1,0 +1,296 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AppControl API",
+    "description": "Enterprise platform for operational mastery and IT system resilience. Maps applications as dependency graphs (DAGs), monitors component health, orchestrates sequenced operations, and manages DR site failover.",
+    "version": "0.1.0",
+    "contact": {
+      "name": "AppControl Team"
+    },
+    "license": {
+      "name": "Proprietary"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "AppControl API v1"
+    }
+  ],
+  "security": [
+    { "bearerAuth": [] },
+    { "apiKeyAuth": [] }
+  ],
+  "paths": {
+    "/apps": {
+      "get": {
+        "summary": "List applications",
+        "tags": ["Applications"],
+        "responses": { "200": { "description": "List of applications" } }
+      },
+      "post": {
+        "summary": "Create application",
+        "tags": ["Applications"],
+        "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateApp" } } } },
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/apps/{id}": {
+      "get": {
+        "summary": "Get application by ID",
+        "tags": ["Applications"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "200": { "description": "Application details" } }
+      },
+      "put": {
+        "summary": "Update application",
+        "tags": ["Applications"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "200": { "description": "Updated" } }
+      },
+      "delete": {
+        "summary": "Delete application",
+        "tags": ["Applications"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/apps/{id}/start": {
+      "post": {
+        "summary": "Start application (DAG sequencing)",
+        "tags": ["Applications"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "200": { "description": "Start initiated" } }
+      }
+    },
+    "/apps/{id}/stop": {
+      "post": {
+        "summary": "Stop application (reverse DAG)",
+        "tags": ["Applications"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "200": { "description": "Stop initiated" } }
+      }
+    },
+    "/apps/{id}/start-branch": {
+      "post": {
+        "summary": "Start error branch (pink branch restart)",
+        "tags": ["Applications"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "200": { "description": "Branch restart initiated" } }
+      }
+    },
+    "/apps/{app_id}/components": {
+      "get": {
+        "summary": "List components for an application",
+        "tags": ["Components"],
+        "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "200": { "description": "List of components" } }
+      },
+      "post": {
+        "summary": "Create component",
+        "tags": ["Components"],
+        "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/components/{id}": {
+      "get": {
+        "summary": "Get component by ID",
+        "tags": ["Components"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "200": { "description": "Component details" } }
+      },
+      "put": {
+        "summary": "Update component",
+        "tags": ["Components"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "200": { "description": "Updated" } }
+      },
+      "delete": {
+        "summary": "Delete component",
+        "tags": ["Components"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/components/{id}/start": {
+      "post": { "summary": "Start single component", "tags": ["Components"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Start initiated" } } }
+    },
+    "/components/{id}/stop": {
+      "post": { "summary": "Stop single component", "tags": ["Components"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Stop initiated" } } }
+    },
+    "/components/{id}/command/{cmd}": {
+      "post": { "summary": "Execute custom command on component", "tags": ["Components"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }, { "name": "cmd", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Command executed" } } }
+    },
+    "/apps/{app_id}/dependencies": {
+      "get": { "summary": "List dependencies", "tags": ["Dependencies"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "List of dependencies" } } },
+      "post": { "summary": "Create dependency", "tags": ["Dependencies"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "201": { "description": "Created" } } }
+    },
+    "/dependencies/{id}": {
+      "delete": { "summary": "Delete dependency", "tags": ["Dependencies"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "204": { "description": "Deleted" } } }
+    },
+    "/apps/{app_id}/permissions/users": {
+      "get": { "summary": "List user permissions", "tags": ["Permissions"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "User permissions" } } },
+      "post": { "summary": "Grant user permission", "tags": ["Permissions"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Permission granted" } } }
+    },
+    "/apps/{app_id}/permissions/teams": {
+      "get": { "summary": "List team permissions", "tags": ["Permissions"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Team permissions" } } },
+      "post": { "summary": "Grant team permission", "tags": ["Permissions"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Permission granted" } } }
+    },
+    "/apps/{app_id}/permissions/effective": {
+      "get": { "summary": "Get effective permission for current user", "tags": ["Permissions"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Effective permission level" } } }
+    },
+    "/teams": {
+      "get": { "summary": "List teams", "tags": ["Teams"], "responses": { "200": { "description": "List of teams" } } },
+      "post": { "summary": "Create team", "tags": ["Teams"], "responses": { "201": { "description": "Created" } } }
+    },
+    "/teams/{id}": {
+      "get": { "summary": "Get team", "tags": ["Teams"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Team details" } } },
+      "put": { "summary": "Update team", "tags": ["Teams"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Updated" } } },
+      "delete": { "summary": "Delete team", "tags": ["Teams"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "204": { "description": "Deleted" } } }
+    },
+    "/teams/{id}/members": {
+      "get": { "summary": "List team members", "tags": ["Teams"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Members" } } },
+      "post": { "summary": "Add team member", "tags": ["Teams"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Added" } } }
+    },
+    "/apps/{app_id}/switchover": {
+      "post": { "summary": "Start DR switchover", "tags": ["Switchover"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Switchover initiated" } } }
+    },
+    "/apps/{app_id}/switchover/next-phase": {
+      "post": { "summary": "Advance to next switchover phase", "tags": ["Switchover"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Phase advanced" } } }
+    },
+    "/apps/{app_id}/switchover/rollback": {
+      "post": { "summary": "Rollback switchover", "tags": ["Switchover"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Rolled back" } } }
+    },
+    "/apps/{app_id}/switchover/commit": {
+      "post": { "summary": "Commit switchover", "tags": ["Switchover"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Committed" } } }
+    },
+    "/apps/{app_id}/switchover/status": {
+      "get": { "summary": "Get switchover status", "tags": ["Switchover"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Switchover status" } } }
+    },
+    "/apps/{app_id}/diagnose": {
+      "post": { "summary": "Run 3-level diagnostic", "tags": ["Diagnostics"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Diagnostic results" } } }
+    },
+    "/apps/{app_id}/rebuild": {
+      "post": { "summary": "Rebuild components from diagnostic", "tags": ["Diagnostics"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Rebuild initiated" } } }
+    },
+    "/apps/{app_id}/reports/availability": {
+      "get": { "summary": "Availability report", "tags": ["Reports"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Availability data" } } }
+    },
+    "/apps/{app_id}/reports/incidents": {
+      "get": { "summary": "Incidents report", "tags": ["Reports"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Incidents list" } } }
+    },
+    "/apps/{app_id}/reports/audit": {
+      "get": { "summary": "Audit trail", "tags": ["Reports"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Audit log" } } }
+    },
+    "/apps/{app_id}/reports/compliance": {
+      "get": { "summary": "DORA compliance report", "tags": ["Reports"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Compliance metrics" } } }
+    },
+    "/apps/{app_id}/reports/rto": {
+      "get": { "summary": "RTO report", "tags": ["Reports"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "RTO data" } } }
+    },
+    "/apps/{app_id}/reports/export": {
+      "get": { "summary": "Export PDF report", "tags": ["Reports"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "PDF binary", "content": { "application/pdf": {} } } } }
+    },
+    "/orchestration/apps/{app_id}/start": {
+      "post": { "summary": "Scheduler: start application", "tags": ["Orchestration"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Job started" } } }
+    },
+    "/orchestration/apps/{app_id}/stop": {
+      "post": { "summary": "Scheduler: stop application", "tags": ["Orchestration"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Job started" } } }
+    },
+    "/orchestration/apps/{app_id}/status": {
+      "get": { "summary": "Scheduler: get job status", "tags": ["Orchestration"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Job status" } } }
+    },
+    "/orchestration/apps/{app_id}/wait-running": {
+      "get": { "summary": "Scheduler: wait until RUNNING", "tags": ["Orchestration"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Application is running" } } }
+    },
+    "/apps/{app_id}/variables": {
+      "get": { "summary": "List application variables", "tags": ["Variables"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Variables list" } } },
+      "post": { "summary": "Create variable", "tags": ["Variables"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "201": { "description": "Created" } } }
+    },
+    "/apps/{app_id}/groups": {
+      "get": { "summary": "List component groups", "tags": ["Groups"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Groups list" } } },
+      "post": { "summary": "Create group", "tags": ["Groups"], "parameters": [{ "name": "app_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "201": { "description": "Created" } } }
+    },
+    "/agents": {
+      "get": { "summary": "List agents", "tags": ["Agents"], "responses": { "200": { "description": "Agent list" } } }
+    },
+    "/agents/{id}": {
+      "get": { "summary": "Get agent details", "tags": ["Agents"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Agent details" } } }
+    },
+    "/workspaces": {
+      "get": { "summary": "List workspaces", "tags": ["Workspaces"], "responses": { "200": { "description": "Workspaces list" } } },
+      "post": { "summary": "Create workspace", "tags": ["Workspaces"], "responses": { "201": { "description": "Created" } } }
+    },
+    "/approvals": {
+      "get": { "summary": "List approval requests", "tags": ["Approvals"], "responses": { "200": { "description": "Approval requests" } } },
+      "post": { "summary": "Create approval request", "tags": ["Approvals"], "responses": { "201": { "description": "Created" } } }
+    },
+    "/approvals/{id}/decide": {
+      "post": { "summary": "Approve or reject", "tags": ["Approvals"], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Decision recorded" } } }
+    },
+    "/break-glass/activate": {
+      "post": { "summary": "Activate emergency break-glass session", "tags": ["Break-Glass"], "security": [], "responses": { "200": { "description": "Session activated" } } }
+    },
+    "/api-keys": {
+      "get": { "summary": "List API keys", "tags": ["API Keys"], "responses": { "200": { "description": "API keys list" } } },
+      "post": { "summary": "Create API key", "tags": ["API Keys"], "responses": { "201": { "description": "Created" } } }
+    },
+    "/import/yaml": {
+      "post": { "summary": "Import YAML map", "tags": ["Import"], "responses": { "200": { "description": "Import result" } } }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      },
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "API key with 'ApiKey' prefix"
+      }
+    },
+    "schemas": {
+      "CreateApp": {
+        "type": "object",
+        "required": ["name", "site_id"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "site_id": { "type": "string", "format": "uuid" }
+        }
+      },
+      "ComponentState": {
+        "type": "string",
+        "enum": ["UNKNOWN", "RUNNING", "STOPPED", "FAILED", "DEGRADED", "STARTING", "STOPPING", "UNREACHABLE"]
+      },
+      "PermissionLevel": {
+        "type": "string",
+        "enum": ["none", "view", "operate", "edit", "manage", "owner"]
+      }
+    }
+  },
+  "tags": [
+    { "name": "Applications", "description": "Application CRUD and lifecycle operations" },
+    { "name": "Components", "description": "Component management and commands" },
+    { "name": "Dependencies", "description": "DAG dependency management" },
+    { "name": "Permissions", "description": "RBAC permission management" },
+    { "name": "Teams", "description": "Team management" },
+    { "name": "Switchover", "description": "DR site switchover (6-phase)" },
+    { "name": "Diagnostics", "description": "3-level diagnostic and rebuild" },
+    { "name": "Reports", "description": "DORA compliance and operational reports" },
+    { "name": "Orchestration", "description": "Scheduler integration API" },
+    { "name": "Variables", "description": "Application variable management" },
+    { "name": "Groups", "description": "Component group management" },
+    { "name": "Agents", "description": "Agent monitoring" },
+    { "name": "Workspaces", "description": "Workspace-site access control" },
+    { "name": "Approvals", "description": "4-eyes approval workflow" },
+    { "name": "Break-Glass", "description": "Emergency access" },
+    { "name": "API Keys", "description": "API key management" },
+    { "name": "Import", "description": "YAML map import" }
+  ]
+}

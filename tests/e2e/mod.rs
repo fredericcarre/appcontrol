@@ -43,3 +43,9 @@ mod test_incident_lifecycle;
 mod test_saml_auth;
 mod test_variables_groups;
 mod test_yaml_import;
+
+// ---- Phase 5: Agent connectivity, heartbeat, workspace access ----
+mod test_heartbeat_unreachable;
+mod test_agent_ip_addresses;
+mod test_workspace_access;
+mod test_host_resolution;

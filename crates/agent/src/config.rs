@@ -2,7 +2,6 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Clone)]
-#[allow(dead_code)]
 pub struct AgentConfig {
     pub agent: AgentSection,
     pub gateway: GatewaySection,
@@ -17,15 +16,24 @@ pub struct AgentSection {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[allow(dead_code)]
 pub struct GatewaySection {
-    pub url: String,
+    /// Single gateway URL (legacy, still supported).
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Multiple gateway URLs for failover (recommended).
+    #[serde(default)]
+    pub urls: Vec<String>,
+    /// Failover strategy: "ordered" (try in order) or "round-robin".
+    #[serde(default = "default_failover_strategy")]
+    pub failover_strategy: String,
+    /// How often (in seconds) to try returning to the primary gateway.
+    #[serde(default = "default_primary_retry")]
+    pub primary_retry_secs: u64,
     #[serde(default = "default_reconnect_interval")]
     pub reconnect_interval_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[allow(dead_code)]
 pub struct TlsSection {
     pub enabled: bool,
     pub cert_file: Option<String>,
@@ -35,6 +43,14 @@ pub struct TlsSection {
 
 fn default_reconnect_interval() -> u64 {
     10
+}
+
+fn default_failover_strategy() -> String {
+    "ordered".to_string()
+}
+
+fn default_primary_retry() -> u64 {
+    300
 }
 
 impl AgentConfig {
@@ -51,7 +67,10 @@ impl AgentConfig {
                     id: "auto".to_string(),
                 },
                 gateway: GatewaySection {
-                    url: "ws://localhost:4443/ws".to_string(),
+                    url: Some("ws://localhost:4443/ws".to_string()),
+                    urls: Vec::new(),
+                    failover_strategy: default_failover_strategy(),
+                    primary_retry_secs: default_primary_retry(),
                     reconnect_interval_secs: default_reconnect_interval(),
                 },
                 tls: None,
@@ -64,7 +83,10 @@ impl AgentConfig {
             config.agent.id = v;
         }
         if let Ok(v) = std::env::var("GATEWAY_URL") {
-            config.gateway.url = v;
+            config.gateway.url = Some(v);
+        }
+        if let Ok(v) = std::env::var("GATEWAY_URLS") {
+            config.gateway.urls = v.split(',').map(|s| s.trim().to_string()).collect();
         }
         if let Ok(v) = std::env::var("GATEWAY_RECONNECT_SECS") {
             if let Ok(s) = v.parse() {
@@ -108,8 +130,28 @@ impl AgentConfig {
         }
     }
 
+    /// Returns the list of gateway URLs to try, in failover order.
+    /// Supports both legacy single `url` and new `urls` list.
+    pub fn gateway_urls(&self) -> Vec<String> {
+        if !self.gateway.urls.is_empty() {
+            return self.gateway.urls.clone();
+        }
+        if let Some(ref url) = self.gateway.url {
+            return vec![url.clone()];
+        }
+        vec!["ws://localhost:4443/ws".to_string()]
+    }
+
+    /// Legacy accessor for backward compatibility.
+    #[allow(dead_code)]
     pub fn gateway_url(&self) -> &str {
-        &self.gateway.url
+        if let Some(ref url) = self.gateway.url {
+            return url;
+        }
+        if let Some(first) = self.gateway.urls.first() {
+            return first;
+        }
+        "ws://localhost:4443/ws"
     }
 
     pub fn buffer_path(&self) -> String {
@@ -117,19 +159,10 @@ impl AgentConfig {
     }
 }
 
-// Add hostname crate dependency alternative - use nix for hostname
 mod hostname {
     use std::ffi::OsString;
 
     pub fn get() -> Result<OsString, std::io::Error> {
-        let mut buf = [0u8; 256];
-        let result = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
-        if result != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-        Ok(OsString::from(
-            String::from_utf8_lossy(&buf[..len]).to_string(),
-        ))
+        Ok(OsString::from(crate::platform::gethostname()))
     }
 }

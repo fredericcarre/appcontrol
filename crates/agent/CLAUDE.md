@@ -38,8 +38,20 @@ agent/src/
 ├── executor.rs        # CRITICAL: process execution with detachment
 ├── scheduler.rs       # Local check scheduler (tokio::time::interval per component)
 ├── buffer.rs          # Offline sled DB buffer (~100MB FIFO), replay on reconnect
+├── platform.rs        # gethostname() + get_ip_addresses() (FQDN + IP detection)
 └── native_commands.rs # Built-in: disk_space, memory, cpu, process, tcp_port, http, load_average
 ```
+
+## Agent Registration
+On connect, the agent sends a Register message with:
+- `agent_id`: UUID (auto-generated or configured)
+- `hostname`: FQDN from gethostname()
+- `ip_addresses`: all non-loopback IPs detected via sysinfo (IPv4 + IPv6)
+- `labels`: key-value metadata (role, env, zone)
+- `version`: agent binary version
+
+The `ip_addresses` field supports cloud scenarios (Azure, AWS) where FQDN
+may be auto-generated and unhelpful. Operators can identify agents by IP.
 
 ## CRITICAL: Process Detachment (executor.rs)
 

@@ -148,7 +148,14 @@ pub async fn create_app(
     .bind(body.tags.as_ref().unwrap_or(&json!([])))
     .fetch_one(&state.db)
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|e| {
+        if let sqlx::Error::Database(ref db_err) = e {
+            if db_err.code().as_deref() == Some("23505") {
+                return StatusCode::CONFLICT;
+            }
+        }
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     // Grant owner permission to creator
     let _ = sqlx::query(
@@ -349,6 +356,30 @@ pub async fn start_branch(
     if dry_run {
         return Ok(Json(json!({ "dry_run": true, "branch": branch })));
     }
+
+    // Execute branch restart in background: the smart start handles pink branch logic
+    // by forcing the target component to be treated as needing restart
+    let state_clone = state.clone();
+    let component_id = body.component_id;
+    tokio::spawn(async move {
+        // Force the component to FAILED so the smart start picks it up as pink branch root
+        if let Err(e) = crate::core::fsm::transition_component(
+            &state_clone,
+            component_id,
+            appcontrol_common::ComponentState::Failed,
+        )
+        .await
+        {
+            tracing::warn!(
+                "Could not force component to FAILED for branch restart: {}",
+                e
+            );
+        }
+        // Then run the smart start which will handle the pink branch
+        if let Err(e) = crate::core::sequencer::execute_start(&state_clone, id).await {
+            tracing::error!("Failed to restart branch for app {}: {}", id, e);
+        }
+    });
 
     Ok(Json(
         json!({ "status": "starting_branch", "branch": branch }),

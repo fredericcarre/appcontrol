@@ -62,7 +62,8 @@ backend/src/
 │   ├── switchover.rs         # 6-phase DR engine
 │   ├── diagnostic.rs         # 3-level diagnosis + recommendation matrix
 │   ├── rebuild.rs            # Rebuild orchestration (DAG order, protection, bastion)
-│   └── permissions.rs        # Effective permission resolution
+│   ├── permissions.rs        # Effective permission + site/workspace access control
+│   └── heartbeat_monitor.rs  # Background: detect stale agents → UNREACHABLE
 ├── websocket/
 │   ├── mod.rs                # WebSocket server
 │   └── hub.rs                # Subscription management, permission-filtered events
@@ -100,7 +101,38 @@ pub async fn effective_permission(pool: &PgPool, user_id: Uuid, app_id: Uuid) ->
     // 3. Get all team permissions from app_permissions_teams (via team_members)
     // 4. Return MAX of all
 }
+
+pub async fn can_access_site(pool, user_id, site_id, org_id, is_admin) -> bool {
+    // Admin → always true
+    // No workspace_sites configured → open access (feature not enabled)
+    // Otherwise: user must be in a workspace that includes the site
+    //   (directly as user, or via team membership)
+}
+
+pub async fn can_operate_component(pool, user_id, component_id, is_admin) -> PermissionLevel {
+    // Combines app-level permission AND site-level workspace access
+    // Returns None if user lacks either
+}
 ```
+
+### Heartbeat Monitor (core/heartbeat_monitor.rs)
+- Background task spawned at backend startup (30s check interval)
+- Queries agents where `last_heartbeat_at < now() - heartbeat_timeout_seconds`
+- Transitions their RUNNING/DEGRADED/STARTING components to UNREACHABLE
+- Skips STOPPED/STOPPING components (intentional state, don't override)
+- Records trigger='heartbeat_timeout' + previous_state in details
+- Marks stale agents as `is_active = false`
+- Timeout is configurable per org: `organizations.heartbeat_timeout_seconds` (default 180s)
+
+### Workspace Access Control (api/workspaces.rs)
+- `GET /api/v1/workspaces` — list workspaces
+- `POST /api/v1/workspaces` — create workspace (admin only)
+- `DELETE /api/v1/workspaces/:id` — delete workspace (admin only)
+- `GET/POST /api/v1/workspaces/:id/sites` — manage site bindings
+- `DELETE /api/v1/workspaces/:id/sites/:site_id` — remove site binding
+- `GET/POST /api/v1/workspaces/:id/members` — manage user/team members
+- `DELETE /api/v1/workspaces/:id/members/:member_id` — remove member
+- `GET /api/v1/workspaces/my-sites` — list sites accessible to current user
 
 ### Diagnostic Engine (core/diagnostic.rs)
 ```rust

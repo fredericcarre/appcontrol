@@ -173,3 +173,162 @@
 - [x] `frontend/src/components/maps/AppMap.tsx` — Group color mapping, pass groups to nodes
 - [x] `frontend/src/pages/ImportPage.tsx` — YAML import page with file upload + paste
 - [x] Tests: 15+ tests covering variables, groups, links, params, YAML import
+
+## Phase 5: Agent Connectivity, Heartbeat & Zone Access Control
+
+### P5-1: Agent IP Address Support
+- [x] `crates/common/src/protocol.rs` — Add `ip_addresses: Vec<String>` to `AgentMessage::Register` (with `serde(default)` for backward compat)
+- [x] `crates/agent/src/platform.rs` — `get_ip_addresses()` detects non-loopback IPs via sysinfo
+- [x] `crates/agent/src/connection.rs` — Include ip_addresses in Register message
+- [x] `migrations/V011__agent_ip_workspace_access_heartbeat.sql` — `agents.ip_addresses JSONB DEFAULT '[]'`
+- [x] `crates/backend/src/api/agents.rs` — Include ip_addresses in agent list/detail API responses
+- [x] `crates/backend/src/websocket/mod.rs` — Store ip_addresses + update last_heartbeat_at on Register and Heartbeat
+- [x] Tests: backward compat (old agents without ip_addresses), roundtrip, API response
+
+### P5-2: Heartbeat Timeout → UNREACHABLE State
+- [x] `crates/backend/src/core/heartbeat_monitor.rs` — Background task: detect stale agents, transition components to UNREACHABLE
+- [x] `crates/backend/src/main.rs` — Spawn heartbeat monitor on startup (30s check interval)
+- [x] `migrations/V011__agent_ip_workspace_access_heartbeat.sql` — `organizations.heartbeat_timeout_seconds INTEGER DEFAULT 180`
+- [x] FSM distinction: FAILED (check ran, returned error) vs UNREACHABLE (agent silent, unknown state)
+- [x] State transition details include `previous_state` and `agent_id` for recovery on reconnect
+- [x] STOPPED/STOPPING components are NOT transitioned to UNREACHABLE
+- [x] Tests: stale agent detection, active agent not marked, configurable timeout per org
+
+### P5-3: Workspace-Site Access Control (Zone Security)
+- [x] `migrations/V011__agent_ip_workspace_access_heartbeat.sql` — workspace_sites, workspace_members tables
+- [x] `crates/backend/src/core/permissions.rs` — `can_access_site()`, `can_operate_component()` functions
+- [x] `crates/backend/src/api/workspaces.rs` — Full CRUD: workspaces, site bindings, member bindings, my-sites
+- [x] `crates/backend/src/api/mod.rs` — Register workspace routes
+- [x] Workspace access model: org admin = implicit all, no config = open, with config = restricted
+- [x] Team membership grants site access (user in team → team in workspace → workspace has site)
+- [x] Audit: workspace creation logged to action_log
+- [x] Tests: 11 E2E tests covering CRUD, site binding, user/team members, access control, admin bypass, audit
+
+### P5-4: Host-Based Agent Resolution (No Multicast)
+- [x] `migrations/V012__component_host_field.sql` — `components.host VARCHAR(300)` for user-facing FQDN/IP
+- [x] `crates/backend/src/api/components.rs` — Accept `host` (and `hostname` alias) in create/update, return in responses
+- [x] `crates/backend/src/api/components.rs` — `resolve_host_to_agent()`: hostname match → IP match → None
+- [x] `crates/backend/src/api/components.rs` — `resolve_components_for_agent()`: late binding on agent register
+- [x] `crates/backend/src/websocket/mod.rs` — Call `resolve_components_for_agent` on agent Register
+- [x] No multicast: 1 component → 1 host → 1 agent (first match by created_at wins)
+- [x] Backward compat: `hostname` field accepted as alias for `host` in JSON API
+- [x] Tests: 8 E2E tests (host field, hostname alias, resolve by hostname/IP, late binding, no multicast)
+
+## Phase 6: Security & Resilience (Competitive Audit)
+
+> Based on comprehensive competitive analysis of ServiceNow, BMC Helix, Automic, BigFix, Ansible AAP, HashiCorp Consul/Nomad, Rundeck, StackStorm. Baseline score: 3.1/10 → Target: 7.9/10.
+
+### P6-1: Architecture Documentation
+- [x] `SECURITY_ARCHITECTURE.md` — Comprehensive security architecture with ASCII diagrams (threat model, agent identity chain, message reliability, failover, rate limiting, WebSocket security, process execution, approvals, break-glass, credential vault, agent update, certificate lifecycle, config security)
+
+### P6-2: Security Database Schema
+- [x] `migrations/V013__security_resilience.sql` — approval_requests, approval_decisions, approval_policies, break_glass_accounts, break_glass_sessions (APPEND-ONLY), agent_update_tasks, certificate_events tables; agents: certificate_fingerprint/cn/identity_verified; app_variables: vault_path/vault_backend; organizations: rate limits
+
+### P6-3: Protocol Hardening (P0 - Critical)
+- [x] `crates/common/src/protocol.rs` — sequence_id on CommandResult/CheckResult for reliable delivery (ack/retransmit)
+- [x] `crates/common/src/protocol.rs` — exec_mode field ("sync" | "detached") on ExecuteCommand with backward-compat default
+- [x] `crates/common/src/protocol.rs` — cert_fingerprint/cert_cn on AgentConnected for identity binding
+- [x] `crates/common/src/protocol.rs` — BackendMessage::UpdateAgent (binary_url, checksum_sha256, target_version)
+- [x] `crates/common/src/protocol.rs` — BackendMessage::CertificateResponse, AgentMessage::CertificateRenewal
+- [x] `crates/common/src/protocol.rs` — BackendMessage::ApprovalResult
+- [x] Backward compatibility tests for all new fields (old agents/gateways work with new backend)
+
+### P6-4: Agent Security (P0 - Critical)
+- [x] `crates/agent/src/executor.rs` — Resource limits (RLIMIT_CPU 30s/120s, RLIMIT_AS 512MB/1GB, RLIMIT_NOFILE 512/1024, RLIMIT_NPROC 64/128) applied before exec in detached grandchild
+- [x] `crates/agent/src/executor.rs` — execute_async_detached wired (double-fork + setsid) with resource limits
+- [x] `crates/agent/src/connection.rs` — exec_mode routing: "detached" → execute_async_detached, "sync" → execute_sync
+- [x] `crates/agent/src/connection.rs` — sequence_id on all CommandResult messages for reliable delivery
+- [x] `crates/agent/src/connection.rs` — Multi-gateway failover (ordered strategy, backoff, periodic primary retry)
+- [x] `crates/agent/src/config.rs` — Multi-gateway support (urls list, failover_strategy, primary_retry_secs, GATEWAY_URLS env)
+- [x] `crates/agent/src/connection.rs` — Handle UpdateAgent, CertificateResponse, ApprovalResult messages
+
+### P6-5: Gateway Security (P0)
+- [x] `crates/gateway/src/main.rs` — Forward cert_fingerprint/cert_cn in AgentConnected messages (both initial registration and re-announce on reconnect)
+
+### P6-6: Backend Security (P0/P1)
+- [x] `crates/backend/src/config.rs` — JWT_SECRET required in production (panic if missing/insecure), DATABASE_URL validated
+- [x] `crates/backend/src/websocket/mod.rs` — Permission-checked WebSocket subscribe (View permission required)
+- [x] `crates/backend/src/websocket/mod.rs` — Store agent cert fingerprint, set identity_verified flag
+- [x] `crates/backend/src/websocket/mod.rs` — Send Ack for CommandResult with sequence_id (reliable delivery)
+- [x] `crates/backend/src/middleware/rate_limit.rs` — In-memory rate limiter (DashMap-based, per-IP auth, per-user operations/reads)
+- [x] `crates/backend/src/main.rs` — Rate limiter cleanup background task (every 5 min)
+- [x] Rate limiter tests (within limit, different keys independent, cleanup)
+
+### P6-7: 4-Eyes Approval Workflow (P2)
+- [x] `crates/backend/src/api/approvals.rs` — Risk classification (low/medium/high/critical per action type)
+- [x] `crates/backend/src/api/approvals.rs` — create_approval_request, decide_approval (requester != approver enforced)
+- [x] `crates/backend/src/api/approvals.rs` — list_approval_requests, list/upsert_approval_policies
+- [x] Routes: /approvals, /approvals/:id/decide, /approvals/policies
+
+### P6-8: Break-Glass Emergency Access (P2)
+- [x] `crates/backend/src/api/break_glass.rs` — create/list accounts, activate (no auth), list/end sessions
+- [x] `crates/backend/src/lib.rs` — /break-glass/activate route outside auth middleware
+- [x] APPEND-ONLY session logging, time-bounded sessions (5-120 min), CRITICAL security event logging
+- [x] Routes: /break-glass/activate (unauth), /break-glass/accounts, /break-glass/sessions, /break-glass/sessions/:id/end
+
+### P6-9: Agent Update & Certificate Lifecycle (P2/P3)
+- [x] Protocol: UpdateAgent message (binary_url + SHA-256 checksum + target_version)
+- [x] Protocol: CertificateRenewal (CSR from agent) → CertificateResponse (signed cert from backend)
+- [x] Agent handler stubs (download/verify/replace TODO)
+- [x] Migration: agent_update_tasks, certificate_events tables
+
+## Phase 7: Production Readiness
+
+> Based on comprehensive production-readiness audit scoring 6.5/10.
+> Target: address all critical gaps to reach production-deployable state.
+
+### P7-1: Migration & Database Lifecycle
+- [x] `crates/backend/src/main.rs` — Auto-run migrations on startup (Flyway-style V001__ naming, `_migrations` tracking table, transactional per-migration)
+- [x] `crates/backend/src/main.rs` — Auto-partition maintenance: `ensure_check_event_partitions()` creates partitions for current + next year on startup
+- [x] `crates/backend/src/main.rs` — Daily background partition maintenance task (86400s interval)
+- [ ] Validation: `sqlx migrate run` succeeds on clean PostgreSQL 16
+
+### P7-2: Observability
+- [x] `crates/backend/Cargo.toml` — Added `metrics`, `metrics-exporter-prometheus` dependencies
+- [x] `crates/backend/src/main.rs` — Install Prometheus recorder on startup with application metrics (http_requests_total, http_request_duration_seconds, ws_connections_active, agents_connected, state_transitions_total, commands_executed_total, db_pool_connections)
+- [x] `crates/backend/src/api/health.rs` — `GET /metrics` endpoint serving Prometheus text format
+- [x] `crates/backend/Cargo.toml` — `tracing-subscriber` with `json` feature
+- [x] `crates/backend/src/main.rs` — Configurable log format: `LOG_FORMAT=json` enables structured JSON logging, `text` (default) for human-readable
+- [x] `crates/backend/src/config.rs` — `log_format` field loaded from `LOG_FORMAT` env var
+
+### P7-3: Security Hardening
+- [x] `crates/backend/src/lib.rs` — Configurable CORS: `CORS_ORIGINS` env var → restrictive in production (no origins = deny cross-origin), permissive only in development
+- [x] `crates/backend/src/config.rs` — `cors_origins: Vec<String>` parsed from comma-separated `CORS_ORIGINS`
+- [x] `crates/backend/src/config.rs` — Warning in production if CORS_ORIGINS not set
+- [x] `crates/gateway/src/main.rs` — mTLS fingerprint forwarding: extract `cert_fingerprint` from agent Register message and forward via AgentConnected
+- [x] `crates/gateway/src/main.rs` — Re-announce with stored cert fingerprint on backend reconnect
+- [x] `crates/gateway/src/registry.rs` — `AgentInfo.cert_fingerprint` field, stored on register, forwarded on re-announce
+
+### P7-4: Resilience
+- [x] `crates/backend/src/main.rs` — Graceful shutdown: `with_graceful_shutdown(shutdown_signal())` handles SIGTERM + Ctrl-C, drains in-flight requests
+- [x] `crates/backend/src/config.rs` — `redis_url: Option<String>` loaded from `REDIS_URL` env var
+- [x] `crates/backend/src/main.rs` — Optional Redis connection: `ConnectionManager` with graceful degradation (warn + continue without cache)
+- [x] `crates/backend/src/lib.rs` — `AppState.redis: Option<redis::aio::ConnectionManager>`
+
+### P7-5: API Documentation
+- [x] `crates/backend/openapi.json` — OpenAPI 3.0.3 specification covering all 75+ endpoints, organized by tag (Applications, Components, Dependencies, Permissions, Teams, Switchover, Diagnostics, Reports, Orchestration, Variables, Groups, Agents, Workspaces, Approvals, Break-Glass, API Keys, Import)
+- [x] `crates/backend/src/api/health.rs` — `GET /openapi.json` endpoint serving the specification
+- [x] `crates/backend/src/lib.rs` — Route registered for `/openapi.json`
+
+### P7-6: Frontend Production Readiness
+- [x] `frontend/src/components/ErrorBoundary.tsx` — React ErrorBoundary component (catches rendering errors, shows error UI with retry, custom fallback support)
+- [x] `frontend/src/App.tsx` — ErrorBoundary wrapping all authenticated page content
+- [x] `frontend/package.json` — Vitest + React Testing Library + jsdom dev dependencies
+- [x] `frontend/vite.config.ts` — Vitest configuration (jsdom environment, globals, test setup)
+- [x] `frontend/src/test-setup.ts` — Test setup with jest-dom matchers
+- [x] `frontend/tsconfig.app.json` — Exclude test files from production build
+- [x] `frontend/src/stores/auth.test.ts` — 3 tests: initial state, setAuth, logout
+- [x] `frontend/src/stores/ui.test.ts` — 4 tests: toggle sidebar, set collapsed, toggle theme, command palette
+- [x] `frontend/src/lib/permissions.test.ts` — 4 tests: ordering, hasPermission, labels, count
+- [x] `frontend/src/components/ErrorBoundary.test.tsx` — 4 tests: render children, error UI, try again button, custom fallback
+
+### P7-7: Project Documentation
+- [x] `.env.example` — Complete environment variable reference (DATABASE_URL, JWT_SECRET, CORS_ORIGINS, LOG_FORMAT, REDIS_URL, OIDC, SAML, rate limits)
+- [x] `CHANGELOG.md` — Keep-a-Changelog format, v0.1.0 initial release + unreleased Phase 7 changes
+
+### Build Validation
+- [x] `cargo build --workspace` — clean (0 errors)
+- [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
+- [x] `cargo test --workspace` — all unit tests pass (73 common + 14 gateway + backend) (e2e tests skipped, require live PostgreSQL)
+- [x] `cd frontend && npm run build` — clean (0 errors)
+- [x] `cd frontend && npm test` — 15 tests pass (4 files)

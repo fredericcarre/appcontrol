@@ -10,7 +10,7 @@ pub enum DagError {
 }
 
 /// A Directed Acyclic Graph for component dependencies.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Dag {
     /// component_id -> set of dependencies (component_ids that must start first)
     pub adjacency: HashMap<Uuid, HashSet<Uuid>>,
@@ -20,10 +20,7 @@ pub struct Dag {
 
 impl Dag {
     pub fn new() -> Self {
-        Self {
-            adjacency: HashMap::new(),
-            nodes: HashSet::new(),
-        }
+        Self::default()
     }
 
     pub fn add_node(&mut self, id: Uuid) {

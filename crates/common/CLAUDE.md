@@ -76,6 +76,9 @@ pub enum AgentMessage {
     Heartbeat { agent_id: Uuid, cpu: f32, memory: f32, at: DateTime<Utc> },
     CheckResult(CheckResult),
     CommandResult { request_id: Uuid, exit_code: i32, stdout: String, stderr: String, duration_ms: u32 },
+    Register { agent_id: Uuid, hostname: String, ip_addresses: Vec<String>, labels: Value, version: String },
+    // ip_addresses: detected non-loopback IPs (FQDN + IP support for Azure/cloud)
+    // serde(default) ensures backward compat with older agents that don't send ip_addresses
 }
 
 // Backend → Agent

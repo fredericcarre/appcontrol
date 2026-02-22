@@ -109,19 +109,23 @@ impl TestContext {
 
         let config = appcontrol_backend::config::AppConfig {
             database_url: db_url,
-            redis_url: std::env::var("TEST_REDIS_URL")
-                .unwrap_or_else(|_| "redis://localhost:6379".to_string()),
             port: addr.port(),
             jwt_secret: "test-jwt-secret".to_string(),
             jwt_issuer: "appcontrol-test".to_string(),
             oidc: None,
             saml: None,
+            app_env: "development".to_string(),
+            rate_limit_auth: 100,
+            rate_limit_operations: 100,
+            rate_limit_reads: 1000,
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
             db: pool.clone(),
             ws_hub: appcontrol_backend::websocket::Hub::new(),
             config,
+            rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
+            heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
         });
 
         let app = appcontrol_backend::create_router(state);
@@ -214,8 +218,6 @@ impl TestContext {
 
         let config = appcontrol_backend::config::AppConfig {
             database_url: db_url,
-            redis_url: std::env::var("TEST_REDIS_URL")
-                .unwrap_or_else(|_| "redis://localhost:6379".to_string()),
             port: addr.port(),
             jwt_secret: "test-jwt-secret".to_string(),
             jwt_issuer: "appcontrol-test".to_string(),
@@ -231,12 +233,18 @@ impl TestContext {
                 admin_group,
                 want_assertions_signed: false,
             }),
+            app_env: "development".to_string(),
+            rate_limit_auth: 100,
+            rate_limit_operations: 100,
+            rate_limit_reads: 1000,
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
             db: pool.clone(),
             ws_hub: appcontrol_backend::websocket::Hub::new(),
             config,
+            rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
+            heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
         });
 
         let app = appcontrol_backend::create_router(state);

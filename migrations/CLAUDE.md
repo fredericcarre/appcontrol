@@ -20,6 +20,9 @@ V005__event_tables.sql             # check_events (partitioned), state_transitio
 V006__teams_permissions.sql        # workspaces, teams, team_members, app_permissions_users/teams, app_share_links, user_favorites, saved_views
 V007__api_keys_notifications.sql   # api_keys, notification_preferences
 V008__materialized_views.sql       # component_daily_stats + refresh indexes
+V009__saml_oidc.sql                # SAML/OIDC columns, saml_group_mappings
+V010__variables_groups_params.sql  # app_variables, component_groups, component_links, command_input_params
+V011__agent_ip_workspace_access_heartbeat.sql  # agents.ip_addresses, workspace_sites, workspace_members, orgs.heartbeat_timeout_seconds
 ```
 
 ## Complete Schema Reference

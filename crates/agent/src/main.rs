@@ -3,9 +3,11 @@ mod config;
 mod connection;
 mod executor;
 mod native_commands;
+mod platform;
 mod scheduler;
 
 use clap::Parser;
+use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
@@ -43,17 +45,28 @@ async fn main() -> anyhow::Result<()> {
     // Initialize offline buffer
     let buffer = buffer::OfflineBuffer::new(&config.buffer_path())?;
 
-    // Initialize connection manager
+    // Initialize check scheduler (shared via Arc for UpdateConfig handling)
     let (msg_tx, msg_rx) = tokio::sync::mpsc::unbounded_channel();
+    let check_scheduler = Arc::new(scheduler::CheckScheduler::new(agent_id, msg_tx.clone()));
+
+    // Initialize connection manager with multi-gateway failover support
+    let gateway_urls = config.gateway_urls();
     let connection = connection::ConnectionManager::new(
-        config.gateway_url().to_string(),
+        gateway_urls.clone(),
+        config.gateway.failover_strategy.clone(),
+        config.gateway.primary_retry_secs,
         agent_id,
         config.labels.clone(),
         buffer.clone(),
+        check_scheduler.clone(),
+        msg_tx,
     );
 
-    // Initialize check scheduler
-    let check_scheduler = scheduler::CheckScheduler::new(agent_id, msg_tx.clone());
+    tracing::info!(
+        "Gateway failover: {} URLs configured (strategy={})",
+        gateway_urls.len(),
+        config.gateway.failover_strategy
+    );
 
     // Start all subsystems
     let conn_handle = tokio::spawn(connection.run(msg_rx));
