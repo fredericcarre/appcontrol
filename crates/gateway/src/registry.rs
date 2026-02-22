@@ -7,6 +7,7 @@ pub struct AgentInfo {
     pub hostname: String,
     pub last_heartbeat: chrono::DateTime<chrono::Utc>,
     pub connected_at: chrono::DateTime<chrono::Utc>,
+    pub cert_fingerprint: Option<String>,
 }
 
 /// Tracks connected agents with bidirectional lookups.
@@ -27,7 +28,7 @@ impl AgentRegistry {
 
     /// Register an agent. Returns the previous AgentInfo if this agent_id was already registered
     /// (reconnection scenario — old connection replaced).
-    pub fn register(&self, conn_id: Uuid, agent_id: Uuid, hostname: String) -> Option<AgentInfo> {
+    pub fn register(&self, conn_id: Uuid, agent_id: Uuid, hostname: String, cert_fingerprint: Option<String>) -> Option<AgentInfo> {
         let now = chrono::Utc::now();
 
         // If this agent_id was already registered on a different conn, remove old entry
@@ -51,6 +52,7 @@ impl AgentRegistry {
             hostname: hostname.clone(),
             last_heartbeat: now,
             connected_at: now,
+            cert_fingerprint,
         };
         self.agents.insert(conn_id, info);
         self.agent_to_conn.insert(agent_id, conn_id);
@@ -120,7 +122,7 @@ mod tests {
         let conn_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
 
-        reg.register(conn_id, agent_id, "host1".to_string());
+        reg.register(conn_id, agent_id, "host1".to_string(), None);
 
         assert_eq!(reg.connected_count(), 1);
         assert_eq!(reg.get_agent_id(conn_id), Some(agent_id));
@@ -133,7 +135,7 @@ mod tests {
         let conn_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
 
-        reg.register(conn_id, agent_id, "host1".to_string());
+        reg.register(conn_id, agent_id, "host1".to_string(), None);
 
         let info = reg.unregister(conn_id).expect("should return AgentInfo");
         assert_eq!(info.agent_id, agent_id);
@@ -155,8 +157,8 @@ mod tests {
         let conn1 = Uuid::new_v4();
         let conn2 = Uuid::new_v4();
 
-        reg.register(conn1, agent_id, "host1".to_string());
-        let prev = reg.register(conn2, agent_id, "host1".to_string());
+        reg.register(conn1, agent_id, "host1".to_string(), None);
+        let prev = reg.register(conn2, agent_id, "host1".to_string(), None);
 
         assert!(prev.is_some());
         assert_eq!(reg.connected_count(), 1);

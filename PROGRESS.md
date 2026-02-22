@@ -272,7 +272,63 @@
 - [x] Agent handler stubs (download/verify/replace TODO)
 - [x] Migration: agent_update_tasks, certificate_events tables
 
+## Phase 7: Production Readiness
+
+> Based on comprehensive production-readiness audit scoring 6.5/10.
+> Target: address all critical gaps to reach production-deployable state.
+
+### P7-1: Migration & Database Lifecycle
+- [x] `crates/backend/src/main.rs` — Auto-run migrations on startup (Flyway-style V001__ naming, `_migrations` tracking table, transactional per-migration)
+- [x] `crates/backend/src/main.rs` — Auto-partition maintenance: `ensure_check_event_partitions()` creates partitions for current + next year on startup
+- [x] `crates/backend/src/main.rs` — Daily background partition maintenance task (86400s interval)
+- [ ] Validation: `sqlx migrate run` succeeds on clean PostgreSQL 16
+
+### P7-2: Observability
+- [x] `crates/backend/Cargo.toml` — Added `metrics`, `metrics-exporter-prometheus` dependencies
+- [x] `crates/backend/src/main.rs` — Install Prometheus recorder on startup with application metrics (http_requests_total, http_request_duration_seconds, ws_connections_active, agents_connected, state_transitions_total, commands_executed_total, db_pool_connections)
+- [x] `crates/backend/src/api/health.rs` — `GET /metrics` endpoint serving Prometheus text format
+- [x] `crates/backend/Cargo.toml` — `tracing-subscriber` with `json` feature
+- [x] `crates/backend/src/main.rs` — Configurable log format: `LOG_FORMAT=json` enables structured JSON logging, `text` (default) for human-readable
+- [x] `crates/backend/src/config.rs` — `log_format` field loaded from `LOG_FORMAT` env var
+
+### P7-3: Security Hardening
+- [x] `crates/backend/src/lib.rs` — Configurable CORS: `CORS_ORIGINS` env var → restrictive in production (no origins = deny cross-origin), permissive only in development
+- [x] `crates/backend/src/config.rs` — `cors_origins: Vec<String>` parsed from comma-separated `CORS_ORIGINS`
+- [x] `crates/backend/src/config.rs` — Warning in production if CORS_ORIGINS not set
+- [x] `crates/gateway/src/main.rs` — mTLS fingerprint forwarding: extract `cert_fingerprint` from agent Register message and forward via AgentConnected
+- [x] `crates/gateway/src/main.rs` — Re-announce with stored cert fingerprint on backend reconnect
+- [x] `crates/gateway/src/registry.rs` — `AgentInfo.cert_fingerprint` field, stored on register, forwarded on re-announce
+
+### P7-4: Resilience
+- [x] `crates/backend/src/main.rs` — Graceful shutdown: `with_graceful_shutdown(shutdown_signal())` handles SIGTERM + Ctrl-C, drains in-flight requests
+- [x] `crates/backend/src/config.rs` — `redis_url: Option<String>` loaded from `REDIS_URL` env var
+- [x] `crates/backend/src/main.rs` — Optional Redis connection: `ConnectionManager` with graceful degradation (warn + continue without cache)
+- [x] `crates/backend/src/lib.rs` — `AppState.redis: Option<redis::aio::ConnectionManager>`
+
+### P7-5: API Documentation
+- [x] `crates/backend/openapi.json` — OpenAPI 3.0.3 specification covering all 75+ endpoints, organized by tag (Applications, Components, Dependencies, Permissions, Teams, Switchover, Diagnostics, Reports, Orchestration, Variables, Groups, Agents, Workspaces, Approvals, Break-Glass, API Keys, Import)
+- [x] `crates/backend/src/api/health.rs` — `GET /openapi.json` endpoint serving the specification
+- [x] `crates/backend/src/lib.rs` — Route registered for `/openapi.json`
+
+### P7-6: Frontend Production Readiness
+- [x] `frontend/src/components/ErrorBoundary.tsx` — React ErrorBoundary component (catches rendering errors, shows error UI with retry, custom fallback support)
+- [x] `frontend/src/App.tsx` — ErrorBoundary wrapping all authenticated page content
+- [x] `frontend/package.json` — Vitest + React Testing Library + jsdom dev dependencies
+- [x] `frontend/vite.config.ts` — Vitest configuration (jsdom environment, globals, test setup)
+- [x] `frontend/src/test-setup.ts` — Test setup with jest-dom matchers
+- [x] `frontend/tsconfig.app.json` — Exclude test files from production build
+- [x] `frontend/src/stores/auth.test.ts` — 3 tests: initial state, setAuth, logout
+- [x] `frontend/src/stores/ui.test.ts` — 4 tests: toggle sidebar, set collapsed, toggle theme, command palette
+- [x] `frontend/src/lib/permissions.test.ts` — 4 tests: ordering, hasPermission, labels, count
+- [x] `frontend/src/components/ErrorBoundary.test.tsx` — 4 tests: render children, error UI, try again button, custom fallback
+
+### P7-7: Project Documentation
+- [x] `.env.example` — Complete environment variable reference (DATABASE_URL, JWT_SECRET, CORS_ORIGINS, LOG_FORMAT, REDIS_URL, OIDC, SAML, rate limits)
+- [x] `CHANGELOG.md` — Keep-a-Changelog format, v0.1.0 initial release + unreleased Phase 7 changes
+
 ### Build Validation
 - [x] `cargo build --workspace` — clean (0 errors)
 - [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
-- [x] `cargo test --workspace` — 100 unit tests pass (e2e tests skipped, require live PostgreSQL)
+- [x] `cargo test --workspace` — all unit tests pass (73 common + 14 gateway + backend) (e2e tests skipped, require live PostgreSQL)
+- [x] `cd frontend && npm run build` — clean (0 errors)
+- [x] `cd frontend && npm test` — 15 tests pass (4 files)

@@ -20,6 +20,12 @@ pub struct AppConfig {
     pub rate_limit_operations: u32,
     /// Rate limiting: read endpoints (per user per minute)
     pub rate_limit_reads: u32,
+    /// Redis URL (optional — set REDIS_URL to enable caching)
+    pub redis_url: Option<String>,
+    /// CORS allowed origins (comma-separated). Empty = permissive in dev, restrictive in prod.
+    pub cors_origins: Vec<String>,
+    /// Log format: "text" (default) or "json" for structured JSON logging
+    pub log_format: String,
 }
 
 impl AppConfig {
@@ -76,6 +82,23 @@ impl AppConfig {
             }
         };
 
+        let cors_origins: Vec<String> = std::env::var("CORS_ORIGINS")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if is_production && cors_origins.is_empty() {
+            tracing::warn!(
+                "CORS_ORIGINS not set in production — CORS will reject cross-origin requests. \
+                 Set CORS_ORIGINS=https://your-domain.com to allow frontend access."
+            );
+        }
+
         Self {
             database_url,
             port: std::env::var("PORT")
@@ -99,6 +122,9 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(200),
+            redis_url: std::env::var("REDIS_URL").ok(),
+            cors_origins,
+            log_format: std::env::var("LOG_FORMAT").unwrap_or_else(|_| "text".to_string()),
         }
     }
 }

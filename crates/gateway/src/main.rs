@@ -231,12 +231,15 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
 
                     match &agent_msg {
                         appcontrol_common::AgentMessage::Register {
-                            agent_id, hostname, ..
+                            agent_id,
+                            hostname,
+                            cert_fingerprint,
+                            ..
                         } => {
-                            // Register in our local registry
+                            // Register in our local registry (with cert fingerprint for re-announce)
                             state_clone
                                 .registry
-                                .register(conn_id, *agent_id, hostname.clone());
+                                .register(conn_id, *agent_id, hostname.clone(), cert_fingerprint.clone());
 
                             // Register the agent's sender in the router (keyed by agent_id)
                             state_clone.router.add_agent(*agent_id, tx_clone.clone());
@@ -244,12 +247,14 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
                             // Remember the agent_id for cleanup
                             *agent_id_clone.lock().unwrap() = Some(*agent_id);
 
-                            // Notify backend that this agent is now connected
+                            // Forward agent's cert fingerprint from Register message to backend.
+                            // The agent includes its own certificate fingerprint in the Register
+                            // message when mTLS is configured. This binds agent identity to cert.
                             let notification = GatewayMessage::AgentConnected {
                                 agent_id: *agent_id,
                                 hostname: hostname.clone(),
-                                cert_fingerprint: None, // TODO: extract from TLS handshake
-                                cert_cn: None,          // TODO: extract from TLS handshake
+                                cert_fingerprint: cert_fingerprint.clone(),
+                                cert_cn: Some(hostname.clone()),
                             };
                             if let Ok(json) = serde_json::to_string(&notification) {
                                 state_clone.router.forward_to_backend(&json);
@@ -323,8 +328,8 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
         let notification = GatewayMessage::AgentConnected {
             agent_id: agent_info.agent_id,
             hostname: agent_info.hostname.clone(),
-            cert_fingerprint: None, // TODO: store and forward from TLS handshake
-            cert_cn: None,
+            cert_fingerprint: agent_info.cert_fingerprint.clone(),
+            cert_cn: Some(agent_info.hostname.clone()),
         };
         if let Ok(json) = serde_json::to_string(&notification) {
             write

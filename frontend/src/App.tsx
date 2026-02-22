@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { MapViewPage } from '@/pages/MapViewPage';
 import { TeamsPage } from '@/pages/TeamsPage';
@@ -23,7 +24,9 @@ function AuthLayout({ children }: { children: React.ReactNode }) {
       <div className={cn("flex flex-col flex-1 overflow-hidden transition-all duration-200", sidebarCollapsed ? "ml-[60px]" : "ml-[240px]")}>
         <Header />
         <main className="flex-1 overflow-auto p-6">
-          {children}
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
         </main>
       </div>
     </div>
