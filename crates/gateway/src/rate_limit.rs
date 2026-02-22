@@ -35,10 +35,13 @@ impl AgentRateLimiter {
     pub fn check(&self, agent_id: Uuid) -> bool {
         let now = chrono::Utc::now();
 
-        let mut entry = self.counters.entry(agent_id).or_insert_with(|| AgentCounter {
-            count: 0,
-            window_start: now,
-        });
+        let mut entry = self
+            .counters
+            .entry(agent_id)
+            .or_insert_with(|| AgentCounter {
+                count: 0,
+                window_start: now,
+            });
 
         let counter = entry.value_mut();
 

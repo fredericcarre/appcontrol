@@ -237,9 +237,12 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
                             ..
                         } => {
                             // Register in our local registry (with cert fingerprint for re-announce)
-                            state_clone
-                                .registry
-                                .register(conn_id, *agent_id, hostname.clone(), cert_fingerprint.clone());
+                            state_clone.registry.register(
+                                conn_id,
+                                *agent_id,
+                                hostname.clone(),
+                                cert_fingerprint.clone(),
+                            );
 
                             // Register the agent's sender in the router (keyed by agent_id)
                             state_clone.router.add_agent(*agent_id, tx_clone.clone());

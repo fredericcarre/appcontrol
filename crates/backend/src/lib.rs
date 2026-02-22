@@ -48,7 +48,13 @@ fn build_cors_layer(config: &config::AppConfig) -> CorsLayer {
             .collect();
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(origins))
-            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH])
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::DELETE,
+                Method::PATCH,
+            ])
             .allow_headers(tower_http::cors::Any)
             .allow_credentials(true)
     }

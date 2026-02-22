@@ -37,8 +37,7 @@ async fn main() -> anyhow::Result<()> {
 
     let ws_hub = websocket::Hub::new();
 
-    let heartbeat_batcher =
-        appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
+    let heartbeat_batcher = appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
 
     // Connect to Redis if configured
     let redis = if let Some(ref redis_url) = config.redis_url {
@@ -49,7 +48,10 @@ async fn main() -> anyhow::Result<()> {
                     Some(conn)
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to connect to Redis: {} — continuing without cache", e);
+                    tracing::warn!(
+                        "Failed to connect to Redis: {} — continuing without cache",
+                        e
+                    );
                     None
                 }
             },
@@ -70,7 +72,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Register application metrics
     metrics::describe_counter!("http_requests_total", "Total HTTP requests");
-    metrics::describe_histogram!("http_request_duration_seconds", "HTTP request duration in seconds");
+    metrics::describe_histogram!(
+        "http_request_duration_seconds",
+        "HTTP request duration in seconds"
+    );
     metrics::describe_gauge!("ws_connections_active", "Active WebSocket connections");
     metrics::describe_gauge!("agents_connected", "Number of connected agents");
     metrics::describe_counter!("state_transitions_total", "Total FSM state transitions");
@@ -228,8 +233,7 @@ async fn run_migrations(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     .await?;
 
     // Find migration files
-    let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../migrations");
+    let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
 
     let mut entries: Vec<(i32, String, std::path::PathBuf)> = Vec::new();
 

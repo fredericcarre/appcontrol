@@ -357,7 +357,11 @@ pub async fn record_command_result(
     stdout: &str,
     stderr: &str,
 ) {
-    let status = if exit_code == 0 { "completed" } else { "failed" };
+    let status = if exit_code == 0 {
+        "completed"
+    } else {
+        "failed"
+    };
     if let Err(e) = sqlx::query(
         "UPDATE command_executions
          SET exit_code = $2, stdout = $3, stderr = $4, status = $5, completed_at = now()

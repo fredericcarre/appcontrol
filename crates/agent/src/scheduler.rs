@@ -188,12 +188,14 @@ impl CheckScheduler {
         {
             let mut state = self.check_state.write().await;
             for (comp_id, _) in &due_components {
-                let cs = state.entry(*comp_id).or_insert_with(|| ComponentCheckState {
-                    last_checked_at: None,
-                    last_exit_code: None,
-                    last_sent_at: None,
-                    in_flight: false,
-                });
+                let cs = state
+                    .entry(*comp_id)
+                    .or_insert_with(|| ComponentCheckState {
+                        last_checked_at: None,
+                        last_exit_code: None,
+                        last_sent_at: None,
+                        in_flight: false,
+                    });
                 cs.in_flight = true;
                 cs.last_checked_at = Some(now);
             }
@@ -207,39 +209,38 @@ impl CheckScheduler {
             let check_cmd = config.check_cmd.as_ref().unwrap();
             let cmd_hash = hash_command(check_cmd);
 
-            let (exit_code, stdout, duration_ms) =
-                if let Some(cached) = executed_cmds.get(&cmd_hash) {
-                    cached.clone()
-                } else {
-                    let timeout = Duration::from_secs(30);
-                    let start = std::time::Instant::now();
-                    match crate::executor::execute_sync(check_cmd, timeout).await {
-                        Ok(result) => {
-                            let entry = (
-                                result.exit_code,
-                                result.stdout.clone(),
-                                result.duration_ms,
-                            );
-                            executed_cmds.insert(cmd_hash, entry.clone());
-                            entry
-                        }
-                        Err(_) => {
-                            let duration = start.elapsed().as_millis() as u32;
-                            let entry = (-1i32, String::new(), duration);
-                            executed_cmds.insert(cmd_hash, entry.clone());
-                            entry
-                        }
+            let (exit_code, stdout, duration_ms) = if let Some(cached) =
+                executed_cmds.get(&cmd_hash)
+            {
+                cached.clone()
+            } else {
+                let timeout = Duration::from_secs(30);
+                let start = std::time::Instant::now();
+                match crate::executor::execute_sync(check_cmd, timeout).await {
+                    Ok(result) => {
+                        let entry = (result.exit_code, result.stdout.clone(), result.duration_ms);
+                        executed_cmds.insert(cmd_hash, entry.clone());
+                        entry
                     }
-                };
+                    Err(_) => {
+                        let duration = start.elapsed().as_millis() as u32;
+                        let entry = (-1i32, String::new(), duration);
+                        executed_cmds.insert(cmd_hash, entry.clone());
+                        entry
+                    }
+                }
+            };
 
             // Update check state, clear in_flight, and determine if we should send
             let mut state = self.check_state.write().await;
-            let cs = state.entry(*comp_id).or_insert_with(|| ComponentCheckState {
-                last_checked_at: None,
-                last_exit_code: None,
-                last_sent_at: None,
-                in_flight: false,
-            });
+            let cs = state
+                .entry(*comp_id)
+                .or_insert_with(|| ComponentCheckState {
+                    last_checked_at: None,
+                    last_exit_code: None,
+                    last_sent_at: None,
+                    in_flight: false,
+                });
 
             cs.in_flight = false;
 

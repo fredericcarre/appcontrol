@@ -347,11 +347,7 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
 
             // Record result in command_executions for audit trail
             crate::core::sequencer::record_command_result(
-                &state.db,
-                request_id,
-                exit_code,
-                &stdout,
-                &stderr,
+                &state.db, request_id, exit_code, &stdout, &stderr,
             )
             .await;
 
@@ -452,15 +448,25 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
 /// This is called when an agent connects (AgentConnected) so the agent's scheduler
 /// knows what components to health-check. Without this, the agent has no work to do.
 async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
-    let rows = sqlx::query_as::<_, (
-        uuid::Uuid,  // id
-        String,       // name
-        Option<String>, Option<String>, Option<String>,  // check, start, stop
-        Option<String>, Option<String>, Option<String>,  // integrity, post_start, infra
-        Option<String>, Option<String>,                   // rebuild, rebuild_infra
-        i32, i32, i32,                                    // intervals
-        serde_json::Value,                                 // env_vars
-    )>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            uuid::Uuid, // id
+            String,     // name
+            Option<String>,
+            Option<String>,
+            Option<String>, // check, start, stop
+            Option<String>,
+            Option<String>,
+            Option<String>, // integrity, post_start, infra
+            Option<String>,
+            Option<String>, // rebuild, rebuild_infra
+            i32,
+            i32,
+            i32,               // intervals
+            serde_json::Value, // env_vars
+        ),
+    >(
         "SELECT id, name, check_cmd, start_cmd, stop_cmd,
                 integrity_check_cmd, post_start_check_cmd, infra_check_cmd,
                 rebuild_cmd, rebuild_infra_cmd,
@@ -487,24 +493,41 @@ async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
 
     let components: Vec<appcontrol_common::ComponentConfig> = rows
         .into_iter()
-        .map(|(id, name, check, start, stop, integrity, post_start, infra, rebuild, rebuild_infra, interval, start_to, stop_to, env)| {
-            appcontrol_common::ComponentConfig {
-                component_id: id,
+        .map(
+            |(
+                id,
                 name,
-                check_cmd: check,
-                start_cmd: start,
-                stop_cmd: stop,
-                integrity_check_cmd: integrity,
-                post_start_check_cmd: post_start,
-                infra_check_cmd: infra,
-                rebuild_cmd: rebuild,
-                rebuild_infra_cmd: rebuild_infra,
-                check_interval_seconds: interval as u32,
-                start_timeout_seconds: start_to as u32,
-                stop_timeout_seconds: stop_to as u32,
-                env_vars: env,
-            }
-        })
+                check,
+                start,
+                stop,
+                integrity,
+                post_start,
+                infra,
+                rebuild,
+                rebuild_infra,
+                interval,
+                start_to,
+                stop_to,
+                env,
+            )| {
+                appcontrol_common::ComponentConfig {
+                    component_id: id,
+                    name,
+                    check_cmd: check,
+                    start_cmd: start,
+                    stop_cmd: stop,
+                    integrity_check_cmd: integrity,
+                    post_start_check_cmd: post_start,
+                    infra_check_cmd: infra,
+                    rebuild_cmd: rebuild,
+                    rebuild_infra_cmd: rebuild_infra,
+                    check_interval_seconds: interval as u32,
+                    start_timeout_seconds: start_to as u32,
+                    stop_timeout_seconds: stop_to as u32,
+                    env_vars: env,
+                }
+            },
+        )
         .collect();
 
     let count = components.len();

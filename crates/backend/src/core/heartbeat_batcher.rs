@@ -52,12 +52,11 @@ impl HeartbeatBatcher {
             let count = agent_ids.len();
 
             // Single UPDATE for all agents in the batch
-            if let Err(e) = sqlx::query(
-                "UPDATE agents SET last_heartbeat_at = now() WHERE id = ANY($1)",
-            )
-            .bind(&agent_ids)
-            .execute(&db)
-            .await
+            if let Err(e) =
+                sqlx::query("UPDATE agents SET last_heartbeat_at = now() WHERE id = ANY($1)")
+                    .bind(&agent_ids)
+                    .execute(&db)
+                    .await
             {
                 tracing::warn!(count, "Failed to batch-update heartbeats: {}", e);
             } else {
