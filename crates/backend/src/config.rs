@@ -5,7 +5,6 @@ use crate::auth::saml::SamlConfig;
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub database_url: String,
-    pub redis_url: String,
     pub port: u16,
     pub jwt_secret: String,
     pub jwt_issuer: String,
@@ -79,8 +78,6 @@ impl AppConfig {
 
         Self {
             database_url,
-            redis_url: std::env::var("REDIS_URL")
-                .unwrap_or_else(|_| "redis://localhost:6379".to_string()),
             port: std::env::var("PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())

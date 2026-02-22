@@ -26,8 +26,6 @@ backend:
     url: ""
     existingSecret: ""
     secretKey: "database-url"
-  redis:
-    url: ""
   jwt:
     secret: ""
     existingSecret: ""
@@ -76,12 +74,6 @@ postgresql:
   primary:
     persistence:
       size: 10Gi
-
-redis:
-  enabled: true
-  architecture: standalone
-  auth:
-    enabled: false
 
 ingress:
   enabled: false

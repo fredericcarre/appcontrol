@@ -109,8 +109,6 @@ impl TestContext {
 
         let config = appcontrol_backend::config::AppConfig {
             database_url: db_url,
-            redis_url: std::env::var("TEST_REDIS_URL")
-                .unwrap_or_else(|_| "redis://localhost:6379".to_string()),
             port: addr.port(),
             jwt_secret: "test-jwt-secret".to_string(),
             jwt_issuer: "appcontrol-test".to_string(),
@@ -219,8 +217,6 @@ impl TestContext {
 
         let config = appcontrol_backend::config::AppConfig {
             database_url: db_url,
-            redis_url: std::env::var("TEST_REDIS_URL")
-                .unwrap_or_else(|_| "redis://localhost:6379".to_string()),
             port: addr.port(),
             jwt_secret: "test-jwt-secret".to_string(),
             jwt_issuer: "appcontrol-test".to_string(),

@@ -1,7 +1,7 @@
 # Docker Compose for local development on macOS
 # Usage: docker compose -f docker/docker-compose.dev.yaml up -d
 #
-# This starts only the infrastructure services (PostgreSQL + Redis).
+# This starts only the infrastructure services (PostgreSQL).
 # You run backend, frontend, and agent natively for hot-reload.
 
 version: "3.8"
@@ -26,19 +26,6 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    platform: linux/arm64
-    ports:
-      - "6379:6379"
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   # Optional: pgAdmin for database inspection
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -54,17 +41,5 @@ services:
       postgres:
         condition: service_healthy
 
-  # Optional: RedisInsight for cache inspection
-  redisinsight:
-    image: redis/redisinsight:latest
-    platform: linux/amd64
-    profiles: ["tools"]
-    ports:
-      - "5540:5540"
-    depends_on:
-      redis:
-        condition: service_healthy
-
 volumes:
   pgdata:
-  redisdata:
