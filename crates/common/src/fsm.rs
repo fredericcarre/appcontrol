@@ -68,6 +68,10 @@ pub fn next_state_from_check(current: ComponentState, exit_code: i32) -> Option<
         (Degraded, 1) => None,
         (Degraded, _) => Some(Failed),
 
+        // Stopping: check KO (process gone) → Stopped, check OK = stay in Stopping
+        (Stopping, 0) => None,
+        (Stopping, _) => Some(Stopped),
+
         // Other states: checks don't trigger transitions
         _ => None,
     }
@@ -276,6 +280,24 @@ mod tests {
     #[test]
     fn test_check_unknown_exit_1_failed() {
         assert_eq!(next_state_from_check(Unknown, 1), Some(Failed));
+    }
+
+    #[test]
+    fn test_check_stopping_exit_0_no_change() {
+        // Process still alive during stop — stay in Stopping
+        assert_eq!(next_state_from_check(Stopping, 0), None);
+    }
+
+    #[test]
+    fn test_check_stopping_exit_1_stopped() {
+        // Process gone (check fails) → transition to Stopped
+        assert_eq!(next_state_from_check(Stopping, 1), Some(Stopped));
+    }
+
+    #[test]
+    fn test_check_stopping_exit_2_stopped() {
+        // Any non-zero exit during Stopping → Stopped
+        assert_eq!(next_state_from_check(Stopping, 2), Some(Stopped));
     }
 
     #[test]

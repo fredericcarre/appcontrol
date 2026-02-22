@@ -265,6 +265,11 @@ async fn process_gateway_message(
                 );
                 state.ws_hub.register_agent_route(agent_id, gw_id);
 
+                // Push component config to the agent so its scheduler starts health checks.
+                // This is the critical link: without UpdateConfig, the agent has no components
+                // to check and the health check loop that drives STARTING→RUNNING never fires.
+                send_config_to_agent(state, agent_id).await;
+
                 // Store certificate fingerprint for identity verification
                 if cert_fingerprint.is_some() || cert_cn.is_some() {
                     if let Err(e) = sqlx::query(
@@ -428,6 +433,9 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                 &ip_addresses,
             )
             .await;
+
+            // Send updated component config after resolution (may have bound new components)
+            send_config_to_agent(state, agent_id).await;
         }
         appcontrol_common::AgentMessage::CertificateRenewal { agent_id, csr_pem } => {
             tracing::info!(
@@ -437,5 +445,81 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             );
             // TODO: Forward CSR to CA, get signed cert, send CertificateResponse back
         }
+    }
+}
+
+/// Query all components assigned to an agent and send them as an UpdateConfig message.
+/// This is called when an agent connects (AgentConnected) so the agent's scheduler
+/// knows what components to health-check. Without this, the agent has no work to do.
+async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
+    let rows = sqlx::query_as::<_, (
+        uuid::Uuid,  // id
+        String,       // name
+        Option<String>, Option<String>, Option<String>,  // check, start, stop
+        Option<String>, Option<String>, Option<String>,  // integrity, post_start, infra
+        Option<String>, Option<String>,                   // rebuild, rebuild_infra
+        i32, i32, i32,                                    // intervals
+        serde_json::Value,                                 // env_vars
+    )>(
+        "SELECT id, name, check_cmd, start_cmd, stop_cmd,
+                integrity_check_cmd, post_start_check_cmd, infra_check_cmd,
+                rebuild_cmd, rebuild_infra_cmd,
+                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds,
+                COALESCE(env_vars, '{}'::jsonb)
+         FROM components WHERE agent_id = $1",
+    )
+    .bind(agent_id)
+    .fetch_all(&state.db)
+    .await;
+
+    let rows = match rows {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(agent_id = %agent_id, "Failed to query components for agent: {}", e);
+            return;
+        }
+    };
+
+    if rows.is_empty() {
+        tracing::debug!(agent_id = %agent_id, "No components assigned to agent — skipping UpdateConfig");
+        return;
+    }
+
+    let components: Vec<appcontrol_common::ComponentConfig> = rows
+        .into_iter()
+        .map(|(id, name, check, start, stop, integrity, post_start, infra, rebuild, rebuild_infra, interval, start_to, stop_to, env)| {
+            appcontrol_common::ComponentConfig {
+                component_id: id,
+                name,
+                check_cmd: check,
+                start_cmd: start,
+                stop_cmd: stop,
+                integrity_check_cmd: integrity,
+                post_start_check_cmd: post_start,
+                infra_check_cmd: infra,
+                rebuild_cmd: rebuild,
+                rebuild_infra_cmd: rebuild_infra,
+                check_interval_seconds: interval as u32,
+                start_timeout_seconds: start_to as u32,
+                stop_timeout_seconds: stop_to as u32,
+                env_vars: env,
+            }
+        })
+        .collect();
+
+    let count = components.len();
+    let msg = appcontrol_common::BackendMessage::UpdateConfig { components };
+
+    if state.ws_hub.send_to_agent(agent_id, msg) {
+        tracing::info!(
+            agent_id = %agent_id,
+            component_count = count,
+            "Sent UpdateConfig to agent"
+        );
+    } else {
+        tracing::warn!(
+            agent_id = %agent_id,
+            "Failed to send UpdateConfig — agent not reachable via gateway"
+        );
     }
 }
