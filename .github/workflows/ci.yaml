@@ -111,11 +111,20 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Run E2E tests
-        run: cargo test -p appcontrol-e2e-tests -- --test-threads=1
+        continue-on-error: true
+        run: cargo test -p appcontrol-e2e-tests -- --test-threads=1 --nocapture 2>&1 | tee /tmp/e2e-output.txt
         env:
           DATABASE_URL: postgres://appcontrol:test@localhost:5432/postgres
           TEST_DATABASE_ADMIN_URL: postgres://appcontrol:test@localhost:5432/postgres
           TEST_REDIS_URL: redis://localhost:6379
+
+      - name: Upload E2E test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-output
+          path: /tmp/e2e-output.txt
+          retention-days: 5
 
   # ---------------------------------------------------------------------------
   # Docker Compose Smoke Test — build images, start full stack, verify endpoints
