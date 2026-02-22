@@ -339,35 +339,42 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             if !stdout.is_empty() || !stderr.is_empty() {
                 tracing::debug!(stdout = %stdout, stderr = %stderr, "Command output");
             }
-            // Send Ack back to agent if sequence_id was provided
+            // Send Ack back to agent if sequence_id was provided.
+            // Uses the request_id → agent_id mapping recorded when ExecuteCommand was dispatched.
             if let Some(seq) = sequence_id {
                 let ack = appcontrol_common::BackendMessage::Ack {
                     request_id,
                     sequence_id: Some(seq),
                 };
-                // Find the agent's gateway and send the ack
-                // (The CommandResult doesn't contain agent_id directly,
-                //  so we broadcast to the agent that sent the original request)
-                tracing::debug!(
-                    request_id = %request_id,
-                    sequence_id = seq,
-                    "Sending Ack for command result"
-                );
-                // Note: In a full implementation, we'd look up the agent_id from request_id
-                // and send the ack through the correct gateway. For now, we log it.
-                let _ = ack;
+                if let Some(agent_id) = state.ws_hub.resolve_request_agent(request_id) {
+                    if state.ws_hub.send_to_agent(agent_id, ack) {
+                        tracing::debug!(
+                            request_id = %request_id,
+                            agent_id = %agent_id,
+                            sequence_id = seq,
+                            "Ack routed to agent"
+                        );
+                    } else {
+                        tracing::warn!(
+                            request_id = %request_id,
+                            agent_id = %agent_id,
+                            "Failed to route Ack — agent not reachable"
+                        );
+                    }
+                } else {
+                    tracing::debug!(
+                        request_id = %request_id,
+                        sequence_id = seq,
+                        "No agent mapping for request — Ack not routed"
+                    );
+                }
             }
         }
         appcontrol_common::AgentMessage::Heartbeat { agent_id, .. } => {
             tracing::trace!(agent_id = %agent_id, "Agent heartbeat");
-            // Update last_heartbeat_at in database
-            if let Err(e) = sqlx::query("UPDATE agents SET last_heartbeat_at = now() WHERE id = $1")
-                .bind(agent_id)
-                .execute(&state.db)
-                .await
-            {
-                tracing::warn!(agent_id = %agent_id, "Failed to update heartbeat: {}", e);
-            }
+            // Batch heartbeat update — flushed every 5s instead of 1 SQL per heartbeat.
+            // At 2500 agents this reduces PostgreSQL writes from 2500/min to ~12/min.
+            state.heartbeat_batcher.record(agent_id).await;
         }
         appcontrol_common::AgentMessage::Register {
             agent_id,

@@ -161,6 +161,7 @@ impl TestContext {
             ws_hub: appcontrol_backend::websocket::Hub::new(),
             config,
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
+            heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
         });
 
         let app = appcontrol_backend::create_router(state);
@@ -310,6 +311,7 @@ impl TestContext {
             ws_hub: appcontrol_backend::websocket::Hub::new(),
             config,
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
+            heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
         });
 
         let app = appcontrol_backend::create_router(state);

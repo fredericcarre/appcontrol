@@ -22,6 +22,7 @@ pub struct AppState {
     pub ws_hub: websocket::Hub,
     pub config: config::AppConfig,
     pub rate_limiter: middleware::rate_limit::RateLimitState,
+    pub heartbeat_batcher: core::heartbeat_batcher::HeartbeatBatcher,
 }
 
 pub fn create_router(state: Arc<AppState>) -> Router {

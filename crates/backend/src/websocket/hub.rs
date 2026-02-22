@@ -22,21 +22,33 @@ struct GatewayConnection {
 
 /// WebSocket hub. Manages frontend connections, multiple gateway connections,
 /// and routes commands to agents via the correct gateway.
+///
+/// Performance features:
+/// - `app_subscriptions`: reverse index from app_id → set of conn_ids.
+///   Broadcast is O(subscribers) instead of O(all_connections).
+/// - `request_to_agent`: tracks request_id → agent_id for Ack routing
+///   when CommandResult comes back (it doesn't contain agent_id).
 pub struct Hub {
     /// Frontend client connections
     connections: DashMap<Uuid, Connection>,
+    /// app_id → set of conn_ids subscribed to that app (reverse index for broadcast)
+    app_subscriptions: DashMap<Uuid, HashSet<Uuid>>,
     /// gateway_id → gateway connection (supports multiple gateways)
     gateways: DashMap<Uuid, GatewayConnection>,
     /// agent_id → gateway_id (routing table: which gateway hosts which agent)
     agent_to_gateway: DashMap<Uuid, Uuid>,
+    /// request_id → agent_id (for routing Acks back to the correct agent)
+    request_to_agent: DashMap<Uuid, Uuid>,
 }
 
 impl Hub {
     pub fn new() -> Self {
         Self {
             connections: DashMap::new(),
+            app_subscriptions: DashMap::new(),
             gateways: DashMap::new(),
             agent_to_gateway: DashMap::new(),
+            request_to_agent: DashMap::new(),
         }
     }
 
@@ -61,7 +73,14 @@ impl Hub {
     }
 
     pub fn remove_connection(&self, conn_id: Uuid) {
-        self.connections.remove(&conn_id);
+        // Clean up app_subscriptions reverse index
+        if let Some((_, conn)) = self.connections.remove(&conn_id) {
+            for app_id in &conn.subscriptions {
+                if let Some(mut subs) = self.app_subscriptions.get_mut(app_id) {
+                    subs.remove(&conn_id);
+                }
+            }
+        }
     }
 
     /// Subscribe to app events. Caller must check permissions first.
@@ -69,6 +88,11 @@ impl Hub {
         if let Some(mut conn) = self.connections.get_mut(&conn_id) {
             conn.subscriptions.insert(app_id);
         }
+        // Maintain reverse index
+        self.app_subscriptions
+            .entry(app_id)
+            .or_default()
+            .insert(conn_id);
     }
 
     /// Get the user_id associated with a connection (for permission checking).
@@ -80,19 +104,27 @@ impl Hub {
         if let Some(mut conn) = self.connections.get_mut(&conn_id) {
             conn.subscriptions.remove(&app_id);
         }
+        // Clean up reverse index
+        if let Some(mut subs) = self.app_subscriptions.get_mut(&app_id) {
+            subs.remove(&conn_id);
+        }
     }
 
     /// Broadcast an event to all connections subscribed to the given app.
+    /// Uses the app_subscriptions reverse index for O(subscribers) performance
+    /// instead of scanning all connections.
     pub fn broadcast(&self, app_id: Uuid, event: WsEvent) {
         let json = match serde_json::to_string(&event) {
             Ok(j) => j,
             Err(_) => return,
         };
 
-        for entry in self.connections.iter() {
-            let conn = entry.value();
-            if conn.subscriptions.contains(&app_id) {
-                let _ = conn.sender.send(json.clone());
+        // Use reverse index: only iterate subscribers for this app
+        if let Some(subscriber_ids) = self.app_subscriptions.get(&app_id) {
+            for conn_id in subscriber_ids.iter() {
+                if let Some(conn) = self.connections.get(conn_id) {
+                    let _ = conn.sender.send(json.clone());
+                }
             }
         }
     }
@@ -163,7 +195,14 @@ impl Hub {
 
     /// Send a command to a specific agent via its gateway.
     /// The message is wrapped in a GatewayEnvelope with the target_agent_id.
+    /// If the message is an ExecuteCommand, the request_id → agent_id mapping
+    /// is recorded for Ack routing when CommandResult comes back.
     pub fn send_to_agent(&self, agent_id: Uuid, message: BackendMessage) -> bool {
+        // Track request_id → agent_id for Ack routing
+        if let BackendMessage::ExecuteCommand { request_id, .. } = &message {
+            self.request_to_agent.insert(*request_id, agent_id);
+        }
+
         // Look up which gateway this agent is connected to
         let gateway_id = match self.agent_to_gateway.get(&agent_id) {
             Some(entry) => *entry.value(),
@@ -207,6 +246,14 @@ impl Hub {
             );
         }
         false
+    }
+
+    /// Look up and consume the agent_id associated with a request_id.
+    /// Used to route Acks back to the correct agent when CommandResult arrives.
+    pub fn resolve_request_agent(&self, request_id: Uuid) -> Option<Uuid> {
+        self.request_to_agent
+            .remove(&request_id)
+            .map(|(_, agent_id)| agent_id)
     }
 
     /// Check if any gateway is connected.
@@ -331,5 +378,113 @@ mod tests {
                 assert!(matches!(message, BackendMessage::ExecuteCommand { .. }));
             }
         }
+    }
+
+    #[test]
+    fn test_request_to_agent_tracking() {
+        let hub = Hub::new();
+        let gw = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let request_id = Uuid::new_v4();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        hub.register_gateway(gw, "PRD".to_string(), tx);
+        hub.register_agent_route(agent_id, gw);
+
+        // send_to_agent with ExecuteCommand should track request_id
+        let cmd = BackendMessage::ExecuteCommand {
+            request_id,
+            component_id: Uuid::new_v4(),
+            command: "start".to_string(),
+            timeout_seconds: 30,
+            exec_mode: "sync".to_string(),
+        };
+        hub.send_to_agent(agent_id, cmd);
+
+        // Should be able to resolve request → agent
+        assert_eq!(hub.resolve_request_agent(request_id), Some(agent_id));
+        // Consumed — second call returns None
+        assert_eq!(hub.resolve_request_agent(request_id), None);
+    }
+
+    #[test]
+    fn test_broadcast_uses_app_subscription_index() {
+        let hub = Hub::new();
+
+        let conn1 = Uuid::new_v4();
+        let conn2 = Uuid::new_v4();
+        let conn3 = Uuid::new_v4();
+        let app_a = Uuid::new_v4();
+        let app_b = Uuid::new_v4();
+
+        let (tx1, mut rx1) = mpsc::unbounded_channel();
+        let (tx2, mut rx2) = mpsc::unbounded_channel();
+        let (tx3, mut rx3) = mpsc::unbounded_channel();
+
+        hub.add_connection(conn1, Uuid::new_v4(), tx1);
+        hub.add_connection(conn2, Uuid::new_v4(), tx2);
+        hub.add_connection(conn3, Uuid::new_v4(), tx3);
+
+        hub.subscribe(conn1, app_a);
+        hub.subscribe(conn2, app_a);
+        hub.subscribe(conn3, app_b);
+
+        // Broadcast to app_a — only conn1 and conn2
+        hub.broadcast(
+            app_a,
+            WsEvent::StateChange {
+                component_id: Uuid::new_v4(),
+                app_id: app_a,
+                from: appcontrol_common::ComponentState::Unknown,
+                to: appcontrol_common::ComponentState::Running,
+                at: chrono::Utc::now(),
+            },
+        );
+
+        assert!(rx1.try_recv().is_ok());
+        assert!(rx2.try_recv().is_ok());
+        assert!(rx3.try_recv().is_err()); // not subscribed to app_a
+    }
+
+    #[test]
+    fn test_unsubscribe_cleans_reverse_index() {
+        let hub = Hub::new();
+        let conn = Uuid::new_v4();
+        let app = Uuid::new_v4();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        hub.add_connection(conn, Uuid::new_v4(), tx);
+        hub.subscribe(conn, app);
+
+        assert!(hub
+            .app_subscriptions
+            .get(&app)
+            .map_or(false, |s| s.contains(&conn)));
+
+        hub.unsubscribe(conn, app);
+
+        assert!(hub
+            .app_subscriptions
+            .get(&app)
+            .map_or(true, |s| !s.contains(&conn)));
+    }
+
+    #[test]
+    fn test_remove_connection_cleans_subscriptions() {
+        let hub = Hub::new();
+        let conn = Uuid::new_v4();
+        let app = Uuid::new_v4();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        hub.add_connection(conn, Uuid::new_v4(), tx);
+        hub.subscribe(conn, app);
+
+        hub.remove_connection(conn);
+
+        assert!(hub
+            .app_subscriptions
+            .get(&app)
+            .map_or(true, |s| !s.contains(&conn)));
+        assert_eq!(hub.connection_count(), 0);
     }
 }

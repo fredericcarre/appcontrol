@@ -17,14 +17,27 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::create_pool(&config.database_url).await?;
     let ws_hub = websocket::Hub::new();
 
+    let heartbeat_batcher =
+        appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
+
     let state = Arc::new(AppState {
         db: pool,
         ws_hub,
         config,
         rate_limiter: middleware::rate_limit::RateLimitState::new(),
+        heartbeat_batcher,
     });
 
     let app = create_router(state.clone());
+
+    // Start heartbeat batcher flush loop (flushes every 5s)
+    let batcher_state = state.clone();
+    tokio::spawn(async move {
+        batcher_state
+            .heartbeat_batcher
+            .run(batcher_state.db.clone())
+            .await;
+    });
 
     // Start heartbeat monitor background task (checks every 30s)
     let monitor_state = state.clone();

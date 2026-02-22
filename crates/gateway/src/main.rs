@@ -1,3 +1,4 @@
+mod rate_limit;
 mod registry;
 mod router;
 
@@ -11,6 +12,7 @@ use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use appcontrol_common::{BackendMessage, GatewayEnvelope, GatewayMessage};
+use rate_limit::AgentRateLimiter;
 use registry::AgentRegistry;
 use router::MessageRouter;
 
@@ -92,6 +94,7 @@ impl GatewayConfig {
 pub struct GatewayState {
     pub registry: AgentRegistry,
     pub router: MessageRouter,
+    pub rate_limiter: AgentRateLimiter,
     pub config: GatewayConfig,
     pub gateway_id: uuid::Uuid,
 }
@@ -114,10 +117,12 @@ async fn main() -> anyhow::Result<()> {
 
     let registry = AgentRegistry::new();
     let router = MessageRouter::new();
+    let rate_limiter = AgentRateLimiter::new();
 
     let state = Arc::new(GatewayState {
         registry,
         router,
+        rate_limiter,
         config: config.clone(),
         gateway_id,
     });
@@ -212,6 +217,18 @@ async fn handle_agent_connection(socket: ws::WebSocket, state: Arc<GatewayState>
                 if let Ok(agent_msg) =
                     serde_json::from_str::<appcontrol_common::AgentMessage>(&text)
                 {
+                    // Rate limit per agent: drop messages if agent exceeds quota
+                    let current_agent_id = { *agent_id_clone.lock().unwrap() };
+                    if let Some(aid) = current_agent_id {
+                        if !state_clone.rate_limiter.check(aid) {
+                            tracing::warn!(
+                                agent_id = %aid,
+                                "Agent rate-limited — message dropped"
+                            );
+                            continue;
+                        }
+                    }
+
                     match &agent_msg {
                         appcontrol_common::AgentMessage::Register {
                             agent_id, hostname, ..

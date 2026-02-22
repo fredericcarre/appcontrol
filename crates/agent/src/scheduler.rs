@@ -21,12 +21,18 @@ const HEARTBEAT_EVERY_N_TICKS: u64 = 60 / TICK_INTERVAL_SECS;
 
 /// Per-component tracking for individual check intervals and delta dedup.
 struct ComponentCheckState {
-    /// Last time this component's check was executed.
+    /// Last time this component's check was *started* (not completed).
+    /// Using start time prevents drift: if a check takes 5s and interval is 30s,
+    /// the next check fires at 30s from start, not 35s.
     last_checked_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Last known exit code for delta comparison.
     last_exit_code: Option<i32>,
     /// Last time a CheckResult was actually sent to the backend.
     last_sent_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// True while a check is in flight. Prevents piling: if a check takes longer
+    /// than its interval, the scheduler skips the next evaluation instead of
+    /// queuing a second concurrent check.
+    in_flight: bool,
 }
 
 /// Manages periodic health check scheduling for all assigned components.
@@ -122,7 +128,13 @@ impl CheckScheduler {
     }
 
     /// Evaluate which components are due for a check and run them.
-    /// Uses command hash deduplication to avoid running the same command twice.
+    ///
+    /// Anti-drift and anti-piling guarantees:
+    /// - `last_checked_at` is set at check *start* (not completion), so a check
+    ///   that takes 5s with a 30s interval fires next at t=30s, not t=35s.
+    /// - `in_flight` flag prevents double-execution: if a check takes longer
+    ///   than its interval, the scheduler skips that component until it finishes.
+    /// - Command hash dedup: identical commands execute only once per cycle.
     async fn run_due_checks(&self) {
         let now = chrono::Utc::now();
         let components = self.components.read().await;
@@ -132,37 +144,59 @@ impl CheckScheduler {
         }
 
         // Determine which components are due for a check
-        let check_state = self.check_state.read().await;
         let mut due_components: Vec<(Uuid, &ComponentConfig)> = Vec::new();
 
-        for (comp_id, config) in components.iter() {
-            if config.check_cmd.is_none() {
-                continue;
+        {
+            let check_state = self.check_state.read().await;
+            for (comp_id, config) in components.iter() {
+                if config.check_cmd.is_none() {
+                    continue;
+                }
+
+                let interval_secs = if config.check_interval_seconds > 0 {
+                    config.check_interval_seconds as i64
+                } else {
+                    30 // default to 30s per spec
+                };
+
+                let is_due = match check_state.get(comp_id) {
+                    Some(state) => {
+                        // Skip if already in flight (prevents piling)
+                        if state.in_flight {
+                            continue;
+                        }
+                        match state.last_checked_at {
+                            Some(last) => (now - last).num_seconds() >= interval_secs,
+                            None => true, // never checked
+                        }
+                    }
+                    None => true, // no state yet
+                };
+
+                if is_due {
+                    due_components.push((*comp_id, config));
+                }
             }
-
-            let interval_secs = if config.check_interval_seconds > 0 {
-                config.check_interval_seconds as i64
-            } else {
-                30 // default to 30s per spec
-            };
-
-            let is_due = match check_state.get(comp_id) {
-                Some(state) => match state.last_checked_at {
-                    Some(last) => (now - last).num_seconds() >= interval_secs,
-                    None => true, // never checked
-                },
-                None => true, // no state yet
-            };
-
-            if is_due {
-                due_components.push((*comp_id, config));
-            }
-        }
-
-        drop(check_state); // release read lock before write
+        } // drop read lock
 
         if due_components.is_empty() {
             return;
+        }
+
+        // Mark all due components as in_flight and set last_checked_at to NOW
+        // (start time, not completion time — prevents drift)
+        {
+            let mut state = self.check_state.write().await;
+            for (comp_id, _) in &due_components {
+                let cs = state.entry(*comp_id).or_insert_with(|| ComponentCheckState {
+                    last_checked_at: None,
+                    last_exit_code: None,
+                    last_sent_at: None,
+                    in_flight: false,
+                });
+                cs.in_flight = true;
+                cs.last_checked_at = Some(now);
+            }
         }
 
         // Execute checks with command hash deduplication.
@@ -198,15 +232,16 @@ impl CheckScheduler {
                     }
                 };
 
-            // Update check state and determine if we should send
+            // Update check state, clear in_flight, and determine if we should send
             let mut state = self.check_state.write().await;
             let cs = state.entry(*comp_id).or_insert_with(|| ComponentCheckState {
                 last_checked_at: None,
                 last_exit_code: None,
                 last_sent_at: None,
+                in_flight: false,
             });
 
-            cs.last_checked_at = Some(now);
+            cs.in_flight = false;
 
             // Delta check: send if exit code changed OR staleness timeout exceeded
             let exit_code_changed = cs.last_exit_code != Some(exit_code);
@@ -328,6 +363,7 @@ mod tests {
                     last_checked_at: Some(chrono::Utc::now()),
                     last_exit_code: Some(0),
                     last_sent_at: Some(chrono::Utc::now()),
+                    in_flight: false,
                 },
             );
         }
