@@ -58,7 +58,7 @@ jobs:
         run: cargo build --workspace
 
       - name: Unit tests
-        run: cargo test --workspace --exclude appcontrol-e2e-tests
+        run: cargo test --workspace --exclude appcontrol-e2e-tests --exclude appcontrol-e2e-real
         env:
           DATABASE_URL: postgres://appcontrol:test@localhost:5432/appcontrol_test
 
