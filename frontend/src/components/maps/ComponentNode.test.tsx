@@ -90,27 +90,34 @@ describe('ComponentNode', () => {
 
   it('should apply RUNNING background color', () => {
     renderComponentNode({ state: 'RUNNING' });
-    const container = screen.getByText('RUNNING').closest('[style]');
-    expect(container?.getAttribute('style')).toContain('#E8F5E9');
+    // Get the outermost styled container (the node wrapper with border)
+    const stateEl = screen.getByText('RUNNING');
+    const container = stateEl.closest('.rounded-lg') as HTMLElement;
+    expect(container).toBeTruthy();
+    // jsdom converts hex to rgb, so check for the rgb equivalent of #E8F5E9
+    expect(container?.style.backgroundColor).toBe('rgb(232, 245, 233)');
   });
 
   it('should apply FAILED background color', () => {
     renderComponentNode({ state: 'FAILED' });
-    const container = screen.getByText('FAILED').closest('[style]');
-    expect(container?.getAttribute('style')).toContain('#FFEBEE');
+    const container = screen.getByText('FAILED').closest('.rounded-lg') as HTMLElement;
+    // rgb of #FFEBEE
+    expect(container?.style.backgroundColor).toBe('rgb(255, 235, 238)');
   });
 
   it('should apply dashed border for UNKNOWN state', () => {
     renderComponentNode({ state: 'UNKNOWN' });
-    const container = screen.getByText('UNKNOWN').closest('[style]');
-    expect(container?.getAttribute('style')).toContain('dashed');
+    const container = screen.getByText('UNKNOWN').closest('.rounded-lg') as HTMLElement;
+    expect(container?.style.borderStyle).toBe('dashed');
   });
 
   it('should apply error branch colors when isErrorBranch is true', () => {
     renderComponentNode({ isErrorBranch: true });
-    const container = screen.getByText('my-db').closest('[style]');
-    expect(container?.getAttribute('style')).toContain('#FFE0E6');
-    expect(container?.getAttribute('style')).toContain('#FF6B8A');
+    const container = screen.getByText('my-db').closest('.rounded-lg') as HTMLElement;
+    // rgb of #FFE0E6
+    expect(container?.style.backgroundColor).toBe('rgb(255, 224, 230)');
+    // rgb of #FF6B8A
+    expect(container?.style.borderColor).toBe('rgb(255, 107, 138)');
   });
 
   it('should add pulse animation class for STARTING state', () => {
@@ -206,8 +213,8 @@ describe('ComponentNode', () => {
 
   it('should apply group color to left border', () => {
     renderComponentNode({ groupColor: '#FF0000' });
-    const container = screen.getByText('my-db').closest('[style]');
-    expect(container?.getAttribute('style')).toContain('#FF0000');
+    const container = screen.getByText('my-db').closest('.rounded-lg') as HTMLElement;
+    expect(container?.style.borderLeftColor).toBe('rgb(255, 0, 0)');
   });
 
   it('should show ring when selected', () => {

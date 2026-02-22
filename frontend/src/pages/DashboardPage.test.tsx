@@ -124,19 +124,28 @@ describe('DashboardPage', () => {
     const { DashboardPage } = await import('./DashboardPage');
     render(React.createElement(DashboardPage), { wrapper: createWrapper() });
 
-    // Total should be 4
-    expect(screen.getByText('4')).toBeInTheDocument();
-    // Healthy (sunny + fair) = 2
-    expect(screen.getByText('2')).toBeInTheDocument();
-    // Degraded (cloudy + rainy) = 1
-    expect(screen.getByText('1')).toBeInTheDocument();
-    // Failed (stormy) = 1
-    // (There's another '1' above)
-
+    // Verify stat labels exist
     expect(screen.getByText('Total Apps')).toBeInTheDocument();
     expect(screen.getByText('Healthy')).toBeInTheDocument();
     expect(screen.getByText('Degraded')).toBeInTheDocument();
     expect(screen.getByText('Failed')).toBeInTheDocument();
+
+    // Find the stat values next to their labels
+    const totalLabel = screen.getByText('Total Apps');
+    const totalValue = totalLabel.parentElement?.querySelector('p.text-2xl');
+    expect(totalValue?.textContent).toBe('4');
+
+    const healthyLabel = screen.getByText('Healthy');
+    const healthyValue = healthyLabel.parentElement?.querySelector('p.text-2xl');
+    expect(healthyValue?.textContent).toBe('2');
+
+    const degradedLabel = screen.getByText('Degraded');
+    const degradedValue = degradedLabel.parentElement?.querySelector('p.text-2xl');
+    expect(degradedValue?.textContent).toBe('1');
+
+    const failedLabel = screen.getByText('Failed');
+    const failedValue = failedLabel.parentElement?.querySelector('p.text-2xl');
+    expect(failedValue?.textContent).toBe('1');
   });
 
   it('should display application names in the list', async () => {

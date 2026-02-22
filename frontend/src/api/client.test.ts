@@ -2,26 +2,27 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth';
 
-// We need to test the client module, but since it creates an axios instance at
-// module load time, we test the interceptor behaviors by importing the module fresh.
+// vi.hoisted runs before vi.mock — use it to declare shared state
+const { requestHandlers, responseHandlers } = vi.hoisted(() => ({
+  requestHandlers: [] as Array<{ fulfilled: (config: Record<string, unknown>) => Record<string, unknown> }>,
+  responseHandlers: [] as Array<{ fulfilled: (response: unknown) => unknown; rejected: (error: unknown) => unknown }>,
+}));
 
-// Mock axios
 vi.mock('axios', () => {
   const interceptors = {
-    request: { use: vi.fn(), handlers: [] as Array<{ fulfilled: (config: Record<string, unknown>) => Record<string, unknown> }> },
-    response: { use: vi.fn(), handlers: [] as Array<{ fulfilled: (response: unknown) => unknown; rejected: (error: unknown) => unknown }> },
+    request: {
+      use: vi.fn((fulfilled: (config: Record<string, unknown>) => Record<string, unknown>) => {
+        requestHandlers.push({ fulfilled });
+        return 0;
+      }),
+    },
+    response: {
+      use: vi.fn((fulfilled: (r: unknown) => unknown, rejected: (e: unknown) => unknown) => {
+        responseHandlers.push({ fulfilled, rejected });
+        return 0;
+      }),
+    },
   };
-
-  // Capture interceptor callbacks when use() is called
-  interceptors.request.use = vi.fn((fulfilled) => {
-    interceptors.request.handlers.push({ fulfilled });
-    return 0;
-  }) as unknown as typeof interceptors.request.use;
-
-  interceptors.response.use = vi.fn((fulfilled, rejected) => {
-    interceptors.response.handlers.push({ fulfilled, rejected });
-    return 0;
-  }) as unknown as typeof interceptors.response.use;
 
   const instance = {
     interceptors,
@@ -39,29 +40,22 @@ vi.mock('axios', () => {
   };
 });
 
+// Import client to trigger interceptor registration
+import '@/api/client';
+
 describe('API client', () => {
   let requestInterceptor: (config: Record<string, unknown>) => Record<string, unknown>;
   let responseErrorInterceptor: (error: unknown) => unknown;
 
-  beforeEach(async () => {
-    vi.resetModules();
+  beforeEach(() => {
     useAuthStore.setState({ token: null, user: null });
 
-    // Re-import to trigger interceptor registration
-    await import('@/api/client');
-
-    const mockAxios = axios as unknown as { create: ReturnType<typeof vi.fn> };
-    const instance = mockAxios.create.mock.results[mockAxios.create.mock.results.length - 1]?.value;
-
-    if (instance) {
-      const reqHandlers = instance.interceptors.request.handlers;
-      const resHandlers = instance.interceptors.response.handlers;
-      if (reqHandlers.length > 0) {
-        requestInterceptor = reqHandlers[reqHandlers.length - 1].fulfilled;
-      }
-      if (resHandlers.length > 0) {
-        responseErrorInterceptor = resHandlers[resHandlers.length - 1].rejected;
-      }
+    // Use the interceptors captured during module load
+    if (requestHandlers.length > 0) {
+      requestInterceptor = requestHandlers[requestHandlers.length - 1].fulfilled;
+    }
+    if (responseHandlers.length > 0) {
+      responseErrorInterceptor = responseHandlers[responseHandlers.length - 1].rejected;
     }
   });
 
@@ -69,10 +63,11 @@ describe('API client', () => {
     vi.restoreAllMocks();
   });
 
-  it('should create axios instance with correct baseURL and headers', () => {
+  it('should create axios instance with correct config', () => {
     expect(axios.create).toHaveBeenCalledWith({
       baseURL: '/api',
       headers: { 'Content-Type': 'application/json' },
+      withCredentials: true,
     });
   });
 
@@ -104,6 +99,9 @@ describe('API client', () => {
       value: { href: originalHref },
       writable: true,
     });
+
+    // Mock fetch so the logout endpoint call doesn't fail
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
 
     const error = { response: { status: 401 } };
 

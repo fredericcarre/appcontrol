@@ -142,8 +142,11 @@ describe('useKeyboard', () => {
 
     const div = document.createElement('div');
     div.contentEditable = 'true';
+    // jsdom doesn't implement isContentEditable getter, so define it explicitly
+    Object.defineProperty(div, 'isContentEditable', { value: true });
     document.body.appendChild(div);
 
+    // Use same pattern as INPUT/TEXTAREA tests: override target on window event
     const event = new KeyboardEvent('keydown', { key: '?', bubbles: true });
     Object.defineProperty(event, 'target', { value: div });
     window.dispatchEvent(event);

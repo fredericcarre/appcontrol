@@ -40,7 +40,9 @@ describe('DetailPanel', () => {
 
   it('should render component host', () => {
     render(<DetailPanel component={createComponent()} onClose={vi.fn()} />);
-    expect(screen.getByText('db-server-01')).toBeInTheDocument();
+    // Host appears in header and in the Info tab row
+    const hostElements = screen.getAllByText('db-server-01');
+    expect(hostElements.length).toBeGreaterThanOrEqual(1);
   });
 
   it('should render component state', () => {
@@ -189,9 +191,10 @@ describe('DetailPanel', () => {
       <DetailPanel component={createComponent()} onClose={vi.fn()} />
     );
 
-    expect(screen.getByRole('tab', { name: 'Info' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Commands' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Events' })).toBeInTheDocument();
+    // Custom Tabs component uses plain buttons, not role="tab"
+    expect(screen.getByText('Info')).toBeInTheDocument();
+    expect(screen.getByText('Commands')).toBeInTheDocument();
+    expect(screen.getByText('Events')).toBeInTheDocument();
   });
 
   it('should show command buttons in Commands tab when canOperate', () => {
@@ -205,8 +208,8 @@ describe('DetailPanel', () => {
       />,
     );
 
-    // Switch to Commands tab
-    fireEvent.click(screen.getByRole('tab', { name: 'Commands' }));
+    // Switch to Commands tab using button click
+    fireEvent.click(screen.getByText('Commands'));
 
     expect(screen.getByText('Execute Custom Command')).toBeInTheDocument();
     expect(screen.getByText('Run Diagnostic')).toBeInTheDocument();
