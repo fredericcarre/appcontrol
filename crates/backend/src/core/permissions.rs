@@ -169,14 +169,12 @@ pub async fn can_operate_component(
     }
 
     // Check site-level access via application's site
-    let site_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT site_id FROM applications WHERE id = $1",
-    )
-    .bind(app_id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+    let site_id = sqlx::query_scalar::<_, Uuid>("SELECT site_id FROM applications WHERE id = $1")
+        .bind(app_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
 
     if let Some(site_id) = site_id {
         if !can_access_site(pool, user_id, site_id, organization_id, is_org_admin).await {

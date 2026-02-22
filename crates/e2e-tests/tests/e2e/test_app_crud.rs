@@ -33,7 +33,10 @@ mod test_app_crud {
         let ctx = TestContext::new().await;
 
         let resp = ctx
-            .post("/api/v1/apps", json!({"name": "Owner-Test", "site_id": ctx.default_site_id}))
+            .post(
+                "/api/v1/apps",
+                json!({"name": "Owner-Test", "site_id": ctx.default_site_id}),
+            )
             .await;
         let app: Value = resp.json().await.unwrap();
         let app_id: Uuid = app["id"].as_str().unwrap().parse().unwrap();
@@ -69,7 +72,11 @@ mod test_app_crud {
     async fn test_list_apps_with_search() {
         let ctx = TestContext::new().await;
         ctx.create_payments_app().await;
-        ctx.post("/api/v1/apps", json!({"name": "Other-App", "site_id": ctx.default_site_id})).await;
+        ctx.post(
+            "/api/v1/apps",
+            json!({"name": "Other-App", "site_id": ctx.default_site_id}),
+        )
+        .await;
 
         // Search by name
         let resp = ctx.get("/api/v1/apps?search=Paiements").await;
@@ -95,8 +102,11 @@ mod test_app_crud {
 
         // Create 5 apps
         for i in 0..5 {
-            ctx.post("/api/v1/apps", json!({"name": format!("App-{i}"), "site_id": ctx.default_site_id}))
-                .await;
+            ctx.post(
+                "/api/v1/apps",
+                json!({"name": format!("App-{i}"), "site_id": ctx.default_site_id}),
+            )
+            .await;
         }
 
         // Page 1: limit=2, offset=0

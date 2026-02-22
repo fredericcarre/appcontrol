@@ -5,7 +5,6 @@
 /// Seeds test data via HTTP API calls (not SQL).
 /// Provides helpers to wait for component states and verify transitions.
 #[allow(dead_code)]
-
 use reqwest::Client;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -350,7 +349,10 @@ impl TestHarness {
     }
 
     /// Get state transitions for a component, ordered by time.
-    pub async fn get_transitions(&self, component_id: Uuid) -> Vec<(String, String, chrono::DateTime<chrono::Utc>)> {
+    pub async fn get_transitions(
+        &self,
+        component_id: Uuid,
+    ) -> Vec<(String, String, chrono::DateTime<chrono::Utc>)> {
         sqlx::query_as::<_, (String, String, chrono::DateTime<chrono::Utc>)>(
             "SELECT from_state, to_state, created_at FROM state_transitions WHERE component_id = $1 ORDER BY created_at",
         )
@@ -425,9 +427,12 @@ impl TestHarness {
         let admin_url = std::env::var("TEST_DATABASE_ADMIN_URL")
             .unwrap_or_else(|_| "postgres://appcontrol:test@localhost:5432/postgres".to_string());
         if let Ok(admin_pool) = PgPool::connect(&admin_url).await {
-            let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", self.db_name))
-                .execute(&admin_pool)
-                .await;
+            let _ = sqlx::query(&format!(
+                "DROP DATABASE IF EXISTS {} WITH (FORCE)",
+                self.db_name
+            ))
+            .execute(&admin_pool)
+            .await;
             admin_pool.close().await;
         }
     }

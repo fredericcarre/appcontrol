@@ -167,7 +167,10 @@ mod test_websocket_events {
         let app1_id = ctx.create_payments_app().await;
 
         let resp = ctx
-            .post("/api/v1/apps", json!({"name": "Second-App", "site_id": ctx.default_site_id}))
+            .post(
+                "/api/v1/apps",
+                json!({"name": "Second-App", "site_id": ctx.default_site_id}),
+            )
             .await;
         let app2: Value = resp.json().await.unwrap();
         let app2_id: Uuid = app2["id"].as_str().unwrap().parse().unwrap();

@@ -19,19 +19,34 @@ async fn test_start_stop_full_sequence() {
     let (app_id, db_id, app_id_comp, web_id) = h.create_test_app(site_id).await;
 
     // ---- START ----
-    let resp = h.api_post(&format!("/apps/{app_id}/start"), serde_json::json!({})).await;
+    let resp = h
+        .api_post(&format!("/apps/{app_id}/start"), serde_json::json!({}))
+        .await;
     assert!(resp.get("status").is_some() || resp.get("plan").is_some());
 
     // Wait for all components to reach RUNNING (max 120s)
-    let all_running = h.wait_for_state(db_id, "RUNNING", Duration::from_secs(120)).await
-        && h.wait_for_state(app_id_comp, "RUNNING", Duration::from_secs(60)).await
-        && h.wait_for_state(web_id, "RUNNING", Duration::from_secs(60)).await;
+    let all_running = h
+        .wait_for_state(db_id, "RUNNING", Duration::from_secs(120))
+        .await
+        && h.wait_for_state(app_id_comp, "RUNNING", Duration::from_secs(60))
+            .await
+        && h.wait_for_state(web_id, "RUNNING", Duration::from_secs(60))
+            .await;
     assert!(all_running, "All components should reach RUNNING state");
 
     // Verify: processes are actually alive
-    assert!(h.process_running("oracle-db"), "Oracle-DB process should be running");
-    assert!(h.process_running("tomcat-app"), "Tomcat-App process should be running");
-    assert!(h.process_running("apache-web"), "Apache-Web process should be running");
+    assert!(
+        h.process_running("oracle-db"),
+        "Oracle-DB process should be running"
+    );
+    assert!(
+        h.process_running("tomcat-app"),
+        "Tomcat-App process should be running"
+    );
+    assert!(
+        h.process_running("apache-web"),
+        "Apache-Web process should be running"
+    );
 
     // Verify DAG order: DB should have started before AppServer
     let db_transitions = h.get_transitions(db_id).await;
@@ -73,17 +88,31 @@ async fn test_start_stop_full_sequence() {
     );
 
     // ---- STOP ----
-    h.api_post(&format!("/apps/{app_id}/stop"), serde_json::json!({})).await;
+    h.api_post(&format!("/apps/{app_id}/stop"), serde_json::json!({}))
+        .await;
 
-    let all_stopped = h.wait_for_state(web_id, "STOPPED", Duration::from_secs(60)).await
-        && h.wait_for_state(app_id_comp, "STOPPED", Duration::from_secs(60)).await
-        && h.wait_for_state(db_id, "STOPPED", Duration::from_secs(60)).await;
+    let all_stopped = h
+        .wait_for_state(web_id, "STOPPED", Duration::from_secs(60))
+        .await
+        && h.wait_for_state(app_id_comp, "STOPPED", Duration::from_secs(60))
+            .await
+        && h.wait_for_state(db_id, "STOPPED", Duration::from_secs(60))
+            .await;
     assert!(all_stopped, "All components should reach STOPPED state");
 
     // Verify: processes are actually dead
-    assert!(!h.process_running("oracle-db"), "Oracle-DB should be stopped");
-    assert!(!h.process_running("tomcat-app"), "Tomcat-App should be stopped");
-    assert!(!h.process_running("apache-web"), "Apache-Web should be stopped");
+    assert!(
+        !h.process_running("oracle-db"),
+        "Oracle-DB should be stopped"
+    );
+    assert!(
+        !h.process_running("tomcat-app"),
+        "Tomcat-App should be stopped"
+    );
+    assert!(
+        !h.process_running("apache-web"),
+        "Apache-Web should be stopped"
+    );
 
     // Verify reverse DAG order: Web stopped before AppServer, AppServer before DB
     let web_stop_transitions = h.get_transitions(web_id).await;

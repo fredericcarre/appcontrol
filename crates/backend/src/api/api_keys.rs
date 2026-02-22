@@ -78,7 +78,18 @@ pub async fn list_api_keys(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, StatusCode> {
-    let keys = sqlx::query_as::<_, (Uuid, String, String, Value, bool, Option<chrono::DateTime<chrono::Utc>>, chrono::DateTime<chrono::Utc>)>(
+    let keys = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Value,
+            bool,
+            Option<chrono::DateTime<chrono::Utc>>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         r#"
         SELECT id, name, key_prefix, scopes, is_active, expires_at, created_at
         FROM api_keys
@@ -114,14 +125,13 @@ pub async fn delete_api_key(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, StatusCode> {
-    let result = sqlx::query(
-        "UPDATE api_keys SET is_active = false WHERE id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(user.user_id)
-    .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result =
+        sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(user.user_id)
+            .execute(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if result.rows_affected() == 0 {
         return Err(StatusCode::NOT_FOUND);

@@ -117,10 +117,8 @@ impl Hub {
             zone = %zone,
             "Gateway registered"
         );
-        self.gateways.insert(
-            gateway_id,
-            GatewayConnection { sender, zone },
-        );
+        self.gateways
+            .insert(gateway_id, GatewayConnection { sender, zone });
     }
 
     /// Unregister a gateway and clean up all agent→gateway mappings.

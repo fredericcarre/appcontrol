@@ -25,8 +25,7 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Self {
-        let app_env =
-            std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
+        let app_env = std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
         let is_production = app_env == "production";
 
         // JWT_SECRET: required in production, fallback in dev
@@ -54,9 +53,7 @@ impl AppConfig {
                          Generate one with: openssl rand -base64 48"
                     );
                 }
-                tracing::warn!(
-                    "JWT_SECRET not set — using dev default. NOT SAFE FOR PRODUCTION."
-                );
+                tracing::warn!("JWT_SECRET not set — using dev default. NOT SAFE FOR PRODUCTION.");
                 "dev-secret-change-in-production".to_string()
             }
         };
@@ -71,9 +68,7 @@ impl AppConfig {
             }
             Err(_) => {
                 if is_production {
-                    panic!(
-                        "FATAL: DATABASE_URL must be set when APP_ENV=production."
-                    );
+                    panic!("FATAL: DATABASE_URL must be set when APP_ENV=production.");
                 }
                 tracing::warn!(
                     "DATABASE_URL not set — using localhost default. NOT SAFE FOR PRODUCTION."

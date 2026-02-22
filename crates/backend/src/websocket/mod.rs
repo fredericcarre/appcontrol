@@ -120,7 +120,9 @@ async fn handle_client_socket(
                                         "reason": "insufficient_permission"
                                     }
                                 });
-                                if let Some(conn_user_id) = state_clone.ws_hub.get_connection_user_id(conn_id) {
+                                if let Some(conn_user_id) =
+                                    state_clone.ws_hub.get_connection_user_id(conn_id)
+                                {
                                     // Log the attempt in action_log
                                     let _ = crate::middleware::audit::log_action(
                                         &state_clone.db,
@@ -183,13 +185,8 @@ async fn handle_gateway_socket(socket: ws::WebSocket, state: Arc<AppState>) {
             if let ws::Message::Text(text) = msg {
                 match serde_json::from_str::<appcontrol_common::GatewayMessage>(&text) {
                     Ok(gw_msg) => {
-                        process_gateway_message(
-                            &state_clone,
-                            &gw_id_clone,
-                            &gw_tx_clone,
-                            gw_msg,
-                        )
-                        .await;
+                        process_gateway_message(&state_clone, &gw_id_clone, &gw_tx_clone, gw_msg)
+                            .await;
                     }
                     Err(_) => {
                         // Backwards compatibility: try parsing as raw AgentMessage
@@ -295,10 +292,7 @@ async fn process_gateway_message(
                 );
             }
         }
-        appcontrol_common::GatewayMessage::AgentDisconnected {
-            agent_id,
-            hostname,
-        } => {
+        appcontrol_common::GatewayMessage::AgentDisconnected { agent_id, hostname } => {
             tracing::info!(
                 agent_id = %agent_id,
                 hostname = %hostname,
@@ -318,12 +312,8 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                 exit_code = cr.exit_code,
                 "Processing check result"
             );
-            if let Err(e) = crate::core::fsm::process_check_result(
-                state,
-                cr.component_id,
-                cr.exit_code,
-            )
-            .await
+            if let Err(e) =
+                crate::core::fsm::process_check_result(state, cr.component_id, cr.exit_code).await
             {
                 tracing::warn!(
                     component_id = %cr.component_id,
@@ -371,12 +361,10 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
         appcontrol_common::AgentMessage::Heartbeat { agent_id, .. } => {
             tracing::trace!(agent_id = %agent_id, "Agent heartbeat");
             // Update last_heartbeat_at in database
-            if let Err(e) = sqlx::query(
-                "UPDATE agents SET last_heartbeat_at = now() WHERE id = $1",
-            )
-            .bind(agent_id)
-            .execute(&state.db)
-            .await
+            if let Err(e) = sqlx::query("UPDATE agents SET last_heartbeat_at = now() WHERE id = $1")
+                .bind(agent_id)
+                .execute(&state.db)
+                .await
             {
                 tracing::warn!(agent_id = %agent_id, "Failed to update heartbeat: {}", e);
             }

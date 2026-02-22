@@ -370,7 +370,10 @@ pub async fn start_branch(
         )
         .await
         {
-            tracing::warn!("Could not force component to FAILED for branch restart: {}", e);
+            tracing::warn!(
+                "Could not force component to FAILED for branch restart: {}",
+                e
+            );
         }
         // Then run the smart start which will handle the pink branch
         if let Err(e) = crate::core::sequencer::execute_start(&state_clone, id).await {

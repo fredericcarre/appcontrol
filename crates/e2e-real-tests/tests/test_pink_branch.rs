@@ -41,7 +41,10 @@ async fn test_pink_branch_remediation() {
 
     // All processes alive
     assert!(h.process_running("oracle-db"), "DB should be running");
-    assert!(h.process_running("tomcat-app"), "AppServer should be running");
+    assert!(
+        h.process_running("tomcat-app"),
+        "AppServer should be running"
+    );
     assert!(h.process_running("apache-web"), "Web should be running");
 
     // Record timestamp BEFORE the crash — we'll use this to check that DB
@@ -81,7 +84,10 @@ async fn test_pink_branch_remediation() {
         .await
         && h.wait_for_state(web_id, "RUNNING", Duration::from_secs(60))
             .await;
-    assert!(remediated, "Pink branch should remediate: AppServer + Web should be RUNNING again");
+    assert!(
+        remediated,
+        "Pink branch should remediate: AppServer + Web should be RUNNING again"
+    );
 
     // ---- PHASE 4: Verify smart start behavior ----
 
@@ -99,7 +105,9 @@ async fn test_pink_branch_remediation() {
     );
 
     // 4c. AppServer should have restarted (new transitions after remediation)
-    let app_new_transitions = h.count_transitions_since(app_id_comp, before_remediation).await;
+    let app_new_transitions = h
+        .count_transitions_since(app_id_comp, before_remediation)
+        .await;
     assert!(
         app_new_transitions > 0,
         "AppServer should have new transitions after remediation"

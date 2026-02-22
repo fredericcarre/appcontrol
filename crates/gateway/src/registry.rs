@@ -27,12 +27,7 @@ impl AgentRegistry {
 
     /// Register an agent. Returns the previous AgentInfo if this agent_id was already registered
     /// (reconnection scenario — old connection replaced).
-    pub fn register(
-        &self,
-        conn_id: Uuid,
-        agent_id: Uuid,
-        hostname: String,
-    ) -> Option<AgentInfo> {
+    pub fn register(&self, conn_id: Uuid, agent_id: Uuid, hostname: String) -> Option<AgentInfo> {
         let now = chrono::Utc::now();
 
         // If this agent_id was already registered on a different conn, remove old entry
@@ -109,7 +104,9 @@ impl AgentRegistry {
 
     /// Look up the conn_id for a given agent_id.
     pub fn get_conn_id(&self, agent_id: Uuid) -> Option<Uuid> {
-        self.agent_to_conn.get(&agent_id).map(|entry| *entry.value())
+        self.agent_to_conn
+            .get(&agent_id)
+            .map(|entry| *entry.value())
     }
 }
 

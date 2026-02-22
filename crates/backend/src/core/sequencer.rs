@@ -224,8 +224,7 @@ pub async fn start_single_component(
     }
 
     // Wait for component to reach Running state (agent's health check will confirm)
-    let deadline =
-        std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
 
     loop {
         let current = super::fsm::get_current_state(&state.db, component_id).await?;
@@ -295,8 +294,7 @@ pub async fn stop_single_component(
     }
 
     // Wait for Stopped state
-    let deadline =
-        std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
 
     loop {
         let current = super::fsm::get_current_state(&state.db, component_id).await?;

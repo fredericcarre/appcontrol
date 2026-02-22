@@ -169,10 +169,7 @@ pub enum GatewayMessage {
         cert_cn: Option<String>,
     },
     /// An agent disconnected from this gateway.
-    AgentDisconnected {
-        agent_id: Uuid,
-        hostname: String,
-    },
+    AgentDisconnected { agent_id: Uuid, hostname: String },
 }
 
 /// Client subscription message (frontend → backend WebSocket).
@@ -411,9 +408,7 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: BackendMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
-            BackendMessage::UpdateAgent {
-                target_version, ..
-            } => {
+            BackendMessage::UpdateAgent { target_version, .. } => {
                 assert_eq!(target_version, "0.3.0");
             }
             _ => panic!("Expected UpdateAgent"),
@@ -528,10 +523,7 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: super::GatewayMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
-            super::GatewayMessage::AgentDisconnected {
-                agent_id,
-                hostname,
-            } => {
+            super::GatewayMessage::AgentDisconnected { agent_id, hostname } => {
                 assert_eq!(agent_id, aid);
                 assert_eq!(hostname, "server01");
             }

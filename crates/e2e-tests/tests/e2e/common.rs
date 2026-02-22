@@ -99,11 +99,13 @@ impl TestContext {
         let viewer_id = Uuid::new_v4();
         let editor_id = Uuid::new_v4();
 
-        sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')")
-            .bind(org_id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')",
+        )
+        .bind(org_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         for (id, name, role) in [
             (admin_id, "admin", "admin"),
@@ -794,13 +796,12 @@ impl TestContext {
     // ---- State helpers ----
 
     pub async fn set_all_running(&self, app_id: Uuid) {
-        let comp_ids = sqlx::query_scalar::<_, Uuid>(
-            "SELECT id FROM components WHERE application_id = $1",
-        )
-        .bind(app_id)
-        .fetch_all(&self.db_pool)
-        .await
-        .unwrap();
+        let comp_ids =
+            sqlx::query_scalar::<_, Uuid>("SELECT id FROM components WHERE application_id = $1")
+                .bind(app_id)
+                .fetch_all(&self.db_pool)
+                .await
+                .unwrap();
         for cid in comp_ids {
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
@@ -1231,11 +1232,13 @@ impl TestContext {
         let org2_id = Uuid::new_v4();
         let user2_id = Uuid::new_v4();
 
-        sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'Other Org', 'other-org')")
-            .bind(org2_id)
-            .execute(&self.db_pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Other Org', 'other-org')",
+        )
+        .bind(org2_id)
+        .execute(&self.db_pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO users (id, organization_id, external_id, display_name, role, email)
              VALUES ($1, $2, 'other_admin', 'Other Admin', 'admin', 'other@test.local')",

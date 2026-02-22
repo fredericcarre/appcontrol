@@ -88,11 +88,7 @@ impl MessageRouter {
             let bytes = buf.total_bytes();
             let msgs = buf.drain();
             if count > 0 {
-                tracing::info!(
-                    count,
-                    bytes,
-                    "Replaying buffered messages to backend"
-                );
+                tracing::info!(count, bytes, "Replaying buffered messages to backend");
             }
             msgs
         };

@@ -92,10 +92,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/teams/:id/members",
             get(teams::list_members).post(teams::add_member),
         )
-        .route(
-            "/teams/:id/members/:user_id",
-            delete(teams::remove_member),
-        )
+        .route("/teams/:id/members/:user_id", delete(teams::remove_member))
         // Switchover
         .route(
             "/apps/:app_id/switchover",
@@ -125,10 +122,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(reports::switchovers),
         )
         .route("/apps/:app_id/reports/audit", get(reports::audit))
-        .route(
-            "/apps/:app_id/reports/compliance",
-            get(reports::compliance),
-        )
+        .route("/apps/:app_id/reports/compliance", get(reports::compliance))
         .route("/apps/:app_id/reports/rto", get(reports::rto))
         // Orchestration (scheduler)
         .route(
@@ -186,7 +180,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // YAML Map Import
         .route("/import/yaml", post(import::import_yaml_map))
         // API Keys
-        .route("/api-keys", get(api_keys::list_api_keys).post(api_keys::create_api_key))
+        .route(
+            "/api-keys",
+            get(api_keys::list_api_keys).post(api_keys::create_api_key),
+        )
         .route("/api-keys/:id", delete(api_keys::delete_api_key))
         // Agents
         .route("/agents", get(agents::list_agents))
@@ -213,19 +210,13 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/workspaces/:id/members/:member_id",
             delete(workspaces::remove_workspace_member),
         )
-        .route(
-            "/workspaces/my-sites",
-            get(workspaces::my_accessible_sites),
-        )
+        .route("/workspaces/my-sites", get(workspaces::my_accessible_sites))
         // Approval Workflows (4-eyes principle)
         .route(
             "/approvals",
             get(approvals::list_approval_requests).post(approvals::create_approval_request),
         )
-        .route(
-            "/approvals/:id/decide",
-            post(approvals::decide_approval),
-        )
+        .route("/approvals/:id/decide", post(approvals::decide_approval))
         .route(
             "/approvals/policies",
             get(approvals::list_approval_policies).post(approvals::upsert_approval_policy),
@@ -233,7 +224,8 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Break-Glass Emergency Access (admin endpoints)
         .route(
             "/break-glass/accounts",
-            get(break_glass::list_break_glass_accounts).post(break_glass::create_break_glass_account),
+            get(break_glass::list_break_glass_accounts)
+                .post(break_glass::create_break_glass_account),
         )
         .route(
             "/break-glass/sessions",

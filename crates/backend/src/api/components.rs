@@ -694,13 +694,12 @@ pub async fn resolve_components_for_agent(
     ip_addresses: &[String],
 ) {
     // Match components by hostname
-    let result = sqlx::query(
-        "UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL",
-    )
-    .bind(agent_id)
-    .bind(hostname)
-    .execute(pool)
-    .await;
+    let result =
+        sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
+            .bind(agent_id)
+            .bind(hostname)
+            .execute(pool)
+            .await;
 
     if let Ok(r) = result {
         if r.rows_affected() > 0 {
@@ -715,13 +714,12 @@ pub async fn resolve_components_for_agent(
 
     // Match components by any of the agent's IP addresses
     for ip in ip_addresses {
-        let result = sqlx::query(
-            "UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL",
-        )
-        .bind(agent_id)
-        .bind(ip)
-        .execute(pool)
-        .await;
+        let result =
+            sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
+                .bind(agent_id)
+                .bind(ip)
+                .execute(pool)
+                .await;
 
         if let Ok(r) = result {
             if r.rows_affected() > 0 {

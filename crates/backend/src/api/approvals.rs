@@ -20,8 +20,8 @@ use appcontrol_common::PermissionLevel;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateApprovalRequest {
-    pub operation_type: String,  // start, stop, switchover, rebuild
-    pub resource_type: String,   // application, component
+    pub operation_type: String, // start, stop, switchover, rebuild
+    pub resource_type: String,  // application, component
     pub resource_id: Uuid,
     pub reason: Option<String>,
     pub payload: Option<Value>,
@@ -29,7 +29,7 @@ pub struct CreateApprovalRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct ApprovalDecisionRequest {
-    pub decision: String,  // approved, rejected
+    pub decision: String, // approved, rejected
     pub reason: Option<String>,
 }
 
@@ -310,14 +310,12 @@ pub async fn decide_approval(
     };
 
     if new_status != "pending" {
-        sqlx::query(
-            "UPDATE approval_requests SET status = $2, resolved_at = now() WHERE id = $1",
-        )
-        .bind(request_id)
-        .bind(new_status)
-        .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        sqlx::query("UPDATE approval_requests SET status = $2, resolved_at = now() WHERE id = $1")
+            .bind(request_id)
+            .bind(new_status)
+            .execute(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
     log_action(

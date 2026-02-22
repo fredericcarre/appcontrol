@@ -93,11 +93,7 @@ impl ConnectionManager {
             }
 
             let url = &self.gateway_urls[current_url_idx];
-            tracing::info!(
-                "Connecting to gateway [{}]: {}",
-                current_url_idx + 1,
-                url
-            );
+            tracing::info!("Connecting to gateway [{}]: {}", current_url_idx + 1, url);
 
             match self.connect_and_run(url, &mut msg_rx).await {
                 Ok(()) => {
@@ -239,7 +235,8 @@ impl ConnectionManager {
                                     pid = pid,
                                     "Detached process started"
                                 );
-                                let seq = seq_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                let seq =
+                                    seq_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                                 let _ = msg_tx.send(AgentMessage::CommandResult {
                                     request_id,
                                     exit_code: 0,
@@ -251,7 +248,8 @@ impl ConnectionManager {
                             }
                             Err(e) => {
                                 tracing::error!(request_id = %request_id, "Detached exec failed: {}", e);
-                                let seq = seq_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                let seq =
+                                    seq_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                                 let _ = msg_tx.send(AgentMessage::CommandResult {
                                     request_id,
                                     exit_code: -1,
@@ -268,7 +266,8 @@ impl ConnectionManager {
                                 request_id,
                                 exit_code: -1,
                                 stdout: String::new(),
-                                stderr: "Detached execution not supported on this platform".to_string(),
+                                stderr: "Detached execution not supported on this platform"
+                                    .to_string(),
                                 duration_ms: 0,
                                 sequence_id: None,
                             });
@@ -284,7 +283,8 @@ impl ConnectionManager {
                                     duration_ms = result.duration_ms,
                                     "Command completed"
                                 );
-                                let seq = seq_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                let seq =
+                                    seq_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                                 let _ = msg_tx.send(AgentMessage::CommandResult {
                                     request_id,
                                     exit_code: result.exit_code,
@@ -297,7 +297,8 @@ impl ConnectionManager {
                             Err(e) => {
                                 let duration_ms = start.elapsed().as_millis() as u32;
                                 tracing::error!(request_id = %request_id, "Command failed: {}", e);
-                                let seq = seq_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                let seq =
+                                    seq_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                                 let _ = msg_tx.send(AgentMessage::CommandResult {
                                     request_id,
                                     exit_code: -1,
@@ -366,11 +367,7 @@ impl ConnectionManager {
                 request_id,
                 approved,
             } => {
-                tracing::info!(
-                    "Approval result for {}: approved={}",
-                    request_id,
-                    approved
-                );
+                tracing::info!("Approval result for {}: approved={}", request_id, approved);
             }
         }
     }

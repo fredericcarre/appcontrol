@@ -110,8 +110,7 @@ async fn main() -> anyhow::Result<()> {
     let config = GatewayConfig::load(&args.config)?;
 
     // Derive a stable gateway_id from the configured ID (deterministic UUID v5)
-    let gateway_id =
-        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, config.gateway.id.as_bytes());
+    let gateway_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, config.gateway.id.as_bytes());
 
     let registry = AgentRegistry::new();
     let router = MessageRouter::new();

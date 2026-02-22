@@ -70,8 +70,8 @@ impl RateLimitState {
     pub fn new() -> Self {
         Self {
             auth: RateLimiter::new(60),       // 1-minute window
-            operations: RateLimiter::new(60),  // 1-minute window
-            reads: RateLimiter::new(60),       // 1-minute window
+            operations: RateLimiter::new(60), // 1-minute window
+            reads: RateLimiter::new(60),      // 1-minute window
         }
     }
 }

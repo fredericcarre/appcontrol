@@ -125,7 +125,12 @@ mod test_org_isolation {
         let ctx = TestContext::new().await;
 
         // Org1 creates app
-        let resp = ctx.post("/api/v1/apps", json!({"name": "Org1-App", "site_id": ctx.default_site_id})).await;
+        let resp = ctx
+            .post(
+                "/api/v1/apps",
+                json!({"name": "Org1-App", "site_id": ctx.default_site_id}),
+            )
+            .await;
         assert!(resp.status().is_success());
 
         // Org2 creates app with same name → should succeed (different org)
@@ -139,7 +144,11 @@ mod test_org_isolation {
             .await
             .unwrap();
         let resp = ctx
-            .post_with_token(&org2_token, "/api/v1/apps", json!({"name": "Org1-App", "site_id": org2_site_id}))
+            .post_with_token(
+                &org2_token,
+                "/api/v1/apps",
+                json!({"name": "Org1-App", "site_id": org2_site_id}),
+            )
             .await;
         assert!(
             resp.status().is_success(),

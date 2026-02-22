@@ -9,7 +9,10 @@ pub mod websocket;
 // MCP module is internal-only
 mod mcp;
 
-use axum::{routing::{get, post}, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;

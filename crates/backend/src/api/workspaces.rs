@@ -129,14 +129,12 @@ pub async fn delete_workspace(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let result = sqlx::query(
-        "DELETE FROM workspaces WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(id)
-    .bind(user.organization_id)
-    .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result = sqlx::query("DELETE FROM workspaces WHERE id = $1 AND organization_id = $2")
+        .bind(id)
+        .bind(user.organization_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if result.rows_affected() == 0 {
         return Err(StatusCode::NOT_FOUND);
@@ -224,14 +222,12 @@ pub async fn remove_workspace_site(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    sqlx::query(
-        "DELETE FROM workspace_sites WHERE workspace_id = $1 AND site_id = $2",
-    )
-    .bind(workspace_id)
-    .bind(site_id)
-    .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM workspace_sites WHERE workspace_id = $1 AND site_id = $2")
+        .bind(workspace_id)
+        .bind(site_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -329,14 +325,12 @@ pub async fn remove_workspace_member(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    sqlx::query(
-        "DELETE FROM workspace_members WHERE id = $1 AND workspace_id = $2",
-    )
-    .bind(member_id)
-    .bind(workspace_id)
-    .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM workspace_members WHERE id = $1 AND workspace_id = $2")
+        .bind(member_id)
+        .bind(workspace_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
