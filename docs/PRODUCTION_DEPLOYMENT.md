@@ -9,7 +9,7 @@ This guide covers deploying AppControl in a production Kubernetes environment.
 | Kubernetes | 1.26+ | EKS, GKE, AKS, or OpenShift 4.12+ |
 | Helm | 3.12+ | |
 | PostgreSQL | 16+ | Managed (RDS, CloudSQL, Azure DB) recommended |
-| Redis | 7+ | Managed with failover recommended |
+| Redis | 7+ | Optional — only used for token revocation. Not required by gateways or agents. |
 | cert-manager | 1.12+ | For TLS certificate management |
 | kubectl | 1.26+ | Matching cluster version |
 
@@ -31,10 +31,15 @@ This guide covers deploying AppControl in a production Kubernetes environment.
                         │  │          │
               ┌─────────┘  └────┐     │  Agents connect
               │                 │     │  via mTLS
-         ┌────▼───┐       ┌────▼──┐  │
-         │PostgreSQL│      │ Redis │  ▼
-         │  (HA)   │      │ (HA)  │  🖥 Agents
-         └─────────┘      └───────┘
+         ┌────▼─────┐   ┌──────▼──┐  │
+         │PostgreSQL │   │ Redis   │  ▼
+         │  (HA)     │   │(optional│  🖥 Agents
+         │ REQUIRED  │   │token    │
+         └───────────┘   │revoke)  │
+                         └─────────┘
+
+Note: Only the Backend connects to PostgreSQL and Redis.
+Gateways and Agents have no database or cache dependency.
 ```
 
 ## Step 1: Namespace and Secrets
@@ -169,17 +174,29 @@ archive_command = 'your-wal-archive-command'
 
 The Helm chart includes a PostgreSQL StatefulSet with PVC. Set `postgresql.enabled: true` in values.
 
-## Step 4: Redis Setup
+## Step 4: Redis Setup (Optional)
 
-### Managed Redis (recommended)
+Redis is used **only by the backend** for JWT token revocation (blacklist). Gateways and agents never connect to Redis.
 
-- **AWS ElastiCache**: Redis 7, `cache.r6g.large`, Multi-AZ with automatic failover
-- **GCP Memorystore**: Redis 7, Standard tier (HA)
-- **Azure Cache for Redis**: Premium P1 with zone redundancy
+**Without Redis:** token revocation is unavailable — tokens remain valid until JWT expiry (24h). All other features work normally. For a quick workaround, rotate `JWT_SECRET` to invalidate all tokens.
 
-### In-cluster Redis (dev/staging only)
+**With Redis:** revoked tokens are stored as `revoked:{fingerprint}` keys with a 25h TTL. Backend checks this on every authenticated request.
 
-The Helm chart includes a Redis StatefulSet with AOF persistence. Set `redis.enabled: true` in values.
+### Managed Redis (recommended for production)
+
+- **AWS ElastiCache**: Redis 7, `cache.t4g.small` is sufficient (minimal storage needs). Multi-AZ optional.
+- **GCP Memorystore**: Redis 7, Basic tier is sufficient.
+- **Azure Cache for Redis**: Basic C0 is sufficient.
+
+Note: Redis usage is minimal (~100 bytes per revoked token, max 25h TTL). A small instance is sufficient even for large deployments.
+
+### In-cluster Redis (dev/staging)
+
+The Helm chart includes a Redis StatefulSet. Set `redis.enabled: true` in values.
+
+### No Redis
+
+Simply omit `REDIS_URL` from backend configuration. The backend starts without Redis and logs a warning.
 
 ## Step 5: Helm Values for Production
 

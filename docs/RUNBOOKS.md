@@ -168,9 +168,9 @@ kubectl logs -n appcontrol -l app.kubernetes.io/component=redis --tail=50
 ```
 
 **Impact**: Backend continues operating without Redis (fail-open design):
-- Token revocation blacklist unavailable (tokens valid until JWT expiry)
-- Cache misses increase database load
-- Rate limiting counters reset
+- Token revocation blacklist unavailable (tokens valid until JWT expiry — 24h max)
+- No other features are affected — Redis is only used for token revocation
+- Rate limiting uses in-memory counters (independent of Redis)
 
 **Resolution**:
 

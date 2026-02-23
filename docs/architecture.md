@@ -71,7 +71,7 @@
 | **Agent** | Local process manager + health checker | None (client only) | YAML + env var overrides |
 | **CLI** | CLI client for automation/schedulers | None (client only) | Env vars + CLI args |
 | **PostgreSQL** | Persistent storage | `:5432` | Standard |
-| **Redis** | Cache + pub/sub for real-time events | `:6379` | Standard |
+| **Redis** | JWT token revocation blacklist (optional) | `:6379` | Standard |
 
 ## Communication Protocols
 
@@ -124,9 +124,21 @@ Agent ---WSS (mTLS)---> gateway:4443/ws
 |----------|---------|-------------|
 | `PORT` | `3000` | HTTP listen port |
 | `DATABASE_URL` | `postgresql://appcontrol:appcontrol@localhost:5432/appcontrol` | PostgreSQL connection string |
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection string |
-| `JWT_SECRET` | `dev-secret-change-in-production` | JWT signing secret |
+| `REDIS_URL` | _(none)_ | Redis connection string (optional — only for token revocation) |
+| `JWT_SECRET` | `dev-secret-change-in-production` | JWT signing secret (**required** in production) |
 | `JWT_ISSUER` | `appcontrol` | JWT issuer claim |
+| `APP_ENV` | `development` | Environment: `development`, `staging`, `production` |
+| `CORS_ORIGINS` | _(none)_ | Comma-separated allowed origins |
+| `LOG_FORMAT` | `text` | `text` or `json` (structured logging) |
+| `DB_POOL_SIZE` | `20` | Database connection pool max connections |
+| `DB_IDLE_TIMEOUT_SECS` | `600` | Idle connection timeout (seconds) |
+| `DB_CONNECT_TIMEOUT_SECS` | `30` | Connection acquisition timeout (seconds) |
+| `SHUTDOWN_TIMEOUT_SECS` | `30` | Graceful shutdown timeout (seconds) |
+| `RATE_LIMIT_AUTH` | `10` | Auth endpoint rate limit (per IP per minute) |
+| `RATE_LIMIT_OPERATIONS` | `5` | Operation endpoint rate limit (per user per minute) |
+| `RATE_LIMIT_READS` | `200` | Read endpoint rate limit (per user per minute) |
+| `RETENTION_ACTION_LOG_DAYS` | `0` | Days to keep action_log entries (0 = unlimited) |
+| `RETENTION_CHECK_EVENTS_DAYS` | `0` | Days to keep check_events partitions (0 = unlimited) |
 
 ### Gateway
 | Variable | Default | Description |
