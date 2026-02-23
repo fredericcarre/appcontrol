@@ -8,13 +8,13 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use axum::extract::Query;
 use crate::auth::AuthUser;
 use crate::core::permissions::{can_access_site, effective_permission};
 use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
+use axum::extract::Query;
 
 #[derive(Debug, Deserialize)]
 pub struct GrantUserPermissionRequest {
@@ -363,22 +363,20 @@ pub async fn delete_permission(
     }
 
     // Try user permissions first, then team permissions
-    let deleted = sqlx::query(
-        "DELETE FROM app_permissions_users WHERE id = $1 AND application_id = $2",
-    )
-    .bind(perm_id)
-    .bind(app_id)
-    .execute(&state.db)
-    .await?;
+    let deleted =
+        sqlx::query("DELETE FROM app_permissions_users WHERE id = $1 AND application_id = $2")
+            .bind(perm_id)
+            .bind(app_id)
+            .execute(&state.db)
+            .await?;
 
     if deleted.rows_affected() == 0 {
-        let deleted_team = sqlx::query(
-            "DELETE FROM app_permissions_teams WHERE id = $1 AND application_id = $2",
-        )
-        .bind(perm_id)
-        .bind(app_id)
-        .execute(&state.db)
-        .await?;
+        let deleted_team =
+            sqlx::query("DELETE FROM app_permissions_teams WHERE id = $1 AND application_id = $2")
+                .bind(perm_id)
+                .bind(app_id)
+                .execute(&state.db)
+                .await?;
 
         if deleted_team.rows_affected() == 0 {
             return Err(ApiError::NotFound);
@@ -471,7 +469,17 @@ pub async fn consume_share_link(
     Json(body): Json<ConsumeShareLinkRequest>,
 ) -> Result<Json<Value>, ApiError> {
     // Look up the share link
-    let link = sqlx::query_as::<_, (Uuid, Uuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>(
+    let link = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<i32>,
+            i32,
+        ),
+    >(
         r#"
         SELECT id, application_id, permission_level, expires_at, max_uses, use_count
         FROM app_share_links
@@ -495,7 +503,9 @@ pub async fn consume_share_link(
     // Check max uses
     if let Some(max) = max_uses {
         if use_count >= max {
-            return Err(ApiError::Validation("Share link has reached maximum uses".into()));
+            return Err(ApiError::Validation(
+                "Share link has reached maximum uses".into(),
+            ));
         }
     }
 
@@ -589,7 +599,16 @@ pub async fn list_all_permissions(
         return Err(ApiError::Forbidden);
     }
 
-    let user_perms = sqlx::query_as::<_, (Uuid, Uuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+    let user_perms = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
         r#"
         SELECT apu.id, apu.user_id, apu.permission_level, u.email, apu.expires_at
         FROM app_permissions_users apu
@@ -601,7 +620,16 @@ pub async fn list_all_permissions(
     .fetch_all(&state.db)
     .await?;
 
-    let team_perms = sqlx::query_as::<_, (Uuid, Uuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+    let team_perms = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
         r#"
         SELECT apt.id, apt.team_id, apt.permission_level, t.name, apt.expires_at
         FROM app_permissions_teams apt

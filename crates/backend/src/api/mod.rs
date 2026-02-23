@@ -96,7 +96,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // User search / discovery
         .route("/users/search", get(permissions::search_users))
         // Share link consumption
-        .route("/share-links/consume", post(permissions::consume_share_link))
+        .route(
+            "/share-links/consume",
+            post(permissions::consume_share_link),
+        )
         // Teams
         .route("/teams", get(teams::list_teams).post(teams::create_team))
         .route(
