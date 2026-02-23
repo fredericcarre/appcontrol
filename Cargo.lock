@@ -146,6 +146,7 @@ dependencies = [
  "axum-extra",
  "base64 0.22.1",
  "chrono",
+ "clap",
  "dashmap",
  "flate2",
  "futures-util",
@@ -169,6 +170,7 @@ dependencies = [
  "tracing-subscriber",
  "urlencoding",
  "uuid",
+ "windows-service",
 ]
 
 [[package]]
@@ -271,6 +273,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "windows-service",
 ]
 
 [[package]]
