@@ -49,3 +49,6 @@ mod test_heartbeat_unreachable;
 mod test_agent_ip_addresses;
 mod test_workspace_access;
 mod test_host_resolution;
+
+// ---- Phase 6: Enrollment and dynamic PKI ----
+mod test_enrollment;

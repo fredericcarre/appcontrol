@@ -118,6 +118,8 @@ impl TestContext {
             rate_limit_auth: 100,
             rate_limit_operations: 100,
             rate_limit_reads: 1000,
+            redis_url: None,
+            cors_origins: vec![],
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
@@ -126,6 +128,8 @@ impl TestContext {
             config,
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
+            redis: None,
+            operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
         });
 
         let app = appcontrol_backend::create_router(state);
@@ -237,6 +241,8 @@ impl TestContext {
             rate_limit_auth: 100,
             rate_limit_operations: 100,
             rate_limit_reads: 1000,
+            redis_url: None,
+            cors_origins: vec![],
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
@@ -245,6 +251,8 @@ impl TestContext {
             config,
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
+            redis: None,
+            operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
         });
 
         let app = appcontrol_backend::create_router(state);
@@ -372,6 +380,15 @@ impl TestContext {
         self.client
             .delete(format!("{}{path}", self.api_url))
             .bearer_auth(self.token_for(user))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    pub async fn post_anonymous(&self, path: &str, body: Value) -> Response {
+        self.client
+            .post(format!("{}{path}", self.api_url))
+            .json(&body)
             .send()
             .await
             .unwrap()
