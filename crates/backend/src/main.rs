@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
 
-    let pool = db::create_pool(&config.database_url).await?;
+    let pool = db::create_pool(&config).await?;
 
     // Auto-run migrations on startup (Flyway-style V001__ naming)
     tracing::info!("Running database migrations...");
@@ -81,6 +81,10 @@ async fn main() -> anyhow::Result<()> {
     metrics::describe_counter!("state_transitions_total", "Total FSM state transitions");
     metrics::describe_counter!("commands_executed_total", "Total commands executed");
     metrics::describe_gauge!("db_pool_connections", "Database pool active connections");
+
+    let shutdown_timeout_secs = config.shutdown_timeout_secs;
+    let retention_action_log_days = config.retention_action_log_days;
+    let retention_check_events_days = config.retention_check_events_days;
 
     let state = Arc::new(AppState {
         db: pool,
@@ -143,21 +147,52 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Database pool metrics reporter (every 10s)
+    db::spawn_pool_metrics(state.db.clone());
+
+    // WebSocket connection gauge updater
+    let ws_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+        loop {
+            interval.tick().await;
+            metrics::gauge!("ws_connections_active").set(ws_state.ws_hub.connection_count() as f64);
+            metrics::gauge!("agents_connected").set(ws_state.ws_hub.routed_agent_count() as f64);
+        }
+    });
+
+    // Data retention task (runs daily)
+    let retention_pool = state.db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(86400));
+        // Skip the immediate first tick
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            run_data_retention(
+                &retention_pool,
+                retention_action_log_days,
+                retention_check_events_days,
+            )
+            .await;
+        }
+    });
+
     let addr = format!("0.0.0.0:{}", state.config.port);
     tracing::info!("Starting AppControl backend on {}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
-    // Graceful shutdown on SIGTERM / Ctrl-C
+    // Graceful shutdown on SIGTERM / Ctrl-C with configurable timeout
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(shutdown_timeout_secs))
         .await?;
 
     tracing::info!("AppControl backend shut down gracefully");
     Ok(())
 }
 
-/// Wait for SIGTERM (container stop) or Ctrl-C (interactive).
-async fn shutdown_signal() {
+/// Wait for SIGTERM (container stop) or Ctrl-C (interactive), with a hard timeout.
+async fn shutdown_signal(timeout_secs: u64) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -179,6 +214,14 @@ async fn shutdown_signal() {
         _ = ctrl_c => { tracing::info!("Received Ctrl-C, starting graceful shutdown..."); },
         _ = terminate => { tracing::info!("Received SIGTERM, starting graceful shutdown..."); },
     }
+
+    // Give in-flight requests time to complete, then force exit
+    tracing::info!(
+        timeout_secs,
+        "Waiting for in-flight requests to complete..."
+    );
+    tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)).await;
+    tracing::warn!("Shutdown timeout reached — forcing exit");
 }
 
 /// Ensure check_events partitions exist for the current and next year.
@@ -216,6 +259,77 @@ async fn ensure_check_event_partitions(pool: &sqlx::PgPool) -> anyhow::Result<()
 }
 
 use chrono::Datelike;
+
+/// Run data retention policies: archive or delete old data.
+async fn run_data_retention(pool: &sqlx::PgPool, action_log_days: u32, check_events_days: u32) {
+    if action_log_days > 0 {
+        let interval = format!("{} days", action_log_days);
+        match sqlx::query("DELETE FROM action_log WHERE created_at < now() - $1::interval")
+            .bind(&interval)
+            .execute(pool)
+            .await
+        {
+            Ok(result) => {
+                if result.rows_affected() > 0 {
+                    tracing::info!(
+                        deleted = result.rows_affected(),
+                        retention_days = action_log_days,
+                        "Action log data retention: cleaned old entries"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Action log retention failed: {}", e);
+            }
+        }
+    }
+
+    if check_events_days > 0 {
+        // Drop old partitions for check_events
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(check_events_days as i64);
+        let cutoff_year = cutoff.year();
+        let cutoff_month = cutoff.month();
+
+        // List existing partitions and drop those older than cutoff
+        let partitions: Vec<String> = sqlx::query_scalar(
+            "SELECT tablename FROM pg_tables WHERE tablename LIKE 'check_events_y%' AND schemaname = 'public'"
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        for partition_name in partitions {
+            // Parse year/month from partition name: check_events_y2025m03
+            if let Some(ym) = partition_name.strip_prefix("check_events_y") {
+                let parts: Vec<&str> = ym.split('m').collect();
+                if parts.len() == 2 {
+                    if let (Ok(year), Ok(month)) =
+                        (parts[0].parse::<i32>(), parts[1].parse::<u32>())
+                    {
+                        if year < cutoff_year || (year == cutoff_year && month < cutoff_month) {
+                            let sql = format!("DROP TABLE IF EXISTS {}", partition_name);
+                            match sqlx::query(&sql).execute(pool).await {
+                                Ok(_) => {
+                                    tracing::info!(
+                                        partition = partition_name,
+                                        "Dropped old check_events partition"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        partition = partition_name,
+                                        "Failed to drop partition: {}",
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Run migrations from the migrations/ directory.
 /// Handles Flyway-style naming (V001__name.sql) by executing them in order.

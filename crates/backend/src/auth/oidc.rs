@@ -128,10 +128,11 @@ pub async fn oidc_login(
 }
 
 /// GET /api/v1/auth/oidc/callback — Exchange authorization code for tokens.
+/// Sets an HttpOnly cookie with the JWT token for browser security.
 pub async fn oidc_callback(
     State(state): State<Arc<AppState>>,
     Query(query): Query<OidcCallbackQuery>,
-) -> Result<Json<OidcLoginResponse>, StatusCode> {
+) -> Result<impl IntoResponse, StatusCode> {
     let oidc = state
         .config
         .oidc
@@ -194,10 +195,19 @@ pub async fn oidc_callback(
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(OidcLoginResponse {
-        token: jwt_token,
-        user: auth_user,
-    }))
+    // Set HttpOnly cookie for browser security (no localStorage exposure)
+    let is_production = state.config.app_env == "production";
+    let cookie = crate::middleware::auth::build_auth_cookie(&jwt_token, is_production);
+
+    let response = (
+        [(axum::http::header::SET_COOKIE, cookie)],
+        Json(OidcLoginResponse {
+            token: jwt_token,
+            user: auth_user,
+        }),
+    );
+
+    Ok(response)
 }
 
 /// Discover OIDC endpoints from the discovery URL.

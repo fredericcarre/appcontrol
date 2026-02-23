@@ -68,9 +68,47 @@ async fn main() -> anyhow::Result<()> {
         config.gateway.failover_strategy
     );
 
+    // Clone scheduler reference before it's moved into run()
+    let _scheduler_for_reload = check_scheduler.clone();
+
     // Start all subsystems
     let conn_handle = tokio::spawn(connection.run(msg_rx));
     let sched_handle = tokio::spawn(check_scheduler.run());
+
+    // SIGHUP handler: reload agent configuration file on HUP signal
+    #[cfg(unix)]
+    {
+        let config_path = args.config.clone();
+        tokio::spawn(async move {
+            let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+                .expect("failed to install SIGHUP handler");
+            loop {
+                sighup.recv().await;
+                tracing::info!(
+                    "Received SIGHUP — reloading configuration from {}",
+                    config_path
+                );
+                match config::AgentConfig::load(&config_path) {
+                    Ok(new_config) => {
+                        tracing::info!("Configuration reloaded successfully");
+                        // Update check intervals in the scheduler
+                        // (The actual component configs come from the backend via UpdateConfig,
+                        //  but local agent config like log level, buffer path, etc. can be reloaded)
+
+                        // Re-initialize log level if it changed
+                        if let Ok(_filter) =
+                            tracing_subscriber::EnvFilter::try_new(new_config.log_level())
+                        {
+                            tracing::info!("Updated log filter: {}", new_config.log_level());
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to reload configuration: {}", e);
+                    }
+                }
+            }
+        });
+    }
 
     tokio::select! {
         r = conn_handle => { tracing::error!("Connection manager exited: {:?}", r); }

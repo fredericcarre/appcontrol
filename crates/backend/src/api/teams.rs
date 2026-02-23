@@ -9,6 +9,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::middleware::audit::log_action;
 use crate::AppState;
 
@@ -43,14 +44,13 @@ pub struct TeamRow {
 pub async fn list_teams(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let teams = sqlx::query_as::<_, TeamRow>(
         "SELECT id, organization_id, name, description, created_at, updated_at FROM teams WHERE organization_id = $1 ORDER BY name",
     )
     .bind(user.organization_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({ "teams": teams })))
 }
@@ -59,15 +59,14 @@ pub async fn get_team(
     State(state): State<Arc<AppState>>,
     Extension(_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let team = sqlx::query_as::<_, TeamRow>(
         "SELECT id, organization_id, name, description, created_at, updated_at FROM teams WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_not_found()?;
 
     Ok(Json(json!(team)))
 }
@@ -76,7 +75,11 @@ pub async fn create_team(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Json(body): Json<CreateTeamRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    // Input validation
+    validate_length("name", &body.name, 1, 200)?;
+    validate_optional_length("description", &body.description, 2000)?;
+
     let team_id = Uuid::new_v4();
     log_action(
         &state.db,
@@ -86,8 +89,7 @@ pub async fn create_team(
         team_id,
         json!({"name": body.name}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let team = sqlx::query_as::<_, TeamRow>(
         r#"
@@ -101,8 +103,7 @@ pub async fn create_team(
     .bind(&body.name)
     .bind(&body.description)
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     // Add creator as team lead
     let _ =
@@ -120,7 +121,13 @@ pub async fn update_team(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateTeamRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
+    // Input validation
+    if let Some(ref name) = body.name {
+        validate_length("name", name, 1, 200)?;
+    }
+    validate_optional_length("description", &body.description, 2000)?;
+
     log_action(
         &state.db,
         user.user_id,
@@ -129,8 +136,7 @@ pub async fn update_team(
         id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let team = sqlx::query_as::<_, TeamRow>(
         r#"
@@ -146,9 +152,8 @@ pub async fn update_team(
     .bind(&body.name)
     .bind(&body.description)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_not_found()?;
 
     Ok(Json(json!(team)))
 }
@@ -157,7 +162,7 @@ pub async fn delete_team(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     log_action(
         &state.db,
         user.user_id,
@@ -166,17 +171,15 @@ pub async fn delete_team(
         id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result = sqlx::query("DELETE FROM teams WHERE id = $1")
         .bind(id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::NotFound);
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -186,14 +189,13 @@ pub async fn list_members(
     State(state): State<Arc<AppState>>,
     Extension(_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let members = sqlx::query_as::<_, (Uuid, Uuid, String, chrono::DateTime<chrono::Utc>)>(
         "SELECT id, user_id, role, joined_at FROM team_members WHERE team_id = $1",
     )
     .bind(id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result: Vec<Value> = members
         .iter()
@@ -208,7 +210,7 @@ pub async fn add_member(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
     Json(body): Json<AddMemberRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     log_action(
         &state.db,
         user.user_id,
@@ -217,8 +219,7 @@ pub async fn add_member(
         id,
         json!({"user_id": body.user_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let member_id = sqlx::query_scalar::<_, Uuid>(
         r#"
@@ -231,8 +232,7 @@ pub async fn add_member(
     .bind(body.user_id)
     .bind(body.role.as_deref().unwrap_or("member"))
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok((StatusCode::CREATED, Json(json!({"id": member_id}))))
 }
@@ -241,7 +241,7 @@ pub async fn remove_member(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path((team_id, user_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     log_action(
         &state.db,
         user.user_id,
@@ -250,15 +250,13 @@ pub async fn remove_member(
         team_id,
         json!({"user_id": user_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
         .bind(team_id)
         .bind(user_id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

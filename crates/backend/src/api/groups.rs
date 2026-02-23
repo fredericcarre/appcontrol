@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -46,10 +47,10 @@ pub async fn list_groups(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let groups = sqlx::query_as::<_, GroupRow>(
@@ -58,8 +59,7 @@ pub async fn list_groups(
     )
     .bind(app_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({ "groups": groups })))
 }
@@ -70,11 +70,15 @@ pub async fn create_group(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Json(body): Json<CreateGroupRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
+
+    // Input validation
+    validate_length("name", &body.name, 1, 200)?;
+    validate_optional_length("description", &body.description, 2000)?;
 
     let group_id = Uuid::new_v4();
     log_action(
@@ -85,8 +89,7 @@ pub async fn create_group(
         group_id,
         json!({"name": body.name, "app_id": app_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let group = sqlx::query_as::<_, GroupRow>(
         r#"
@@ -102,8 +105,7 @@ pub async fn create_group(
     .bind(body.color.as_deref().unwrap_or("#6366F1"))
     .bind(body.display_order.unwrap_or(0))
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok((StatusCode::CREATED, Json(json!(group))))
 }
@@ -114,11 +116,17 @@ pub async fn update_group(
     Extension(user): Extension<AuthUser>,
     Path((app_id, group_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<UpdateGroupRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
+
+    // Input validation
+    if let Some(ref name) = body.name {
+        validate_length("name", name, 1, 200)?;
+    }
+    validate_optional_length("description", &body.description, 2000)?;
 
     log_action(
         &state.db,
@@ -128,8 +136,7 @@ pub async fn update_group(
         group_id,
         json!({"app_id": app_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let group = sqlx::query_as::<_, GroupRow>(
         r#"
@@ -149,9 +156,8 @@ pub async fn update_group(
     .bind(&body.color)
     .bind(body.display_order)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_not_found()?;
 
     Ok(Json(json!(group)))
 }
@@ -161,10 +167,10 @@ pub async fn delete_group(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path((app_id, group_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -175,18 +181,16 @@ pub async fn delete_group(
         group_id,
         json!({"app_id": app_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result = sqlx::query("DELETE FROM component_groups WHERE id = $1 AND application_id = $2")
         .bind(group_id)
         .bind(app_id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::NotFound);
     }
 
     Ok(StatusCode::NO_CONTENT)

@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::error::{ApiError, OptionExt};
 use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -131,7 +132,7 @@ pub async fn create_approval_request(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Json(body): Json<CreateApprovalRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let risk_level = classify_risk(&body.operation_type);
     let timeout = default_timeout_minutes(risk_level);
     let required = required_approvals_for_risk(risk_level);
@@ -150,8 +151,7 @@ pub async fn create_approval_request(
             "risk_level": risk_level,
         }),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let row = sqlx::query_as::<_, ApprovalRow>(
         r#"
@@ -175,8 +175,7 @@ pub async fn create_approval_request(
     .bind(required)
     .bind(timeout)
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     // Broadcast approval request event via WebSocket
     if body.resource_type == "application" {
@@ -201,7 +200,7 @@ pub async fn create_approval_request(
 pub async fn list_approval_requests(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let requests = sqlx::query_as::<_, ApprovalRow>(
         r#"
         SELECT id, organization_id, operation_type, resource_type, resource_id,
@@ -215,8 +214,7 @@ pub async fn list_approval_requests(
     )
     .bind(user.organization_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({ "requests": requests })))
 }
@@ -227,7 +225,7 @@ pub async fn decide_approval(
     Extension(user): Extension<AuthUser>,
     Path(request_id): Path<Uuid>,
     Json(body): Json<ApprovalDecisionRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     // Fetch the request
     let request = sqlx::query_as::<_, ApprovalRow>(
         r#"
@@ -241,18 +239,19 @@ pub async fn decide_approval(
     .bind(request_id)
     .bind(user.organization_id)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_not_found()?;
 
     // 4-eyes: requester cannot approve their own request
     if request.requested_by == user.user_id {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     // Must be pending
     if request.status != "pending" {
-        return Err(StatusCode::CONFLICT);
+        return Err(ApiError::Conflict(
+            "Request is no longer pending".to_string(),
+        ));
     }
 
     // Check if expired
@@ -263,7 +262,9 @@ pub async fn decide_approval(
         .bind(request_id)
         .execute(&state.db)
         .await;
-        return Err(StatusCode::GONE);
+        return Err(ApiError::Conflict(
+            "Approval request has expired".to_string(),
+        ));
     }
 
     // Check approver has sufficient permission on the resource
@@ -275,7 +276,7 @@ pub async fn decide_approval(
     )
     .await;
     if perm < PermissionLevel::Operate {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     // Record the decision
@@ -289,8 +290,7 @@ pub async fn decide_approval(
     .bind(&body.decision)
     .bind(&body.reason)
     .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     // Count approvals
     let approval_count = sqlx::query_scalar::<_, i64>(
@@ -314,8 +314,7 @@ pub async fn decide_approval(
             .bind(request_id)
             .bind(new_status)
             .execute(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .await?;
     }
 
     log_action(
@@ -330,8 +329,7 @@ pub async fn decide_approval(
             "new_status": new_status,
         }),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({
         "request_id": request_id,
@@ -346,9 +344,9 @@ pub async fn decide_approval(
 pub async fn list_approval_policies(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let policies = sqlx::query_as::<_, (Uuid, String, String, i32, i32, bool)>(
@@ -357,8 +355,7 @@ pub async fn list_approval_policies(
     )
     .bind(user.organization_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result: Vec<Value> = policies
         .into_iter()
@@ -390,9 +387,9 @@ pub async fn upsert_approval_policy(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Json(body): Json<UpsertPolicyRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let risk_level = classify_risk(&body.operation_type);
@@ -419,8 +416,7 @@ pub async fn upsert_approval_policy(
     .bind(timeout)
     .bind(enabled)
     .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     log_action(
         &state.db,
@@ -430,8 +426,7 @@ pub async fn upsert_approval_policy(
         user.organization_id,
         json!({ "operation_type": body.operation_type, "enabled": enabled }),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({
         "operation_type": body.operation_type,

@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -65,7 +66,7 @@ pub async fn list_apps(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Query(params): Query<ListAppsQuery>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
 
@@ -86,8 +87,7 @@ pub async fn list_apps(
     .bind(limit)
     .bind(offset)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({ "apps": apps, "total": apps.len() })))
 }
@@ -96,21 +96,21 @@ pub async fn get_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let app = sqlx::query_as::<_, AppRow>(
-        "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at FROM applications WHERE id = $1 AND organization_id = $2",
+        "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
+         FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(id)
     .bind(user.organization_id)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_not_found()?;
 
     Ok(Json(json!(app)))
 }
@@ -119,7 +119,11 @@ pub async fn create_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Json(body): Json<CreateAppRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    // Input validation
+    validate_length("name", &body.name, 1, 200)?;
+    validate_optional_length("description", &body.description, 2000)?;
+
     // Log before execute
     let app_id = Uuid::new_v4();
     log_action(
@@ -130,8 +134,7 @@ pub async fn create_app(
         app_id,
         json!({ "name": body.name }),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let app = sqlx::query_as::<_, AppRow>(
         r#"
@@ -147,19 +150,12 @@ pub async fn create_app(
     .bind(body.site_id)
     .bind(body.tags.as_ref().unwrap_or(&json!([])))
     .fetch_one(&state.db)
-    .await
-    .map_err(|e| {
-        if let sqlx::Error::Database(ref db_err) = e {
-            if db_err.code().as_deref() == Some("23505") {
-                return StatusCode::CONFLICT;
-            }
-        }
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     // Grant owner permission to creator
     let _ = sqlx::query(
-        "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) VALUES ($1, $2, 'owner', $2)",
+        "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) \
+         VALUES ($1, $2, 'owner', $2)",
     )
     .bind(app_id)
     .bind(user.user_id)
@@ -174,11 +170,17 @@ pub async fn update_app(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateAppRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
+
+    // Input validation
+    if let Some(ref name) = body.name {
+        validate_length("name", name, 1, 200)?;
+    }
+    validate_optional_length("description", &body.description, 2000)?;
 
     log_action(
         &state.db,
@@ -188,8 +190,7 @@ pub async fn update_app(
         id,
         json!({"changes": body.name}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let app = sqlx::query_as::<_, AppRow>(
         r#"
@@ -210,9 +211,8 @@ pub async fn update_app(
     .bind(&body.tags)
     .bind(user.organization_id)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_not_found()?;
 
     Ok(Json(json!(app)))
 }
@@ -221,10 +221,10 @@ pub async fn delete_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Owner {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -235,18 +235,16 @@ pub async fn delete_app(
         id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
         .bind(id)
         .bind(user.organization_id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::NotFound);
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -257,10 +255,10 @@ pub async fn start_app(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
     Json(body): Json<Option<StartAppRequest>>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let dry_run = body.and_then(|b| b.dry_run).unwrap_or(false);
@@ -273,18 +271,16 @@ pub async fn start_app(
         id,
         json!({"dry_run": dry_run}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let plan = crate::core::sequencer::build_start_plan(&state.db, id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if dry_run {
         return Ok(Json(json!({ "dry_run": true, "plan": plan })));
     }
 
-    // Execute start sequence in background
     let state_clone = state.clone();
     tokio::spawn(async move {
         if let Err(e) = crate::core::sequencer::execute_start(&state_clone, id).await {
@@ -299,10 +295,10 @@ pub async fn stop_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -313,8 +309,7 @@ pub async fn stop_app(
         id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let state_clone = state.clone();
     tokio::spawn(async move {
@@ -331,10 +326,10 @@ pub async fn start_branch(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
     Json(body): Json<StartBranchRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -345,24 +340,20 @@ pub async fn start_branch(
         id,
         json!({"component_id": body.component_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let branch = crate::core::branch::detect_error_branch(&state.db, id, body.component_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let dry_run = body.dry_run.unwrap_or(false);
     if dry_run {
         return Ok(Json(json!({ "dry_run": true, "branch": branch })));
     }
 
-    // Execute branch restart in background: the smart start handles pink branch logic
-    // by forcing the target component to be treated as needing restart
     let state_clone = state.clone();
     let component_id = body.component_id;
     tokio::spawn(async move {
-        // Force the component to FAILED so the smart start picks it up as pink branch root
         if let Err(e) = crate::core::fsm::transition_component(
             &state_clone,
             component_id,
@@ -375,7 +366,6 @@ pub async fn start_branch(
                 e
             );
         }
-        // Then run the smart start which will handle the pink branch
         if let Err(e) = crate::core::sequencer::execute_start(&state_clone, id).await {
             tracing::error!("Failed to restart branch for app {}: {}", id, e);
         }

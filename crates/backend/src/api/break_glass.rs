@@ -9,6 +9,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::error::{validate_length, ApiError};
 use crate::middleware::audit::log_action;
 use crate::AppState;
 
@@ -67,10 +68,13 @@ pub async fn create_break_glass_account(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Json(body): Json<CreateBreakGlassAccountRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
+
+    // Input validation
+    validate_length("username", &body.username, 1, 200)?;
 
     let id = Uuid::new_v4();
     let password_hash = hash_password(&body.password);
@@ -83,8 +87,7 @@ pub async fn create_break_glass_account(
         user.organization_id,
         json!({ "username": body.username }),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     sqlx::query(
         "INSERT INTO break_glass_accounts (id, organization_id, username, password_hash) \
@@ -95,15 +98,7 @@ pub async fn create_break_glass_account(
     .bind(&body.username)
     .bind(&password_hash)
     .execute(&state.db)
-    .await
-    .map_err(|e| {
-        if let sqlx::Error::Database(ref db_err) = e {
-            if db_err.code().as_deref() == Some("23505") {
-                return StatusCode::CONFLICT;
-            }
-        }
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -119,9 +114,9 @@ pub async fn create_break_glass_account(
 pub async fn list_break_glass_accounts(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let accounts = sqlx::query_as::<_, (Uuid, String, bool, chrono::DateTime<chrono::Utc>)>(
@@ -130,8 +125,7 @@ pub async fn list_break_glass_accounts(
     )
     .bind(user.organization_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result: Vec<Value> = accounts
         .into_iter()
@@ -157,7 +151,7 @@ pub async fn list_break_glass_accounts(
 pub async fn activate_break_glass(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ActivateBreakGlassRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let password_hash = hash_password(&body.password);
 
     // Validate credentials
@@ -168,9 +162,8 @@ pub async fn activate_break_glass(
     .bind(&body.username)
     .bind(&password_hash)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::UNAUTHORIZED)?;
+    .await?
+    .ok_or(ApiError::Unauthorized)?;
 
     let (account_id, organization_id) = account;
 
@@ -195,8 +188,7 @@ pub async fn activate_break_glass(
     .bind(&body.reason)
     .bind(duration_minutes)
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     // Log the break-glass activation as a CRITICAL security event
     let _ = sqlx::query(
@@ -237,9 +229,9 @@ pub async fn activate_break_glass(
 pub async fn list_break_glass_sessions(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let sessions = sqlx::query_as::<_, BreakGlassSessionRow>(
@@ -250,8 +242,7 @@ pub async fn list_break_glass_sessions(
     )
     .bind(user.organization_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({ "sessions": sessions })))
 }
@@ -261,9 +252,9 @@ pub async fn end_break_glass_session(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(session_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     if !user.is_admin() {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let result = sqlx::query(
@@ -273,11 +264,10 @@ pub async fn end_break_glass_session(
     .bind(session_id)
     .bind(user.organization_id)
     .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::NotFound);
     }
 
     log_action(
@@ -288,8 +278,7 @@ pub async fn end_break_glass_session(
         session_id,
         json!({ "ended_by": user.user_id }),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({
         "session_id": session_id,

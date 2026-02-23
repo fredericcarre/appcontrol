@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::error::{validate_length, ApiError, OptionExt};
 use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -48,7 +49,7 @@ pub struct UpdateInputParamRequest {
 }
 
 /// Resolve the application_id for a command through the component chain.
-async fn app_id_for_command(db: &sqlx::PgPool, command_id: Uuid) -> Result<Uuid, StatusCode> {
+async fn app_id_for_command(db: &sqlx::PgPool, command_id: Uuid) -> Result<Uuid, ApiError> {
     sqlx::query_scalar::<_, Uuid>(
         "SELECT c.application_id FROM component_commands cc \
          JOIN components c ON c.id = cc.component_id \
@@ -56,9 +57,8 @@ async fn app_id_for_command(db: &sqlx::PgPool, command_id: Uuid) -> Result<Uuid,
     )
     .bind(command_id)
     .fetch_optional(db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)
+    .await?
+    .ok_or_not_found()
 }
 
 /// List all input parameters for a command.
@@ -66,11 +66,11 @@ pub async fn list_params(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(command_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let app_id = app_id_for_command(&state.db, command_id).await?;
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let params = sqlx::query_as::<_, InputParamRow>(
@@ -79,8 +79,7 @@ pub async fn list_params(
     )
     .bind(command_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({ "params": params })))
 }
@@ -91,17 +90,23 @@ pub async fn create_param(
     Extension(user): Extension<AuthUser>,
     Path(command_id): Path<Uuid>,
     Json(body): Json<CreateInputParamRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let app_id = app_id_for_command(&state.db, command_id).await?;
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
+
+    // Input validation
+    validate_length("name", &body.name, 1, 200)?;
 
     // Validate the regex is valid if provided
     if let Some(ref regex) = body.validation_regex {
         if regex::Regex::new(regex).is_err() {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(ApiError::Validation(format!(
+                "Invalid regex pattern: {}",
+                regex
+            )));
         }
     }
 
@@ -114,8 +119,7 @@ pub async fn create_param(
         param_id,
         json!({"name": body.name, "command_id": command_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let param = sqlx::query_as::<_, InputParamRow>(
         r#"
@@ -133,8 +137,7 @@ pub async fn create_param(
     .bind(body.required.unwrap_or(true))
     .bind(body.display_order.unwrap_or(0))
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok((StatusCode::CREATED, Json(json!(param))))
 }
@@ -144,11 +147,11 @@ pub async fn delete_param(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path((command_id, param_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     let app_id = app_id_for_command(&state.db, command_id).await?;
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -159,18 +162,16 @@ pub async fn delete_param(
         param_id,
         json!({"command_id": command_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result = sqlx::query("DELETE FROM command_input_params WHERE id = $1 AND command_id = $2")
         .bind(param_id)
         .bind(command_id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::NotFound);
     }
 
     Ok(StatusCode::NO_CONTENT)

@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::error::{ApiError, OptionExt};
 use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -143,10 +144,10 @@ pub async fn list_components(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let components = sqlx::query_as::<_, ComponentRow>(
@@ -160,8 +161,7 @@ pub async fn list_components(
     )
     .bind(app_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({ "components": components })))
 }
@@ -170,7 +170,7 @@ pub async fn get_component(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
         SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
@@ -182,9 +182,8 @@ pub async fn get_component(
     )
     .bind(id)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_not_found()?;
 
     let perm = effective_permission(
         &state.db,
@@ -194,7 +193,7 @@ pub async fn get_component(
     )
     .await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     Ok(Json(json!(component)))
@@ -205,10 +204,10 @@ pub async fn create_component(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Json(body): Json<CreateComponentRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let comp_id = Uuid::new_v4();
@@ -220,8 +219,7 @@ pub async fn create_component(
         comp_id,
         json!({"name": body.name}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     // Use effective_host() to support both "host" and "hostname" JSON fields
     let effective_host = body.effective_host().map(|s| s.to_string());
@@ -271,8 +269,7 @@ pub async fn create_component(
     .bind(body.env_vars.as_ref().unwrap_or(&json!({})))
     .bind(body.tags.as_ref().unwrap_or(&json!([])))
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok((StatusCode::CREATED, Json(json!(component))))
 }
@@ -282,19 +279,18 @@ pub async fn update_component(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateComponentRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     // Get current component to check app permission
     let current =
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+            .await?
+            .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, current, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -305,8 +301,7 @@ pub async fn update_component(
         id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     // Use effective_host() to support both "host" and "hostname" JSON fields
     let effective_host = body.effective_host().map(|s| s.to_string());
@@ -367,9 +362,8 @@ pub async fn update_component(
     .bind(body.position_x)
     .bind(body.position_y)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_not_found()?;
 
     Ok(Json(json!(component)))
 }
@@ -378,18 +372,17 @@ pub async fn delete_component(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+            .await?
+            .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -400,14 +393,12 @@ pub async fn delete_component(
         id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     sqlx::query("DELETE FROM components WHERE id = $1")
         .bind(id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -416,18 +407,17 @@ pub async fn start_component(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+            .await?
+            .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -438,13 +428,12 @@ pub async fn start_component(
         id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     // Trigger FSM transition to Starting
     crate::core::fsm::transition_component(&state, id, appcontrol_common::ComponentState::Starting)
         .await
-        .map_err(|_| StatusCode::CONFLICT)?;
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     Ok(Json(json!({ "status": "starting" })))
 }
@@ -453,18 +442,17 @@ pub async fn stop_component(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+            .await?
+            .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -475,12 +463,11 @@ pub async fn stop_component(
         id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     crate::core::fsm::transition_component(&state, id, appcontrol_common::ComponentState::Stopping)
         .await
-        .map_err(|_| StatusCode::CONFLICT)?;
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     Ok(Json(json!({ "status": "stopping" })))
 }
@@ -489,18 +476,17 @@ pub async fn execute_command(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path((id, cmd)): Path<(Uuid, String)>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+            .await?
+            .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -511,8 +497,7 @@ pub async fn execute_command(
         id,
         json!({"command": cmd}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     // Look up the command from component_commands
     let command = sqlx::query_scalar::<_, String>(
@@ -521,9 +506,8 @@ pub async fn execute_command(
     .bind(id)
     .bind(&cmd)
     .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_not_found()?;
 
     let request_id = Uuid::new_v4();
     Ok(Json(
@@ -535,10 +519,10 @@ pub async fn list_dependencies(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let deps = sqlx::query_as::<_, DependencyRow>(
@@ -546,8 +530,7 @@ pub async fn list_dependencies(
     )
     .bind(app_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok(Json(json!({ "dependencies": deps })))
 }
@@ -557,10 +540,10 @@ pub async fn create_dependency(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Json(body): Json<CreateDependencyRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     // Check for cycles before inserting
@@ -573,7 +556,9 @@ pub async fn create_dependency(
     .await
     .is_err()
     {
-        return Err(StatusCode::CONFLICT);
+        return Err(ApiError::Conflict(
+            "Adding this dependency would create a cycle".to_string(),
+        ));
     }
 
     let dep_id = Uuid::new_v4();
@@ -585,8 +570,7 @@ pub async fn create_dependency(
         dep_id,
         json!({"from": body.from_component_id, "to": body.to_component_id}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let dep = sqlx::query_as::<_, DependencyRow>(
         r#"
@@ -600,8 +584,7 @@ pub async fn create_dependency(
     .bind(body.from_component_id)
     .bind(body.to_component_id)
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok((StatusCode::CREATED, Json(json!(dep))))
 }
@@ -610,18 +593,17 @@ pub async fn delete_dependency(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM dependencies WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+            .await?
+            .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -632,14 +614,12 @@ pub async fn delete_dependency(
         id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     sqlx::query("DELETE FROM dependencies WHERE id = $1")
         .bind(id)
         .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

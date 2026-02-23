@@ -1,6 +1,5 @@
 use axum::{
     extract::{Extension, Path, State},
-    http::StatusCode,
     response::Json,
 };
 use serde::Deserialize;
@@ -10,6 +9,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -26,10 +26,10 @@ pub async fn start_switchover(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Json(body): Json<StartSwitchoverRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Manage {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -40,8 +40,7 @@ pub async fn start_switchover(
         app_id,
         json!({"target_site": body.target_site_id, "mode": body.mode}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let switchover_id = crate::core::switchover::start_switchover(
         &state.db,
@@ -52,7 +51,7 @@ pub async fn start_switchover(
         user.user_id,
     )
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(
         json!({ "switchover_id": switchover_id, "phase": "PREPARE", "status": "in_progress" }),
@@ -63,10 +62,10 @@ pub async fn next_phase(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Manage {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -77,12 +76,11 @@ pub async fn next_phase(
         app_id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result = crate::core::switchover::advance_phase(&state.db, app_id)
         .await
-        .map_err(|_| StatusCode::CONFLICT)?;
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     Ok(Json(json!(result)))
 }
@@ -91,10 +89,10 @@ pub async fn rollback(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Manage {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -105,12 +103,11 @@ pub async fn rollback(
         app_id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result = crate::core::switchover::rollback(&state.db, app_id)
         .await
-        .map_err(|_| StatusCode::CONFLICT)?;
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     Ok(Json(json!(result)))
 }
@@ -119,10 +116,10 @@ pub async fn commit(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Manage {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -133,12 +130,11 @@ pub async fn commit(
         app_id,
         json!({}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let result = crate::core::switchover::commit(&state.db, app_id)
         .await
-        .map_err(|_| StatusCode::CONFLICT)?;
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     Ok(Json(json!(result)))
 }
@@ -147,15 +143,15 @@ pub async fn status(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let result = crate::core::switchover::get_status(&state.db, app_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(json!(result)))
 }

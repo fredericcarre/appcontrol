@@ -22,32 +22,35 @@ pub struct ExecResult {
 }
 
 /// Execute a command synchronously with timeout.
+///
+/// On timeout, the child process (and its entire process group) is killed
+/// to prevent orphaned processes from lingering after the agent moves on.
 pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<ExecResult> {
     let start = std::time::Instant::now();
 
-    let result = tokio::time::timeout(timeout, async {
-        #[cfg(unix)]
-        let output = tokio::process::Command::new("sh")
-            .arg("-c")
+    #[cfg(unix)]
+    let child = {
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c")
             .arg(command)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output()
-            .await?;
+            .process_group(0); // Create a new process group so we can kill all children
+        cmd.spawn()?
+    };
 
-        #[cfg(windows)]
-        let output = tokio::process::Command::new("cmd")
-            .arg("/C")
-            .arg(command)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await?;
+    #[cfg(windows)]
+    let mut child = tokio::process::Command::new("cmd")
+        .arg("/C")
+        .arg(command)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
-        Ok::<_, anyhow::Error>(output)
-    })
-    .await;
+    // Capture the PID before wait_with_output() consumes the Child handle
+    let child_pid = child.id();
 
+    let result = tokio::time::timeout(timeout, child.wait_with_output()).await;
     let duration_ms = start.elapsed().as_millis() as u32;
 
     match result {
@@ -73,13 +76,33 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
                 duration_ms,
             })
         }
-        Ok(Err(e)) => Err(e),
-        Err(_) => Ok(ExecResult {
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: "Command timed out".to_string(),
-            duration_ms,
-        }),
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => {
+            // Timeout! Kill the process and its children
+            tracing::warn!(command = %command, "Command timed out after {:?}, killing process", timeout);
+
+            // Try SIGTERM first, then SIGKILL using the saved PID
+            #[cfg(unix)]
+            if let Some(pid) = child_pid {
+                // Kill the process group (negative PID kills the group)
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGTERM);
+                }
+                // Give it 5 seconds to die gracefully
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                // Force kill if still alive
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGKILL);
+                }
+            }
+
+            Ok(ExecResult {
+                exit_code: -1,
+                stdout: String::new(),
+                stderr: "Command timed out and was killed".to_string(),
+                duration_ms,
+            })
+        }
     }
 }
 
@@ -270,6 +293,19 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit_code, -1);
         assert!(result.stderr.contains("timed out"));
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_execute_sync_timeout_kills_process() {
+        // Start a process that ignores SIGTERM and runs for a long time
+        let result = execute_sync("sleep 60", Duration::from_millis(200))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, -1);
+        assert!(result.stderr.contains("killed"));
+        // Process should be dead
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
     #[test]

@@ -4,6 +4,24 @@ use uuid::Uuid;
 
 use crate::types::{CheckResult, ComponentConfig, ComponentState};
 
+/// QoS priority levels for message ordering.
+/// Higher priority messages are processed before lower priority ones.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum MessagePriority {
+    /// Heartbeats, periodic status — can be delayed or dropped
+    Low = 0,
+    /// Configuration updates, check results — normal processing
+    #[default]
+    Normal = 1,
+    /// Command results, state transitions — timely delivery
+    High = 2,
+    /// Emergency operations, switchover commands — immediate delivery
+    Critical = 3,
+}
+
 /// Messages sent from Agent to Backend (via Gateway).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
@@ -42,6 +60,19 @@ pub enum AgentMessage {
         agent_id: Uuid,
         csr_pem: String,
     },
+}
+
+impl AgentMessage {
+    /// Get the QoS priority for this message type.
+    pub fn priority(&self) -> MessagePriority {
+        match self {
+            AgentMessage::Heartbeat { .. } => MessagePriority::Low,
+            AgentMessage::CheckResult(_) => MessagePriority::Normal,
+            AgentMessage::CommandResult { .. } => MessagePriority::High,
+            AgentMessage::Register { .. } => MessagePriority::Critical,
+            AgentMessage::CertificateRenewal { .. } => MessagePriority::High,
+        }
+    }
 }
 
 /// Messages sent from Backend to Agent (via Gateway).
@@ -83,6 +114,20 @@ pub enum BackendMessage {
         request_id: Uuid,
         approved: bool,
     },
+}
+
+impl BackendMessage {
+    /// Get the QoS priority for this message type.
+    pub fn priority(&self) -> MessagePriority {
+        match self {
+            BackendMessage::ExecuteCommand { .. } => MessagePriority::High,
+            BackendMessage::UpdateConfig { .. } => MessagePriority::Normal,
+            BackendMessage::Ack { .. } => MessagePriority::Low,
+            BackendMessage::UpdateAgent { .. } => MessagePriority::Normal,
+            BackendMessage::CertificateResponse { .. } => MessagePriority::High,
+            BackendMessage::ApprovalResult { .. } => MessagePriority::Critical,
+        }
+    }
 }
 
 fn default_exec_mode() -> String {
@@ -552,5 +597,50 @@ mod tests {
             },
             _ => panic!("Expected AgentMessage"),
         }
+    }
+
+    #[test]
+    fn test_agent_message_priority_ordering() {
+        let heartbeat = AgentMessage::Heartbeat {
+            agent_id: Uuid::new_v4(),
+            cpu: 0.0,
+            memory: 0.0,
+            at: Utc::now(),
+        };
+        let register = AgentMessage::Register {
+            agent_id: Uuid::new_v4(),
+            hostname: "test".to_string(),
+            ip_addresses: vec![],
+            labels: serde_json::json!({}),
+            version: "0.1.0".to_string(),
+            cert_fingerprint: None,
+        };
+        let cmd_result = AgentMessage::CommandResult {
+            request_id: Uuid::new_v4(),
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+            duration_ms: 0,
+            sequence_id: None,
+        };
+
+        assert!(heartbeat.priority() < cmd_result.priority());
+        assert!(cmd_result.priority() < register.priority());
+    }
+
+    #[test]
+    fn test_backend_message_priority() {
+        let ack = BackendMessage::Ack {
+            request_id: Uuid::new_v4(),
+            sequence_id: None,
+        };
+        let exec = BackendMessage::ExecuteCommand {
+            request_id: Uuid::new_v4(),
+            component_id: Uuid::new_v4(),
+            command: "test".to_string(),
+            timeout_seconds: 30,
+            exec_mode: "sync".to_string(),
+        };
+        assert!(ack.priority() < exec.priority());
     }
 }

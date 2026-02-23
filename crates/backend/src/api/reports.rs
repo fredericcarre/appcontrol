@@ -1,6 +1,5 @@
 use axum::{
     extract::{Extension, Path, Query, State},
-    http::StatusCode,
     response::{IntoResponse, Json},
 };
 use serde::Deserialize;
@@ -10,6 +9,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::error::ApiError;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
 
@@ -26,10 +26,10 @@ pub async fn availability(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Query(params): Query<ReportQuery>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let from = params
@@ -52,8 +52,7 @@ pub async fn availability(
     .bind(from)
     .bind(to)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let data: Vec<Value> = stats.iter().map(|(cid, date, running, total)| {
         let pct = if *total > 0 { (*running as f64 / *total as f64) * 100.0 } else { 0.0 };
@@ -68,10 +67,10 @@ pub async fn incidents(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Query(params): Query<ReportQuery>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let from = params
@@ -94,8 +93,7 @@ pub async fn incidents(
     .bind(from)
     .bind(to)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let data: Vec<Value> = incidents.iter().map(|(cid, name, state, at)| {
         json!({"component_id": cid, "component_name": name, "state": state, "at": at})
@@ -109,10 +107,10 @@ pub async fn switchovers(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Query(_params): Query<ReportQuery>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let logs = sqlx::query_as::<_, (Uuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
@@ -126,8 +124,7 @@ pub async fn switchovers(
     )
     .bind(app_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let data: Vec<Value> = logs.iter().map(|(id, phase, status, details, at)| {
         json!({"id": id, "phase": phase, "status": status, "details": details, "at": at})
@@ -141,10 +138,10 @@ pub async fn audit(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Query(params): Query<ReportQuery>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let from = params
@@ -166,8 +163,7 @@ pub async fn audit(
     .bind(from)
     .bind(to)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let data: Vec<Value> = logs.iter().map(|(id, uid, action, rtype, at)| {
         json!({"id": id, "user_id": uid, "action": action, "resource_type": rtype, "at": at})
@@ -181,10 +177,10 @@ pub async fn compliance(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Query(_params): Query<ReportQuery>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     // Check DORA compliance metrics
@@ -208,10 +204,10 @@ pub async fn rto(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Query(_params): Query<ReportQuery>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     // Compute average Recovery Time Objective from switchover logs
@@ -246,10 +242,10 @@ pub async fn export_pdf(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Query(params): Query<ReportQuery>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let from = params
@@ -261,8 +257,7 @@ pub async fn export_pdf(
     let app_name = sqlx::query_scalar::<_, String>("SELECT name FROM applications WHERE id = $1")
         .bind(app_id)
         .fetch_optional(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .await?
         .unwrap_or_else(|| "Unknown".to_string());
 
     // Availability summary

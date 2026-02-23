@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -39,10 +40,10 @@ pub async fn list_user_permissions(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Manage {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let perms = sqlx::query_as::<_, (Uuid, Uuid, String, Option<chrono::DateTime<chrono::Utc>>)>(
@@ -54,8 +55,7 @@ pub async fn list_user_permissions(
     )
     .bind(app_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let permissions: Vec<Value> = perms
         .iter()
@@ -70,10 +70,10 @@ pub async fn grant_user_permission(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Json(body): Json<GrantUserPermissionRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Manage {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -84,8 +84,7 @@ pub async fn grant_user_permission(
         app_id,
         json!({"target_user": body.user_id, "level": body.permission_level}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let id = sqlx::query_scalar::<_, Uuid>(
         r#"
@@ -101,8 +100,7 @@ pub async fn grant_user_permission(
     .bind(user.user_id)
     .bind(body.expires_at)
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -114,10 +112,10 @@ pub async fn list_team_permissions(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Manage {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let perms = sqlx::query_as::<_, (Uuid, Uuid, String, Option<chrono::DateTime<chrono::Utc>>)>(
@@ -129,8 +127,7 @@ pub async fn list_team_permissions(
     )
     .bind(app_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let permissions: Vec<Value> = perms
         .iter()
@@ -145,10 +142,10 @@ pub async fn grant_team_permission(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Json(body): Json<GrantTeamPermissionRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Manage {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     log_action(
@@ -159,8 +156,7 @@ pub async fn grant_team_permission(
         app_id,
         json!({"team_id": body.team_id, "level": body.permission_level}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let id = sqlx::query_scalar::<_, Uuid>(
         r#"
@@ -176,8 +172,7 @@ pub async fn grant_team_permission(
     .bind(user.user_id)
     .bind(body.expires_at)
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -189,10 +184,10 @@ pub async fn list_share_links(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Manage {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let links = sqlx::query_as::<
@@ -214,8 +209,7 @@ pub async fn list_share_links(
     )
     .bind(app_id)
     .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let share_links: Vec<Value> = links
         .iter()
@@ -232,10 +226,10 @@ pub async fn create_share_link(
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
     Json(body): Json<CreateShareLinkRequest>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Manage {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(ApiError::Forbidden);
     }
 
     let token = uuid::Uuid::new_v4().to_string().replace('-', "");
@@ -248,8 +242,7 @@ pub async fn create_share_link(
         app_id,
         json!({"level": body.permission_level}),
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     let id = sqlx::query_scalar::<_, Uuid>(
         r#"
@@ -265,8 +258,7 @@ pub async fn create_share_link(
     .bind(body.expires_at)
     .bind(body.max_uses)
     .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     Ok((StatusCode::CREATED, Json(json!({"id": id, "token": token}))))
 }
@@ -275,7 +267,7 @@ pub async fn get_effective_permission(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     Ok(Json(
         json!({ "permission_level": format!("{:?}", perm).to_lowercase() }),
