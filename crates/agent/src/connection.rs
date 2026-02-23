@@ -50,7 +50,10 @@ impl ConnectionManager {
                         Some(c)
                     }
                     Err(e) => {
-                        tracing::error!("Failed to build TLS connector: {} — connections will fail", e);
+                        tracing::error!(
+                            "Failed to build TLS connector: {} — connections will fail",
+                            e
+                        );
                         None
                     }
                 };
@@ -258,9 +261,15 @@ impl ConnectionManager {
         msg_rx: &mut mpsc::UnboundedReceiver<AgentMessage>,
     ) -> anyhow::Result<()>
     where
-        S: futures_util::Stream<Item = Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>>
-            + futures_util::Sink<tokio_tungstenite::tungstenite::Message, Error = tokio_tungstenite::tungstenite::Error>
-            + Unpin,
+        S: futures_util::Stream<
+                Item = Result<
+                    tokio_tungstenite::tungstenite::Message,
+                    tokio_tungstenite::tungstenite::Error,
+                >,
+            > + futures_util::Sink<
+                tokio_tungstenite::tungstenite::Message,
+                Error = tokio_tungstenite::tungstenite::Error,
+            > + Unpin,
     {
         use futures_util::{SinkExt, StreamExt};
 
