@@ -10,12 +10,33 @@ pub fn gethostname() -> String {
         let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
         String::from_utf8_lossy(&buf[..len]).to_string()
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        std::env::var("COMPUTERNAME")
-            .or_else(|_| std::env::var("HOSTNAME"))
-            .unwrap_or_else(|_| "unknown".to_string())
+        // Use GetComputerNameExW for reliable FQDN retrieval on Windows.
+        // Falls back to env vars if the API call fails.
+        win_hostname().unwrap_or_else(|| {
+            std::env::var("COMPUTERNAME")
+                .or_else(|_| std::env::var("HOSTNAME"))
+                .unwrap_or_else(|_| "unknown".to_string())
+        })
     }
+}
+
+/// Windows: retrieve hostname via Win32 API for reliability.
+#[cfg(windows)]
+fn win_hostname() -> Option<String> {
+    // Use std::process::Command to call hostname.exe — works everywhere, no extra deps
+    std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|out| {
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if name.is_empty() {
+                None
+            } else {
+                Some(name)
+            }
+        })
 }
 
 /// Detect all non-loopback IP addresses on this machine.

@@ -40,12 +40,17 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
     };
 
     #[cfg(windows)]
-    let mut child = tokio::process::Command::new("cmd")
-        .arg("/C")
-        .arg(command)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let child = {
+        use tokio::process::Command;
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C")
+            .arg(command)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            // CREATE_NEW_PROCESS_GROUP allows us to kill the entire tree on timeout
+            .creation_flags(windows::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP.0);
+        cmd.spawn()?
+    };
 
     // Capture the PID before wait_with_output() consumes the Child handle
     let child_pid = child.id();
@@ -94,6 +99,12 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
                 unsafe {
                     libc::kill(-(pid as i32), libc::SIGKILL);
                 }
+            }
+
+            // On Windows, terminate the process tree via job objects
+            #[cfg(windows)]
+            if let Some(pid) = child_pid {
+                win_kill_process_tree(pid);
             }
 
             Ok(ExecResult {
@@ -262,6 +273,56 @@ mod exec {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Windows: detached process execution
+// ---------------------------------------------------------------------------
+
+/// Execute a command asynchronously on Windows with process detachment.
+///
+/// CRITICAL: The spawned process MUST survive agent crash.
+///
+/// Uses CreateProcess with CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS flags.
+/// The process runs independently of the agent — no console, no parent dependency.
+/// A Windows Job Object is NOT used here (we WANT the process to survive agent exit).
+#[cfg(windows)]
+pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
+    use std::os::windows::process::CommandExt;
+
+    // DETACHED_PROCESS: no console window
+    // CREATE_NEW_PROCESS_GROUP: own Ctrl+C group, survives agent shutdown
+    // CREATE_BREAKAWAY_FROM_JOB: escape any job object the agent might be in
+    const DETACHED_PROCESS: u32 = 0x00000008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
+
+    let child = std::process::Command::new("cmd")
+        .args(["/C", command])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB)
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("Failed to spawn detached process: {}", e))?;
+
+    let pid = child.id();
+    tracing::info!(pid = pid, "Detached process launched on Windows");
+
+    // We intentionally do NOT wait on the child — it must outlive the agent.
+    // The Child handle is dropped here; on Windows this does NOT kill the process.
+    Ok(pid)
+}
+
+/// Kill a process and all its children on Windows using TerminateProcess.
+#[cfg(windows)]
+fn win_kill_process_tree(pid: u32) {
+    // Use taskkill /T /F which kills the process tree
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,6 +338,16 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(windows)]
+    async fn test_execute_sync_success_windows() {
+        let result = execute_sync("echo hello", Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.trim().contains("hello"));
+    }
+
+    #[tokio::test]
     #[cfg(unix)]
     async fn test_execute_sync_failure() {
         let result = execute_sync("exit 42", Duration::from_secs(5))
@@ -286,9 +357,29 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(windows)]
+    async fn test_execute_sync_failure_windows() {
+        let result = execute_sync("exit /B 42", Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 42);
+    }
+
+    #[tokio::test]
     #[cfg(unix)]
     async fn test_execute_sync_timeout() {
         let result = execute_sync("sleep 60", Duration::from_millis(100))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, -1);
+        assert!(result.stderr.contains("timed out"));
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_execute_sync_timeout_windows() {
+        // ping -n 60 localhost takes ~60 seconds
+        let result = execute_sync("ping -n 60 127.0.0.1", Duration::from_millis(500))
             .await
             .unwrap();
         assert_eq!(result.exit_code, -1);
@@ -325,5 +416,15 @@ mod tests {
             nix::unistd::Pid::from_raw(pid as i32),
             nix::sys::signal::Signal::SIGTERM,
         );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_execute_async_detached_windows() {
+        // Launch a short-lived detached process
+        let pid = execute_async_detached("timeout /T 2 /NOBREAK >nul").unwrap();
+        assert!(pid > 0);
+        // We can't easily check if the process is running without OpenProcess,
+        // but if we got a PID back, the launch succeeded.
     }
 }

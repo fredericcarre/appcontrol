@@ -163,7 +163,8 @@ impl AgentConfig {
     }
 
     pub fn buffer_path(&self) -> String {
-        format!("/var/lib/appcontrol/buffer-{}", self.agent_id())
+        let base = default_data_dir();
+        format!("{}/buffer-{}", base, self.agent_id())
     }
 
     /// Returns the configured log level filter string.
@@ -171,6 +172,52 @@ impl AgentConfig {
         self.log_level
             .clone()
             .unwrap_or_else(|| "appcontrol_agent=debug".to_string())
+    }
+}
+
+/// Returns the platform-appropriate data directory for the agent.
+///
+/// - Linux/macOS: `/var/lib/appcontrol`
+/// - Windows: `C:\ProgramData\AppControl`
+pub fn default_data_dir() -> String {
+    #[cfg(unix)]
+    {
+        "/var/lib/appcontrol".to_string()
+    }
+    #[cfg(windows)]
+    {
+        std::env::var("PROGRAMDATA")
+            .map(|p| format!("{}\\AppControl", p))
+            .unwrap_or_else(|_| "C:\\ProgramData\\AppControl".to_string())
+    }
+}
+
+/// Returns the platform-appropriate default config directory.
+///
+/// - Linux/macOS: `/etc/appcontrol`
+/// - Windows: `C:\ProgramData\AppControl\config`
+pub fn default_config_dir() -> String {
+    #[cfg(unix)]
+    {
+        "/etc/appcontrol".to_string()
+    }
+    #[cfg(windows)]
+    {
+        std::env::var("PROGRAMDATA")
+            .map(|p| format!("{}\\AppControl\\config", p))
+            .unwrap_or_else(|_| "C:\\ProgramData\\AppControl\\config".to_string())
+    }
+}
+
+/// Returns the default config file path for the platform.
+pub fn default_config_path() -> String {
+    #[cfg(unix)]
+    {
+        "/etc/appcontrol/agent.yaml".to_string()
+    }
+    #[cfg(windows)]
+    {
+        format!("{}\\agent.yaml", default_config_dir())
     }
 }
 
