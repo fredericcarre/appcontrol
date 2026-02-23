@@ -104,14 +104,12 @@ pub async fn transition_component(
     .map_err(|e| FsmError::Database(e.to_string()))?;
 
     // Update cached current_state on the components row (fast read path)
-    sqlx::query(
-        "UPDATE components SET current_state = $2, updated_at = now() WHERE id = $1",
-    )
-    .bind(component_id)
-    .bind(new_state.to_string())
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| FsmError::Database(e.to_string()))?;
+    sqlx::query("UPDATE components SET current_state = $2, updated_at = now() WHERE id = $1")
+        .bind(component_id)
+        .bind(new_state.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?;
 
     // Commit the transaction — both writes succeed or neither does
     tx.commit()

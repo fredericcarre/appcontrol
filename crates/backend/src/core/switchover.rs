@@ -240,8 +240,13 @@ async fn execute_sync(
             };
 
             super::sequencer::record_command_dispatch_public(
-                &state.db, request_id, *comp_id, *agent_id, "integrity_check",
-            ).await;
+                &state.db,
+                request_id,
+                *comp_id,
+                *agent_id,
+                "integrity_check",
+            )
+            .await;
 
             state.ws_hub.send_to_agent(*agent_id, message);
             dispatched.push((*comp_id, name.clone(), request_id));
@@ -289,7 +294,8 @@ async fn execute_sync(
                     });
                 }
                 Some((status, exit_code, stderr)) if status == "failed" => {
-                    let msg = stderr.unwrap_or_else(|| format!("exit code {}", exit_code.unwrap_or(-1)));
+                    let msg =
+                        stderr.unwrap_or_else(|| format!("exit code {}", exit_code.unwrap_or(-1)));
                     failures.push(format!("{}: {}", name, msg));
                     break serde_json::json!({
                         "component": name,

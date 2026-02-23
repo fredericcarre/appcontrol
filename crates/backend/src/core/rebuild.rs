@@ -245,8 +245,13 @@ pub async fn execute_rebuild(
 
                     // Record dispatch
                     super::sequencer::record_command_dispatch_public(
-                        &state.db, request_id, comp_id, exec_agent_id, "rebuild_infra",
-                    ).await;
+                        &state.db,
+                        request_id,
+                        comp_id,
+                        exec_agent_id,
+                        "rebuild_infra",
+                    )
+                    .await;
 
                     state.ws_hub.send_to_agent(exec_agent_id, message);
                     tracing::info!(
@@ -257,9 +262,9 @@ pub async fn execute_rebuild(
                     );
 
                     // Wait for completion
-                    let result = wait_for_command_completion(
-                        &state.db, request_id, INFRA_CMD_TIMEOUT_SECS,
-                    ).await;
+                    let result =
+                        wait_for_command_completion(&state.db, request_id, INFRA_CMD_TIMEOUT_SECS)
+                            .await;
 
                     match result {
                         CommandCompletion::Success => {
@@ -267,7 +272,10 @@ pub async fn execute_rebuild(
                         }
                         CommandCompletion::Failed(msg) => {
                             tracing::error!(component = %comp_name, error = %msg, "Infra rebuild FAILED — suspending rebuild");
-                            return Err(RebuildError::ExecutionFailed(comp_id, format!("Infra rebuild failed: {}", msg)));
+                            return Err(RebuildError::ExecutionFailed(
+                                comp_id,
+                                format!("Infra rebuild failed: {}", msg),
+                            ));
                         }
                         CommandCompletion::Timeout => {
                             tracing::error!(component = %comp_name, "Infra rebuild TIMED OUT — suspending rebuild");
@@ -290,8 +298,13 @@ pub async fn execute_rebuild(
                     };
 
                     super::sequencer::record_command_dispatch_public(
-                        &state.db, request_id, comp_id, agent_id, "rebuild_app",
-                    ).await;
+                        &state.db,
+                        request_id,
+                        comp_id,
+                        agent_id,
+                        "rebuild_app",
+                    )
+                    .await;
 
                     state.ws_hub.send_to_agent(agent_id, message);
                     tracing::info!(
@@ -302,8 +315,11 @@ pub async fn execute_rebuild(
                     );
 
                     let result = wait_for_command_completion(
-                        &state.db, request_id, REBUILD_CMD_TIMEOUT_SECS,
-                    ).await;
+                        &state.db,
+                        request_id,
+                        REBUILD_CMD_TIMEOUT_SECS,
+                    )
+                    .await;
 
                     match result {
                         CommandCompletion::Success => {
@@ -317,7 +333,10 @@ pub async fn execute_rebuild(
                         }
                         CommandCompletion::Failed(msg) => {
                             tracing::error!(component = %comp_name, error = %msg, "App rebuild FAILED — suspending rebuild");
-                            return Err(RebuildError::ExecutionFailed(comp_id, format!("App rebuild failed: {}", msg)));
+                            return Err(RebuildError::ExecutionFailed(
+                                comp_id,
+                                format!("App rebuild failed: {}", msg),
+                            ));
                         }
                         CommandCompletion::Timeout => {
                             tracing::error!(component = %comp_name, "App rebuild TIMED OUT — suspending rebuild");
@@ -350,7 +369,10 @@ pub async fn execute_rebuild(
         }
         for handle in handles {
             if let Ok(Err(e)) = handle.await {
-                tracing::error!("Failed to restart component after rebuild — suspending: {}", e);
+                tracing::error!(
+                    "Failed to restart component after rebuild — suspending: {}",
+                    e
+                );
                 return Err(RebuildError::ExecutionFailed(
                     Uuid::nil(),
                     format!("Restart failed after rebuild: {}", e),
@@ -406,7 +428,8 @@ async fn wait_for_command_completion(
                 match status.as_str() {
                     "completed" => return CommandCompletion::Success,
                     "failed" => {
-                        let msg = stderr.unwrap_or_else(|| format!("exit code {}", exit_code.unwrap_or(-1)));
+                        let msg = stderr
+                            .unwrap_or_else(|| format!("exit code {}", exit_code.unwrap_or(-1)));
                         return CommandCompletion::Failed(msg);
                     }
                     _ => {

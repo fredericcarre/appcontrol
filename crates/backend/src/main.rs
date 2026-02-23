@@ -287,12 +287,11 @@ use chrono::Datelike;
 /// Without this, the admin must manually call `POST /api/v1/pki/init` before any
 /// agent can enroll. This eliminates that manual step — zero-config mTLS.
 async fn auto_init_pki(pool: &sqlx::PgPool) {
-    let orgs_without_ca: Vec<(uuid::Uuid, String)> = sqlx::query_as(
-        "SELECT id, name FROM organizations WHERE ca_cert_pem IS NULL",
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    let orgs_without_ca: Vec<(uuid::Uuid, String)> =
+        sqlx::query_as("SELECT id, name FROM organizations WHERE ca_cert_pem IS NULL")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
     for (org_id, org_name) in orgs_without_ca {
         match appcontrol_common::generate_ca(&org_name, 3650) {
@@ -308,8 +307,7 @@ async fn auto_init_pki(pool: &sqlx::PgPool) {
                 {
                     tracing::warn!(org = %org_name, "Failed to store auto-generated CA: {}", e);
                 } else {
-                    let fp = appcontrol_common::fingerprint_pem(&ca.cert_pem)
-                        .unwrap_or_default();
+                    let fp = appcontrol_common::fingerprint_pem(&ca.cert_pem).unwrap_or_default();
                     tracing::info!(
                         org = %org_name,
                         fingerprint = %fp,
@@ -335,7 +333,7 @@ async fn run_data_retention(pool: &sqlx::PgPool, action_log_days: u32, check_eve
 
         // Ensure archive table exists (idempotent)
         let _ = sqlx::query(
-            "CREATE TABLE IF NOT EXISTS action_log_archive (LIKE action_log INCLUDING ALL)"
+            "CREATE TABLE IF NOT EXISTS action_log_archive (LIKE action_log INCLUDING ALL)",
         )
         .execute(pool)
         .await;

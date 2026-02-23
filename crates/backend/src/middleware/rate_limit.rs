@@ -139,9 +139,11 @@ async fn check_rate_limit(
 /// Cleanup expired rate limit counters (called periodically from background task).
 pub async fn cleanup_rate_limit_counters(pool: &sqlx::PgPool) {
     // Remove counters older than 2 minutes (window is 60s, 2x buffer)
-    let _ = sqlx::query("DELETE FROM rate_limit_counters WHERE window_start < now() - interval '2 minutes'")
-        .execute(pool)
-        .await;
+    let _ = sqlx::query(
+        "DELETE FROM rate_limit_counters WHERE window_start < now() - interval '2 minutes'",
+    )
+    .execute(pool)
+    .await;
 }
 
 /// Rate limiting middleware for auth endpoints (keyed by IP).

@@ -127,8 +127,7 @@ pub async fn diagnose_app(
         .map(|(comp_id, comp_name)| {
             let health = exit_code_to_status(check_map.get(&(comp_id, "health")));
             let integrity = exit_code_to_status(check_map.get(&(comp_id, "integrity")));
-            let infrastructure =
-                exit_code_to_status(check_map.get(&(comp_id, "infrastructure")));
+            let infrastructure = exit_code_to_status(check_map.get(&(comp_id, "infrastructure")));
             let recommendation = compute_recommendation(health, integrity, infrastructure);
 
             ComponentDiagnosis {
