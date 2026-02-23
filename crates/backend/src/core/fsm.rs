@@ -20,13 +20,12 @@ pub async fn get_current_state(
     pool: &sqlx::PgPool,
     component_id: Uuid,
 ) -> Result<ComponentState, FsmError> {
-    let state_str = sqlx::query_scalar::<_, String>(
-        "SELECT current_state FROM components WHERE id = $1",
-    )
-    .bind(component_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| FsmError::Database(e.to_string()))?;
+    let state_str =
+        sqlx::query_scalar::<_, String>("SELECT current_state FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
 
     match state_str {
         Some(s) => parse_state(&s),

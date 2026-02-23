@@ -26,9 +26,7 @@ pub async fn perform_update(
     target_version: &str,
 ) -> Result<(), UpdateError> {
     let current_exe = std::env::current_exe().map_err(|_| UpdateError::NoExePath)?;
-    let parent_dir = current_exe
-        .parent()
-        .ok_or(UpdateError::NoExePath)?;
+    let parent_dir = current_exe.parent().ok_or(UpdateError::NoExePath)?;
 
     tracing::info!(
         version = target_version,
@@ -157,12 +155,14 @@ fn restart_agent(exe_path: &std::path::Path) -> Result<(), UpdateError> {
 
     let args: Vec<String> = std::env::args().collect();
 
-    tracing::info!("Re-executing agent: {} {:?}", exe_path.display(), &args[1..]);
+    tracing::info!(
+        "Re-executing agent: {} {:?}",
+        exe_path.display(),
+        &args[1..]
+    );
 
     // exec() replaces the current process image — this never returns on success
-    let err = std::process::Command::new(exe_path)
-        .args(&args[1..])
-        .exec();
+    let err = std::process::Command::new(exe_path).args(&args[1..]).exec();
 
     // If we reach here, exec() failed
     Err(UpdateError::Io(err))
@@ -172,7 +172,10 @@ fn restart_agent(exe_path: &std::path::Path) -> Result<(), UpdateError> {
 fn restart_agent(exe_path: &std::path::Path) -> Result<(), UpdateError> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    tracing::info!("Spawning new agent process and exiting: {}", exe_path.display());
+    tracing::info!(
+        "Spawning new agent process and exiting: {}",
+        exe_path.display()
+    );
 
     std::process::Command::new(exe_path)
         .args(&args)

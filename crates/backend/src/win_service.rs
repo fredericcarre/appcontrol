@@ -156,7 +156,8 @@ fn run_service() -> anyhow::Result<()> {
             None
         };
 
-        let operation_lock = appcontrol_backend::core::operation_lock::OperationLock::with_pool(pool.clone());
+        let operation_lock =
+            appcontrol_backend::core::operation_lock::OperationLock::with_pool(pool.clone());
 
         let state = std::sync::Arc::new(appcontrol_backend::AppState {
             db: pool,

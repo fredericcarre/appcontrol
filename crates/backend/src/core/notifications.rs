@@ -64,7 +64,15 @@ pub async fn dispatch_event(
 
     // Find all enabled webhook endpoints that subscribe to this event type,
     // scoped to the application's organization or the specific application.
-    let webhooks = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<sqlx::types::Json<serde_json::Value>>)>(
+    let webhooks = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<sqlx::types::Json<serde_json::Value>>,
+        ),
+    >(
         r#"
         SELECT w.id, w.url, w.secret, w.headers
         FROM webhook_endpoints w
@@ -85,8 +93,8 @@ pub async fn dispatch_event(
         return Ok(());
     }
 
-    let payload = serde_json::to_value(&event)
-        .map_err(|e| NotificationError::Http(e.to_string()))?;
+    let payload =
+        serde_json::to_value(&event).map_err(|e| NotificationError::Http(e.to_string()))?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))

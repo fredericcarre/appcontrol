@@ -281,13 +281,14 @@ async fn execute_start_target(
     let mut swapped = 0;
     for (comp_id, agent_override, check_override, start_override, stop_override) in &overrides {
         // Save current config as a snapshot before swapping (config_versions)
-        let current = sqlx::query_as::<_, (Option<Uuid>, Option<String>, Option<String>, Option<String>)>(
-            "SELECT agent_id, check_cmd, start_cmd, stop_cmd FROM components WHERE id = $1",
-        )
-        .bind(comp_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+        let current =
+            sqlx::query_as::<_, (Option<Uuid>, Option<String>, Option<String>, Option<String>)>(
+                "SELECT agent_id, check_cmd, start_cmd, stop_cmd FROM components WHERE id = $1",
+            )
+            .bind(comp_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
         if let Some((cur_agent, cur_check, cur_start, cur_stop)) = current {
             let before = serde_json::json!({
@@ -375,10 +376,7 @@ async fn execute_start_target(
 }
 
 /// Advance to the next phase with real orchestration.
-pub async fn advance_phase(
-    state: &Arc<AppState>,
-    app_id: Uuid,
-) -> Result<Value, SwitchoverError> {
+pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value, SwitchoverError> {
     let pool = &state.db;
 
     // Get current phase

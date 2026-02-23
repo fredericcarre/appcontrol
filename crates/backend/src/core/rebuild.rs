@@ -67,7 +67,14 @@ pub async fn build_rebuild_plan(
     }))
 }
 
-type RebuildTarget = (Uuid, String, bool, Option<String>, Option<String>, Option<Uuid>);
+type RebuildTarget = (
+    Uuid,
+    String,
+    bool,
+    Option<String>,
+    Option<String>,
+    Option<Uuid>,
+);
 
 /// Fetch rebuild target components with effective rebuild commands.
 async fn fetch_rebuild_targets(
@@ -318,10 +325,12 @@ pub async fn execute_rebuild(
 
 /// Get the agent_id assigned to a component.
 async fn get_component_agent(pool: &sqlx::PgPool, component_id: Uuid) -> Option<Uuid> {
-    sqlx::query_scalar::<_, Uuid>("SELECT agent_id FROM components WHERE id = $1 AND agent_id IS NOT NULL")
-        .bind(component_id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT agent_id FROM components WHERE id = $1 AND agent_id IS NOT NULL",
+    )
+    .bind(component_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
 }

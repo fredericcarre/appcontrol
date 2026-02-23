@@ -86,12 +86,11 @@ impl OperationLock {
             .map_err(|e| LockError::Database(e.to_string()))?;
 
         // Try to acquire the advisory lock (non-blocking)
-        let acquired: bool =
-            sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-                .bind(key)
-                .fetch_one(&mut *conn)
-                .await
-                .map_err(|e| LockError::Database(e.to_string()))?;
+        let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| LockError::Database(e.to_string()))?;
 
         if !acquired {
             return Err(LockError::Conflict {
@@ -195,9 +194,7 @@ mod tests {
             .build()
             .unwrap();
         rt.block_on(async {
-            let guard = lock
-                .try_lock(Uuid::new_v4(), "start", Uuid::new_v4())
-                .await;
+            let guard = lock.try_lock(Uuid::new_v4(), "start", Uuid::new_v4()).await;
             assert!(guard.is_ok());
         });
     }
