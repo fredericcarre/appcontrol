@@ -92,11 +92,18 @@ pub async fn enroll(gateway_url: &str, token: &str, config_dir: &str) -> anyhow:
     std::fs::write(&key_path, key_pem)?;
     std::fs::write(&ca_path, ca_pem)?;
 
-    // Set key file permissions (owner read only)
+    // Set key file permissions: owner read only
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(windows)]
+    {
+        // On Windows, make the key read-only (best effort — full ACLs require Win32 API)
+        let mut perms = std::fs::metadata(&key_path)?.permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&key_path, perms)?;
     }
 
     // Convert gateway URL to WebSocket URL for the config
@@ -147,10 +154,27 @@ tls:
     println!("  ca:     {}", ca_path.display());
     println!("  config: {}", config_path.display());
     println!();
+
+    #[cfg(unix)]
     println!(
         "  Start the agent with:\n    appcontrol-agent --config {}",
         config_path.display()
     );
+
+    #[cfg(windows)]
+    {
+        println!(
+            "  Start the agent with:\n    appcontrol-agent.exe --config \"{}\"",
+            config_path.display()
+        );
+        println!();
+        println!("  Install as Windows service:");
+        println!(
+            "    appcontrol-agent.exe service install --config \"{}\"",
+            config_path.display()
+        );
+        println!("    sc start AppControlAgent");
+    }
 
     Ok(())
 }

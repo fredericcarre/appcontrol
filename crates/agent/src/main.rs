@@ -6,17 +6,19 @@ mod executor;
 mod native_commands;
 mod platform;
 mod scheduler;
+#[cfg(windows)]
+mod service;
 mod tls;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
 #[command(name = "appcontrol-agent", about = "AppControl Agent")]
 struct Args {
-    /// Path to configuration file
-    #[arg(short, long, default_value = "/etc/appcontrol/agent.yaml")]
+    /// Path to configuration file (default: platform-specific)
+    #[arg(short, long, default_value_t = config::default_config_path(), global = true)]
     config: String,
 
     /// Override agent ID
@@ -31,9 +33,36 @@ struct Args {
     #[arg(long)]
     token: Option<String>,
 
-    /// Directory to write enrollment certs and config (default /etc/appcontrol)
-    #[arg(long, default_value = "/etc/appcontrol")]
+    /// Directory to write enrollment certs and config
+    #[arg(long, default_value_t = config::default_config_dir())]
     enroll_dir: String,
+
+    /// Windows service management commands
+    #[command(subcommand)]
+    command: Option<ServiceCommand>,
+}
+
+#[derive(Subcommand)]
+enum ServiceCommand {
+    /// Windows service management
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServiceAction {
+    /// Install as a Windows service
+    Install {
+        /// Path to agent configuration file
+        #[arg(short, long, default_value_t = config::default_config_path())]
+        config: String,
+    },
+    /// Remove the Windows service
+    Uninstall,
+    /// Run as a Windows service (called by SCM, not by user)
+    Run,
 }
 
 #[tokio::main]
@@ -47,6 +76,11 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
+
+    // Handle service subcommands (Windows only)
+    if let Some(command) = args.command {
+        return handle_service_command(command);
+    }
 
     // Enrollment mode: get certs from gateway and exit
     if let Some(ref gateway_url) = args.enroll {
@@ -100,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
     let conn_handle = tokio::spawn(connection.run(msg_rx));
     let sched_handle = tokio::spawn(check_scheduler.run());
 
-    // SIGHUP handler: reload agent configuration file on HUP signal
+    // Platform-specific signal handling for configuration reload
     #[cfg(unix)]
     {
         let config_path = args.config.clone();
@@ -113,25 +147,21 @@ async fn main() -> anyhow::Result<()> {
                     "Received SIGHUP — reloading configuration from {}",
                     config_path
                 );
-                match config::AgentConfig::load(&config_path) {
-                    Ok(new_config) => {
-                        tracing::info!("Configuration reloaded successfully");
-                        // Update check intervals in the scheduler
-                        // (The actual component configs come from the backend via UpdateConfig,
-                        //  but local agent config like log level, buffer path, etc. can be reloaded)
-
-                        // Re-initialize log level if it changed
-                        if let Ok(_filter) =
-                            tracing_subscriber::EnvFilter::try_new(new_config.log_level())
-                        {
-                            tracing::info!("Updated log filter: {}", new_config.log_level());
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to reload configuration: {}", e);
-                    }
-                }
+                reload_config(&config_path);
             }
+        });
+    }
+
+    // Windows: Ctrl+C / shutdown signal handling (foreground mode only, not service)
+    #[cfg(windows)]
+    {
+        tokio::spawn(async {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                tracing::error!("Failed to listen for Ctrl+C: {}", e);
+                return;
+            }
+            tracing::info!("Received Ctrl+C — shutting down gracefully");
+            std::process::exit(0);
         });
     }
 
@@ -141,4 +171,63 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn reload_config(config_path: &str) {
+    match config::AgentConfig::load(config_path) {
+        Ok(new_config) => {
+            tracing::info!("Configuration reloaded successfully");
+            if let Ok(_filter) = tracing_subscriber::EnvFilter::try_new(new_config.log_level()) {
+                tracing::info!("Updated log filter: {}", new_config.log_level());
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to reload configuration: {}", e);
+        }
+    }
+}
+
+#[allow(unreachable_code)]
+fn handle_service_command(command: ServiceCommand) -> anyhow::Result<()> {
+    match command {
+        ServiceCommand::Service { action } => match action {
+            ServiceAction::Install { config } => {
+                #[cfg(windows)]
+                {
+                    service::install_service(&config)?;
+                    return Ok(());
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = config;
+                    anyhow::bail!(
+                        "Windows service commands are only available on Windows.\n\
+                         On Linux, use systemd: systemctl enable/start appcontrol-agent"
+                    );
+                }
+            }
+            ServiceAction::Uninstall => {
+                #[cfg(windows)]
+                {
+                    service::uninstall_service()?;
+                    return Ok(());
+                }
+                #[cfg(not(windows))]
+                {
+                    anyhow::bail!("Windows service commands are only available on Windows.");
+                }
+            }
+            ServiceAction::Run => {
+                #[cfg(windows)]
+                {
+                    service::run_as_service()?;
+                    return Ok(());
+                }
+                #[cfg(not(windows))]
+                {
+                    anyhow::bail!("Windows service commands are only available on Windows.");
+                }
+            }
+        },
+    }
 }

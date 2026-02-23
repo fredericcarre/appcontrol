@@ -358,9 +358,9 @@ impl ConnectionManager {
                 // Spawn execution in a separate task — never block the WS loop
                 tokio::spawn(async move {
                     if exec_mode == "detached" {
-                        // Use double-fork + setsid for start/stop/rebuild commands
-                        // Process survives agent crash (Critical Rule #5)
-                        #[cfg(unix)]
+                        // Use platform-specific detachment for start/stop/rebuild commands.
+                        // Unix: double-fork + setsid — process survives agent crash.
+                        // Windows: CreateProcess with DETACHED_PROCESS flag.
                         match crate::executor::execute_async_detached(&command) {
                             Ok(pid) => {
                                 tracing::info!(
@@ -392,18 +392,6 @@ impl ConnectionManager {
                                     sequence_id: Some(seq),
                                 });
                             }
-                        }
-                        #[cfg(not(unix))]
-                        {
-                            let _ = msg_tx.send(AgentMessage::CommandResult {
-                                request_id,
-                                exit_code: -1,
-                                stdout: String::new(),
-                                stderr: "Detached execution not supported on this platform"
-                                    .to_string(),
-                                duration_ms: 0,
-                                sequence_id: None,
-                            });
                         }
                     } else {
                         // Sync execution: wait for result (checks, diagnostics, custom commands)
