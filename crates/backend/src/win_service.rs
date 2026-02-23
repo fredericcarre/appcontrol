@@ -156,6 +156,9 @@ fn run_service() -> anyhow::Result<()> {
             None
         };
 
+        let operation_lock =
+            appcontrol_backend::core::operation_lock::OperationLock::with_pool(pool.clone());
+
         let state = std::sync::Arc::new(appcontrol_backend::AppState {
             db: pool,
             ws_hub,
@@ -163,7 +166,7 @@ fn run_service() -> anyhow::Result<()> {
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher,
             redis,
-            operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
+            operation_lock,
         });
 
         let app = appcontrol_backend::create_router(state.clone());

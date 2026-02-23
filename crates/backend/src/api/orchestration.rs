@@ -56,6 +56,7 @@ pub async fn start(
         let guard = state
             .operation_lock
             .try_lock(app_id, "orchestration_start", user.user_id)
+            .await
             .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
         let state_clone = state.clone();
@@ -86,6 +87,7 @@ pub async fn stop(
     let guard = state
         .operation_lock
         .try_lock(app_id, "orchestration_stop", user.user_id)
+        .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     log_action(
@@ -121,8 +123,7 @@ pub async fn status(
 
     let components = sqlx::query_as::<_, (Uuid, String, String)>(
         r#"
-        SELECT c.id, c.name,
-               COALESCE((SELECT st.to_state FROM state_transitions st WHERE st.component_id = c.id ORDER BY st.created_at DESC LIMIT 1), 'UNKNOWN') as state
+        SELECT c.id, c.name, c.current_state
         FROM components c
         WHERE c.application_id = $1
         ORDER BY c.name
@@ -163,10 +164,7 @@ pub async fn wait_running(
     loop {
         let components = sqlx::query_as::<_, (String,)>(
             r#"
-            SELECT COALESCE(
-                (SELECT st.to_state FROM state_transitions st WHERE st.component_id = c.id ORDER BY st.created_at DESC LIMIT 1),
-                'UNKNOWN'
-            ) as state
+            SELECT c.current_state
             FROM components c
             WHERE c.application_id = $1 AND c.is_optional = false
             "#,

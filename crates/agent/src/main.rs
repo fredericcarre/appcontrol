@@ -6,6 +6,7 @@ mod executor;
 mod native_commands;
 mod platform;
 mod scheduler;
+mod self_update;
 #[cfg(windows)]
 mod service;
 mod tls;

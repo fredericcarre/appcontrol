@@ -79,5 +79,34 @@ pub async fn rebuild(
         return Ok(Json(json!({ "dry_run": true, "plan": plan })));
     }
 
+    // Acquire operation lock — prevents concurrent operations on the same app
+    let guard = state
+        .operation_lock
+        .try_lock(app_id, "rebuild", user.user_id)
+        .await
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+
+    let state_clone = state.clone();
+    let component_ids = body.component_ids.clone();
+    let user_id = user.user_id;
+    tokio::spawn(async move {
+        let _guard = guard; // Hold the lock until rebuild completes
+        match crate::core::rebuild::execute_rebuild(
+            &state_clone,
+            app_id,
+            component_ids.as_deref(),
+            user_id,
+        )
+        .await
+        {
+            Ok(result) => {
+                tracing::info!(app_id = %app_id, "Rebuild completed: {:?}", result);
+            }
+            Err(e) => {
+                tracing::error!(app_id = %app_id, "Rebuild failed: {}", e);
+            }
+        }
+    });
+
     Ok(Json(json!({ "status": "rebuilding", "plan": plan })))
 }

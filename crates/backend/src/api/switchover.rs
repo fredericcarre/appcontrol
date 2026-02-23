@@ -78,7 +78,7 @@ pub async fn next_phase(
     )
     .await?;
 
-    let result = crate::core::switchover::advance_phase(&state.db, app_id)
+    let result = crate::core::switchover::advance_phase(&state, app_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 

@@ -14,26 +14,45 @@ pub enum FsmError {
     Database(String),
 }
 
-/// Get the current state of a component from the latest state_transition record.
+/// Get the current state of a component from the cached `current_state` column.
+/// This is O(1) — no scan on the append-only state_transitions table.
 pub async fn get_current_state(
     pool: &sqlx::PgPool,
     component_id: Uuid,
 ) -> Result<ComponentState, FsmError> {
-    let state_str = sqlx::query_scalar::<_, String>(
-        "SELECT to_state FROM state_transitions WHERE component_id = $1 ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(component_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| FsmError::Database(e.to_string()))?;
+    let state_str =
+        sqlx::query_scalar::<_, String>("SELECT current_state FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
 
     match state_str {
         Some(s) => parse_state(&s),
-        None => Ok(ComponentState::Unknown),
+        None => Err(FsmError::ComponentNotFound(component_id)),
     }
 }
 
+/// Get the current state for multiple components in a single query.
+pub async fn get_current_states(
+    pool: &sqlx::PgPool,
+    component_ids: &[Uuid],
+) -> Result<Vec<(Uuid, ComponentState)>, FsmError> {
+    let rows = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT id, current_state FROM components WHERE id = ANY($1)",
+    )
+    .bind(component_ids)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    rows.into_iter()
+        .map(|(id, s)| parse_state(&s).map(|state| (id, state)))
+        .collect()
+}
+
 /// Transition a component to a new state, validating the FSM rules.
+/// Updates both the append-only state_transitions log AND the cached current_state column.
 pub async fn transition_component(
     state: &Arc<AppState>,
     component_id: Uuid,
@@ -48,7 +67,7 @@ pub async fn transition_component(
         });
     }
 
-    // Insert state transition (append-only)
+    // Insert state transition (append-only audit trail)
     sqlx::query(
         r#"
         INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
@@ -62,14 +81,16 @@ pub async fn transition_component(
     .await
     .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    // Get app_id for WebSocket notification
-    let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| FsmError::Database(e.to_string()))?
-            .ok_or(FsmError::ComponentNotFound(component_id))?;
+    // Update cached current_state on the components row (fast read path)
+    let app_id = sqlx::query_scalar::<_, Uuid>(
+        "UPDATE components SET current_state = $2, updated_at = now() WHERE id = $1 RETURNING application_id",
+    )
+    .bind(component_id)
+    .bind(new_state.to_string())
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| FsmError::Database(e.to_string()))?
+    .ok_or(FsmError::ComponentNotFound(component_id))?;
 
     // Push WebSocket event
     state.ws_hub.broadcast(
@@ -82,6 +103,20 @@ pub async fn transition_component(
             at: chrono::Utc::now(),
         },
     );
+
+    // Fire notification asynchronously (webhook/Slack)
+    let db = state.db.clone();
+    let event = crate::core::notifications::NotificationEvent::StateChange {
+        component_id,
+        app_id,
+        from: current.to_string(),
+        to: new_state.to_string(),
+    };
+    tokio::spawn(async move {
+        if let Err(e) = crate::core::notifications::dispatch_event(&db, app_id, event).await {
+            tracing::warn!("Notification dispatch failed: {}", e);
+        }
+    });
 
     Ok(())
 }
