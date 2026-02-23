@@ -16,23 +16,12 @@ use std::path::Path;
 /// `gateway_url` is the base URL of the gateway (e.g., "https://gateway.example.com:4443").
 /// `token` is the enrollment token (e.g., "ac_enroll_...").
 /// `config_dir` is where to write certs and config (e.g., "/etc/appcontrol").
-pub async fn enroll(
-    gateway_url: &str,
-    token: &str,
-    config_dir: &str,
-) -> anyhow::Result<()> {
+pub async fn enroll(gateway_url: &str, token: &str, config_dir: &str) -> anyhow::Result<()> {
     let hostname = crate::platform::gethostname();
-    tracing::info!(
-        "Enrolling agent '{}' via gateway {}",
-        hostname,
-        gateway_url
-    );
+    tracing::info!("Enrolling agent '{}' via gateway {}", hostname, gateway_url);
 
     // Build the enrollment URL (gateway /enroll endpoint)
-    let enroll_url = format!(
-        "{}/enroll",
-        gateway_url.trim_end_matches('/')
-    );
+    let enroll_url = format!("{}/enroll", gateway_url.trim_end_matches('/'));
 
     let body = serde_json::json!({
         "token": token,

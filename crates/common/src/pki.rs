@@ -132,9 +132,7 @@ pub fn issue_gateway_cert(
     san_ips: &[String],
     validity_days: u32,
 ) -> Result<IssuedCert, PkiError> {
-    use rcgen::{
-        CertificateParams, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose, SanType,
-    };
+    use rcgen::{CertificateParams, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose, SanType};
     use time::{Duration, OffsetDateTime};
 
     let ca_key = KeyPair::from_pem(ca_key_pem)
@@ -166,9 +164,9 @@ pub fn issue_gateway_cert(
     })?)];
     for dns in san_dns {
         if dns != cn {
-            sans.push(SanType::DnsName(dns.as_str().try_into().map_err(
-                |e| PkiError::Generation(format!("Invalid SAN DNS name '{}': {}", dns, e)),
-            )?));
+            sans.push(SanType::DnsName(dns.as_str().try_into().map_err(|e| {
+                PkiError::Generation(format!("Invalid SAN DNS name '{}': {}", dns, e))
+            })?));
         }
     }
     for ip_str in san_ips {
@@ -201,9 +199,7 @@ pub fn issue_agent_cert(
     hostname: &str,
     validity_days: u32,
 ) -> Result<IssuedCert, PkiError> {
-    use rcgen::{
-        CertificateParams, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose, SanType,
-    };
+    use rcgen::{CertificateParams, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose, SanType};
     use time::{Duration, OffsetDateTime};
 
     let ca_key = KeyPair::from_pem(ca_key_pem)
@@ -222,9 +218,10 @@ pub fn issue_agent_cert(
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
     params.not_before = OffsetDateTime::now_utc();
     params.not_after = OffsetDateTime::now_utc() + Duration::days(validity_days as i64);
-    params.subject_alt_names = vec![SanType::DnsName(hostname.try_into().map_err(|e| {
-        PkiError::Generation(format!("Invalid hostname as DNS name: {}", e))
-    })?)];
+    params.subject_alt_names =
+        vec![SanType::DnsName(hostname.try_into().map_err(|e| {
+            PkiError::Generation(format!("Invalid hostname as DNS name: {}", e))
+        })?)];
 
     let key_pair = KeyPair::generate()
         .map_err(|e| PkiError::Generation(format!("Agent key generation failed: {}", e)))?;
@@ -250,8 +247,7 @@ pub fn fingerprint_pem(cert_pem: &str) -> Option<String> {
         .filter(|l| !l.starts_with("-----"))
         .copied()
         .collect();
-    let der =
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64).ok()?;
+    let der = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64).ok()?;
     let digest = sha2::Sha256::digest(&der);
     Some(hex::encode(digest))
 }

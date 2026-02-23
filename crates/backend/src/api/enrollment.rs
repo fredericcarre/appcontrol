@@ -201,12 +201,11 @@ pub async fn init_pki(
     validate_length("org_name", &req.org_name, 1, 200)?;
 
     // Check if CA already exists
-    let existing: Option<(Option<String>,)> = sqlx::query_as(
-        "SELECT ca_cert_pem FROM organizations WHERE id = $1",
-    )
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let existing: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
+            .bind(user.organization_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     if let Some((Some(ref _cert),)) = existing {
         return Err(ApiError::Conflict(
@@ -230,14 +229,12 @@ pub async fn init_pki(
     .await
     .ok();
 
-    sqlx::query(
-        "UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1",
-    )
-    .bind(user.organization_id)
-    .bind(&ca.cert_pem)
-    .bind(&ca.key_pem)
-    .execute(&state.db)
-    .await?;
+    sqlx::query("UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1")
+        .bind(user.organization_id)
+        .bind(&ca.cert_pem)
+        .bind(&ca.key_pem)
+        .execute(&state.db)
+        .await?;
 
     let fingerprint = appcontrol_common::fingerprint_pem(&ca.cert_pem).unwrap_or_default();
 
@@ -253,12 +250,11 @@ pub async fn get_ca_cert(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let row: Option<(Option<String>,)> = sqlx::query_as(
-        "SELECT ca_cert_pem FROM organizations WHERE id = $1",
-    )
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
+            .bind(user.organization_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     match row {
         Some((Some(cert_pem),)) => {
@@ -330,7 +326,17 @@ pub async fn enroll(
     // Hash the token and look it up
     let token_hash = hex::encode(sha2::Sha256::digest(req.token.as_bytes()));
 
-    let token_row = sqlx::query_as::<_, (Uuid, Uuid, String, Option<i32>, i32, chrono::DateTime<chrono::Utc>)>(
+    let token_row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            Option<i32>,
+            i32,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         r#"SELECT id, organization_id, scope, max_uses, current_uses, expires_at
            FROM enrollment_tokens
            WHERE token_hash = $1
@@ -343,32 +349,57 @@ pub async fn enroll(
     let (token_id, org_id, scope, max_uses, current_uses, expires_at) = match token_row {
         Some(row) => row,
         None => {
-            log_enrollment_event(&state.db, Uuid::nil(), None, "invalid_token", &req.hostname, &client_ip).await;
+            log_enrollment_event(
+                &state.db,
+                Uuid::nil(),
+                None,
+                "invalid_token",
+                &req.hostname,
+                &client_ip,
+            )
+            .await;
             return Err(ApiError::Unauthorized);
         }
     };
 
     // Check expiry
     if chrono::Utc::now() > expires_at {
-        log_enrollment_event(&state.db, org_id, Some(token_id), "token_expired", &req.hostname, &client_ip).await;
+        log_enrollment_event(
+            &state.db,
+            org_id,
+            Some(token_id),
+            "token_expired",
+            &req.hostname,
+            &client_ip,
+        )
+        .await;
         return Err(ApiError::Validation("Token has expired".to_string()));
     }
 
     // Check usage limit
     if let Some(max) = max_uses {
         if current_uses >= max {
-            log_enrollment_event(&state.db, org_id, Some(token_id), "token_exhausted", &req.hostname, &client_ip).await;
-            return Err(ApiError::Validation("Token has reached max uses".to_string()));
+            log_enrollment_event(
+                &state.db,
+                org_id,
+                Some(token_id),
+                "token_exhausted",
+                &req.hostname,
+                &client_ip,
+            )
+            .await;
+            return Err(ApiError::Validation(
+                "Token has reached max uses".to_string(),
+            ));
         }
     }
 
     // Load organization CA
-    let ca_row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT ca_cert_pem, ca_key_pem FROM organizations WHERE id = $1",
-    )
-    .bind(org_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let ca_row: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT ca_cert_pem, ca_key_pem FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     let (ca_cert_pem, ca_key_pem) = match ca_row {
         Some((Some(cert), Some(key))) => (cert, key),
@@ -383,26 +414,22 @@ pub async fn enroll(
 
     // Issue certificate based on scope
     let issued = match scope.as_str() {
-        "gateway" => {
-            appcontrol_common::issue_gateway_cert(
-                &ca_cert_pem,
-                &ca_key_pem,
-                &req.hostname,
-                &req.san_dns,
-                &req.san_ips,
-                validity_days,
-            )
-            .map_err(|e| ApiError::Internal(format!("Cert generation failed: {}", e)))?
-        }
-        _ => {
-            appcontrol_common::issue_agent_cert(
-                &ca_cert_pem,
-                &ca_key_pem,
-                &req.hostname,
-                validity_days,
-            )
-            .map_err(|e| ApiError::Internal(format!("Cert generation failed: {}", e)))?
-        }
+        "gateway" => appcontrol_common::issue_gateway_cert(
+            &ca_cert_pem,
+            &ca_key_pem,
+            &req.hostname,
+            &req.san_dns,
+            &req.san_ips,
+            validity_days,
+        )
+        .map_err(|e| ApiError::Internal(format!("Cert generation failed: {}", e)))?,
+        _ => appcontrol_common::issue_agent_cert(
+            &ca_cert_pem,
+            &ca_key_pem,
+            &req.hostname,
+            validity_days,
+        )
+        .map_err(|e| ApiError::Internal(format!("Cert generation failed: {}", e)))?,
     };
 
     let fingerprint = appcontrol_common::fingerprint_pem(&issued.cert_pem).unwrap_or_default();
@@ -519,18 +546,20 @@ pub async fn list_enrollment_events(
 
     let events_json: Vec<Value> = events
         .into_iter()
-        .map(|(id, token_id, event_type, hostname, ip_address, agent_id, cert_fp, created_at)| {
-            json!({
-                "id": id,
-                "token_id": token_id,
-                "event_type": event_type,
-                "hostname": hostname,
-                "ip_address": ip_address,
-                "agent_id": agent_id,
-                "cert_fingerprint": cert_fp,
-                "created_at": created_at,
-            })
-        })
+        .map(
+            |(id, token_id, event_type, hostname, ip_address, agent_id, cert_fp, created_at)| {
+                json!({
+                    "id": id,
+                    "token_id": token_id,
+                    "event_type": event_type,
+                    "hostname": hostname,
+                    "ip_address": ip_address,
+                    "agent_id": agent_id,
+                    "cert_fingerprint": cert_fp,
+                    "created_at": created_at,
+                })
+            },
+        )
         .collect();
 
     Ok(Json(json!({ "events": events_json })))

@@ -245,7 +245,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/enrollment/tokens/:id/revoke",
             post(enrollment::revoke_enrollment_token),
         )
-        .route("/enrollment/events", get(enrollment::list_enrollment_events))
+        .route(
+            "/enrollment/events",
+            get(enrollment::list_enrollment_events),
+        )
         // PKI management
         .route("/pki/init", post(enrollment::init_pki))
         .route("/pki/ca", get(enrollment::get_ca_cert))

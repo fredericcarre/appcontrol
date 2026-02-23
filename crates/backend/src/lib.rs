@@ -173,10 +173,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(api::break_glass::activate_break_glass),
         )
         // Agent/Gateway enrollment (no auth — token-based)
-        .route(
-            "/api/v1/enroll",
-            post(api::enrollment::enroll),
-        )
+        .route("/api/v1/enroll", post(api::enrollment::enroll))
         // Protected API routes (includes auth middleware layer)
         .nest("/api/v1", api::api_routes(state.clone()))
         .route("/ws", get(websocket::ws_handler))

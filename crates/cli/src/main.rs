@@ -589,14 +589,7 @@ async fn cmd_pki(client: &reqwest::Client, base: &str, action: PkiCommands) -> i
                 Ok(resp) if resp.status().is_success() => {
                     let body: Value = resp.json().await.unwrap_or_default();
                     let mut table = comfy_table::Table::new();
-                    table.set_header(vec![
-                        "ID",
-                        "Name",
-                        "Scope",
-                        "Uses",
-                        "Expires",
-                        "Status",
-                    ]);
+                    table.set_header(vec!["ID", "Name", "Scope", "Uses", "Expires", "Status"]);
 
                     if let Some(tokens) = body.get("tokens").and_then(|t| t.as_array()) {
                         for t in tokens {
@@ -607,24 +600,18 @@ async fn cmd_pki(client: &reqwest::Client, base: &str, action: PkiCommands) -> i
                             };
                             let uses = format!(
                                 "{}/{}",
-                                t.get("current_uses")
-                                    .and_then(|u| u.as_i64())
-                                    .unwrap_or(0),
+                                t.get("current_uses").and_then(|u| u.as_i64()).unwrap_or(0),
                                 t.get("max_uses")
                                     .and_then(|m| m.as_i64())
                                     .map(|m| m.to_string())
                                     .unwrap_or_else(|| "unlimited".to_string())
                             );
                             table.add_row(vec![
-                                &t.get("id")
-                                    .and_then(|i| i.as_str())
-                                    .unwrap_or("?")[..8],
+                                &t.get("id").and_then(|i| i.as_str()).unwrap_or("?")[..8],
                                 t.get("name").and_then(|n| n.as_str()).unwrap_or("?"),
                                 t.get("scope").and_then(|s| s.as_str()).unwrap_or("?"),
                                 &uses,
-                                t.get("expires_at")
-                                    .and_then(|e| e.as_str())
-                                    .unwrap_or("?"),
+                                t.get("expires_at").and_then(|e| e.as_str()).unwrap_or("?"),
                                 status,
                             ]);
                         }
@@ -772,18 +759,10 @@ async fn cmd_pki(client: &reqwest::Client, base: &str, action: PkiCommands) -> i
                     if let Some(events) = body.get("events").and_then(|e| e.as_array()) {
                         for ev in events {
                             table.add_row(vec![
-                                ev.get("created_at")
-                                    .and_then(|t| t.as_str())
-                                    .unwrap_or("?"),
-                                ev.get("event_type")
-                                    .and_then(|e| e.as_str())
-                                    .unwrap_or("?"),
-                                ev.get("hostname")
-                                    .and_then(|h| h.as_str())
-                                    .unwrap_or("?"),
-                                ev.get("ip_address")
-                                    .and_then(|i| i.as_str())
-                                    .unwrap_or("?"),
+                                ev.get("created_at").and_then(|t| t.as_str()).unwrap_or("?"),
+                                ev.get("event_type").and_then(|e| e.as_str()).unwrap_or("?"),
+                                ev.get("hostname").and_then(|h| h.as_str()).unwrap_or("?"),
+                                ev.get("ip_address").and_then(|i| i.as_str()).unwrap_or("?"),
                                 ev.get("cert_fingerprint")
                                     .and_then(|f| f.as_str())
                                     .map(|f| &f[..std::cmp::min(f.len(), 16)])

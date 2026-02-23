@@ -50,9 +50,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Enrollment mode: get certs from gateway and exit
     if let Some(ref gateway_url) = args.enroll {
-        let token = args.token.as_deref().ok_or_else(|| {
-            anyhow::anyhow!("--token is required with --enroll")
-        })?;
+        let token = args
+            .token
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--token is required with --enroll"))?;
         return enroll::enroll(gateway_url, token, &args.enroll_dir).await;
     }
 
