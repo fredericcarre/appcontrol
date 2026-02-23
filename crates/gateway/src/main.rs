@@ -5,7 +5,8 @@ mod router;
 use axum::{
     extract::{ws, State},
     http::HeaderMap,
-    routing::get,
+    response::{IntoResponse, Json},
+    routing::{get, post},
     Router,
 };
 use clap::Parser;
@@ -179,6 +180,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/ws", get(agent_ws_handler))
         .route("/health", get(health_handler))
+        .route("/enroll", post(enroll_handler))
         .with_state(state.clone());
 
     let addr = format!(
@@ -281,6 +283,66 @@ async fn health_handler(State(state): State<Arc<GatewayState>>) -> String {
         "ok agents={} backend={} buffer_msgs={} buffer_bytes={}",
         agents, backend, buf_count, buf_bytes
     )
+}
+
+/// Proxy enrollment requests from agents to the backend.
+///
+/// Agents that don't have a certificate yet can't connect via mTLS WebSocket.
+/// Instead, they POST to this endpoint which proxies to the backend's `/api/v1/enroll`.
+/// This endpoint is served WITHOUT mTLS verification (it's the bootstrap path).
+async fn enroll_handler(
+    State(state): State<Arc<GatewayState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+
+    // Build the backend enrollment URL from the WebSocket URL
+    let backend_url = &state.config.backend.url;
+    // Convert ws://host:port/ws/gateway -> http://host:port/api/v1/enroll
+    let enroll_url = backend_url
+        .replace("ws://", "http://")
+        .replace("wss://", "https://")
+        .replace("/ws/gateway", "/api/v1/enroll");
+
+    // Forward client IP
+    let client_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown");
+
+    let client = reqwest::Client::new();
+    match client
+        .post(&enroll_url)
+        .header("x-forwarded-for", client_ip)
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = StatusCode::from_u16(resp.status().as_u16())
+                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            match resp.json::<serde_json::Value>().await {
+                Ok(json_body) => (status, Json(json_body)).into_response(),
+                Err(e) => {
+                    tracing::error!("Failed to read enrollment response: {}", e);
+                    StatusCode::BAD_GATEWAY.into_response()
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to proxy enrollment to backend: {}", e);
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": "enrollment_proxy_failed",
+                    "message": "Gateway could not reach the backend"
+                })),
+            )
+                .into_response()
+        }
+    }
 }
 
 async fn agent_ws_handler(

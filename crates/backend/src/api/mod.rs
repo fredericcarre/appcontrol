@@ -6,6 +6,7 @@ pub mod break_glass;
 pub mod command_params;
 pub mod components;
 pub mod diagnostic;
+pub mod enrollment;
 pub mod groups;
 pub mod health;
 pub mod import;
@@ -235,6 +236,19 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/break-glass/sessions/:id/end",
             post(break_glass::end_break_glass_session),
         )
+        // Enrollment token management (authenticated admin endpoints)
+        .route(
+            "/enrollment/tokens",
+            get(enrollment::list_enrollment_tokens).post(enrollment::create_enrollment_token),
+        )
+        .route(
+            "/enrollment/tokens/:id/revoke",
+            post(enrollment::revoke_enrollment_token),
+        )
+        .route("/enrollment/events", get(enrollment::list_enrollment_events))
+        // PKI management
+        .route("/pki/init", post(enrollment::init_pki))
+        .route("/pki/ca", get(enrollment::get_ca_cert))
         // SAML group mapping admin API (requires auth)
         .merge(crate::auth::saml::saml_admin_routes())
         // PDF report export

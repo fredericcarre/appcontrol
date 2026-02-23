@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Shield,
   Upload,
+  KeyRound,
 } from 'lucide-react';
 
 const navItems = [
@@ -18,6 +19,7 @@ const navItems = [
   { to: '/teams', icon: Users, label: 'Teams' },
   { to: '/agents', icon: Server, label: 'Agents' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
+  { to: '/enrollment', icon: KeyRound, label: 'Enrollment' },
   { to: '/import', icon: Upload, label: 'Import' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];

@@ -1,6 +1,7 @@
 mod buffer;
 mod config;
 mod connection;
+mod enroll;
 mod executor;
 mod native_commands;
 mod platform;
@@ -21,6 +22,18 @@ struct Args {
     /// Override agent ID
     #[arg(long)]
     agent_id: Option<String>,
+
+    /// Enroll this agent with a gateway (provide gateway URL, e.g., https://gateway:4443)
+    #[arg(long)]
+    enroll: Option<String>,
+
+    /// Enrollment token (required with --enroll)
+    #[arg(long)]
+    token: Option<String>,
+
+    /// Directory to write enrollment certs and config (default /etc/appcontrol)
+    #[arg(long, default_value = "/etc/appcontrol")]
+    enroll_dir: String,
 }
 
 #[tokio::main]
@@ -34,6 +47,15 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
+
+    // Enrollment mode: get certs from gateway and exit
+    if let Some(ref gateway_url) = args.enroll {
+        let token = args.token.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("--token is required with --enroll")
+        })?;
+        return enroll::enroll(gateway_url, token, &args.enroll_dir).await;
+    }
+
     let config = config::AgentConfig::load(&args.config)?;
 
     let agent_id = match args.agent_id {
