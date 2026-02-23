@@ -460,16 +460,27 @@ impl ConnectionManager {
                     target_version,
                     binary_url
                 );
-                // Agent self-update is handled in a dedicated task
+                // Agent self-update: download, verify SHA-256, atomic replace, restart
                 tokio::spawn(async move {
-                    tracing::info!(
-                        "Agent update to {} acknowledged (url={}, sha256={}). \
-                         Self-update mechanism will download, verify, and restart.",
-                        target_version,
-                        binary_url,
-                        checksum_sha256
-                    );
-                    // TODO: implement download + verify + atomic replace + self-restart
+                    match crate::self_update::perform_update(
+                        &binary_url,
+                        &checksum_sha256,
+                        &target_version,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            // perform_update re-execs the process on success (Unix),
+                            // or spawns a new process and exits (Windows).
+                            tracing::info!("Agent update complete — process will restart");
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Agent self-update failed: {}. Continuing with current version.",
+                                e
+                            );
+                        }
+                    }
                 });
             }
             BackendMessage::CertificateResponse {

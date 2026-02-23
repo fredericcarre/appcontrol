@@ -32,6 +32,7 @@ redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
 metrics = "0.23"
 metrics-exporter-prometheus = "0.15"
 sha2 = "0.10"
+hmac = "0.12"
 hex = "0.4"
 clap = { version = "4", features = ["derive"] }
 

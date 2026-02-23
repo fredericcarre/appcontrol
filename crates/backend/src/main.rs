@@ -123,6 +123,8 @@ async fn main() -> anyhow::Result<()> {
     let retention_action_log_days = config.retention_action_log_days;
     let retention_check_events_days = config.retention_check_events_days;
 
+    let operation_lock = appcontrol_backend::core::operation_lock::OperationLock::with_pool(pool.clone());
+
     let state = Arc::new(AppState {
         db: pool,
         ws_hub,
@@ -130,7 +132,7 @@ async fn main() -> anyhow::Result<()> {
         rate_limiter: middleware::rate_limit::RateLimitState::new(),
         heartbeat_batcher,
         redis,
-        operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
+        operation_lock,
     });
 
     // Store prometheus handle in a leaked box for the metrics handler

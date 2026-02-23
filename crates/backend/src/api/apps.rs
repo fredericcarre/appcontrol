@@ -285,6 +285,7 @@ pub async fn start_app(
     let guard = state
         .operation_lock
         .try_lock(id, "start", user.user_id)
+        .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     let state_clone = state.clone();
@@ -312,6 +313,7 @@ pub async fn stop_app(
     let guard = state
         .operation_lock
         .try_lock(id, "stop", user.user_id)
+        .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     log_action(
@@ -369,6 +371,7 @@ pub async fn start_branch(
     let guard = state
         .operation_lock
         .try_lock(id, "start_branch", user.user_id)
+        .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     let state_clone = state.clone();
