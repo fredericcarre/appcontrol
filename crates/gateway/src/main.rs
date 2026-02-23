@@ -28,6 +28,7 @@ struct Args {
 pub struct GatewayConfig {
     gateway: GatewaySection,
     backend: BackendSection,
+    tls: Option<TlsSection>,
 }
 
 #[derive(Debug, serde::Deserialize, Clone)]
@@ -42,6 +43,14 @@ struct GatewaySection {
 struct BackendSection {
     url: String,
     reconnect_interval_secs: u64,
+}
+
+#[derive(Debug, serde::Deserialize, Clone)]
+struct TlsSection {
+    enabled: bool,
+    cert_file: String,
+    key_file: String,
+    ca_file: String,
 }
 
 impl GatewayConfig {
@@ -62,6 +71,7 @@ impl GatewayConfig {
                     url: "ws://localhost:3000/ws/gateway".to_string(),
                     reconnect_interval_secs: 5,
                 },
+                tls: None,
             }
         };
 
@@ -86,6 +96,28 @@ impl GatewayConfig {
             if let Ok(s) = v.parse() {
                 config.backend.reconnect_interval_secs = s;
             }
+        }
+
+        // TLS env var overrides
+        let tls_enabled = std::env::var("TLS_ENABLED")
+            .ok()
+            .map(|v| v == "true" || v == "1");
+        let tls_cert = std::env::var("TLS_CERT_FILE").ok();
+        let tls_key = std::env::var("TLS_KEY_FILE").ok();
+        let tls_ca = std::env::var("TLS_CA_FILE").ok();
+        if tls_enabled == Some(true) || tls_cert.is_some() {
+            let existing = config.tls.unwrap_or(TlsSection {
+                enabled: false,
+                cert_file: String::new(),
+                key_file: String::new(),
+                ca_file: String::new(),
+            });
+            config.tls = Some(TlsSection {
+                enabled: tls_enabled.unwrap_or(existing.enabled),
+                cert_file: tls_cert.unwrap_or(existing.cert_file),
+                key_file: tls_key.unwrap_or(existing.key_file),
+                ca_file: tls_ca.unwrap_or(existing.ca_file),
+            });
         }
 
         Ok(config)
@@ -153,15 +185,86 @@ async fn main() -> anyhow::Result<()> {
         "{}:{}",
         config.gateway.listen_addr, config.gateway.listen_port
     );
-    tracing::info!(
-        "Gateway {} ({}) listening on {} [id={}]",
-        config.gateway.id,
-        config.gateway.zone,
-        addr,
-        gateway_id
-    );
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+
+    // Serve with mTLS if TLS is configured, otherwise plaintext
+    if let Some(ref tls) = config.tls {
+        if tls.enabled {
+            tracing::info!(
+                "Gateway {} ({}) listening with mTLS on {} [id={}]",
+                config.gateway.id,
+                config.gateway.zone,
+                addr,
+                gateway_id
+            );
+
+            let rustls_config = build_server_tls_config(tls)?;
+            let tls_acceptor = tokio_rustls::TlsAcceptor::from(rustls_config);
+            let tcp_listener = tokio::net::TcpListener::bind(&addr).await?;
+
+            // Accept TLS connections with client cert verification, then serve with axum
+            loop {
+                let (tcp_stream, peer_addr) = tcp_listener.accept().await?;
+                let acceptor = tls_acceptor.clone();
+                let app = app.clone();
+
+                tokio::spawn(async move {
+                    match acceptor.accept(tcp_stream).await {
+                        Ok(tls_stream) => {
+                            // Extract client cert fingerprint from the verified TLS session
+                            let fingerprint = extract_client_cert_fingerprint(&tls_stream);
+                            if let Some(ref fp) = fingerprint {
+                                tracing::debug!(
+                                    peer = %peer_addr,
+                                    fingerprint = %fp,
+                                    "mTLS: client certificate verified"
+                                );
+                            }
+
+                            // Serve the connection using hyper + axum with the TLS stream
+                            let io = hyper_util::rt::TokioIo::new(tls_stream);
+                            let service = hyper_util::service::TowerToHyperService::new(app);
+                            if let Err(e) = hyper_util::server::conn::auto::Builder::new(
+                                hyper_util::rt::TokioExecutor::new(),
+                            )
+                            .serve_connection(io, service)
+                            .await
+                            {
+                                tracing::debug!("Connection from {} ended: {}", peer_addr, e);
+                            }
+                        }
+                        Err(e) => {
+                            // TLS handshake failed — agent did not present a valid cert
+                            tracing::warn!(
+                                peer = %peer_addr,
+                                "mTLS handshake rejected: {} — agent must present a valid certificate",
+                                e
+                            );
+                        }
+                    }
+                });
+            }
+        } else {
+            tracing::warn!(
+                "Gateway {} ({}) listening in PLAINTEXT on {} [id={}] (TLS disabled in config)",
+                config.gateway.id,
+                config.gateway.zone,
+                addr,
+                gateway_id
+            );
+            let listener = tokio::net::TcpListener::bind(&addr).await?;
+            axum::serve(listener, app).await?;
+        }
+    } else {
+        tracing::warn!(
+            "Gateway {} ({}) listening in PLAINTEXT on {} [id={}] (no TLS config)",
+            config.gateway.id,
+            config.gateway.zone,
+            addr,
+            gateway_id
+        );
+        let listener = tokio::net::TcpListener::bind(&addr).await?;
+        axum::serve(listener, app).await?;
+    }
 
     Ok(())
 }
@@ -398,6 +501,81 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
             else => return Ok(()),
         }
     }
+}
+
+/// Extract the SHA-256 fingerprint from the client's verified TLS certificate.
+/// Returns None if no client cert was presented (should not happen with mandatory verification).
+fn extract_client_cert_fingerprint(
+    tls_stream: &tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+) -> Option<String> {
+    use sha2::Digest;
+
+    let (_, session) = tls_stream.get_ref();
+    let peer_certs = session.peer_certificates()?;
+    let first_cert = peer_certs.first()?;
+    let fingerprint = sha2::Sha256::digest(first_cert.as_ref());
+    Some(hex::encode(fingerprint))
+}
+
+/// Build a rustls ServerConfig with mTLS: server cert + mandatory client cert verification.
+fn build_server_tls_config(tls: &TlsSection) -> anyhow::Result<Arc<rustls::ServerConfig>> {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use std::io::BufReader;
+
+    // Load server certificate chain
+    let cert_data = std::fs::read(&tls.cert_file)
+        .map_err(|e| anyhow::anyhow!("Failed to read gateway cert {}: {}", tls.cert_file, e))?;
+    let mut cert_reader = BufReader::new(cert_data.as_slice());
+    let server_certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse gateway cert: {}", e))?;
+
+    if server_certs.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No certificates found in gateway cert file: {}",
+            tls.cert_file
+        ));
+    }
+
+    // Load server private key
+    let key_data = std::fs::read(&tls.key_file)
+        .map_err(|e| anyhow::anyhow!("Failed to read gateway key {}: {}", tls.key_file, e))?;
+    let mut key_reader = BufReader::new(key_data.as_slice());
+    let server_key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
+        .map_err(|e| anyhow::anyhow!("Failed to parse gateway key: {}", e))?
+        .ok_or_else(|| anyhow::anyhow!("No private key found in: {}", tls.key_file))?;
+
+    // Load CA certificates for client verification (agent certs must be signed by this CA)
+    let ca_data = std::fs::read(&tls.ca_file)
+        .map_err(|e| anyhow::anyhow!("Failed to read CA file {}: {}", tls.ca_file, e))?;
+    let mut ca_reader = BufReader::new(ca_data.as_slice());
+
+    let mut root_store = rustls::RootCertStore::empty();
+    for cert in rustls_pemfile::certs(&mut ca_reader) {
+        let cert = cert.map_err(|e| anyhow::anyhow!("Failed to parse CA cert: {}", e))?;
+        root_store
+            .add(cert)
+            .map_err(|e| anyhow::anyhow!("Failed to add CA cert: {}", e))?;
+    }
+
+    // Build server config with MANDATORY client cert verification
+    // Agents MUST present a valid certificate signed by the configured CA.
+    let client_verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build client cert verifier: {}", e))?;
+
+    let config = rustls::ServerConfig::builder()
+        .with_client_cert_verifier(client_verifier)
+        .with_single_cert(server_certs, server_key)
+        .map_err(|e| anyhow::anyhow!("Failed to build server TLS config: {}", e))?;
+
+    tracing::info!(
+        "mTLS server config built: cert={}, ca={} — client certificates REQUIRED",
+        tls.cert_file,
+        tls.ca_file
+    );
+
+    Ok(Arc::new(config))
 }
 
 /// Parse and route a message from the backend.

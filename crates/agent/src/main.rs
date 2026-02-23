@@ -5,6 +5,7 @@ mod executor;
 mod native_commands;
 mod platform;
 mod scheduler;
+mod tls;
 
 use clap::Parser;
 use std::sync::Arc;
@@ -60,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
         buffer.clone(),
         check_scheduler.clone(),
         msg_tx,
+        config.tls.as_ref(),
     );
 
     tracing::info!(

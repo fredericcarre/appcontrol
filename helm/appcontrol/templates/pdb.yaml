@@ -1,0 +1,47 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# Backend PDB: ensure at least 1 pod is always available during voluntary disruptions
+# (node drain, rolling updates, cluster maintenance).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-backend
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.backend.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "appcontrol.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+---
+# Gateway PDB: agents must always be able to connect to at least 1 gateway.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-gateway
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.gateway.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "appcontrol.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+---
+# Frontend PDB: users must always be able to access the UI.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-frontend
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.frontend.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "appcontrol.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+{{- end }}

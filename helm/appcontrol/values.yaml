@@ -15,17 +15,24 @@ backend:
     port: 3000
   resources:
     requests:
-      cpu: 250m
-      memory: 256Mi
-    limits:
-      cpu: "1"
+      cpu: 500m
       memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
   env:
     RUST_LOG: "info"
+    CORS_ORIGINS: ""
   database:
+    # For production: use an external managed database (RDS, CloudSQL, Azure Database).
+    # Set url to the connection string or use existingSecret.
     url: ""
     existingSecret: ""
     secretKey: "database-url"
+  redis:
+    # Auto-generated from redis service if redis.enabled=true.
+    # Override for external Redis (ElastiCache, Memorystore, etc.).
+    url: ""
   jwt:
     secret: ""
     existingSecret: ""
@@ -63,17 +70,84 @@ gateway:
       memory: 128Mi
     limits:
       cpu: "1"
-      memory: 256Mi
+      memory: 512Mi
 
+# ---------------------------------------------------------------
+# PostgreSQL — in-cluster StatefulSet with persistent storage.
+# For production: set enabled=false and configure backend.database.url
+# to point to a managed database (RDS, CloudSQL, Azure DB).
+# ---------------------------------------------------------------
 postgresql:
   enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
   auth:
     database: appcontrol
     username: appcontrol
+    password: ""
     existingSecret: ""
+    secretKey: "postgresql-password"
   primary:
     persistence:
-      size: 10Gi
+      size: 20Gi
+      storageClass: ""
+    initdbScriptsConfigMap: ""
+    extraEnv: []
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+# ---------------------------------------------------------------
+# Redis — in-cluster StatefulSet with AOF persistence.
+# For production: set enabled=false and configure backend.redis.url
+# to point to a managed Redis (ElastiCache, Memorystore, etc.)
+# with Sentinel/cluster mode for HA.
+# ---------------------------------------------------------------
+redis:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  auth:
+    enabled: false
+    password: ""
+    existingSecret: ""
+    secretKey: "redis-password"
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+  maxmemory: "256mb"
+  sentinel:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ---------------------------------------------------------------
+# Pod Disruption Budgets — prevent voluntary disruptions from
+# evicting all pods simultaneously (node drain, rolling updates).
+# ---------------------------------------------------------------
+podDisruptionBudget:
+  enabled: true
+  backend:
+    minAvailable: 1
+  gateway:
+    minAvailable: 1
+  frontend:
+    minAvailable: 1
 
 ingress:
   enabled: false
