@@ -13,6 +13,8 @@ import { OnboardingPage } from '@/pages/OnboardingPage';
 import { LoginPage } from '@/pages/LoginPage';
 import ImportPage from '@/pages/ImportPage';
 import { EnrollmentTokensPage } from '@/pages/EnrollmentTokens';
+import { ShareLinkPage } from '@/pages/ShareLinkPage';
+import { ApiKeysPage } from '@/pages/ApiKeysPage';
 import { useUiStore } from '@/stores/ui';
 import { cn } from '@/lib/utils';
 
@@ -41,6 +43,7 @@ export default function App() {
     return (
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/share/:token" element={<ShareLinkPage />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -57,6 +60,8 @@ export default function App() {
       <Route path="/onboarding" element={<AuthLayout><OnboardingPage /></AuthLayout>} />
       <Route path="/import" element={<AuthLayout><ImportPage /></AuthLayout>} />
       <Route path="/enrollment" element={<AuthLayout><EnrollmentTokensPage /></AuthLayout>} />
+      <Route path="/settings/api-keys" element={<AuthLayout><ApiKeysPage /></AuthLayout>} />
+      <Route path="/share/:token" element={<ShareLinkPage />} />
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

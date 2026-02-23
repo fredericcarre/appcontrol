@@ -1,15 +1,16 @@
 import { useState } from 'react';
-import { useAppPermissions, useSetPermission, useRemovePermission, useShareLinks, useCreateShareLink } from '@/api/permissions';
+import { useAppPermissions, useSetPermission, useRemovePermission, useShareLinks, useCreateShareLink, useRevokeShareLink } from '@/api/permissions';
+import { UserSearchResult } from '@/api/users';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Copy, Link, Plus, Trash2, UserPlus, Users } from 'lucide-react';
+import { Copy, Link, Plus, Trash2, Users, Clock } from 'lucide-react';
 import { PERMISSION_LEVELS, permissionLabel } from '@/lib/permissions';
+import { UserPicker } from './UserPicker';
 
 interface ShareModalProps {
   appId: string;
@@ -23,15 +24,14 @@ export function ShareModal({ appId, open, onOpenChange }: ShareModalProps) {
   const setPermission = useSetPermission();
   const removePermission = useRemovePermission();
   const createShareLink = useCreateShareLink();
+  const revokeShareLink = useRevokeShareLink();
 
-  const [newEmail, setNewEmail] = useState('');
   const [newLevel, setNewLevel] = useState('view');
   const [linkLevel, setLinkLevel] = useState('view');
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
-  const handleAddUser = async () => {
-    if (!newEmail.trim()) return;
-    await setPermission.mutateAsync({ app_id: appId, user_id: newEmail.trim(), level: newLevel });
-    setNewEmail('');
+  const handleAddUser = async (user: UserSearchResult) => {
+    await setPermission.mutateAsync({ app_id: appId, user_id: user.id, level: newLevel });
   };
 
   const handleCreateLink = async () => {
@@ -40,6 +40,8 @@ export function ShareModal({ appId, open, onOpenChange }: ShareModalProps) {
 
   const copyLink = (token: string) => {
     navigator.clipboard.writeText(`${window.location.origin}/share/${token}`);
+    setCopiedToken(token);
+    setTimeout(() => setCopiedToken(null), 2000);
   };
 
   return (
@@ -61,12 +63,7 @@ export function ShareModal({ appId, open, onOpenChange }: ShareModalProps) {
 
           <TabsContent value="users" className="space-y-4">
             <div className="flex gap-2">
-              <Input
-                placeholder="User email or ID"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                className="flex-1"
-              />
+              <UserPicker onSelect={handleAddUser} />
               <Select value={newLevel} onValueChange={setNewLevel}>
                 <SelectTrigger className="w-28">
                   <SelectValue />
@@ -77,9 +74,6 @@ export function ShareModal({ appId, open, onOpenChange }: ShareModalProps) {
                   ))}
                 </SelectContent>
               </Select>
-              <Button onClick={handleAddUser} disabled={!newEmail.trim()}>
-                <UserPlus className="h-4 w-4" />
-              </Button>
             </div>
 
             <Separator />
@@ -135,15 +129,36 @@ export function ShareModal({ appId, open, onOpenChange }: ShareModalProps) {
               <div className="space-y-2">
                 {shareLinks?.map((link) => (
                   <div key={link.id} className="flex items-center justify-between p-2 rounded-md hover:bg-muted">
-                    <div className="text-sm">
+                    <div className="flex items-center gap-2 text-sm">
                       <Badge variant="outline">{link.permission_level}</Badge>
-                      <span className="ml-2 text-muted-foreground">
+                      <span className="text-muted-foreground">
                         {link.current_uses}{link.max_uses ? `/${link.max_uses}` : ''} uses
                       </span>
+                      {link.expires_at && (
+                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {new Date(link.expires_at).toLocaleDateString()}
+                        </span>
+                      )}
                     </div>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => copyLink(link.token)}>
-                      <Copy className="h-3.5 w-3.5" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => copyLink(link.token)}
+                      >
+                        <Copy className={`h-3.5 w-3.5 ${copiedToken === link.token ? 'text-green-500' : ''}`} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => revokeShareLink.mutate({ app_id: appId, link_id: link.id })}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
                 {!shareLinks?.length && (

@@ -449,3 +449,61 @@
 - [x] `cargo test --workspace` — all tests pass (68+ unit tests across all crates)
 - [x] `cd frontend && npm run build` — clean
 - [x] `cd frontend && npm test` — all tests pass
+
+## Phase 9: Sharing, API Keys UI & Documentation
+
+> Security fixes, missing features, and comprehensive documentation.
+
+### P9-1: Permission Security (Workspace Validation)
+- [x] `crates/backend/src/api/permissions.rs` — `validate_workspace_access()`: verify target user has site access before granting permission
+- [x] `crates/backend/src/api/permissions.rs` — `grant_user_permission()`: workspace validation before INSERT
+- [x] `crates/backend/src/api/permissions.rs` — `grant_team_permission()`: validate team has workspace access to the app's site
+- [x] `crates/backend/src/api/permissions.rs` — `consume_share_link()`: workspace validation before granting access via share link
+
+### P9-2: User Search & Discovery
+- [x] `crates/backend/src/api/permissions.rs` — `search_users()`: `GET /users/search?q=&limit=` endpoint (ILIKE on email + display_name, org-scoped)
+- [x] `crates/backend/src/api/mod.rs` — Route registered: `/users/search`
+- [x] `frontend/src/api/users.ts` — `useSearchUsers()` React Query hook with debounced search
+- [x] `frontend/src/components/share/UserPicker.tsx` — Autocomplete dropdown component for user discovery
+
+### P9-3: Share Link Consumption
+- [x] `crates/backend/src/api/permissions.rs` — `consume_share_link()`: `POST /share-links/consume` (validates token, expiry, max uses, workspace, grants permission, increments counter)
+- [x] `crates/backend/src/api/permissions.rs` — `get_share_link_info()`: `GET /share/:token` (unauthenticated, preview before login)
+- [x] `crates/backend/src/api/permissions.rs` — `revoke_share_link()`: `DELETE /apps/:app_id/permissions/share-links/:link_id`
+- [x] `crates/backend/src/lib.rs` — Unauthenticated route for `/api/v1/share/:token`
+- [x] `frontend/src/pages/ShareLinkPage.tsx` — Share link acceptance page (preview, login redirect, accept/decline flow)
+- [x] `frontend/src/App.tsx` — Route: `/share/:token` (both auth and unauth)
+
+### P9-4: Combined Permissions API
+- [x] `crates/backend/src/api/permissions.rs` — `list_all_permissions()`: `GET /apps/:app_id/permissions` (users + teams joined with email/name)
+- [x] `crates/backend/src/api/permissions.rs` — `delete_permission()`: `DELETE /apps/:app_id/permissions/:perm_id` (tries user then team)
+- [x] `frontend/src/api/permissions.ts` — Updated hooks: `useRevokeShareLink`, `useConsumeShareLink`, `useShareLinkInfo`
+
+### P9-5: API Key Management UI
+- [x] `frontend/src/pages/ApiKeysPage.tsx` — Full CRUD UI: create key (with copy-once warning), list keys (prefix, scopes, status, dates), revoke
+- [x] `frontend/src/api/apiKeys.ts` — `useApiKeys()`, `useCreateApiKey()`, `useDeleteApiKey()` React Query hooks
+- [x] `frontend/src/pages/SettingsPage.tsx` — "API Keys" card with link to `/settings/api-keys`
+- [x] `frontend/src/App.tsx` — Route: `/settings/api-keys`
+
+### P9-6: ShareModal Improvements
+- [x] `frontend/src/components/share/ShareModal.tsx` — Replaced free-text input with UserPicker autocomplete
+- [x] `frontend/src/components/share/ShareModal.tsx` — Added share link revocation button
+- [x] `frontend/src/components/share/ShareModal.tsx` — Copy-to-clipboard feedback (green icon)
+- [x] `frontend/src/components/share/ShareModal.test.tsx` — Updated mocks for new exports
+
+### P9-7: Documentation
+- [x] `docs/QUICKSTART.md` — Complete getting-started guide: Docker Compose, local dev, auth setup (JWT-only / OIDC / SAML), first steps, API reference, troubleshooting
+- [x] `docs/USER_GUIDE.md` — Comprehensive user guide: all features, operations, sharing, API keys, administration, screenshot placeholders
+- [x] `CLAUDE.md` — Documentation Maintenance section: regeneration instructions, screenshot auto-generation workflow
+
+### P9-8: CI Screenshot Auto-Generation
+- [x] `.github/workflows/docs-screenshots.yaml` — CI workflow: build stack, capture Playwright screenshots, embed in docs, auto-commit
+- [x] `frontend/playwright.config.ts` — Playwright configuration for screenshot capture (1440x900, light theme)
+- [x] `frontend/e2e-screenshots/capture.spec.ts` — Screenshot tests for all pages (dashboard, map, agents, teams, reports, settings, api-keys, enrollment, import)
+- [x] `docs/screenshots/.gitkeep` — Screenshot output directory
+
+### Build Validation (Phase 9)
+- [x] `cargo build --workspace` — clean (0 errors)
+- [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
+- [x] `cd frontend && npm run build` — clean
+- [x] `cd frontend && npm test` — 229 tests pass (22 files)

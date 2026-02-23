@@ -74,13 +74,29 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(permissions::list_team_permissions).post(permissions::grant_team_permission),
         )
         .route(
+            "/apps/:app_id/permissions",
+            get(permissions::list_all_permissions),
+        )
+        .route(
+            "/apps/:app_id/permissions/:perm_id",
+            delete(permissions::delete_permission),
+        )
+        .route(
             "/apps/:app_id/permissions/share-links",
             get(permissions::list_share_links).post(permissions::create_share_link),
+        )
+        .route(
+            "/apps/:app_id/permissions/share-links/:link_id",
+            delete(permissions::revoke_share_link),
         )
         .route(
             "/apps/:app_id/permissions/effective",
             get(permissions::get_effective_permission),
         )
+        // User search / discovery
+        .route("/users/search", get(permissions::search_users))
+        // Share link consumption
+        .route("/share-links/consume", post(permissions::consume_share_link))
         // Teams
         .route("/teams", get(teams::list_teams).post(teams::create_team))
         .route(

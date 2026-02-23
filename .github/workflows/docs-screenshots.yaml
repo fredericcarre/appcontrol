@@ -1,0 +1,116 @@
+name: Documentation Screenshots
+
+# Generates UI screenshots from a running AppControl stack and commits
+# them to docs/screenshots/. The User Guide references these images.
+#
+# Trigger: on push to main (after merge) or manually via workflow_dispatch.
+# This ensures docs always reflect the latest UI state.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/src/**'
+      - 'docs/**'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  capture-screenshots:
+    name: Capture UI Screenshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build all images
+        run: docker compose -f docker/docker-compose.yaml build
+
+      - name: Start the full stack
+        run: |
+          docker compose -f docker/docker-compose.yaml up -d
+          echo "Waiting for backend health..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
+              echo "Backend healthy after $((i * 2))s"
+              break
+            fi
+            if [ "$i" = "60" ]; then
+              echo "Backend failed to start within 120s"
+              docker compose -f docker/docker-compose.yaml logs backend
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Verify frontend is serving
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:8080/)
+          echo "GET frontend/ → $STATUS"
+          [ "$STATUS" = "200" ]
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Capture screenshots
+        working-directory: frontend
+        run: npx playwright test --project=screenshots
+        continue-on-error: true  # Don't fail the build if some pages have no data
+
+      - name: List captured screenshots
+        run: ls -la docs/screenshots/ || echo "No screenshots directory"
+
+      - name: Embed screenshots in documentation
+        run: |
+          # Replace <!-- SCREENSHOT:name --> markers with actual image references
+          if [ -d docs/screenshots ]; then
+            for img in docs/screenshots/*.png; do
+              name=$(basename "$img" .png)
+              # Replace the marker in USER_GUIDE.md
+              if [ -f docs/USER_GUIDE.md ]; then
+                sed -i "s|<!-- SCREENSHOT:${name} -->|![${name}](screenshots/${name}.png)|g" docs/USER_GUIDE.md
+              fi
+            done
+          fi
+
+      - name: Commit updated screenshots
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/screenshots/ docs/USER_GUIDE.md
+          if git diff --cached --quiet; then
+            echo "No screenshot changes to commit"
+          else
+            git commit -m "docs: auto-update UI screenshots [skip ci]"
+            git push
+          fi
+
+      - name: Upload screenshots as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: docs/screenshots/
+          retention-days: 30
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker/docker-compose.yaml down -v
