@@ -9,7 +9,7 @@ as native Windows services.
   Windows Server (backend + DB)         Windows Servers (agents)
   +---------------------------------+    +-------------------------+
   | PostgreSQL 16 (Windows/Docker)  |    | AppControlAgent service |
-  | Redis 7 (optional)             |    |   -> gateway:4443 (mTLS)|
+  | AppControlBackend service      |    |   -> gateway:4443 (mTLS)|
   | AppControlBackend service      |    +-------------------------+
   |   -> :3000 (API)               |    +-------------------------+
   | AppControlGateway service      |    | AppControlAgent service |
@@ -28,7 +28,6 @@ built-in Windows service support. No external service wrappers needed.
 |-------------|-------|
 | Windows Server 2019+ or Windows 10/11 | Any 64-bit edition |
 | PostgreSQL 16 | [EDB installer](https://www.enterprisedb.com/downloads/postgres-postgresql-downloads) or Docker |
-| Redis 7 (optional) | [Memurai](https://www.memurai.com/) (Redis-compatible for Windows) or Docker |
 | Administrator access | Required for service installation |
 
 ---
@@ -95,7 +94,6 @@ as system-level variables so the Windows service can access them:
 
 # Optional
 [Environment]::SetEnvironmentVariable("PORT", "3000", "Machine")
-[Environment]::SetEnvironmentVariable("REDIS_URL", "redis://127.0.0.1:6379", "Machine")
 [Environment]::SetEnvironmentVariable("LOG_FORMAT", "json", "Machine")
 [Environment]::SetEnvironmentVariable("CORS_ORIGINS", "http://localhost:8080", "Machine")
 ```

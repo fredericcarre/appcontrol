@@ -31,10 +31,9 @@
 |                  +------- sqlx pool ------->+                   |
 |  REST API        |                          +-------------------+
 |  WebSocket /ws   |
-|  (JWT auth)      +------- redis client --->+-------------------+
-|                  |                          |    Redis 7        |
-+--------+---------+                          |    :6379          |
-         |                                    +-------------------+
+|  (JWT auth)      |
++--------+---------+
+         |
          | WebSocket /ws
          | (internal, gateway connects here)
          |
@@ -70,8 +69,7 @@
 | **Gateway** | Agent connection multiplexer | `:4443` (env `LISTEN_PORT`) | YAML + env var overrides |
 | **Agent** | Local process manager + health checker | None (client only) | YAML + env var overrides |
 | **CLI** | CLI client for automation/schedulers | None (client only) | Env vars + CLI args |
-| **PostgreSQL** | Persistent storage | `:5432` | Standard |
-| **Redis** | JWT token revocation blacklist (optional) | `:6379` | Standard |
+| **PostgreSQL** | Persistent storage (including token revocation and rate limiting) | `:5432` | Standard |
 
 ## Communication Protocols
 
@@ -124,7 +122,6 @@ Agent ---WSS (mTLS)---> gateway:4443/ws
 |----------|---------|-------------|
 | `PORT` | `3000` | HTTP listen port |
 | `DATABASE_URL` | `postgresql://appcontrol:appcontrol@localhost:5432/appcontrol` | PostgreSQL connection string |
-| `REDIS_URL` | _(none)_ | Redis connection string (optional — only for token revocation) |
 | `JWT_SECRET` | `dev-secret-change-in-production` | JWT signing secret (**required** in production) |
 | `JWT_ISSUER` | `appcontrol` | JWT issuer claim |
 | `APP_ENV` | `development` | Environment: `development`, `staging`, `production` |
@@ -172,7 +169,6 @@ Agent ---WSS (mTLS)---> gateway:4443/ws
 | Service | Internal Port | External Port | Purpose |
 |---------|--------------|---------------|---------|
 | postgres | 5432 | 5432 | Database |
-| redis | 6379 | 6379 | Cache |
 | backend | 3000 | 3000 | REST API + WebSocket |
 | frontend | 8080 | 8080 | Web UI |
 | gateway | 4443 | 4443 | Agent connections |
@@ -183,7 +179,6 @@ Agent ---WSS (mTLS)---> gateway:4443/ws
                     +-----------------------+
                     |    Central Backend    |
                     |    + PostgreSQL       |
-                    |    + Redis            |
                     +-----------+-----------+
                                 |
                 +---------------+---------------+

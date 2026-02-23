@@ -1,0 +1,18 @@
+# Cargo audit configuration
+# See: https://docs.rs/cargo-audit
+
+[advisories]
+ignore = [
+    # rsa 0.9.10 — Marvin Attack timing sidechannel (CVSS 5.9 medium)
+    # No fix available upstream. Pulled in transitively by sqlx-mysql 0.7.4
+    # via sqlx-macros-core. We only use PostgreSQL, never MySQL, so this
+    # RSA padding oracle attack surface is not reachable in our codebase.
+    # Will be resolved when upgrading to sqlx 0.8+ (which drops rsa dep).
+    "RUSTSEC-2023-0071",
+
+    # sqlx 0.7.4 — Binary Protocol Misinterpretation via truncating casts
+    # Fix requires sqlx >= 0.8.1 which is a breaking API change.
+    # Tracked for upgrade; risk is limited to malicious DB server responses
+    # which is not applicable in our controlled PostgreSQL environment.
+    "RUSTSEC-2024-0363",
+]

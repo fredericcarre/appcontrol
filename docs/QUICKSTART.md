@@ -91,7 +91,6 @@ The script:
 
 ```bash
 export DATABASE_URL=postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol
-export REDIS_URL=redis://localhost:6379          # optional, for token revocation
 export JWT_SECRET=dev-secret-change-in-production
 export RUST_LOG=info,appcontrol_backend=debug
 cargo run --bin appcontrol-backend

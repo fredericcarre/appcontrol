@@ -12,6 +12,7 @@ use std::time::Instant;
 use crate::AppState;
 
 /// Tracks request counts per key within a sliding window.
+/// In-memory implementation — fast, used in single-instance deployments.
 pub struct RateLimiter {
     /// Key → (window_start, count)
     entries: DashMap<String, (Instant, u32)>,
@@ -57,6 +58,8 @@ impl RateLimiter {
 }
 
 /// Rate limiter state shared across the application.
+/// In single-instance mode, uses in-memory DashMap.
+/// In HA mode (>1 backend), uses PostgreSQL rate_limit_counters table.
 pub struct RateLimitState {
     /// Per-IP limiter for auth endpoints
     pub auth: RateLimiter,
@@ -82,6 +85,67 @@ impl Default for RateLimitState {
     }
 }
 
+/// Check rate limit using PostgreSQL if HA mode is enabled, otherwise use in-memory.
+/// PostgreSQL approach: UPSERT counter with window reset on expiry.
+async fn check_rate_limit(
+    pool: &sqlx::PgPool,
+    fallback: &RateLimiter,
+    key: &str,
+    max_requests: u32,
+    window_secs: u64,
+    ha_mode: bool,
+) -> bool {
+    if !ha_mode {
+        return fallback.check(key, max_requests);
+    }
+
+    // PostgreSQL-backed rate limiting for HA deployments.
+    // Uses INSERT ON CONFLICT with window_start reset logic.
+    let result = sqlx::query_scalar::<_, i32>(
+        r#"
+        INSERT INTO rate_limit_counters (key, count, window_start)
+        VALUES ($1, 1, now())
+        ON CONFLICT (key) DO UPDATE SET
+            count = CASE
+                WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
+                THEN 1
+                ELSE rate_limit_counters.count + 1
+            END,
+            window_start = CASE
+                WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
+                THEN now()
+                ELSE rate_limit_counters.window_start
+            END
+        RETURNING count
+        "#,
+    )
+    .bind(key)
+    .bind(window_secs as i32)
+    .fetch_one(pool)
+    .await;
+
+    match result {
+        Ok(count) => count <= max_requests as i32,
+        Err(e) => {
+            tracing::debug!(
+                "PostgreSQL rate limit check failed, falling back to in-memory: {}",
+                e
+            );
+            fallback.check(key, max_requests)
+        }
+    }
+}
+
+/// Cleanup expired rate limit counters (called periodically from background task).
+pub async fn cleanup_rate_limit_counters(pool: &sqlx::PgPool) {
+    // Remove counters older than 2 minutes (window is 60s, 2x buffer)
+    let _ = sqlx::query(
+        "DELETE FROM rate_limit_counters WHERE window_start < now() - interval '2 minutes'",
+    )
+    .execute(pool)
+    .await;
+}
+
 /// Rate limiting middleware for auth endpoints (keyed by IP).
 pub async fn rate_limit_auth(
     State(state): State<Arc<AppState>>,
@@ -93,10 +157,16 @@ pub async fn rate_limit_auth(
         .map(|ci| ci.0.ip().to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
-    if !state
-        .rate_limiter
-        .auth
-        .check(&ip, state.config.rate_limit_auth)
+    let key = format!("auth:{}", ip);
+    if !check_rate_limit(
+        &state.db,
+        &state.rate_limiter.auth,
+        &key,
+        state.config.rate_limit_auth,
+        60,
+        state.config.ha_mode,
+    )
+    .await
     {
         tracing::warn!(ip = %ip, "Auth rate limit exceeded");
         return Err(StatusCode::TOO_MANY_REQUESTS);
@@ -111,19 +181,24 @@ pub async fn rate_limit_operations(
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    // Extract user_id from request extensions (set by auth middleware)
-    let key = request
+    let user = request
         .extensions()
         .get::<crate::auth::AuthUser>()
         .map(|u| u.user_id.to_string())
         .unwrap_or_else(|| "anonymous".to_string());
 
-    if !state
-        .rate_limiter
-        .operations
-        .check(&key, state.config.rate_limit_operations)
+    let key = format!("ops:{}", user);
+    if !check_rate_limit(
+        &state.db,
+        &state.rate_limiter.operations,
+        &key,
+        state.config.rate_limit_operations,
+        60,
+        state.config.ha_mode,
+    )
+    .await
     {
-        tracing::warn!(user = %key, "Operations rate limit exceeded");
+        tracing::warn!(user = %user, "Operations rate limit exceeded");
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
@@ -136,18 +211,24 @@ pub async fn rate_limit_reads(
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let key = request
+    let user = request
         .extensions()
         .get::<crate::auth::AuthUser>()
         .map(|u| u.user_id.to_string())
         .unwrap_or_else(|| "anonymous".to_string());
 
-    if !state
-        .rate_limiter
-        .reads
-        .check(&key, state.config.rate_limit_reads)
+    let key = format!("read:{}", user);
+    if !check_rate_limit(
+        &state.db,
+        &state.rate_limiter.reads,
+        &key,
+        state.config.rate_limit_reads,
+        60,
+        state.config.ha_mode,
+    )
+    .await
     {
-        tracing::warn!(user = %key, "Read rate limit exceeded");
+        tracing::warn!(user = %user, "Read rate limit exceeded");
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 

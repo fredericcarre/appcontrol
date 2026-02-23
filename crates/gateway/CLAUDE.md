@@ -10,10 +10,10 @@ Same as agent minus sled/sysinfo. Add: axum (for WSS server accepting agents).
 ```
 gateway/src/
 ├── main.rs            # CLI, config, start WSS server + WSS client
-├── agent_server.rs    # Accept agent WebSocket connections (mTLS)
-├── backend_client.rs  # WSS connection to backend (mTLS)
 ├── registry.rs        # Track connected agents (id, hostname, last_heartbeat)
-└── router.rs          # Route messages: agent↔backend bidirectional
+├── router.rs          # Route messages: agent↔backend bidirectional
+├── rate_limit.rs      # Rate limiting for gateway connections
+└── win_service.rs     # Windows service support
 ```
 
 ## Key Behavior

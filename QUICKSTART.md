@@ -44,7 +44,6 @@ docker compose -f docker/docker-compose.release.yaml ps
 | Backend API | 3000 | http://localhost:3000 |
 | Gateway (WSS) | 4443 | wss://localhost:4443 |
 | PostgreSQL | 5432 | `postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol` |
-| Redis | 6379 | `redis://localhost:6379` |
 
 ## 2. Verify the stack
 
@@ -263,7 +262,7 @@ gh release view v0.2.0 --repo fredericcarre/appcontrol
 If you want to build locally instead of using release images, see [docker/docker-compose.yaml](docker/docker-compose.yaml) which builds from source, and [docker/dev-setup.sh](docker/dev-setup.sh) for the full dev environment setup:
 
 ```bash
-# Dev infrastructure only (PostgreSQL + Redis)
+# Dev infrastructure only (PostgreSQL)
 docker compose -f docker/docker-compose.dev.yaml up -d
 
 # Build everything

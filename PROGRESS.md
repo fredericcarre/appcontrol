@@ -507,3 +507,58 @@
 - [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
 - [x] `cd frontend && npm run build` — clean
 - [x] `cd frontend && npm test` — 229 tests pass (22 files)
+
+---
+
+## Phase 10: Production Review Fixes
+
+Fixes based on production engineer review. All items address identified weaknesses (W1-W15).
+
+### P10-1: Rebuild Engine — Wait for Command Completion (W1 + W15)
+- [x] `crates/backend/src/core/rebuild.rs` — `execute_rebuild()` now polls `command_executions` table, waits for each rebuild command to complete (or timeout) before proceeding to restart phase
+- [x] `crates/backend/src/core/rebuild.rs` — On failure: SUSPEND (return error), do NOT proceed to restart. Consistent for both infra and app rebuild failures
+- [x] `crates/backend/src/core/rebuild.rs` — Log action BEFORE execution (Critical Rule #3)
+- [x] `crates/backend/src/core/sequencer.rs` — Added `record_command_dispatch_public()` for use by rebuild/switchover
+
+### P10-2: Switchover SYNC — Wait for Integrity Results (W2)
+- [x] `crates/backend/src/core/switchover.rs` — `execute_sync()` now dispatches integrity checks AND waits for results by polling `command_executions` table
+- [x] `crates/backend/src/core/switchover.rs` — Fails the SYNC phase if any integrity check returns non-zero or times out
+
+### P10-3: FSM Transaction Isolation (W5)
+- [x] `crates/backend/src/core/fsm.rs` — `transition_component()` now wraps state read + validation + INSERT + UPDATE in a database transaction with `SELECT ... FOR UPDATE` to prevent race conditions
+
+### P10-4: CI cargo-audit Enforcement (W6)
+- [x] `.github/workflows/ci.yaml` — Removed `continue-on-error: true` from cargo-audit step
+
+### P10-5: Action Log Append-Only Compliance (W7)
+- [x] `crates/backend/src/main.rs` — `run_data_retention()` now archives old action_log entries to `action_log_archive` table instead of deleting them, respecting Critical Rule #2
+
+### P10-6: Webhook Circuit Breaker (W3)
+- [x] `crates/backend/src/core/notifications.rs` — Added circuit breaker: after 5 consecutive failures, webhook is skipped for 5min cooldown. Success resets the circuit. Uses LazyLock + DashMap for lock-free global state.
+
+### P10-7: Redis-Backed Rate Limiting (W8)
+- [x] `crates/backend/src/middleware/rate_limit.rs` — Rate limiting now uses Redis INCR+EXPIRE when available (HA-safe across replicas). Falls back to in-memory DashMap when Redis is absent.
+
+### P10-8: Diagnostic Query Optimization (W9)
+- [x] `crates/backend/src/core/diagnostic.rs` — `diagnose_app()` now uses a single query with `ROW_NUMBER() OVER (PARTITION BY component_id, check_type)` instead of O(3N) individual queries
+
+### P10-9: Dead Code Cleanup (W14)
+- [x] `crates/backend/src/core/switchover.rs` — Removed dead `updates`/`params`/`param_idx` variables in `execute_start_target()` config swap
+
+### P10-10: Auto-Init PKI at Startup
+- [x] `crates/backend/src/main.rs` — `auto_init_pki()` generates CA for orgs without one at startup. Zero-config mTLS.
+
+### P10-11: Remove Redis Dependency
+- [x] `crates/backend/src/middleware/auth.rs` — Token revocation moved from Redis to PostgreSQL `revoked_tokens` table
+- [x] `crates/backend/src/middleware/rate_limit.rs` — Rate limiting uses PostgreSQL when `HA_MODE=true`, in-memory otherwise
+- [x] `crates/backend/src/lib.rs` — Removed `redis` from `AppState`
+- [x] `crates/backend/src/config.rs` — Replaced `redis_url` with `ha_mode` boolean
+- [x] `crates/backend/Cargo.toml` — Removed `redis` crate dependency
+- [x] `migrations/V017__remove_redis_dependency.sql` — `revoked_tokens` + `rate_limit_counters` tables
+- [x] `.github/workflows/ci.yaml` — Removed Redis service from E2E tests
+
+### Build Validation (Phase 10)
+- [x] `cargo build --workspace` — clean (0 errors)
+- [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
+- [x] `cargo test --workspace` — all pass
+- [x] `cd frontend && npm run build` — clean

@@ -25,7 +25,6 @@ pub struct AppState {
     pub config: config::AppConfig,
     pub rate_limiter: middleware::rate_limit::RateLimitState,
     pub heartbeat_batcher: core::heartbeat_batcher::HeartbeatBatcher,
-    pub redis: Option<redis::aio::ConnectionManager>,
     pub operation_lock: core::operation_lock::OperationLock,
 }
 

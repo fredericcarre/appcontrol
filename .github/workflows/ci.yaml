@@ -83,15 +83,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -116,7 +107,6 @@ jobs:
         env:
           DATABASE_URL: postgres://appcontrol:test@localhost:5432/postgres
           TEST_DATABASE_ADMIN_URL: postgres://appcontrol:test@localhost:5432/postgres
-          TEST_REDIS_URL: redis://localhost:6379
 
       - name: Upload E2E test output
         if: always()
@@ -263,7 +253,6 @@ jobs:
 
       - name: Audit
         run: cargo audit
-        continue-on-error: true
 
   # ---------------------------------------------------------------------------
   # Docker Image Security Scan — trivy vulnerability scanner

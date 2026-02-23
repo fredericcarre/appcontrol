@@ -20,8 +20,9 @@ pub struct AppConfig {
     pub rate_limit_operations: u32,
     /// Rate limiting: read endpoints (per user per minute)
     pub rate_limit_reads: u32,
-    /// Redis URL (optional — set REDIS_URL to enable caching)
-    pub redis_url: Option<String>,
+    /// HA mode: when true, rate limiting uses PostgreSQL instead of in-memory.
+    /// Enable when running multiple backend replicas behind a load balancer.
+    pub ha_mode: bool,
     /// CORS allowed origins (comma-separated). Empty = permissive in dev, restrictive in prod.
     pub cors_origins: Vec<String>,
     /// Log format: "text" (default) or "json" for structured JSON logging
@@ -133,7 +134,10 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(200),
-            redis_url: std::env::var("REDIS_URL").ok(),
+            ha_mode: std::env::var("HA_MODE")
+                .ok()
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
             cors_origins,
             log_format: std::env::var("LOG_FORMAT").unwrap_or_else(|_| "text".to_string()),
             db_pool_size: std::env::var("DB_POOL_SIZE")

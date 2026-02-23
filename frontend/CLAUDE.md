@@ -65,7 +65,10 @@ frontend/src/
 │   ├── AgentsPage.tsx
 │   ├── ReportsPage.tsx
 │   ├── SettingsPage.tsx
-│   └── OnboardingPage.tsx
+│   ├── OnboardingPage.tsx
+│   ├── ShareLinkPage.tsx              # Public share link viewer (read-only map access)
+│   ├── ApiKeysPage.tsx                # API key management for scheduler integration
+│   └── ImportPage.tsx                 # Application import (XML/JSON/YAML upload)
 └── lib/
     ├── colors.ts                    # State color palette
     └── permissions.ts              # Permission level helpers

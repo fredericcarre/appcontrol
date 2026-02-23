@@ -145,17 +145,6 @@ fn run_service() -> anyhow::Result<()> {
         let heartbeat_batcher =
             appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
 
-        let redis = if let Some(ref redis_url) = config.redis_url {
-            redis::Client::open(redis_url.as_str()).ok().and_then(|c| {
-                // Block on the async connection manager creation
-                tokio::runtime::Handle::current()
-                    .block_on(redis::aio::ConnectionManager::new(c))
-                    .ok()
-            })
-        } else {
-            None
-        };
-
         let operation_lock =
             appcontrol_backend::core::operation_lock::OperationLock::with_pool(pool.clone());
 
@@ -165,7 +154,6 @@ fn run_service() -> anyhow::Result<()> {
             config,
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher,
-            redis,
             operation_lock,
         });
 
