@@ -110,8 +110,11 @@ dependencies = [
  "chrono",
  "clap",
  "futures-util",
+ "hex",
  "libc",
  "nix",
+ "rustls 0.22.4",
+ "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -121,10 +124,13 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-rustls 0.25.0",
  "tokio-tungstenite 0.21.0",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -238,11 +244,17 @@ dependencies = [
  "clap",
  "dashmap",
  "futures-util",
+ "hex",
+ "hyper-util",
+ "rustls 0.22.4",
+ "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-rustls 0.25.0",
  "tokio-tungstenite 0.21.0",
  "tracing",
  "tracing-subscriber",
@@ -3889,6 +3901,15 @@ name = "webpki-roots"
 version = "0.25.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.6",
+]
 
 [[package]]
 name = "webpki-roots"

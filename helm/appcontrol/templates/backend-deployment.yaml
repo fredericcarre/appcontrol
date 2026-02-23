@@ -55,7 +55,17 @@ spec:
               value: {{ .Values.backend.database.url | quote }}
               {{- end }}
             - name: REDIS_URL
+              {{- if .Values.backend.redis.url }}
               value: {{ .Values.backend.redis.url | quote }}
+              {{- else if .Values.redis.enabled }}
+              value: "redis://{{ include "appcontrol.fullname" . }}-redis:6379"
+              {{- else }}
+              value: ""
+              {{- end }}
+            {{- if .Values.backend.env.CORS_ORIGINS }}
+            - name: CORS_ORIGINS
+              value: {{ .Values.backend.env.CORS_ORIGINS | quote }}
+            {{- end }}
             - name: JWT_SECRET
               {{- if .Values.backend.jwt.existingSecret }}
               valueFrom:
@@ -69,13 +79,17 @@ spec:
             httpGet:
               path: /health
               port: 3000
-            initialDelaySeconds: 10
+            initialDelaySeconds: 15
             periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
           readinessProbe:
             httpGet:
               path: /ready
               port: 3000
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}

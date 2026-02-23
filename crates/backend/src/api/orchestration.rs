@@ -52,8 +52,15 @@ pub async fn start(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if !dry_run {
+        // Acquire operation lock — prevents concurrent start/stop on the same app
+        let guard = state
+            .operation_lock
+            .try_lock(app_id, "orchestration_start", user.user_id)
+            .map_err(|e| ApiError::Conflict(e.to_string()))?;
+
         let state_clone = state.clone();
         tokio::spawn(async move {
+            let _guard = guard; // Hold the lock until the operation completes
             if let Err(e) = crate::core::sequencer::execute_start(&state_clone, app_id).await {
                 tracing::error!("Orchestration start failed for {}: {}", app_id, e);
             }
@@ -75,6 +82,12 @@ pub async fn stop(
         return Err(ApiError::Forbidden);
     }
 
+    // Acquire operation lock — prevents concurrent start/stop on the same app
+    let guard = state
+        .operation_lock
+        .try_lock(app_id, "orchestration_stop", user.user_id)
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+
     log_action(
         &state.db,
         user.user_id,
@@ -87,6 +100,7 @@ pub async fn stop(
 
     let state_clone = state.clone();
     tokio::spawn(async move {
+        let _guard = guard; // Hold the lock until the operation completes
         if let Err(e) = crate::core::sequencer::execute_stop(&state_clone, app_id).await {
             tracing::error!("Orchestration stop failed for {}: {}", app_id, e);
         }

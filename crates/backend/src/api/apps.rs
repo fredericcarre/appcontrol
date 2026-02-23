@@ -281,8 +281,15 @@ pub async fn start_app(
         return Ok(Json(json!({ "dry_run": true, "plan": plan })));
     }
 
+    // Acquire operation lock — prevents concurrent start/stop on the same app
+    let guard = state
+        .operation_lock
+        .try_lock(id, "start", user.user_id)
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+
     let state_clone = state.clone();
     tokio::spawn(async move {
+        let _guard = guard; // Hold the lock until the operation completes
         if let Err(e) = crate::core::sequencer::execute_start(&state_clone, id).await {
             tracing::error!("Failed to start app {}: {}", id, e);
         }
@@ -301,6 +308,12 @@ pub async fn stop_app(
         return Err(ApiError::Forbidden);
     }
 
+    // Acquire operation lock — prevents concurrent start/stop on the same app
+    let guard = state
+        .operation_lock
+        .try_lock(id, "stop", user.user_id)
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+
     log_action(
         &state.db,
         user.user_id,
@@ -313,6 +326,7 @@ pub async fn stop_app(
 
     let state_clone = state.clone();
     tokio::spawn(async move {
+        let _guard = guard; // Hold the lock until the operation completes
         if let Err(e) = crate::core::sequencer::execute_stop(&state_clone, id).await {
             tracing::error!("Failed to stop app {}: {}", id, e);
         }
@@ -351,9 +365,16 @@ pub async fn start_branch(
         return Ok(Json(json!({ "dry_run": true, "branch": branch })));
     }
 
+    // Acquire operation lock — prevents concurrent start/stop on the same app
+    let guard = state
+        .operation_lock
+        .try_lock(id, "start_branch", user.user_id)
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+
     let state_clone = state.clone();
     let component_id = body.component_id;
     tokio::spawn(async move {
+        let _guard = guard; // Hold the lock until the operation completes
         if let Err(e) = crate::core::fsm::transition_component(
             &state_clone,
             component_id,

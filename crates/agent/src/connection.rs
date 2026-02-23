@@ -5,11 +5,13 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::buffer::OfflineBuffer;
+use crate::config::TlsSection;
 use crate::scheduler::CheckScheduler;
 use appcontrol_common::{AgentMessage, BackendMessage};
 
 /// Manages the WebSocket connection to the gateway/backend.
 /// Supports multi-gateway failover with ordered strategy.
+/// When TLS is configured, uses mTLS with client certificate authentication.
 pub struct ConnectionManager {
     gateway_urls: Vec<String>,
     failover_strategy: String,
@@ -21,6 +23,10 @@ pub struct ConnectionManager {
     msg_tx: mpsc::UnboundedSender<AgentMessage>,
     /// Monotonic sequence counter for reliable message delivery.
     sequence_counter: Arc<AtomicU64>,
+    /// TLS connector for mTLS connections (None = plaintext, Some = mTLS enforced).
+    tls_connector: Option<tokio_rustls::TlsConnector>,
+    /// SHA-256 fingerprint of the agent's client certificate.
+    cert_fingerprint: Option<String>,
 }
 
 impl ConnectionManager {
@@ -34,7 +40,32 @@ impl ConnectionManager {
         buffer: OfflineBuffer,
         scheduler: Arc<CheckScheduler>,
         msg_tx: mpsc::UnboundedSender<AgentMessage>,
+        tls_config: Option<&TlsSection>,
     ) -> Self {
+        let (tls_connector, cert_fingerprint) = match tls_config {
+            Some(tls) if tls.enabled => {
+                let connector = match crate::tls::build_tls_connector(tls) {
+                    Ok(c) => {
+                        tracing::info!("mTLS enabled — agent will present client certificate");
+                        Some(c)
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to build TLS connector: {} — connections will fail", e);
+                        None
+                    }
+                };
+                let fingerprint = crate::tls::compute_cert_fingerprint(tls);
+                if let Some(ref fp) = fingerprint {
+                    tracing::info!("Agent cert fingerprint: {}", fp);
+                }
+                (connector, fingerprint)
+            }
+            _ => {
+                tracing::warn!("TLS not configured — agent will connect in PLAINTEXT (not recommended for production)");
+                (None, None)
+            }
+        };
+
         Self {
             gateway_urls,
             failover_strategy,
@@ -45,10 +76,12 @@ impl ConnectionManager {
             scheduler,
             msg_tx,
             sequence_counter: Arc::new(AtomicU64::new(1)),
+            tls_connector,
+            cert_fingerprint,
         }
     }
 
-    /// Backward-compatible constructor for single gateway URL.
+    /// Backward-compatible constructor for single gateway URL (plaintext, for testing only).
     #[allow(dead_code)]
     pub fn new_single(
         gateway_url: String,
@@ -67,6 +100,7 @@ impl ConnectionManager {
             buffer,
             scheduler,
             msg_tx,
+            None,
         )
     }
 
@@ -134,20 +168,110 @@ impl ConnectionManager {
         gateway_url: &str,
         msg_rx: &mut mpsc::UnboundedReceiver<AgentMessage>,
     ) -> anyhow::Result<()> {
-        use futures_util::{SinkExt, StreamExt};
-        use tokio_tungstenite::connect_async;
+        if let Some(ref connector) = self.tls_connector {
+            self.connect_tls(connector, gateway_url, msg_rx).await
+        } else {
+            self.connect_plaintext(gateway_url, msg_rx).await
+        }
+    }
 
-        let (ws_stream, _) = connect_async(gateway_url).await?;
+    /// Connect with mTLS: TCP → TLS handshake (with client cert) → WebSocket upgrade.
+    async fn connect_tls(
+        &self,
+        connector: &tokio_rustls::TlsConnector,
+        gateway_url: &str,
+        msg_rx: &mut mpsc::UnboundedReceiver<AgentMessage>,
+    ) -> anyhow::Result<()> {
+        use futures_util::StreamExt;
+
+        // Parse host from URL for SNI
+        let url = url::Url::parse(gateway_url)
+            .map_err(|e| anyhow::anyhow!("Invalid gateway URL: {}", e))?;
+        let host = url
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("No host in gateway URL"))?;
+        let port = url.port().unwrap_or(4443);
+
+        // Establish TCP connection
+        let tcp_stream = tokio::net::TcpStream::connect(format!("{}:{}", host, port)).await?;
+
+        // Perform TLS handshake with mTLS (client cert presented automatically)
+        let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
+            .map_err(|e| anyhow::anyhow!("Invalid server name for TLS: {}", e))?;
+        let tls_stream = connector.connect(server_name, tcp_stream).await?;
+
+        tracing::info!(
+            "mTLS handshake complete with gateway {}:{} — client certificate presented",
+            host,
+            port
+        );
+
+        // Upgrade to WebSocket over TLS
+        let ws_url = if gateway_url.starts_with("ws://") {
+            gateway_url.replace("ws://", "wss://")
+        } else {
+            gateway_url.to_string()
+        };
+        let request = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri(&ws_url)
+            .header("Host", host)
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header(
+                "Sec-WebSocket-Key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
+            .header("Sec-WebSocket-Version", "13")
+            .body(())
+            .map_err(|e| anyhow::anyhow!("Failed to build WS request: {}", e))?;
+
+        let (ws_stream, _) =
+            tokio_tungstenite::client_async(request, tokio_rustls::TlsStream::from(tls_stream))
+                .await?;
         let (mut write, mut read) = ws_stream.split();
 
-        // Send registration message with hostname and detected IPs
+        self.register_and_run(&mut write, &mut read, gateway_url, msg_rx)
+            .await
+    }
+
+    /// Connect without TLS (development/testing only).
+    async fn connect_plaintext(
+        &self,
+        gateway_url: &str,
+        msg_rx: &mut mpsc::UnboundedReceiver<AgentMessage>,
+    ) -> anyhow::Result<()> {
+        use futures_util::StreamExt;
+        let (ws_stream, _) = tokio_tungstenite::connect_async(gateway_url).await?;
+        let (mut write, mut read) = ws_stream.split();
+
+        self.register_and_run(&mut write, &mut read, gateway_url, msg_rx)
+            .await
+    }
+
+    /// Send registration, replay buffer, and run the message loop.
+    /// Generic over the WebSocket stream type (works with both TLS and plaintext).
+    async fn register_and_run<S>(
+        &self,
+        write: &mut futures_util::stream::SplitSink<S, tokio_tungstenite::tungstenite::Message>,
+        read: &mut futures_util::stream::SplitStream<S>,
+        gateway_url: &str,
+        msg_rx: &mut mpsc::UnboundedReceiver<AgentMessage>,
+    ) -> anyhow::Result<()>
+    where
+        S: futures_util::Stream<Item = Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>>
+            + futures_util::Sink<tokio_tungstenite::tungstenite::Message, Error = tokio_tungstenite::tungstenite::Error>
+            + Unpin,
+    {
+        use futures_util::{SinkExt, StreamExt};
+
+        // Send registration message with hostname, detected IPs, and cert fingerprint
         let register = AgentMessage::Register {
             agent_id: self.agent_id,
             hostname: crate::platform::gethostname(),
             ip_addresses: crate::platform::get_ip_addresses(),
             labels: serde_json::json!(self.labels),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            cert_fingerprint: None, // Gateway populates this from TLS handshake
+            cert_fingerprint: self.cert_fingerprint.clone(),
         };
 
         let msg = serde_json::to_string(&register)?;

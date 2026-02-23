@@ -4,6 +4,7 @@ pub mod diagnostic;
 pub mod fsm;
 pub mod heartbeat_batcher;
 pub mod heartbeat_monitor;
+pub mod operation_lock;
 pub mod permissions;
 pub mod rebuild;
 pub mod sequencer;

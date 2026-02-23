@@ -93,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
         rate_limiter: middleware::rate_limit::RateLimitState::new(),
         heartbeat_batcher,
         redis,
+        operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
     });
 
     // Store prometheus handle in a leaked box for the metrics handler
