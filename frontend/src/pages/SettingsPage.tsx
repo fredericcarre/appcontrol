@@ -1,10 +1,12 @@
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Moon, Sun, User } from 'lucide-react';
+import { Moon, Sun, User, Key } from 'lucide-react';
 
 export function SettingsPage() {
+  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const theme = useUiStore((s) => s.theme);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
@@ -37,6 +39,25 @@ export function SettingsPage() {
               <span className="text-muted-foreground">Organization</span>
               <p className="font-medium font-mono text-xs">{user?.org_id?.slice(0, 8) || '-'}</p>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Key className="h-5 w-5" /> API Keys
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Manage API Keys</p>
+              <p className="text-xs text-muted-foreground">Create and revoke API keys for scheduler integration</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => navigate('/settings/api-keys')}>
+              Manage Keys
+            </Button>
           </div>
         </CardContent>
       </Card>

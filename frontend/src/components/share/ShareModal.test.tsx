@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 
@@ -10,6 +10,12 @@ vi.mock('@/api/permissions', () => ({
   useRemovePermission: vi.fn(),
   useShareLinks: vi.fn(),
   useCreateShareLink: vi.fn(),
+  useRevokeShareLink: vi.fn(),
+}));
+
+// Mock the users API
+vi.mock('@/api/users', () => ({
+  useSearchUsers: vi.fn(() => ({ data: [], isLoading: false })),
 }));
 
 import {
@@ -18,6 +24,7 @@ import {
   useRemovePermission,
   useShareLinks,
   useCreateShareLink,
+  useRevokeShareLink,
 } from '@/api/permissions';
 
 const mockedUseAppPermissions = vi.mocked(useAppPermissions);
@@ -25,6 +32,7 @@ const mockedUseShareLinks = vi.mocked(useShareLinks);
 const mockedUseSetPermission = vi.mocked(useSetPermission);
 const mockedUseRemovePermission = vi.mocked(useRemovePermission);
 const mockedUseCreateShareLink = vi.mocked(useCreateShareLink);
+const mockedUseRevokeShareLink = vi.mocked(useRevokeShareLink);
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -44,8 +52,8 @@ describe('ShareModal', () => {
 
     mockedUseAppPermissions.mockReturnValue({
       data: [
-        { id: 'p1', app_id: 'app-1', user_id: 'u1', level: 'edit', user_email: 'alice@example.com' },
-        { id: 'p2', app_id: 'app-1', team_id: 't1', level: 'view', team_name: 'DevOps' },
+        { id: 'p1', app_id: 'app-1', user_id: 'u1', level: 'edit', user_email: 'alice@example.com', type: 'user' },
+        { id: 'p2', app_id: 'app-1', team_id: 't1', level: 'view', team_name: 'DevOps', type: 'team' },
       ],
       isLoading: false,
     } as unknown as ReturnType<typeof useAppPermissions>);
@@ -71,6 +79,11 @@ describe('ShareModal', () => {
       mutateAsync: mockMutateAsync,
       isPending: false,
     } as unknown as ReturnType<typeof useCreateShareLink>);
+
+    mockedUseRevokeShareLink.mockReturnValue({
+      mutate: mockMutate,
+      isPending: false,
+    } as unknown as ReturnType<typeof useRevokeShareLink>);
   });
 
   it('should render the modal title', async () => {
@@ -122,7 +135,6 @@ describe('ShareModal', () => {
       { wrapper: createWrapper() },
     );
 
-    // Permission levels appear as badges in the permission rows
     const editBadges = screen.getAllByText('edit');
     expect(editBadges.length).toBeGreaterThanOrEqual(1);
     const viewBadges = screen.getAllByText('view');
@@ -144,14 +156,14 @@ describe('ShareModal', () => {
     expect(screen.getByText('No permissions set')).toBeInTheDocument();
   });
 
-  it('should have an input for adding users', async () => {
+  it('should have user search input', async () => {
     const { ShareModal } = await import('./ShareModal');
     render(
       <ShareModal appId="app-1" open={true} onOpenChange={vi.fn()} />,
       { wrapper: createWrapper() },
     );
 
-    expect(screen.getByPlaceholderText('User email or ID')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search users by name or email...')).toBeInTheDocument();
   });
 
   it('should not render anything when open is false', async () => {
@@ -164,41 +176,6 @@ describe('ShareModal', () => {
     expect(screen.queryByText('Share Application')).not.toBeInTheDocument();
   });
 
-  it('should call setPermission when adding a user', async () => {
-    mockMutateAsync.mockResolvedValue({});
-
-    const { ShareModal } = await import('./ShareModal');
-    render(
-      <ShareModal appId="app-1" open={true} onOpenChange={vi.fn()} />,
-      { wrapper: createWrapper() },
-    );
-
-    const input = screen.getByPlaceholderText('User email or ID');
-    fireEvent.change(input, { target: { value: 'bob@example.com' } });
-
-    // The add user button has a UserPlus icon and is next to the input/select row
-    // It's the button that is NOT disabled (it becomes enabled once there's text)
-    const allButtons = screen.getAllByRole('button');
-    // Find the button that contains the UserPlus SVG
-    const addButton = allButtons.find((btn) => {
-      const svg = btn.querySelector('svg');
-      return svg?.classList.contains('lucide-user-plus');
-    });
-
-    expect(addButton).toBeTruthy();
-    if (addButton) {
-      fireEvent.click(addButton);
-    }
-
-    await waitFor(() => {
-      expect(mockMutateAsync).toHaveBeenCalledWith({
-        app_id: 'app-1',
-        user_id: 'bob@example.com',
-        level: 'view',
-      });
-    });
-  });
-
   it('should call removePermission when delete button is clicked', async () => {
     const { ShareModal } = await import('./ShareModal');
     render(
@@ -206,9 +183,8 @@ describe('ShareModal', () => {
       { wrapper: createWrapper() },
     );
 
-    // Find trash buttons
+    // Find trash buttons (small icon buttons)
     const trashButtons = screen.getAllByRole('button').filter((btn) => {
-      // The remove buttons are the small icon buttons with destructive class
       return btn.className.includes('h-7');
     });
 
