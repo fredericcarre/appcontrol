@@ -157,6 +157,12 @@ impl TestContext {
             redis_url: None,
             cors_origins: vec![],
             log_format: "text".to_string(),
+            db_pool_size: 20,
+            db_idle_timeout_secs: 600,
+            db_connect_timeout_secs: 30,
+            shutdown_timeout_secs: 30,
+            retention_action_log_days: 0,
+            retention_check_events_days: 0,
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
@@ -166,6 +172,7 @@ impl TestContext {
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
             redis: None,
+            operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
         });
 
         let app = appcontrol_backend::create_router(state);
@@ -311,6 +318,12 @@ impl TestContext {
             redis_url: None,
             cors_origins: vec![],
             log_format: "text".to_string(),
+            db_pool_size: 20,
+            db_idle_timeout_secs: 600,
+            db_connect_timeout_secs: 30,
+            shutdown_timeout_secs: 30,
+            retention_action_log_days: 0,
+            retention_check_events_days: 0,
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
@@ -320,6 +333,7 @@ impl TestContext {
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
             redis: None,
+            operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
         });
 
         let app = appcontrol_backend::create_router(state);
