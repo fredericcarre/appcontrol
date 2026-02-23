@@ -5,6 +5,13 @@ use uuid::Uuid;
 use crate::AppState;
 use appcontrol_common::BackendMessage;
 
+/// Default timeout for rebuild commands (5 minutes).
+const REBUILD_CMD_TIMEOUT_SECS: u64 = 300;
+/// Default timeout for infra rebuild commands (10 minutes).
+const INFRA_CMD_TIMEOUT_SECS: u64 = 600;
+/// Polling interval when waiting for command completion.
+const POLL_INTERVAL_SECS: u64 = 2;
+
 #[derive(Debug, thiserror::Error)]
 pub enum RebuildError {
     #[error("Component {0} is rebuild-protected")]
@@ -19,6 +26,8 @@ pub enum RebuildError {
     NoAgent(Uuid),
     #[error("Rebuild failed for component {0}: {1}")]
     ExecutionFailed(Uuid, String),
+    #[error("Rebuild suspended: command timed out for component {0}")]
+    Timeout(Uuid),
 }
 
 /// Build a rebuild plan. Checks protected components and resolves rebuild commands.
@@ -128,14 +137,16 @@ async fn fetch_rebuild_targets(
 }
 
 /// Execute a rebuild plan: stop components in reverse DAG order, run rebuild commands,
-/// then restart in DAG order. This follows the diagnostic → rebuild → verify pattern.
+/// wait for each to complete, then restart in DAG order.
 ///
 /// Steps per component:
 /// 1. Stop the component (if running)
-/// 2. Run `rebuild_infra_cmd` on the bastion agent (if defined) — infrastructure rebuild
-/// 3. Run `rebuild_cmd` on the component's agent — application rebuild
+/// 2. Run `rebuild_infra_cmd` on the bastion agent (if defined) — wait for completion
+/// 3. Run `rebuild_cmd` on the component's agent — wait for completion
 /// 4. Start the component
 /// 5. Verify via health check
+///
+/// On failure: SUSPEND — log the error, do NOT proceed to restart phase.
 pub async fn execute_rebuild(
     state: &Arc<AppState>,
     app_id: Uuid,
@@ -150,6 +161,16 @@ pub async fn execute_rebuild(
             return Err(RebuildError::ProtectedComponent(*id));
         }
     }
+
+    // Log action BEFORE execution (Critical Rule #3: log before execute)
+    let _ = sqlx::query(
+        "INSERT INTO action_log (user_id, action, resource_type, resource_id, details) VALUES ($1, 'rebuild_execute', 'application', $2, $3)",
+    )
+    .bind(initiated_by)
+    .bind(app_id)
+    .bind(serde_json::json!({"components": targets.len(), "status": "started"}))
+    .execute(&state.db)
+    .await;
 
     // Build DAG order
     let dag = super::dag::build_dag(&state.db, app_id).await?;
@@ -166,7 +187,7 @@ pub async fn execute_rebuild(
     tracing::info!(
         app_id = %app_id,
         targets = target_ids.len(),
-        "Rebuild: stopping affected components"
+        "Rebuild phase 1: stopping affected components"
     );
 
     for level in &reverse_levels {
@@ -183,17 +204,18 @@ pub async fn execute_rebuild(
         for handle in handles {
             if let Ok(Err(e)) = handle.await {
                 tracing::warn!("Failed to stop component during rebuild: {}", e);
-                // Continue rebuild even if stop fails (component might already be stopped)
+                // Continue — component might already be stopped
             }
         }
     }
 
     // Phase 2: Execute rebuild commands in DAG order (level by level)
+    // WAIT for each command to complete before proceeding.
     let mut rebuild_results = Vec::new();
 
-    for level in &levels {
-        let mut handles = Vec::new();
+    tracing::info!(app_id = %app_id, "Rebuild phase 2: executing rebuild commands");
 
+    for level in &levels {
         for &comp_id in level {
             if !target_ids.contains(&comp_id) {
                 continue;
@@ -208,84 +230,111 @@ pub async fn execute_rebuild(
             let comp_name = name.clone();
             let agent_id = get_component_agent(&state.db, comp_id).await;
 
-            // Run infrastructure rebuild first (if defined)
+            // Run infrastructure rebuild first (if defined) — WAIT for completion
             if let Some(infra_cmd) = infra_cmd {
                 let exec_agent = bastion_agent.or(agent_id);
-                if let Some(agent_id) = exec_agent {
+                if let Some(exec_agent_id) = exec_agent {
                     let request_id = Uuid::new_v4();
                     let message = BackendMessage::ExecuteCommand {
                         request_id,
                         component_id: comp_id,
                         command: infra_cmd.clone(),
-                        timeout_seconds: 300,
+                        timeout_seconds: INFRA_CMD_TIMEOUT_SECS as u32,
                         exec_mode: "sync".to_string(),
                     };
 
-                    super::sequencer::record_command_result(
-                        &state.db,
+                    // Record dispatch
+                    super::sequencer::record_command_dispatch_public(
+                        &state.db, request_id, comp_id, exec_agent_id, "rebuild_infra",
+                    ).await;
+
+                    state.ws_hub.send_to_agent(exec_agent_id, message);
+                    tracing::info!(
+                        component = %comp_name,
+                        agent = %exec_agent_id,
+                        request_id = %request_id,
+                        "Rebuild infra command dispatched — waiting for completion"
+                    );
+
+                    // Wait for completion
+                    let result = wait_for_command_completion(
+                        &state.db, request_id, INFRA_CMD_TIMEOUT_SECS,
+                    ).await;
+
+                    match result {
+                        CommandCompletion::Success => {
+                            tracing::info!(component = %comp_name, "Infra rebuild completed successfully");
+                        }
+                        CommandCompletion::Failed(msg) => {
+                            tracing::error!(component = %comp_name, error = %msg, "Infra rebuild FAILED — suspending rebuild");
+                            return Err(RebuildError::ExecutionFailed(comp_id, format!("Infra rebuild failed: {}", msg)));
+                        }
+                        CommandCompletion::Timeout => {
+                            tracing::error!(component = %comp_name, "Infra rebuild TIMED OUT — suspending rebuild");
+                            return Err(RebuildError::Timeout(comp_id));
+                        }
+                    }
+                }
+            }
+
+            // Run application rebuild command — WAIT for completion
+            if let Some(rebuild_cmd) = rebuild_cmd {
+                if let Some(agent_id) = agent_id {
+                    let request_id = Uuid::new_v4();
+                    let message = BackendMessage::ExecuteCommand {
                         request_id,
-                        0,
-                        &format!("Rebuild infra command dispatched for {}", comp_name),
-                        "",
-                    )
-                    .await;
+                        component_id: comp_id,
+                        command: rebuild_cmd.clone(),
+                        timeout_seconds: REBUILD_CMD_TIMEOUT_SECS as u32,
+                        exec_mode: "sync".to_string(),
+                    };
+
+                    super::sequencer::record_command_dispatch_public(
+                        &state.db, request_id, comp_id, agent_id, "rebuild_app",
+                    ).await;
 
                     state.ws_hub.send_to_agent(agent_id, message);
                     tracing::info!(
                         component = %comp_name,
                         agent = %agent_id,
-                        "Rebuild infra command dispatched"
+                        request_id = %request_id,
+                        "Rebuild command dispatched — waiting for completion"
                     );
-                }
-            }
 
-            // Run application rebuild command
-            if let Some(rebuild_cmd) = rebuild_cmd {
-                if let Some(agent_id) = agent_id {
-                    let request_id = Uuid::new_v4();
-                    let state_clone = state.clone();
-                    let cmd = rebuild_cmd.clone();
-                    let name = comp_name.clone();
+                    let result = wait_for_command_completion(
+                        &state.db, request_id, REBUILD_CMD_TIMEOUT_SECS,
+                    ).await;
 
-                    handles.push(tokio::spawn(async move {
-                        let message = BackendMessage::ExecuteCommand {
-                            request_id,
-                            component_id: comp_id,
-                            command: cmd,
-                            timeout_seconds: 600,
-                            exec_mode: "sync".to_string(),
-                        };
-                        state_clone.ws_hub.send_to_agent(agent_id, message);
-                        tracing::info!(
-                            component = %name,
-                            agent = %agent_id,
-                            request_id = %request_id,
-                            "Rebuild command dispatched"
-                        );
-                        (comp_id, name, request_id)
-                    }));
+                    match result {
+                        CommandCompletion::Success => {
+                            rebuild_results.push(serde_json::json!({
+                                "component_id": comp_id,
+                                "name": comp_name,
+                                "rebuild_request_id": request_id,
+                                "status": "completed",
+                            }));
+                            tracing::info!(component = %comp_name, "App rebuild completed successfully");
+                        }
+                        CommandCompletion::Failed(msg) => {
+                            tracing::error!(component = %comp_name, error = %msg, "App rebuild FAILED — suspending rebuild");
+                            return Err(RebuildError::ExecutionFailed(comp_id, format!("App rebuild failed: {}", msg)));
+                        }
+                        CommandCompletion::Timeout => {
+                            tracing::error!(component = %comp_name, "App rebuild TIMED OUT — suspending rebuild");
+                            return Err(RebuildError::Timeout(comp_id));
+                        }
+                    }
                 } else {
                     tracing::warn!(component = %comp_name, "No agent for rebuild — skipping");
                 }
             }
         }
-
-        for handle in handles {
-            if let Ok((comp_id, name, request_id)) = handle.await {
-                rebuild_results.push(serde_json::json!({
-                    "component_id": comp_id,
-                    "name": name,
-                    "rebuild_request_id": request_id,
-                    "status": "dispatched",
-                }));
-            }
-        }
     }
 
-    // Phase 3: Restart components in DAG order
+    // Phase 3: Restart components in DAG order (only if ALL rebuilds succeeded)
     tracing::info!(
         app_id = %app_id,
-        "Rebuild: restarting components in DAG order"
+        "Rebuild phase 3: restarting components in DAG order"
     );
 
     for level in &levels {
@@ -301,20 +350,14 @@ pub async fn execute_rebuild(
         }
         for handle in handles {
             if let Ok(Err(e)) = handle.await {
-                tracing::error!("Failed to restart component after rebuild: {}", e);
+                tracing::error!("Failed to restart component after rebuild — suspending: {}", e);
+                return Err(RebuildError::ExecutionFailed(
+                    Uuid::nil(),
+                    format!("Restart failed after rebuild: {}", e),
+                ));
             }
         }
     }
-
-    // Log the rebuild action
-    let _ = sqlx::query(
-        "INSERT INTO action_log (user_id, action, resource_type, resource_id, details) VALUES ($1, 'rebuild_execute', 'application', $2, $3)",
-    )
-    .bind(initiated_by)
-    .bind(app_id)
-    .bind(serde_json::json!({"components": rebuild_results.len()}))
-    .execute(&state.db)
-    .await;
 
     Ok(serde_json::json!({
         "status": "completed",
@@ -333,4 +376,56 @@ async fn get_component_agent(pool: &sqlx::PgPool, component_id: Uuid) -> Option<
     .await
     .ok()
     .flatten()
+}
+
+/// Result of waiting for a command to complete.
+enum CommandCompletion {
+    Success,
+    Failed(String),
+    Timeout,
+}
+
+/// Poll the command_executions table until the command completes or times out.
+async fn wait_for_command_completion(
+    pool: &sqlx::PgPool,
+    request_id: Uuid,
+    timeout_secs: u64,
+) -> CommandCompletion {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+
+    loop {
+        let result = sqlx::query_as::<_, (String, Option<i16>, Option<String>)>(
+            "SELECT status, exit_code, stderr FROM command_executions WHERE request_id = $1",
+        )
+        .bind(request_id)
+        .fetch_optional(pool)
+        .await;
+
+        match result {
+            Ok(Some((status, exit_code, stderr))) => {
+                match status.as_str() {
+                    "completed" => return CommandCompletion::Success,
+                    "failed" => {
+                        let msg = stderr.unwrap_or_else(|| format!("exit code {}", exit_code.unwrap_or(-1)));
+                        return CommandCompletion::Failed(msg);
+                    }
+                    _ => {
+                        // Still dispatched/running — keep polling
+                    }
+                }
+            }
+            Ok(None) => {
+                // Not yet tracked — keep polling
+            }
+            Err(e) => {
+                tracing::warn!(request_id = %request_id, "Error polling command status: {}", e);
+            }
+        }
+
+        if std::time::Instant::now() > deadline {
+            return CommandCompletion::Timeout;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
+    }
 }

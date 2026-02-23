@@ -200,7 +200,8 @@ async fn execute_stop_source(
 }
 
 /// Execute the SYNC phase: verify data consistency between source and target.
-/// Runs integrity checks on source-side components to confirm clean shutdown.
+/// Runs integrity checks on source-side components and WAITS for results.
+/// Fails the phase if any integrity check returns a non-zero exit code.
 async fn execute_sync(
     state: &Arc<AppState>,
     app_id: Uuid,
@@ -225,7 +226,8 @@ async fn execute_sync(
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
-    let mut check_results = Vec::new();
+    // Dispatch all integrity checks and collect request_ids
+    let mut dispatched: Vec<(Uuid, String, Uuid)> = Vec::new(); // (comp_id, name, request_id)
     for (comp_id, name, cmd, agent_id) in &integrity_components {
         if let Some(agent_id) = agent_id {
             let request_id = Uuid::new_v4();
@@ -236,18 +238,92 @@ async fn execute_sync(
                 timeout_seconds: 120,
                 exec_mode: "sync".to_string(),
             };
+
+            super::sequencer::record_command_dispatch_public(
+                &state.db, request_id, *comp_id, *agent_id, "integrity_check",
+            ).await;
+
             state.ws_hub.send_to_agent(*agent_id, message);
-            check_results.push(serde_json::json!({
-                "component": name,
-                "integrity_check": "dispatched",
-                "request_id": request_id,
-            }));
+            dispatched.push((*comp_id, name.clone(), request_id));
         }
+    }
+
+    if dispatched.is_empty() {
+        return Ok(serde_json::json!({
+            "target_site_id": target_site_id,
+            "integrity_checks": 0,
+            "status": "no_checks_configured",
+        }));
+    }
+
+    tracing::info!(
+        app_id = %app_id,
+        checks = dispatched.len(),
+        "SYNC: waiting for integrity check results"
+    );
+
+    // Wait for ALL integrity checks to complete (timeout: 120s per check)
+    let timeout_secs: u64 = 120;
+    let poll_interval = std::time::Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+
+    let mut check_results = Vec::new();
+    let mut failures = Vec::new();
+
+    for (_comp_id, name, request_id) in &dispatched {
+        let result = loop {
+            let row = sqlx::query_as::<_, (String, Option<i16>, Option<String>)>(
+                "SELECT status, exit_code, stderr FROM command_executions WHERE request_id = $1",
+            )
+            .bind(request_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+
+            match row {
+                Some((status, exit_code, stderr)) if status == "completed" => {
+                    break serde_json::json!({
+                        "component": name,
+                        "status": "passed",
+                        "exit_code": exit_code.unwrap_or(0),
+                    });
+                }
+                Some((status, exit_code, stderr)) if status == "failed" => {
+                    let msg = stderr.unwrap_or_else(|| format!("exit code {}", exit_code.unwrap_or(-1)));
+                    failures.push(format!("{}: {}", name, msg));
+                    break serde_json::json!({
+                        "component": name,
+                        "status": "failed",
+                        "exit_code": exit_code.unwrap_or(-1),
+                        "error": msg,
+                    });
+                }
+                _ => {
+                    if std::time::Instant::now() > deadline {
+                        failures.push(format!("{}: timed out", name));
+                        break serde_json::json!({
+                            "component": name,
+                            "status": "timeout",
+                        });
+                    }
+                    tokio::time::sleep(poll_interval).await;
+                }
+            }
+        };
+        check_results.push(result);
+    }
+
+    if !failures.is_empty() {
+        return Err(SwitchoverError::ValidationFailed(format!(
+            "Integrity check failures: {}",
+            failures.join("; ")
+        )));
     }
 
     Ok(serde_json::json!({
         "target_site_id": target_site_id,
-        "integrity_checks_dispatched": check_results.len(),
+        "integrity_checks_completed": check_results.len(),
+        "all_passed": true,
         "checks": check_results,
     }))
 }
@@ -298,19 +374,7 @@ async fn execute_start_target(
                 "stop_cmd": cur_stop,
             });
 
-            // Apply target site overrides to the component
-            let mut updates = Vec::new();
-            let mut params: Vec<String> = Vec::new();
-            let mut param_idx = 2; // $1 is component_id
-
-            if let Some(agent) = agent_override {
-                updates.push(format!("agent_id = ${}", param_idx));
-                params.push(agent.to_string());
-                param_idx += 1;
-            }
-            let _ = (check_override, start_override, stop_override, param_idx);
-
-            // Use a single UPDATE with COALESCE for non-null overrides
+            // Apply target site overrides with COALESCE (non-null overrides only)
             sqlx::query(
                 r#"
                 UPDATE components SET

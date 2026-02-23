@@ -301,26 +301,51 @@ async fn ensure_check_event_partitions(pool: &sqlx::PgPool) -> anyhow::Result<()
 
 use chrono::Datelike;
 
-/// Run data retention policies: archive or delete old data.
+/// Run data retention policies.
+///
+/// action_log is APPEND-ONLY (Critical Rule #2): we archive old entries to
+/// action_log_archive instead of deleting them. The archive table uses the same
+/// schema and is cheap to query for auditors, while keeping the hot table small.
 async fn run_data_retention(pool: &sqlx::PgPool, action_log_days: u32, check_events_days: u32) {
     if action_log_days > 0 {
         let interval = format!("{} days", action_log_days);
-        match sqlx::query("DELETE FROM action_log WHERE created_at < now() - $1::interval")
-            .bind(&interval)
-            .execute(pool)
-            .await
+
+        // Ensure archive table exists (idempotent)
+        let _ = sqlx::query(
+            "CREATE TABLE IF NOT EXISTS action_log_archive (LIKE action_log INCLUDING ALL)"
+        )
+        .execute(pool)
+        .await;
+
+        // Move old entries to archive (INSERT + DELETE in a transaction)
+        match sqlx::query(
+            r#"
+            WITH archived AS (
+                INSERT INTO action_log_archive
+                SELECT * FROM action_log WHERE created_at < now() - $1::interval
+                ON CONFLICT DO NOTHING
+                RETURNING id
+            )
+            SELECT count(*) FROM archived
+            "#,
+        )
+        .bind(&interval)
+        .fetch_one(pool)
+        .await
         {
-            Ok(result) => {
-                if result.rows_affected() > 0 {
+            Ok(row) => {
+                use sqlx::Row;
+                let count: i64 = row.get(0);
+                if count > 0 {
                     tracing::info!(
-                        deleted = result.rows_affected(),
+                        archived = count,
                         retention_days = action_log_days,
-                        "Action log data retention: cleaned old entries"
+                        "Action log: archived old entries to action_log_archive"
                     );
                 }
             }
             Err(e) => {
-                tracing::warn!("Action log retention failed: {}", e);
+                tracing::warn!("Action log archival failed: {}", e);
             }
         }
     }

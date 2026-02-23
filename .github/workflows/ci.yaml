@@ -263,7 +263,6 @@ jobs:
 
       - name: Audit
         run: cargo audit
-        continue-on-error: true
 
   # ---------------------------------------------------------------------------
   # Docker Image Security Scan — trivy vulnerability scanner

@@ -1,3 +1,4 @@
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -7,6 +8,51 @@ pub enum NotificationError {
     Database(String),
     #[error("HTTP error: {0}")]
     Http(String),
+}
+
+/// Circuit breaker state for a webhook endpoint.
+/// After `FAILURE_THRESHOLD` consecutive failures, the circuit opens and
+/// the endpoint is skipped for `COOLDOWN_SECS` seconds before retrying.
+struct CircuitState {
+    consecutive_failures: u32,
+    last_failure_at: Option<std::time::Instant>,
+}
+
+const FAILURE_THRESHOLD: u32 = 5;
+const COOLDOWN_SECS: u64 = 300; // 5 minutes
+
+/// Global circuit breaker registry (webhook_id → state).
+static CIRCUIT_BREAKERS: std::sync::LazyLock<DashMap<Uuid, CircuitState>> =
+    std::sync::LazyLock::new(DashMap::new);
+
+/// Check if a webhook is currently circuit-broken (open).
+fn is_circuit_open(webhook_id: Uuid) -> bool {
+    if let Some(state) = CIRCUIT_BREAKERS.get(&webhook_id) {
+        if state.consecutive_failures >= FAILURE_THRESHOLD {
+            if let Some(last) = state.last_failure_at {
+                // Allow a retry after cooldown
+                if last.elapsed().as_secs() < COOLDOWN_SECS {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Record a successful delivery (resets the circuit breaker).
+fn record_success(webhook_id: Uuid) {
+    CIRCUIT_BREAKERS.remove(&webhook_id);
+}
+
+/// Record a failed delivery (increments failure counter).
+fn record_failure(webhook_id: Uuid) {
+    let mut entry = CIRCUIT_BREAKERS.entry(webhook_id).or_insert(CircuitState {
+        consecutive_failures: 0,
+        last_failure_at: None,
+    });
+    entry.consecutive_failures += 1;
+    entry.last_failure_at = Some(std::time::Instant::now());
 }
 
 /// Events that trigger notifications.
@@ -102,13 +148,23 @@ pub async fn dispatch_event(
         .map_err(|e| NotificationError::Http(e.to_string()))?;
 
     for (webhook_id, url, secret, custom_headers) in &webhooks {
+        let webhook_id = *webhook_id;
+
+        // Circuit breaker: skip endpoints that are consistently failing
+        if is_circuit_open(webhook_id) {
+            tracing::debug!(
+                webhook_id = %webhook_id,
+                "Webhook circuit breaker OPEN — skipping delivery (will retry after cooldown)"
+            );
+            continue;
+        }
+
         let pool = pool.clone();
         let client = client.clone();
         let url = url.clone();
         let secret = secret.clone();
         let custom_headers = custom_headers.clone();
         let payload = payload.clone();
-        let webhook_id = *webhook_id;
         let event_type = event_type.clone();
 
         tokio::spawn(async move {
@@ -215,6 +271,7 @@ async fn deliver_webhook(
                 .await;
 
                 if (200..300).contains(&(status_code as u16 as i32)) {
+                    record_success(webhook_id);
                     tracing::debug!(
                         webhook_id = %webhook_id,
                         status = status_code,
@@ -261,6 +318,13 @@ async fn deliver_webhook(
             tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt as u32))).await;
         }
     }
+
+    // All retries exhausted — record failure for circuit breaker
+    record_failure(webhook_id);
+    tracing::warn!(
+        webhook_id = %webhook_id,
+        "All webhook delivery attempts exhausted — recording failure for circuit breaker"
+    );
 }
 
 #[cfg(test)]

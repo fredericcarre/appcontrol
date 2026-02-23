@@ -322,6 +322,17 @@ pub async fn stop_single_component(
 // Command execution tracking (audit trail)
 // ---------------------------------------------------------------------------
 
+/// Record a dispatched command in the command_executions table (public variant for rebuild/switchover).
+pub async fn record_command_dispatch_public(
+    pool: &sqlx::PgPool,
+    request_id: Uuid,
+    component_id: Uuid,
+    agent_id: Uuid,
+    command_type: &str,
+) {
+    record_command_dispatch(pool, request_id, component_id, agent_id, command_type).await;
+}
+
 /// Record a dispatched command in the command_executions table.
 async fn record_command_dispatch(
     pool: &sqlx::PgPool,

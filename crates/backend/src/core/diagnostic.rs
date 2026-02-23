@@ -60,10 +60,14 @@ pub fn compute_recommendation(
 }
 
 /// Run 3-level diagnosis for all components of an application.
+///
+/// Uses a single query with ROW_NUMBER() window function to get the latest
+/// check result for each (component, check_type) pair, instead of O(3N) queries.
 pub async fn diagnose_app(
     pool: &sqlx::PgPool,
     app_id: Uuid,
 ) -> Result<Vec<ComponentDiagnosis>, DiagnosticError> {
+    // Get all components
     let components = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
     )
@@ -72,53 +76,73 @@ pub async fn diagnose_app(
     .await
     .map_err(|e| DiagnosticError::Database(e.to_string()))?;
 
-    let mut diagnoses = Vec::new();
-
-    for (comp_id, comp_name) in components {
-        let health = get_latest_check_status(pool, comp_id, "health").await?;
-        let integrity = get_latest_check_status(pool, comp_id, "integrity").await?;
-        let infrastructure = get_latest_check_status(pool, comp_id, "infrastructure").await?;
-
-        let recommendation = compute_recommendation(health, integrity, infrastructure);
-
-        diagnoses.push(ComponentDiagnosis {
-            component_id: comp_id,
-            component_name: comp_name,
-            health,
-            integrity,
-            infrastructure,
-            recommendation,
-        });
+    if components.is_empty() {
+        return Ok(Vec::new());
     }
 
-    Ok(diagnoses)
-}
+    let comp_ids: Vec<Uuid> = components.iter().map(|(id, _)| *id).collect();
 
-async fn get_latest_check_status(
-    pool: &sqlx::PgPool,
-    component_id: Uuid,
-    check_type: &str,
-) -> Result<CheckStatus, DiagnosticError> {
-    let result = sqlx::query_scalar::<_, i16>(
+    // Single query: get latest check result per (component_id, check_type)
+    let latest_checks = sqlx::query_as::<_, (Uuid, String, i16)>(
         r#"
-        SELECT exit_code
-        FROM check_events
-        WHERE component_id = $1 AND check_type = $2
-        ORDER BY created_at DESC
-        LIMIT 1
+        SELECT component_id, check_type, exit_code
+        FROM (
+            SELECT component_id, check_type, exit_code,
+                   ROW_NUMBER() OVER (PARTITION BY component_id, check_type ORDER BY created_at DESC) as rn
+            FROM check_events
+            WHERE component_id = ANY($1)
+              AND check_type IN ('health', 'integrity', 'infrastructure')
+        ) ranked
+        WHERE rn = 1
         "#,
     )
-    .bind(component_id)
-    .bind(check_type)
-    .fetch_optional(pool)
+    .bind(&comp_ids)
+    .fetch_all(pool)
     .await
     .map_err(|e| DiagnosticError::Database(e.to_string()))?;
 
-    Ok(match result {
-        Some(0) => CheckStatus::Ok,
-        Some(_) => CheckStatus::Fail,
-        None => CheckStatus::NotAvailable,
-    })
+    // Build a lookup: (component_id, check_type) → exit_code
+    let mut check_map: std::collections::HashMap<(Uuid, &str), i16> =
+        std::collections::HashMap::new();
+    for (comp_id, check_type, exit_code) in &latest_checks {
+        let ct: &str = match check_type.as_str() {
+            "health" => "health",
+            "integrity" => "integrity",
+            "infrastructure" => "infrastructure",
+            _ => continue,
+        };
+        check_map.insert((*comp_id, ct), *exit_code);
+    }
+
+    let exit_code_to_status = |code: Option<&i16>| -> CheckStatus {
+        match code {
+            Some(0) => CheckStatus::Ok,
+            Some(_) => CheckStatus::Fail,
+            None => CheckStatus::NotAvailable,
+        }
+    };
+
+    let diagnoses = components
+        .into_iter()
+        .map(|(comp_id, comp_name)| {
+            let health = exit_code_to_status(check_map.get(&(comp_id, "health")));
+            let integrity = exit_code_to_status(check_map.get(&(comp_id, "integrity")));
+            let infrastructure =
+                exit_code_to_status(check_map.get(&(comp_id, "infrastructure")));
+            let recommendation = compute_recommendation(health, integrity, infrastructure);
+
+            ComponentDiagnosis {
+                component_id: comp_id,
+                component_name: comp_name,
+                health,
+                integrity,
+                infrastructure,
+                recommendation,
+            }
+        })
+        .collect();
+
+    Ok(diagnoses)
 }
 
 #[cfg(test)]
