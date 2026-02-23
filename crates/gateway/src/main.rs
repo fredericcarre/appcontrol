@@ -1,6 +1,8 @@
 mod rate_limit;
 mod registry;
 mod router;
+#[cfg(windows)]
+mod win_service;
 
 use axum::{
     extract::{ws, State},
@@ -9,7 +11,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -18,11 +20,50 @@ use rate_limit::AgentRateLimiter;
 use registry::AgentRegistry;
 use router::{MessageRouter, AGENT_CHANNEL_CAPACITY, CHANNEL_CAPACITY};
 
+/// Platform-aware default config path.
+fn default_config_path() -> String {
+    #[cfg(unix)]
+    {
+        "/etc/appcontrol/gateway.yaml".to_string()
+    }
+    #[cfg(windows)]
+    {
+        std::env::var("PROGRAMDATA")
+            .map(|p| format!("{}\\AppControl\\config\\gateway.yaml", p))
+            .unwrap_or_else(|_| "C:\\ProgramData\\AppControl\\config\\gateway.yaml".to_string())
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "appcontrol-gateway", about = "AppControl Gateway")]
 struct Args {
-    #[arg(short, long, default_value = "/etc/appcontrol/gateway.yaml")]
+    #[arg(short, long, default_value_t = default_config_path(), global = true)]
     config: String,
+
+    #[command(subcommand)]
+    command: Option<ServiceCommand>,
+}
+
+#[derive(Subcommand)]
+enum ServiceCommand {
+    /// Windows service management
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServiceAction {
+    /// Install as a Windows service
+    Install {
+        #[arg(short, long, default_value_t = default_config_path())]
+        config: String,
+    },
+    /// Remove the Windows service
+    Uninstall,
+    /// Run as a Windows service (called by SCM)
+    Run,
 }
 
 #[derive(Debug, serde::Deserialize, Clone)]
@@ -144,6 +185,12 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
+
+    // Handle service subcommands (Windows only)
+    if let Some(command) = args.command {
+        return handle_service_command(command);
+    }
+
     let config = GatewayConfig::load(&args.config)?;
 
     // Derive a stable gateway_id from the configured ID (deterministic UUID v5)
@@ -677,5 +724,50 @@ fn handle_backend_message(state: &Arc<GatewayState>, text: &str) {
                 tracing::warn!("Unknown message from backend: {}", e);
             }
         }
+    }
+}
+
+#[allow(unreachable_code)]
+fn handle_service_command(command: ServiceCommand) -> anyhow::Result<()> {
+    match command {
+        ServiceCommand::Service { action } => match action {
+            ServiceAction::Install { config } => {
+                #[cfg(windows)]
+                {
+                    win_service::install_service(&config)?;
+                    return Ok(());
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = config;
+                    anyhow::bail!(
+                        "Windows service commands are only available on Windows.\n\
+                         On Linux, use systemd: systemctl enable/start appcontrol-gateway"
+                    );
+                }
+            }
+            ServiceAction::Uninstall => {
+                #[cfg(windows)]
+                {
+                    win_service::uninstall_service()?;
+                    return Ok(());
+                }
+                #[cfg(not(windows))]
+                {
+                    anyhow::bail!("Windows service commands are only available on Windows.");
+                }
+            }
+            ServiceAction::Run => {
+                #[cfg(windows)]
+                {
+                    win_service::run_as_service()?;
+                    return Ok(());
+                }
+                #[cfg(not(windows))]
+                {
+                    anyhow::bail!("Windows service commands are only available on Windows.");
+                }
+            }
+        },
     }
 }

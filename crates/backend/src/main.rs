@@ -1,10 +1,47 @@
+#[cfg(windows)]
+mod win_service;
+
+use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use appcontrol_backend::{config, create_router, db, middleware, websocket, AppState};
 
+#[derive(Parser)]
+#[command(name = "appcontrol-backend", about = "AppControl Backend API")]
+struct Args {
+    #[command(subcommand)]
+    command: Option<ServiceCommand>,
+}
+
+#[derive(Subcommand)]
+enum ServiceCommand {
+    /// Windows service management
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServiceAction {
+    /// Install as a Windows service
+    Install,
+    /// Remove the Windows service
+    Uninstall,
+    /// Run as a Windows service (called by SCM)
+    Run,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+
+    // Handle service subcommands (Windows only)
+    if let Some(command) = args.command {
+        return handle_service_command(command);
+    }
+
     let config = config::AppConfig::from_env();
 
     // Structured logging: JSON in production, text in dev
@@ -409,4 +446,48 @@ async fn run_migrations(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[allow(unreachable_code)]
+fn handle_service_command(command: ServiceCommand) -> anyhow::Result<()> {
+    match command {
+        ServiceCommand::Service { action } => match action {
+            ServiceAction::Install => {
+                #[cfg(windows)]
+                {
+                    win_service::install_service()?;
+                    return Ok(());
+                }
+                #[cfg(not(windows))]
+                {
+                    anyhow::bail!(
+                        "Windows service commands are only available on Windows.\n\
+                         On Linux, use systemd: systemctl enable/start appcontrol-backend"
+                    );
+                }
+            }
+            ServiceAction::Uninstall => {
+                #[cfg(windows)]
+                {
+                    win_service::uninstall_service()?;
+                    return Ok(());
+                }
+                #[cfg(not(windows))]
+                {
+                    anyhow::bail!("Windows service commands are only available on Windows.");
+                }
+            }
+            ServiceAction::Run => {
+                #[cfg(windows)]
+                {
+                    win_service::run_as_service()?;
+                    return Ok(());
+                }
+                #[cfg(not(windows))]
+                {
+                    anyhow::bail!("Windows service commands are only available on Windows.");
+                }
+            }
+        },
+    }
 }
