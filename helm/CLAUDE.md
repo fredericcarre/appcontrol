@@ -13,14 +13,13 @@ helm/appcontrol/
 │   ├── backend-service.yaml
 │   ├── frontend-deployment.yaml
 │   ├── frontend-service.yaml
-│   ├── postgresql-statefulset.yaml    # or use external operator
-│   ├── redis-deployment.yaml
 │   ├── gateway-deployment.yaml
+│   ├── gateway-service.yaml
+│   ├── postgresql-statefulset.yaml    # or use external operator
+│   ├── redis-statefulset.yaml         # NOTE: Redis is no longer used by the backend (removed in Phase 10); template retained for cleanup
 │   ├── ingress.yaml                   # K8s Ingress
-│   ├── route.yaml                     # OpenShift Route (conditional)
-│   ├── configmap.yaml
-│   ├── secret.yaml
-│   ├── cronjob-partition.yaml         # Monthly partition maintenance
+│   ├── network-policy.yaml            # Network policies for inter-service communication
+│   ├── pdb.yaml                       # PodDisruptionBudgets for HA
 │   └── _helpers.tpl
 ```
 

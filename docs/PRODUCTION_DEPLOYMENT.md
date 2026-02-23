@@ -9,7 +9,6 @@ This guide covers deploying AppControl in a production Kubernetes environment.
 | Kubernetes | 1.26+ | EKS, GKE, AKS, or OpenShift 4.12+ |
 | Helm | 3.12+ | |
 | PostgreSQL | 16+ | Managed (RDS, CloudSQL, Azure DB) recommended |
-| Redis | 7+ | Optional — only used for token revocation. Not required by gateways or agents. |
 | cert-manager | 1.12+ | For TLS certificate management |
 | kubectl | 1.26+ | Matching cluster version |
 
@@ -31,15 +30,14 @@ This guide covers deploying AppControl in a production Kubernetes environment.
                         │  │          │
               ┌─────────┘  └────┐     │  Agents connect
               │                 │     │  via mTLS
-         ┌────▼─────┐   ┌──────▼──┐  │
-         │PostgreSQL │   │ Redis   │  ▼
-         │  (HA)     │   │(optional│  🖥 Agents
-         │ REQUIRED  │   │token    │
-         └───────────┘   │revoke)  │
-                         └─────────┘
+         ┌────▼─────┐               │
+         │PostgreSQL │               ▼
+         │  (HA)     │               🖥 Agents
+         │ REQUIRED  │
+         └───────────┘
 
-Note: Only the Backend connects to PostgreSQL and Redis.
-Gateways and Agents have no database or cache dependency.
+Note: Only the Backend connects to PostgreSQL.
+Gateways and Agents have no database dependency.
 ```
 
 ## Step 1: Namespace and Secrets
@@ -58,10 +56,6 @@ kubectl create secret generic appcontrol-jwt \
   --namespace appcontrol \
   --from-literal=jwt-secret="$(openssl rand -base64 64)"
 
-# Create Redis auth secret (if using auth)
-kubectl create secret generic appcontrol-redis \
-  --namespace appcontrol \
-  --from-literal=redis-password="$(openssl rand -base64 32)"
 ```
 
 ## Step 2: TLS Certificates
@@ -174,31 +168,7 @@ archive_command = 'your-wal-archive-command'
 
 The Helm chart includes a PostgreSQL StatefulSet with PVC. Set `postgresql.enabled: true` in values.
 
-## Step 4: Redis Setup (Optional)
-
-Redis is used **only by the backend** for JWT token revocation (blacklist). Gateways and agents never connect to Redis.
-
-**Without Redis:** token revocation is unavailable — tokens remain valid until JWT expiry (24h). All other features work normally. For a quick workaround, rotate `JWT_SECRET` to invalidate all tokens.
-
-**With Redis:** revoked tokens are stored as `revoked:{fingerprint}` keys with a 25h TTL. Backend checks this on every authenticated request.
-
-### Managed Redis (recommended for production)
-
-- **AWS ElastiCache**: Redis 7, `cache.t4g.small` is sufficient (minimal storage needs). Multi-AZ optional.
-- **GCP Memorystore**: Redis 7, Basic tier is sufficient.
-- **Azure Cache for Redis**: Basic C0 is sufficient.
-
-Note: Redis usage is minimal (~100 bytes per revoked token, max 25h TTL). A small instance is sufficient even for large deployments.
-
-### In-cluster Redis (dev/staging)
-
-The Helm chart includes a Redis StatefulSet. Set `redis.enabled: true` in values.
-
-### No Redis
-
-Simply omit `REDIS_URL` from backend configuration. The backend starts without Redis and logs a warning.
-
-## Step 5: Helm Values for Production
+## Step 4: Helm Values for Production
 
 Create `production-values.yaml`:
 
@@ -225,8 +195,6 @@ backend:
   database:
     existingSecret: "appcontrol-db"
     secretKey: "database-url"
-  redis:
-    url: "redis://your-elasticache-host:6379"
   jwt:
     existingSecret: "appcontrol-jwt"
     secretKey: "jwt-secret"
@@ -250,9 +218,6 @@ gateway:
 
 # Disable in-cluster databases for production
 postgresql:
-  enabled: false
-
-redis:
   enabled: false
 
 podDisruptionBudget:
@@ -336,7 +301,7 @@ Key metrics:
 
 ### Grafana Dashboard
 
-Import the dashboard from `docs/grafana-dashboard.json` or create panels for:
+Create a Grafana dashboard with panels for:
 - Request rate and error rate (from `http_requests_total`)
 - P50/P95/P99 latency (from `http_request_duration_seconds`)
 - Agent connection count over time

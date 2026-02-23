@@ -61,22 +61,14 @@ Set `SAML_IDP_SSO_URL` to enable SAML authentication (ADFS, Azure AD, Okta, etc.
 | `SAML_ADMIN_GROUP` | No | - | SAML group name mapped to org admin role |
 | `SAML_WANT_ASSERTIONS_SIGNED` | No | `true` | Require IdP to sign SAML assertions |
 
-### Redis (Optional)
+### Redis — Removed (Since Phase 10)
 
-Redis is used **only for JWT token revocation** (blacklist). It is NOT required for core functionality.
+Redis is **no longer used** by AppControl. As of Phase 10, token revocation and rate limiting are handled entirely by PostgreSQL:
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `REDIS_URL` | No | _(disabled)_ | Redis connection string (e.g., `redis://host:6379` or `rediss://host:6379` for TLS). If not set, token revocation relies solely on JWT expiry. |
+- **Token revocation:** Revoked token fingerprints are stored in the `revoked_tokens` PostgreSQL table with automatic expiry cleanup. No external cache needed.
+- **Rate limiting:** Rate limit counters use PostgreSQL-backed storage, eliminating the previous in-memory-only limitation.
 
-**What Redis stores:**
-- `revoked:{token_fingerprint}` — SET with 25h TTL. Created when a token is revoked via the API.
-- No other data is stored in Redis.
-
-**Without Redis:**
-- Token revocation is unavailable — tokens remain valid until JWT expiry (24h max).
-- All other features work normally (health checks, operations, DAG sequencing, DR switchover, etc.).
-- Acceptable for development and staging. For production, Redis (or an alternative revocation strategy like JWT_SECRET rotation) is recommended.
+The `REDIS_URL` environment variable is no longer recognized. If you have an existing Redis instance from a prior version, it can be safely decommissioned.
 
 ### Rate Limiting
 
@@ -150,7 +142,7 @@ Environment variables take precedence over YAML values.
 
 ### Network Architecture Note
 
-The gateway does **NOT** connect to Redis or PostgreSQL. It only needs:
+The gateway does **NOT** connect to PostgreSQL. It only needs:
 - Outbound WebSocket to the backend (`backend.url`)
 - Inbound WebSocket from agents (on `listen_port`)
 
@@ -212,7 +204,7 @@ log_level: "appcontrol_agent=info"  # tracing-subscriber filter syntax
 The agent only makes **outbound** connections:
 - Outbound WebSocket (WSS on port 443 or 4443) to the gateway
 - No inbound ports needed — firewall-friendly
-- No direct connection to backend, database, or Redis
+- No direct connection to backend or database
 
 ### Agent Filesystem
 
@@ -329,7 +321,6 @@ Agent connects to Gateway:
 - [ ] `LOG_FORMAT=json` for log aggregation
 - [ ] `DB_POOL_SIZE` tuned (default 20 is good for most deployments)
 - [ ] `RETENTION_CHECK_EVENTS_DAYS=90` (or appropriate retention)
-- [ ] `REDIS_URL` configured if token revocation is needed
 - [ ] OIDC or SAML configured for SSO
 
 ### Gateway
@@ -345,10 +336,10 @@ Agent connects to Gateway:
 - [ ] `/var/lib/appcontrol/` directory exists and is writable (for offline buffer)
 - [ ] systemd unit file installed for auto-restart
 
-### Redis (if used)
-- [ ] Optional — only needed for token revocation
-- [ ] Only the backend connects to Redis (not gateways, not agents)
-- [ ] For isolated network zones: Redis only needs to be reachable from the backend, NOT from gateways or agents
+### Redis — No Longer Used
+- Redis was removed in Phase 10. Token revocation and rate limiting now use PostgreSQL.
+- No Redis instance is required for any deployment scenario.
+- If upgrading from a pre-Phase 10 deployment, the existing Redis instance can be safely removed.
 
 ---
 
@@ -372,4 +363,4 @@ cargo run -p appcontrol-gateway
 cargo run -p appcontrol-agent
 ```
 
-No Redis needed for development. No TLS needed for local testing.
+No TLS needed for local testing.

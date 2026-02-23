@@ -55,8 +55,8 @@ fi
 ok "Docker Desktop is running"
 
 # ---- Start infrastructure ----
-info "Starting PostgreSQL 16 + Redis 7..."
-docker compose -f "$COMPOSE_FILE" up -d postgres redis
+info "Starting PostgreSQL 16..."
+docker compose -f "$COMPOSE_FILE" up -d postgres
 
 info "Waiting for PostgreSQL to be ready..."
 for i in $(seq 1 30); do
@@ -66,19 +66,6 @@ for i in $(seq 1 30); do
     fi
     if [ "$i" -eq 30 ]; then
         err "PostgreSQL failed to start within 30s"
-        exit 1
-    fi
-    sleep 1
-done
-
-info "Waiting for Redis to be ready..."
-for i in $(seq 1 15); do
-    if docker compose -f "$COMPOSE_FILE" exec -T redis redis-cli ping &>/dev/null; then
-        ok "Redis is ready"
-        break
-    fi
-    if [ "$i" -eq 15 ]; then
-        err "Redis failed to start within 15s"
         exit 1
     fi
     sleep 1
@@ -118,13 +105,11 @@ echo "=========================================="
 echo ""
 echo "  Infrastructure:"
 echo "    PostgreSQL : localhost:5432 (appcontrol/appcontrol_dev)"
-echo "    Redis      : localhost:6379"
 echo ""
 echo "  Start developing:"
 echo ""
 echo "    # Terminal 1 - Backend API"
 echo "    export DATABASE_URL=postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol"
-echo "    export REDIS_URL=redis://localhost:6379"
 echo "    export JWT_SECRET=dev-secret-change-in-production"
 echo "    export RUST_LOG=info,appcontrol_backend=debug"
 echo "    cargo run --bin appcontrol-backend"
@@ -142,7 +127,6 @@ echo ""
 echo "  Optional tools:"
 echo "    docker compose -f docker/docker-compose.dev.yaml --profile tools up -d"
 echo "    pgAdmin   : http://localhost:5050 (admin@appcontrol.local / admin)"
-echo "    RedisInsight: http://localhost:5540"
 echo ""
 echo "  Tear down:"
 echo "    docker compose -f docker/docker-compose.dev.yaml down       # keep data"

@@ -23,6 +23,12 @@ V008__materialized_views.sql       # component_daily_stats + refresh indexes
 V009__saml_oidc.sql                # SAML/OIDC columns, saml_group_mappings
 V010__variables_groups_params.sql  # app_variables, component_groups, component_links, command_input_params
 V011__agent_ip_workspace_access_heartbeat.sql  # agents.ip_addresses, workspace_sites, workspace_members, orgs.heartbeat_timeout_seconds
+V012__component_host_field.sql                 # Add host field to components table
+V013__security_resilience.sql                  # Security resilience tables (threat tracking, incident response)
+V014__command_executions.sql                   # Command executions tracking table
+V015__enrollment_tokens.sql                    # Agent enrollment tokens for secure onboarding
+V016__fsm_cache_notifications_locks.sql        # PostgreSQL-based FSM state cache, notification queue, advisory locks
+V017__remove_redis_dependency.sql              # Remove Redis dependency: PostgreSQL-based rate limiting and token revocation
 ```
 
 ## Complete Schema Reference

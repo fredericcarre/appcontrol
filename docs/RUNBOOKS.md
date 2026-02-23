@@ -129,11 +129,11 @@ curl -X POST https://appcontrol.your-domain.com/api/v1/auth/revoke-all \
   -H "Content-Type: application/json" \
   -d '{"user_id": "UUID_OF_COMPROMISED_USER"}'
 
-# 2. If Redis is available, verify the revocation entry exists
-kubectl exec -n appcontrol deploy/appcontrol-redis-0 -- \
-  redis-cli KEYS "revoked:*"
+# 2. Verify the revocation entry exists in PostgreSQL
+kubectl exec -n appcontrol deploy/appcontrol-backend -- \
+  curl -s localhost:3000/api/v1/auth/revoked-tokens | jq
 
-# 3. If Redis is down, rotate the JWT_SECRET to invalidate ALL tokens
+# 3. If revocation is not working, rotate the JWT_SECRET to invalidate ALL tokens
 kubectl create secret generic appcontrol-jwt \
   --namespace appcontrol \
   --from-literal=jwt-secret="$(openssl rand -base64 64)" \
@@ -149,37 +149,11 @@ kubectl exec -n appcontrol deploy/appcontrol-backend -- \
 
 ---
 
-## Runbook 5: Redis Failure — Graceful Degradation
+## Runbook 5: Redis Failure — OBSOLETE
 
-**Symptoms**: Redis connection errors in backend logs. Token revocation and caching unavailable.
-
-**Diagnosis**:
-
-```bash
-# 1. Check Redis pod status
-kubectl get pods -n appcontrol -l app.kubernetes.io/component=redis
-
-# 2. Check Redis connectivity from backend
-kubectl exec -n appcontrol deploy/appcontrol-backend -- \
-  curl -s localhost:3000/metrics | grep redis
-
-# 3. Check Redis logs
-kubectl logs -n appcontrol -l app.kubernetes.io/component=redis --tail=50
-```
-
-**Impact**: Backend continues operating without Redis (fail-open design):
-- Token revocation blacklist unavailable (tokens valid until JWT expiry — 24h max)
-- No other features are affected — Redis is only used for token revocation
-- Rate limiting uses in-memory counters (independent of Redis)
-
-**Resolution**:
-
-| Cause | Fix |
-|-------|-----|
-| Redis OOM | Increase `redis.maxmemory`, check eviction policy |
-| Redis pod crash | Check PVC for disk issues, restart StatefulSet |
-| Network partition | Check NetworkPolicy allows backend → Redis on port 6379 |
-| Managed Redis failover | Wait for automatic failover (< 30s), backend reconnects |
+> **This runbook is obsolete.** The Redis dependency was removed in Phase 10. Token revocation and rate limiting now use PostgreSQL directly. No Redis instance is required.
+>
+> If you are experiencing token revocation issues, check PostgreSQL connectivity instead (see Runbook 2 for database troubleshooting). Revoked tokens are stored in the `revoked_tokens` table with automatic expiry cleanup.
 
 ---
 

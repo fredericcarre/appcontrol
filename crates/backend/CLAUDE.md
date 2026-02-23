@@ -24,7 +24,6 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 jsonwebtoken = "9"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-redis = { version = "0.25", features = ["tokio-comp"] }
 dashmap = "5"
 ```
 
@@ -33,7 +32,7 @@ dashmap = "5"
 backend/src/
 ├── main.rs                   # Axum server, router, state
 ├── config.rs                 # Environment config
-├── db.rs                     # PostgreSQL pool + Redis client
+├── db.rs                     # PostgreSQL pool
 ├── auth/
 │   ├── mod.rs                # JWT validation
 │   ├── oidc.rs               # OIDC callback
@@ -81,9 +80,9 @@ backend/src/
 
 ### FSM Engine (core/fsm.rs)
 - Uses `common::fsm::is_valid_transition()` to validate
-- On valid transition: INSERT into `state_transitions`, update Redis cache, push WebSocket event
+- On valid transition: INSERT into `state_transitions`, update PostgreSQL cache, push WebSocket event
 - On invalid transition: return error, do NOT update state
-- State stored in Redis (DashMap in-process as fallback) for fast reads; PostgreSQL is the source of truth
+- State stored in PostgreSQL cache (DashMap in-process as fallback) for fast reads; PostgreSQL is the source of truth
 
 ### DAG Sequencer (core/sequencer.rs)
 - Build DAG from `dependencies` table

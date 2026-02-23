@@ -29,10 +29,7 @@ backend:
     url: ""
     existingSecret: ""
     secretKey: "database-url"
-  redis:
-    # Auto-generated from redis service if redis.enabled=true.
-    # Override for external Redis (ElastiCache, Memorystore, etc.).
-    url: ""
+  # redis: DEPRECATED — Redis is no longer used (removed in Phase 10).
   jwt:
     secret: ""
     existingSecret: ""
@@ -104,13 +101,13 @@ postgresql:
       memory: 2Gi
 
 # ---------------------------------------------------------------
-# Redis — in-cluster StatefulSet with AOF persistence.
-# For production: set enabled=false and configure backend.redis.url
-# to point to a managed Redis (ElastiCache, Memorystore, etc.)
-# with Sentinel/cluster mode for HA.
+# Redis — DEPRECATED (no longer used since Phase 10).
+# The backend now uses PostgreSQL for token revocation and rate
+# limiting. This section is retained for backward compatibility
+# but should be set to enabled: false.
 # ---------------------------------------------------------------
 redis:
-  enabled: true
+  enabled: false
   replicaCount: 1
   image:
     repository: redis

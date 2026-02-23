@@ -39,9 +39,9 @@
 ┌──────────────────────▼───────────────────────▼───────────────────────┐
 │                       Backend (Rust + Axum)                          │
 │       FSM Engine · DAG Sequencer · RBAC · Switchover · Reports      │
-├──────────────────┬──────────────────────────────┬────────────────────┤
-│   PostgreSQL 16  │           Redis 7            │   JWT RS256 Auth   │
-└──────────────────┘              │               └────────────────────┘
+├──────────────────┬─────────────────────────────────────────────────────┤
+│   PostgreSQL 16  │                              JWT RS256 Auth         │
+└──────────────────┘                              └─────────────────────┘
                                   │
 ┌─────────────────────────────────▼────────────────────────────────────┐
 │                      Gateway (Rust + Axum)                           │
@@ -70,9 +70,10 @@ docker compose -f docker/docker-compose.release.yaml up -d
 # Verify
 curl http://localhost:3000/health   # → {"status":"ok"}
 
-# Load an example map
+# Load an example map (requires authentication — include a valid JWT token)
 curl -X POST http://localhost:3000/api/v1/apps/import \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-jwt-token>" \
   -d @examples/three-tier-webapp.json
 
 # Open the UI
@@ -85,7 +86,7 @@ Pin a specific version:
 APPCONTROL_VERSION=0.2.0 docker compose -f docker/docker-compose.release.yaml up -d
 ```
 
-See [QUICKSTART.md](QUICKSTART.md) for the full guide (CLI install, agent setup, first map creation).
+See [QUICKSTART.md](docs/QUICKSTART.md) for the full guide (CLI install, agent setup, first map creation).
 
 ## Example Maps
 
@@ -117,9 +118,9 @@ appctl switchover my-app --target-site lyon --mode FULL --wait
 
 | Layer | Technology |
 |-------|-----------|
-| Agent | Rust 1.77+ · Tokio · sysinfo · nix |
+| Agent | Rust 1.88+ · Tokio · sysinfo · nix |
 | Gateway | Rust · Axum 0.7 · rustls |
-| Backend API | Rust · Axum · sqlx 0.7 · PostgreSQL 16 · Redis 7 |
+| Backend API | Rust · Axum · sqlx 0.7 · PostgreSQL 16 |
 | Frontend | React 18 · TypeScript 5.3 · Vite 5 · Tailwind 3.4 · shadcn/ui |
 | Maps | React Flow (@xyflow/react 12+) |
 | State | React Query 5 · Zustand 4 |
@@ -169,7 +170,7 @@ See [COVERAGE.md](COVERAGE.md) for the full coverage strategy and per-module tar
 ## Development
 
 ```bash
-# Start dev infrastructure (PostgreSQL + Redis only)
+# Start dev infrastructure (PostgreSQL only)
 docker compose -f docker/docker-compose.dev.yaml up -d
 
 # Or run the full setup script
@@ -186,7 +187,7 @@ cargo clippy --workspace -- -D warnings
 cd frontend && npm run lint && npm run build
 ```
 
-See [QUICKSTART.md](QUICKSTART.md) for the "from source" section and [RELEASE.md](RELEASE.md) for the release procedure.
+See [QUICKSTART.md](docs/QUICKSTART.md) for the "from source" section and [RELEASE.md](RELEASE.md) for the release procedure.
 
 ## Contributing
 
