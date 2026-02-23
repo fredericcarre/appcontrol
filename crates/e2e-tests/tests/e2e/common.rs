@@ -154,7 +154,7 @@ impl TestContext {
             rate_limit_auth: 100,
             rate_limit_operations: 100,
             rate_limit_reads: 1000,
-            redis_url: None,
+            ha_mode: false,
             cors_origins: vec![],
             log_format: "text".to_string(),
             db_pool_size: 20,
@@ -171,7 +171,6 @@ impl TestContext {
             config,
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
-            redis: None,
             operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
         });
 
@@ -315,7 +314,7 @@ impl TestContext {
             rate_limit_auth: 100,
             rate_limit_operations: 100,
             rate_limit_reads: 1000,
-            redis_url: None,
+            ha_mode: false,
             cors_origins: vec![],
             log_format: "text".to_string(),
             db_pool_size: 20,
@@ -332,7 +331,6 @@ impl TestContext {
             config,
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
-            redis: None,
             operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
         });
 

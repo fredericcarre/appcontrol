@@ -545,8 +545,20 @@ Fixes based on production engineer review. All items address identified weakness
 ### P10-9: Dead Code Cleanup (W14)
 - [x] `crates/backend/src/core/switchover.rs` — Removed dead `updates`/`params`/`param_idx` variables in `execute_start_target()` config swap
 
+### P10-10: Auto-Init PKI at Startup
+- [x] `crates/backend/src/main.rs` — `auto_init_pki()` generates CA for orgs without one at startup. Zero-config mTLS.
+
+### P10-11: Remove Redis Dependency
+- [x] `crates/backend/src/middleware/auth.rs` — Token revocation moved from Redis to PostgreSQL `revoked_tokens` table
+- [x] `crates/backend/src/middleware/rate_limit.rs` — Rate limiting uses PostgreSQL when `HA_MODE=true`, in-memory otherwise
+- [x] `crates/backend/src/lib.rs` — Removed `redis` from `AppState`
+- [x] `crates/backend/src/config.rs` — Replaced `redis_url` with `ha_mode` boolean
+- [x] `crates/backend/Cargo.toml` — Removed `redis` crate dependency
+- [x] `migrations/V017__remove_redis_dependency.sql` — `revoked_tokens` + `rate_limit_counters` tables
+- [x] `.github/workflows/ci.yaml` — Removed Redis service from E2E tests
+
 ### Build Validation (Phase 10)
 - [x] `cargo build --workspace` — clean (0 errors)
 - [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
-- [x] `cargo test --workspace` — 75 tests pass
+- [x] `cargo test --workspace` — all pass
 - [x] `cd frontend && npm run build` — clean

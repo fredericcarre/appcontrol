@@ -76,31 +76,9 @@ async fn main() -> anyhow::Result<()> {
 
     let heartbeat_batcher = appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
 
-    // Connect to Redis if configured
-    let redis = if let Some(ref redis_url) = config.redis_url {
-        match redis::Client::open(redis_url.as_str()) {
-            Ok(client) => match redis::aio::ConnectionManager::new(client).await {
-                Ok(conn) => {
-                    tracing::info!("Connected to Redis");
-                    Some(conn)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to connect to Redis: {} — continuing without cache",
-                        e
-                    );
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::warn!("Invalid REDIS_URL: {} — continuing without cache", e);
-                None
-            }
-        }
-    } else {
-        tracing::info!("REDIS_URL not set — running without Redis cache");
-        None
-    };
+    // Auto-initialize PKI (CA) for all organizations that don't have one yet.
+    // This eliminates the manual `POST /api/v1/pki/init` step.
+    auto_init_pki(&pool).await;
 
     // Install Prometheus metrics recorder
     let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
@@ -132,7 +110,6 @@ async fn main() -> anyhow::Result<()> {
         config,
         rate_limiter: middleware::rate_limit::RateLimitState::new(),
         heartbeat_batcher,
-        redis,
         operation_lock,
     });
 
@@ -173,6 +150,9 @@ async fn main() -> anyhow::Result<()> {
             rl_state.rate_limiter.auth.cleanup();
             rl_state.rate_limiter.operations.cleanup();
             rl_state.rate_limiter.reads.cleanup();
+            // Also clean up PostgreSQL-backed counters and expired revocations
+            middleware::rate_limit::cleanup_rate_limit_counters(&rl_state.db).await;
+            middleware::auth::cleanup_expired_revocations(&rl_state.db).await;
         }
     });
 
@@ -300,6 +280,49 @@ async fn ensure_check_event_partitions(pool: &sqlx::PgPool) -> anyhow::Result<()
 }
 
 use chrono::Datelike;
+
+/// Auto-initialize PKI (CA) for organizations that don't have one yet.
+///
+/// On first startup, there's typically one organization (created by migration or seed).
+/// Without this, the admin must manually call `POST /api/v1/pki/init` before any
+/// agent can enroll. This eliminates that manual step — zero-config mTLS.
+async fn auto_init_pki(pool: &sqlx::PgPool) {
+    let orgs_without_ca: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+        "SELECT id, name FROM organizations WHERE ca_cert_pem IS NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    for (org_id, org_name) in orgs_without_ca {
+        match appcontrol_common::generate_ca(&org_name, 3650) {
+            Ok(ca) => {
+                if let Err(e) = sqlx::query(
+                    "UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1",
+                )
+                .bind(org_id)
+                .bind(&ca.cert_pem)
+                .bind(&ca.key_pem)
+                .execute(pool)
+                .await
+                {
+                    tracing::warn!(org = %org_name, "Failed to store auto-generated CA: {}", e);
+                } else {
+                    let fp = appcontrol_common::fingerprint_pem(&ca.cert_pem)
+                        .unwrap_or_default();
+                    tracing::info!(
+                        org = %org_name,
+                        fingerprint = %fp,
+                        "Auto-initialized PKI (CA valid 10 years)"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(org = %org_name, "Failed to generate CA: {}", e);
+            }
+        }
+    }
+}
 
 /// Run data retention policies.
 ///
