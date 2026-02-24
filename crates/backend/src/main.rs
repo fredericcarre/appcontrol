@@ -559,8 +559,16 @@ async fn run_migrations(pool: &sqlx::PgPool) -> anyhow::Result<()> {
         // so we split on semicolons and execute each statement individually.
         let mut tx = pool.begin().await?;
         for statement in sql.split(';') {
-            let trimmed = statement.trim();
-            if trimmed.is_empty() || trimmed.starts_with("--") {
+            // Strip comment-only lines before checking if the statement is empty.
+            // After splitting on ';', a chunk may start with "-- comment\nCREATE TABLE..."
+            // and we must not skip the whole chunk just because it starts with "--".
+            let stripped: String = statement
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("--"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let trimmed = stripped.trim();
+            if trimmed.is_empty() {
                 continue;
             }
             sqlx::query(trimmed).execute(&mut *tx).await.map_err(|e| {
