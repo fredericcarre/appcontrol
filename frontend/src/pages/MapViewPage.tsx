@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { useApp, useStartApp, useStopApp, useStartBranch, useStartTo } from '@/api/apps';
+import { useApp, useStartApp, useStopApp, useStartBranch } from '@/api/apps';
 import { useStartComponent, useStopComponent, useForceStopComponent, useStartWithDeps } from '@/api/components';
 import { usePermission } from '@/hooks/use-permission';
 import { useWebSocket } from '@/hooks/use-websocket';
@@ -20,7 +20,6 @@ export function MapViewPage() {
   const stopComponent = useStopComponent();
   const forceStopComponent = useForceStopComponent();
   const startWithDeps = useStartWithDeps();
-  const startTo = useStartTo();
   const { subscribe } = useWebSocket();
 
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
@@ -64,10 +63,6 @@ export function MapViewPage() {
   const handleStartWithDeps = useCallback((id: string) => {
     startWithDeps.mutate(id);
   }, [startWithDeps]);
-
-  const handleStartTo = useCallback((id: string) => {
-    if (appId) startTo.mutate({ appId, targetComponentId: id });
-  }, [appId, startTo]);
 
   const handleCommand = useCallback((componentId: string) => {
     setCommandComponentId(componentId);
