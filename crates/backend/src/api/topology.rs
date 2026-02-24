@@ -39,13 +39,11 @@ pub async fn get_topology(
     let format = params.format.as_deref().unwrap_or("json");
 
     // Fetch application name
-    let app_name = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM applications WHERE id = $1",
-    )
-    .bind(app_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    let app_name = sqlx::query_scalar::<_, String>("SELECT name FROM applications WHERE id = $1")
+        .bind(app_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     // Fetch components with current state
     let components = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String)>(
@@ -120,18 +118,16 @@ pub async fn get_topology(
             Ok(Json(json!({ "format": "dot", "content": dot })))
         }
         "yaml" => {
-            let topology = build_topology_structure(
-                app_id, &app_name, &components, &deps, &levels, &name_map,
-            );
-            let yaml_str = serde_yaml::to_string(&topology)
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            let topology =
+                build_topology_structure(app_id, &app_name, &components, &deps, &levels, &name_map);
+            let yaml_str =
+                serde_yaml::to_string(&topology).map_err(|e| ApiError::Internal(e.to_string()))?;
             Ok(Json(json!({ "format": "yaml", "content": yaml_str })))
         }
         _ => {
             // JSON (default)
-            let topology = build_topology_structure(
-                app_id, &app_name, &components, &deps, &levels, &name_map,
-            );
+            let topology =
+                build_topology_structure(app_id, &app_name, &components, &deps, &levels, &name_map);
             Ok(Json(topology))
         }
     }
@@ -427,14 +423,8 @@ pub async fn validate_sequence(
             };
 
             if violation {
-                let from_name = id_to_name
-                    .get(from)
-                    .map(|s| s.as_str())
-                    .unwrap_or("?");
-                let to_name = id_to_name
-                    .get(to)
-                    .map(|s| s.as_str())
-                    .unwrap_or("?");
+                let from_name = id_to_name.get(from).map(|s| s.as_str()).unwrap_or("?");
+                let to_name = id_to_name.get(to).map(|s| s.as_str()).unwrap_or("?");
 
                 conflicts.push(json!({
                     "type": "dependency_order_violation",
