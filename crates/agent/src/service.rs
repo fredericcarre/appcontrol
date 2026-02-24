@@ -45,7 +45,6 @@ pub const SERVICE_DISPLAY_NAME: &str = "AppControl Agent";
 /// when SCM starts the service, it enters the service dispatcher.
 #[cfg(windows)]
 pub fn install_service(config_path: &str) -> anyhow::Result<()> {
-    use std::path::PathBuf;
     use windows_service::service::{
         ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType,
     };
@@ -219,6 +218,7 @@ fn run_service(_arguments: Vec<OsString>) -> anyhow::Result<()> {
             check_scheduler.clone(),
             msg_tx,
             config.tls.as_ref(),
+            config.is_advisory(),
         );
 
         let conn_handle = tokio::spawn(connection.run(msg_rx));
