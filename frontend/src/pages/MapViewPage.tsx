@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { useApp, useStartApp, useStopApp } from '@/api/apps';
+import { useApp, useStartApp, useStopApp, useStartBranch } from '@/api/apps';
 import { useStartComponent, useStopComponent } from '@/api/components';
 import { usePermission } from '@/hooks/use-permission';
 import { useWebSocket } from '@/hooks/use-websocket';
@@ -15,6 +15,7 @@ export function MapViewPage() {
   const { canOperate } = usePermission(appId || '');
   const startApp = useStartApp();
   const stopApp = useStopApp();
+  const startBranch = useStartBranch();
   const startComponent = useStartComponent();
   const stopComponent = useStopComponent();
   const { subscribe } = useWebSocket();
@@ -38,6 +39,10 @@ export function MapViewPage() {
   const handleStopAll = useCallback(() => {
     if (appId) stopApp.mutate(appId);
   }, [appId, stopApp]);
+
+  const handleRestartErrorBranch = useCallback(() => {
+    if (appId) startBranch.mutate({ appId });
+  }, [appId, startBranch]);
 
   const handleStartComponent = useCallback((id: string) => {
     startComponent.mutate(id);
@@ -74,6 +79,7 @@ export function MapViewPage() {
           onSelectComponent={setSelectedComponentId}
           onStartAll={handleStartAll}
           onStopAll={handleStopAll}
+          onRestartErrorBranch={handleRestartErrorBranch}
           onShare={() => setShareOpen(true)}
           onStartComponent={handleStartComponent}
           onStopComponent={handleStopComponent}
@@ -91,6 +97,7 @@ export function MapViewPage() {
           onStop={() => handleStopComponent(selectedComponent.id)}
           onRestart={() => handleStartComponent(selectedComponent.id)}
           onCommand={() => handleCommand(selectedComponent.id)}
+          onDiagnose={() => handleCommand(selectedComponent.id)}
           canOperate={canOperate}
         />
       )}

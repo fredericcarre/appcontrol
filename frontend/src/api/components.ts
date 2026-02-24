@@ -28,7 +28,10 @@ export function useExecuteCommand() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (payload: { component_id: string; command_type: string; args?: string[] }) => {
-      const { data } = await client.post<CommandExecution>(`/components/${payload.component_id}/execute`, payload);
+      const { data } = await client.post<CommandExecution>(
+        `/components/${payload.component_id}/command/${payload.command_type}`,
+        { args: payload.args },
+      );
       return data;
     },
     onSuccess: (_, vars) => {

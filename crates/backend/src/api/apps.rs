@@ -58,7 +58,7 @@ pub struct StartAppRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct StartBranchRequest {
-    pub component_id: Uuid,
+    pub component_id: Option<Uuid>,
     pub dry_run: Option<bool>,
 }
 
@@ -348,17 +348,36 @@ pub async fn start_branch(
         return Err(ApiError::Forbidden);
     }
 
+    // If no component_id provided, find all FAILED components in this application.
+    let target_component_ids: Vec<Uuid> = if let Some(cid) = body.component_id {
+        vec![cid]
+    } else {
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM components WHERE application_id = $1 AND current_state = 'FAILED'",
+        )
+        .bind(id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    };
+
+    if target_component_ids.is_empty() {
+        return Ok(Json(
+            json!({ "status": "no_failed_components", "message": "No FAILED components found to restart" }),
+        ));
+    }
+
     log_action(
         &state.db,
         user.user_id,
         "start_branch",
         "application",
         id,
-        json!({"component_id": body.component_id}),
+        json!({"component_ids": target_component_ids}),
     )
     .await?;
 
-    let branch = crate::core::branch::detect_error_branch(&state.db, id, body.component_id)
+    let branch = crate::core::branch::detect_error_branch(&state.db, id, target_component_ids[0])
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -375,20 +394,22 @@ pub async fn start_branch(
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     let state_clone = state.clone();
-    let component_id = body.component_id;
     tokio::spawn(async move {
         let _guard = guard; // Hold the lock until the operation completes
-        if let Err(e) = crate::core::fsm::transition_component(
-            &state_clone,
-            component_id,
-            appcontrol_common::ComponentState::Failed,
-        )
-        .await
-        {
-            tracing::warn!(
-                "Could not force component to FAILED for branch restart: {}",
-                e
-            );
+        for component_id in &target_component_ids {
+            if let Err(e) = crate::core::fsm::transition_component(
+                &state_clone,
+                *component_id,
+                appcontrol_common::ComponentState::Failed,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Could not force component {} to FAILED for branch restart: {}",
+                    component_id,
+                    e
+                );
+            }
         }
         if let Err(e) = crate::core::sequencer::execute_start(&state_clone, id).await {
             tracing::error!("Failed to restart branch for app {}: {}", id, e);
