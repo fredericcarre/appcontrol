@@ -84,6 +84,29 @@ export function useCommandParams(commandId: string | null) {
   });
 }
 
+export interface StateTransition {
+  id: string;
+  component_id: string;
+  from_state: string;
+  to_state: string;
+  trigger: string;
+  created_at: string;
+}
+
+export function useStateTransitions(componentId: string, limit = 30) {
+  return useQuery({
+    queryKey: ['components', componentId, 'state-transitions'],
+    queryFn: async () => {
+      const { data } = await client.get<{ transitions: StateTransition[] }>(
+        `/components/${componentId}/state-transitions?limit=${limit}`,
+      );
+      return data.transitions;
+    },
+    enabled: !!componentId,
+    refetchInterval: 15_000,
+  });
+}
+
 export function useCommandExecutions(componentId: string, limit = 20) {
   return useQuery({
     queryKey: ['components', componentId, 'command-executions'],

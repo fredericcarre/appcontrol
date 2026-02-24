@@ -371,3 +371,327 @@ pub async fn export_pdf(
         Ok(Json(report).into_response())
     }
 }
+
+// ---------------------------------------------------------------------------
+// Unified Activity Feed
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ActivityQuery {
+    pub limit: Option<i64>,
+    pub cursor: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Unified activity feed for an application.
+/// Merges state transitions, action log, and command executions into a single
+/// chronologically-ordered timeline.
+pub async fn activity_feed(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(app_id): Path<Uuid>,
+    Query(params): Query<ActivityQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    let limit = params.limit.unwrap_or(50).min(200);
+    let cursor = params
+        .cursor
+        .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(1));
+
+    // State transitions (FAILED, RUNNING, STOPPED, etc.)
+    let transitions = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        r#"
+        SELECT st.component_id, c.name, st.from_state, st.to_state, st.trigger, st.created_at
+        FROM state_transitions st
+        JOIN components c ON c.id = st.component_id
+        WHERE c.application_id = $1 AND st.created_at < $2
+        ORDER BY st.created_at DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(app_id)
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await?;
+
+    // User actions on the app itself
+    let actions =
+        sqlx::query_as::<_, (Uuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
+            r#"
+        SELECT al.user_id, COALESCE(u.email, al.user_id::text), al.action, al.details, al.created_at
+        FROM action_log al
+        LEFT JOIN users u ON u.id = al.user_id
+        WHERE al.resource_id = $1 AND al.created_at < $2
+        ORDER BY al.created_at DESC
+        LIMIT $3
+        "#,
+        )
+        .bind(app_id)
+        .bind(cursor)
+        .bind(limit)
+        .fetch_all(&state.db)
+        .await?;
+
+    // Actions targeting components of this app
+    let component_actions = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            String,
+            Value,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        r#"
+        SELECT al.user_id, COALESCE(u.email, al.user_id::text), al.action,
+               COALESCE(c.name, al.resource_id::text), al.details, al.created_at
+        FROM action_log al
+        LEFT JOIN users u ON u.id = al.user_id
+        JOIN components c ON c.id = al.resource_id AND c.application_id = $1
+        WHERE al.resource_type = 'component' AND al.created_at < $2
+        ORDER BY al.created_at DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(app_id)
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Command executions for this app's components
+    let commands = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            String,
+            Option<i16>,
+            Option<i32>,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
+        r#"
+        SELECT ce.request_id, ce.component_id, c.name, ce.command_type,
+               ce.exit_code, ce.duration_ms, ce.dispatched_at, ce.completed_at
+        FROM command_executions ce
+        JOIN components c ON c.id = ce.component_id AND c.application_id = $1
+        WHERE ce.dispatched_at < $2
+        ORDER BY ce.dispatched_at DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(app_id)
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Build unified events list
+    let mut events: Vec<Value> = Vec::new();
+
+    for (comp_id, comp_name, from, to, trigger, at) in &transitions {
+        events.push(json!({
+            "kind": "state_change",
+            "component_id": comp_id,
+            "component_name": comp_name,
+            "from_state": from,
+            "to_state": to,
+            "trigger": trigger,
+            "at": at,
+        }));
+    }
+
+    for (_uid, email, action, details, at) in &actions {
+        events.push(json!({
+            "kind": "user_action",
+            "user": email,
+            "action": action,
+            "details": details,
+            "at": at,
+        }));
+    }
+
+    for (_uid, email, action, comp_name, details, at) in &component_actions {
+        events.push(json!({
+            "kind": "user_action",
+            "user": email,
+            "action": action,
+            "component_name": comp_name,
+            "details": details,
+            "at": at,
+        }));
+    }
+
+    for (req_id, comp_id, comp_name, cmd_type, exit_code, duration, dispatched, completed) in
+        &commands
+    {
+        events.push(json!({
+            "kind": "command",
+            "request_id": req_id,
+            "component_id": comp_id,
+            "component_name": comp_name,
+            "command_type": cmd_type,
+            "exit_code": exit_code,
+            "duration_ms": duration,
+            "dispatched_at": dispatched,
+            "completed_at": completed,
+            "at": completed.unwrap_or(*dispatched),
+        }));
+    }
+
+    // Sort by timestamp descending
+    events.sort_by(|a, b| {
+        let at_a = a["at"].as_str().unwrap_or("");
+        let at_b = b["at"].as_str().unwrap_or("");
+        at_b.cmp(at_a)
+    });
+
+    events.truncate(limit as usize);
+
+    Ok(Json(json!({ "events": events })))
+}
+
+// ---------------------------------------------------------------------------
+// Application Health Summary
+// ---------------------------------------------------------------------------
+
+/// Real-time health summary for an application:
+/// component state breakdown, error components, agent status, recent incidents.
+pub async fn health_summary(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(app_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Component states breakdown
+    let states = sqlx::query_as::<_, (String, i64)>(
+        r#"
+        SELECT COALESCE(cs.current_state, 'UNKNOWN') as state, COUNT(*) as cnt
+        FROM components c
+        LEFT JOIN component_state_cache cs ON cs.component_id = c.id
+        WHERE c.application_id = $1
+        GROUP BY cs.current_state
+        ORDER BY cnt DESC
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let state_breakdown: Value = states
+        .iter()
+        .map(|(s, c)| json!({"state": s, "count": c}))
+        .collect();
+
+    // Components in error
+    let error_components =
+        sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
+            r#"
+        SELECT c.id, c.name, COALESCE(cs.current_state, 'UNKNOWN'), cs.last_changed_at
+        FROM components c
+        JOIN component_state_cache cs ON cs.component_id = c.id
+        WHERE c.application_id = $1
+          AND cs.current_state IN ('FAILED', 'UNREACHABLE', 'DEGRADED')
+        ORDER BY cs.last_changed_at DESC
+        "#,
+        )
+        .bind(app_id)
+        .fetch_all(&state.db)
+        .await?;
+
+    let errors: Vec<Value> = error_components
+        .iter()
+        .map(|(id, name, state, at)| {
+            json!({"component_id": id, "name": name, "state": state, "since": at})
+        })
+        .collect();
+
+    // Agent status for this app
+    let agents = sqlx::query_as::<_, (Uuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
+        r#"
+        SELECT DISTINCT a.id, a.hostname, a.is_active, a.last_heartbeat_at
+        FROM agents a
+        JOIN components c ON c.agent_id = a.id
+        WHERE c.application_id = $1
+        ORDER BY a.hostname
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let agent_status: Vec<Value> = agents
+        .iter()
+        .map(|(id, hostname, active, heartbeat)| {
+            let stale = heartbeat.is_none_or(|hb| (chrono::Utc::now() - hb).num_seconds() > 120);
+            json!({
+                "agent_id": id,
+                "hostname": hostname,
+                "active": active,
+                "last_heartbeat": heartbeat,
+                "stale": stale,
+            })
+        })
+        .collect();
+
+    // Recent incidents (last 10 FAILED transitions)
+    let recent_incidents =
+        sqlx::query_as::<_, (Uuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
+            r#"
+        SELECT st.component_id, c.name, st.from_state, st.to_state, st.created_at
+        FROM state_transitions st
+        JOIN components c ON c.id = st.component_id
+        WHERE c.application_id = $1 AND st.to_state = 'FAILED'
+        ORDER BY st.created_at DESC
+        LIMIT 10
+        "#,
+        )
+        .bind(app_id)
+        .fetch_all(&state.db)
+        .await?;
+
+    let incidents: Vec<Value> = recent_incidents
+        .iter()
+        .map(|(cid, name, from, _to, at)| {
+            json!({"component_id": cid, "component_name": name, "from_state": from, "at": at})
+        })
+        .collect();
+
+    let total_components =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM components WHERE application_id = $1")
+            .bind(app_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
+
+    Ok(Json(json!({
+        "total_components": total_components,
+        "state_breakdown": state_breakdown,
+        "error_components": errors,
+        "agents": agent_status,
+        "recent_incidents": incidents,
+    })))
+}

@@ -1,10 +1,12 @@
-import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch } from 'lucide-react';
+import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { STATE_COLORS, ComponentState } from '@/lib/colors';
 import { Component } from '@/api/apps';
+import { useStateTransitions, useCommandExecutions } from '@/api/components';
 
 interface DetailPanelProps {
   component: Component;
@@ -17,6 +19,39 @@ interface DetailPanelProps {
   onForceStop?: () => void;
   onStartWithDeps?: () => void;
   canOperate?: boolean;
+}
+
+function stateColor(state: string): string {
+  switch (state.toUpperCase()) {
+    case 'RUNNING': return 'text-emerald-500';
+    case 'FAILED': return 'text-red-500';
+    case 'DEGRADED': return 'text-amber-500';
+    case 'STOPPED': return 'text-gray-400';
+    case 'STARTING': return 'text-blue-500';
+    case 'STOPPING': return 'text-orange-400';
+    default: return 'text-gray-500';
+  }
+}
+
+function stateDot(state: string): string {
+  switch (state.toUpperCase()) {
+    case 'RUNNING': return 'bg-emerald-500';
+    case 'FAILED': return 'bg-red-500';
+    case 'DEGRADED': return 'bg-amber-500';
+    case 'STOPPED': return 'bg-gray-400';
+    case 'STARTING': case 'STOPPING': return 'bg-blue-500';
+    default: return 'bg-gray-400';
+  }
+}
+
+function timeAgo(dateStr: string): string {
+  const diffS = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (diffS < 60) return `${diffS}s ago`;
+  const diffM = Math.floor(diffS / 60);
+  if (diffM < 60) return `${diffM}m ago`;
+  const diffH = Math.floor(diffM / 60);
+  if (diffH < 24) return `${diffH}h ago`;
+  return `${Math.floor(diffH / 24)}d ago`;
 }
 
 export function DetailPanel({
@@ -33,6 +68,8 @@ export function DetailPanel({
 }: DetailPanelProps) {
   const state = (component.state || 'UNKNOWN') as ComponentState;
   const stateStyle = STATE_COLORS[state] || STATE_COLORS.UNKNOWN;
+  const { data: transitions } = useStateTransitions(component.id);
+  const { data: executions } = useCommandExecutions(component.id, 10);
 
   return (
     <div className="w-[360px] border-l border-border bg-card h-full flex flex-col">
@@ -85,7 +122,7 @@ export function DetailPanel({
 
       <Separator />
 
-      <Tabs defaultValue="info" className="flex-1 flex flex-col">
+      <Tabs defaultValue="info" className="flex-1 flex flex-col min-h-0">
         <TabsList className="mx-4 mt-2">
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="commands">Commands</TabsTrigger>
@@ -113,11 +150,85 @@ export function DetailPanel({
                 </Button>
               </>
             )}
+
+            {/* Recent command executions */}
+            {executions && executions.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Recent Executions
+                </h4>
+                {executions.map((exec) => (
+                  <div key={exec.id} className="border rounded-md p-2 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-mono">{exec.command_type}</span>
+                      <Badge
+                        variant={exec.status === 'completed' ? 'running' : exec.status === 'failed' ? 'failed' : 'outline'}
+                        className="text-[10px] h-4"
+                      >
+                        {exec.status}
+                      </Badge>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {timeAgo(exec.dispatched_at)}
+                      {exec.duration_ms != null && ` · ${exec.duration_ms}ms`}
+                      {exec.exit_code != null && ` · exit ${exec.exit_code}`}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </TabsContent>
 
-        <TabsContent value="events" className="flex-1 overflow-auto p-4">
-          <p className="text-sm text-muted-foreground">Recent events will appear here via WebSocket.</p>
+        <TabsContent value="events" className="flex-1 min-h-0">
+          <ScrollArea className="h-full">
+            <div className="p-4 space-y-0">
+              {!transitions || transitions.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  No state changes recorded
+                </p>
+              ) : (
+                transitions.map((t, i) => (
+                  <div key={t.id} className="flex gap-2.5 pb-3">
+                    {/* Timeline dot + line */}
+                    <div className="flex flex-col items-center pt-1">
+                      <div className={`h-2 w-2 rounded-full ${stateDot(t.to_state)}`} />
+                      {i < transitions.length - 1 && (
+                        <div className="w-px flex-1 bg-border mt-1" />
+                      )}
+                    </div>
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0 space-y-0.5 pb-1">
+                      <div className="flex items-center gap-1 text-xs">
+                        <span className={`opacity-60 ${stateColor(t.from_state)}`}>
+                          {t.from_state}
+                        </span>
+                        <ArrowRight className="h-2.5 w-2.5 text-muted-foreground flex-shrink-0" />
+                        <span className={`font-semibold ${stateColor(t.to_state)}`}>
+                          {t.to_state}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <span>{new Date(t.created_at).toLocaleString()}</span>
+                        {t.trigger !== 'check' && (
+                          <>
+                            <span>·</span>
+                            <span className="font-medium">{t.trigger}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Time ago */}
+                    <span className="text-[10px] text-muted-foreground whitespace-nowrap pt-1">
+                      {timeAgo(t.created_at)}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </ScrollArea>
         </TabsContent>
       </Tabs>
     </div>

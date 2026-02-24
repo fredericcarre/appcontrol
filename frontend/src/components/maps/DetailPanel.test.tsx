@@ -1,7 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DetailPanel } from './DetailPanel';
 import type { Component } from '@/api/apps';
+
+// Mock the API hooks to avoid needing a real backend
+vi.mock('@/api/components', () => ({
+  useStateTransitions: () => ({ data: undefined }),
+  useCommandExecutions: () => ({ data: undefined }),
+}));
 
 function createComponent(overrides: Partial<Component> = {}): Component {
   return {
@@ -32,43 +39,50 @@ function createComponent(overrides: Partial<Component> = {}): Component {
   };
 }
 
+function renderWithProviders(ui: React.ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  );
+}
+
 describe('DetailPanel', () => {
   it('should render component name', () => {
-    render(<DetailPanel component={createComponent()} onClose={vi.fn()} />);
+    renderWithProviders(<DetailPanel component={createComponent()} onClose={vi.fn()} />);
     expect(screen.getByText('my-database')).toBeInTheDocument();
   });
 
   it('should render component host', () => {
-    render(<DetailPanel component={createComponent()} onClose={vi.fn()} />);
-    // Host appears in header and in the Info tab row
+    renderWithProviders(<DetailPanel component={createComponent()} onClose={vi.fn()} />);
     const hostElements = screen.getAllByText('db-server-01');
     expect(hostElements.length).toBeGreaterThanOrEqual(1);
   });
 
   it('should render component state', () => {
-    render(<DetailPanel component={createComponent({ state: 'RUNNING' })} onClose={vi.fn()} />);
+    renderWithProviders(<DetailPanel component={createComponent({ state: 'RUNNING' })} onClose={vi.fn()} />);
     expect(screen.getByText('RUNNING')).toBeInTheDocument();
   });
 
   it('should render component type badge', () => {
-    render(<DetailPanel component={createComponent({ component_type: 'database' })} onClose={vi.fn()} />);
+    renderWithProviders(<DetailPanel component={createComponent({ component_type: 'database' })} onClose={vi.fn()} />);
     expect(screen.getByText('database')).toBeInTheDocument();
   });
 
   it('should call onClose when close button is clicked', () => {
     const onClose = vi.fn();
-    render(<DetailPanel component={createComponent()} onClose={onClose} />);
+    renderWithProviders(<DetailPanel component={createComponent()} onClose={onClose} />);
 
-    // Find the close button (has X icon)
     const buttons = screen.getAllByRole('button');
-    const closeButton = buttons[0]; // First button is the close button
+    const closeButton = buttons[0];
     fireEvent.click(closeButton);
 
     expect(onClose).toHaveBeenCalled();
   });
 
   it('should show action buttons when canOperate is true', () => {
-    render(
+    renderWithProviders(
       <DetailPanel
         component={createComponent()}
         onClose={vi.fn()}
@@ -84,7 +98,7 @@ describe('DetailPanel', () => {
   });
 
   it('should hide action buttons when canOperate is false', () => {
-    render(
+    renderWithProviders(
       <DetailPanel
         component={createComponent()}
         onClose={vi.fn()}
@@ -98,7 +112,7 @@ describe('DetailPanel', () => {
 
   it('should call onStart when Start button is clicked', () => {
     const onStart = vi.fn();
-    render(
+    renderWithProviders(
       <DetailPanel
         component={createComponent()}
         onClose={vi.fn()}
@@ -115,7 +129,7 @@ describe('DetailPanel', () => {
 
   it('should call onStop when Stop button is clicked', () => {
     const onStop = vi.fn();
-    render(
+    renderWithProviders(
       <DetailPanel
         component={createComponent()}
         onClose={vi.fn()}
@@ -131,7 +145,7 @@ describe('DetailPanel', () => {
   });
 
   it('should show info tab by default with component details', () => {
-    render(
+    renderWithProviders(
       <DetailPanel
         component={createComponent({ check_interval_secs: 30, is_protected: true })}
         onClose={vi.fn()}
@@ -139,11 +153,11 @@ describe('DetailPanel', () => {
     );
 
     expect(screen.getByText('30s')).toBeInTheDocument();
-    expect(screen.getByText('Yes')).toBeInTheDocument(); // Protected: Yes
+    expect(screen.getByText('Yes')).toBeInTheDocument();
   });
 
   it('should show "No" for non-protected components', () => {
-    render(
+    renderWithProviders(
       <DetailPanel
         component={createComponent({ is_protected: false })}
         onClose={vi.fn()}
@@ -154,7 +168,7 @@ describe('DetailPanel', () => {
   });
 
   it('should display check command in info tab', () => {
-    render(
+    renderWithProviders(
       <DetailPanel
         component={createComponent({ check_cmd: '/bin/health_check' })}
         onClose={vi.fn()}
@@ -165,7 +179,7 @@ describe('DetailPanel', () => {
   });
 
   it('should display start command in info tab', () => {
-    render(
+    renderWithProviders(
       <DetailPanel
         component={createComponent({ start_cmd: '/bin/start_service' })}
         onClose={vi.fn()}
@@ -176,7 +190,7 @@ describe('DetailPanel', () => {
   });
 
   it('should display stop command in info tab', () => {
-    render(
+    renderWithProviders(
       <DetailPanel
         component={createComponent({ stop_cmd: '/bin/stop_service' })}
         onClose={vi.fn()}
@@ -187,18 +201,17 @@ describe('DetailPanel', () => {
   });
 
   it('should render tabs for Info, Commands, and Events', () => {
-    render(
+    renderWithProviders(
       <DetailPanel component={createComponent()} onClose={vi.fn()} />
     );
 
-    // Custom Tabs component uses plain buttons, not role="tab"
     expect(screen.getByText('Info')).toBeInTheDocument();
     expect(screen.getByText('Commands')).toBeInTheDocument();
     expect(screen.getByText('Events')).toBeInTheDocument();
   });
 
   it('should show command buttons in Commands tab when canOperate', () => {
-    render(
+    renderWithProviders(
       <DetailPanel
         component={createComponent()}
         onClose={vi.fn()}
@@ -208,7 +221,6 @@ describe('DetailPanel', () => {
       />,
     );
 
-    // Switch to Commands tab using button click
     fireEvent.click(screen.getByText('Commands'));
 
     expect(screen.getByText('Execute Custom Command')).toBeInTheDocument();
@@ -216,7 +228,7 @@ describe('DetailPanel', () => {
   });
 
   it('should display UNKNOWN state for missing state', () => {
-    render(
+    renderWithProviders(
       <DetailPanel
         component={createComponent({ state: '' })}
         onClose={vi.fn()}
