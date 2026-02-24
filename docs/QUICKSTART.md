@@ -770,6 +770,109 @@ Org admins (`role: "admin"`) have implicit owner access on all applications.
 
 ---
 
+## Passive Discovery Mode
+
+Instead of manually defining every component and dependency, you can let AppControl discover your application topology automatically. Agents scan running processes, listening ports, and network connections on their hosts, then the backend infers a candidate dependency graph.
+
+### Trigger a Discovery Scan
+
+```bash
+# Trigger discovery on a specific agent
+curl -X POST "http://localhost:3000/api/v1/discovery/trigger/$AGENT_ID" \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+# List discovery reports received from agents
+curl "http://localhost:3000/api/v1/discovery/reports" \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+# Run inference to create a draft application from agent reports
+curl -X POST "http://localhost:3000/api/v1/discovery/infer" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-discovered-app", "agent_ids": ["AGENT_UUID_1", "AGENT_UUID_2"]}' | jq
+
+# List inferred drafts
+curl "http://localhost:3000/api/v1/discovery/drafts" \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+# Get draft details (components + dependencies)
+curl "http://localhost:3000/api/v1/discovery/drafts/$DRAFT_ID" \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+# Apply a draft to create a real application
+curl -X POST "http://localhost:3000/api/v1/discovery/drafts/$DRAFT_ID/apply" \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+The draft is not applied automatically. Review the inferred topology, then call the apply endpoint to create a real application with components and dependencies.
+
+### Operation Time Estimates
+
+AppControl tracks historical execution times and provides P50/P95 estimates for operations:
+
+```bash
+# Get estimated start/stop time for an application
+curl "http://localhost:3000/api/v1/apps/$APP_ID/estimates?operation=start" \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+Returns per-component timing (P50/P95), DAG-aware wall-clock estimates (accounting for parallel levels), and confidence levels based on historical sample count.
+
+### Air-Gap Agent Update
+
+For environments without internet access, update agents via the backend WebSocket:
+
+```bash
+# Upload an agent binary
+curl -X POST "http://localhost:3000/api/v1/admin/agent-binaries" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"version": "1.2.0", "platform": "linux-amd64", "binary_base64": "...", "checksum_sha256": "..."}' | jq
+
+# Push update to a specific agent (sends binary in 256KB chunks via WebSocket)
+curl -X POST "http://localhost:3000/api/v1/admin/agents/$AGENT_ID/update" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"version": "1.2.0"}' | jq
+
+# Monitor update progress
+curl "http://localhost:3000/api/v1/admin/agent-update-tasks" \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+---
+
+## MCP Server (AI Integration)
+
+AppControl ships with a standalone MCP (Model Context Protocol) server that exposes 10 tools for AI assistants like Claude Desktop. It communicates over JSON-RPC via stdio, so no network ports are opened.
+
+### Setup with Claude Desktop
+
+1. Build the MCP server binary:
+
+```bash
+cargo build --release --bin appcontrol-mcp
+```
+
+2. Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "appcontrol": {
+      "command": "/path/to/appcontrol-mcp",
+      "args": ["--api-url", "http://localhost:3000", "--api-key", "ac_XXXXX"]
+    }
+  }
+}
+```
+
+3. Restart Claude Desktop. You can now ask Claude to list applications, check status, start/stop apps, view topology, run diagnostics, and more -- all through natural language.
+
+**Available tools:** `list_apps`, `get_app_status`, `start_app`, `stop_app`, `diagnose_app`, `get_incidents`, `get_topology`, `estimate_time`, `get_activity`, `list_agents`.
+
+---
+
 ## Next Steps
 
 - **Scheduler Integration:** See [`docs/INTEGRATION_COOKBOOK.md`](./INTEGRATION_COOKBOOK.md) for Control-M, AutoSys, Dollar Universe, Jenkins, GitLab CI examples

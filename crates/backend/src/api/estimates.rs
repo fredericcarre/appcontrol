@@ -74,19 +74,16 @@ pub async fn get_estimates(
     let mut stats_map: HashMap<Uuid, HashMap<String, ComponentStats>> = HashMap::new();
     if let Ok(rows) = stats {
         for (comp_id, cmd_type, sample_count, avg_ms, p50_ms, p95_ms, max_ms) in rows {
-            stats_map
-                .entry(comp_id)
-                .or_default()
-                .insert(
-                    cmd_type,
-                    ComponentStats {
-                        sample_count,
-                        avg_ms,
-                        p50_ms,
-                        p95_ms,
-                        max_ms,
-                    },
-                );
+            stats_map.entry(comp_id).or_default().insert(
+                cmd_type,
+                ComponentStats {
+                    sample_count,
+                    avg_ms,
+                    p50_ms,
+                    p95_ms,
+                    max_ms,
+                },
+            );
         }
     }
 
@@ -113,15 +110,13 @@ pub async fn get_estimates(
         for &comp_id in level {
             total_components += 1;
 
-            let name = sqlx::query_scalar::<_, String>(
-                "SELECT name FROM components WHERE id = $1",
-            )
-            .bind(comp_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| comp_id.to_string());
+            let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
+                .bind(comp_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| comp_id.to_string());
 
             if let Some(type_map) = stats_map.get(&comp_id) {
                 if let Some(s) = type_map.get(cmd_type) {

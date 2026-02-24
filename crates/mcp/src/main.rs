@@ -44,10 +44,7 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter("appcontrol_mcp=debug")
         .init();
 
-    tracing::info!(
-        "AppControl MCP server starting (backend={})",
-        args.url
-    );
+    tracing::info!("AppControl MCP server starting (backend={})", args.url);
 
     let client = tools::McpClient::new(&args.url, &args.api_key)?;
 
@@ -92,11 +89,11 @@ async fn handle_request(
     client: &tools::McpClient,
     request: &serde_json::Value,
 ) -> serde_json::Value {
-    let id = request.get("id").cloned().unwrap_or(serde_json::Value::Null);
-    let method = request
-        .get("method")
-        .and_then(|m| m.as_str())
-        .unwrap_or("");
+    let id = request
+        .get("id")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
 
     match method {
         "initialize" => protocol::initialize_response(id),
@@ -104,10 +101,7 @@ async fn handle_request(
         "tools/list" => protocol::tools_list_response(id),
         "tools/call" => {
             let params = request.get("params").cloned().unwrap_or_default();
-            let tool_name = params
-                .get("name")
-                .and_then(|n| n.as_str())
-                .unwrap_or("");
+            let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
             let arguments = params
                 .get("arguments")
                 .cloned()

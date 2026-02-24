@@ -107,7 +107,17 @@ pub async fn list_binaries(
         return Err(ApiError::Forbidden);
     }
 
-    let rows = sqlx::query_as::<_, (Uuid, String, String, String, i64, chrono::DateTime<chrono::Utc>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            String,
+            i64,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         "SELECT id, version, platform, checksum_sha256, size_bytes, uploaded_at
          FROM agent_binaries ORDER BY uploaded_at DESC",
     )
@@ -194,10 +204,7 @@ pub async fn push_update_to_agent(
             let start = i as usize * CHUNK_SIZE;
             let end = std::cmp::min(start + CHUNK_SIZE, binary_data.len());
             let chunk = &binary_data[start..end];
-            let encoded = base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                chunk,
-            );
+            let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, chunk);
 
             let msg = appcontrol_common::BackendMessage::UpdateBinaryChunk {
                 update_id,
@@ -225,13 +232,11 @@ pub async fn push_update_to_agent(
             }
 
             // Update progress
-            let _ = sqlx::query(
-                "UPDATE agent_update_tasks SET chunks_sent = $2 WHERE id = $1",
-            )
-            .bind(update_id)
-            .bind((i + 1) as i32)
-            .execute(&state_clone.db)
-            .await;
+            let _ = sqlx::query("UPDATE agent_update_tasks SET chunks_sent = $2 WHERE id = $1")
+                .bind(update_id)
+                .bind((i + 1) as i32)
+                .execute(&state_clone.db)
+                .await;
 
             // Small delay between chunks to avoid overwhelming the WebSocket
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -317,7 +322,19 @@ pub async fn list_update_tasks(
         return Err(ApiError::Forbidden);
     }
 
-    let rows = sqlx::query_as::<_, (Uuid, Uuid, String, String, i32, i32, Option<String>, chrono::DateTime<chrono::Utc>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            String,
+            i32,
+            i32,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         "SELECT id, agent_id, target_version, status, chunks_sent, total_chunks, error, started_at
          FROM agent_update_tasks
          ORDER BY started_at DESC
@@ -328,19 +345,21 @@ pub async fn list_update_tasks(
 
     let tasks: Vec<Value> = rows
         .iter()
-        .map(|(id, agent_id, version, status, sent, total, error, started_at)| {
-            json!({
-                "id": id,
-                "agent_id": agent_id,
-                "target_version": version,
-                "status": status,
-                "chunks_sent": sent,
-                "total_chunks": total,
-                "progress_pct": if *total > 0 { (*sent * 100 / *total) as u32 } else { 0 },
-                "error": error,
-                "started_at": started_at,
-            })
-        })
+        .map(
+            |(id, agent_id, version, status, sent, total, error, started_at)| {
+                json!({
+                    "id": id,
+                    "agent_id": agent_id,
+                    "target_version": version,
+                    "status": status,
+                    "chunks_sent": sent,
+                    "total_chunks": total,
+                    "progress_pct": if *total > 0 { (*sent * 100 / *total) as u32 } else { 0 },
+                    "error": error,
+                    "started_at": started_at,
+                })
+            },
+        )
         .collect();
 
     Ok(Json(json!({ "tasks": tasks })))

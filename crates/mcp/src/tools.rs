@@ -49,10 +49,7 @@ impl McpClient {
             }
             "get_incidents" => {
                 let app = get_arg_str(args, "app_name")?;
-                let days = args
-                    .get("days")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(7);
+                let days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(7);
                 self.get_incidents(&app, days).await
             }
             "get_topology" => {
@@ -69,10 +66,7 @@ impl McpClient {
             }
             "get_activity" => {
                 let app = get_arg_str(args, "app_name")?;
-                let limit = args
-                    .get("limit")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(20);
+                let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
                 self.get_activity(&app, limit).await
             }
             "list_agents" => self.list_agents().await,
@@ -117,7 +111,10 @@ impl McpClient {
         let app_id = self.resolve_app(app_name).await?;
         let body = serde_json::json!({ "dry_run": dry_run });
         let resp = self
-            .post(&format!("/api/v1/orchestration/apps/{}/start", app_id), &body)
+            .post(
+                &format!("/api/v1/orchestration/apps/{}/start", app_id),
+                &body,
+            )
             .await?;
 
         if dry_run {
@@ -130,11 +127,7 @@ impl McpClient {
                                 .iter()
                                 .filter_map(|c| c.get("name").and_then(|n| n.as_str()))
                                 .collect();
-                            output.push_str(&format!(
-                                "Level {}: {}\n",
-                                i,
-                                names.join(", ")
-                            ));
+                            output.push_str(&format!("Level {}: {}\n", i, names.join(", ")));
                         }
                     }
                 }
@@ -181,7 +174,10 @@ impl McpClient {
                 app_id, days
             ))
             .await?;
-        format_json_response(&format!("Incidents for {} (last {} days)", app_name, days), &resp)
+        format_json_response(
+            &format!("Incidents for {} (last {} days)", app_name, days),
+            &resp,
+        )
     }
 
     async fn get_topology(&self, app_name: &str) -> Result<String> {

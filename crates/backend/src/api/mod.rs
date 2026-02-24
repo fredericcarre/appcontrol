@@ -324,10 +324,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .route("/discovery/drafts", get(discovery::list_drafts))
         .route("/discovery/drafts/:id", get(discovery::get_draft))
-        .route(
-            "/discovery/drafts/:id/apply",
-            post(discovery::apply_draft),
-        )
+        .route("/discovery/drafts/:id/apply", post(discovery::apply_draft))
         .route("/discovery/infer", post(discovery::infer))
         // Air-gap agent update
         .route(

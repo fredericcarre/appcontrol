@@ -223,23 +223,21 @@ pub async fn handle_binary_chunk(
     msg_tx: &tokio::sync::mpsc::UnboundedSender<AgentMessage>,
 ) {
     // Decode base64 chunk
-    let chunk_data = match base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        data_base64,
-    ) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Failed to decode base64 chunk: {}", e);
-            let _ = msg_tx.send(AgentMessage::UpdateProgress {
-                update_id,
-                agent_id,
-                chunks_received: 0,
-                status: UpdateStatus::Failed,
-                error: Some(format!("Base64 decode error: {}", e)),
-            });
-            return;
-        }
-    };
+    let chunk_data =
+        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data_base64) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!("Failed to decode base64 chunk: {}", e);
+                let _ = msg_tx.send(AgentMessage::UpdateProgress {
+                    update_id,
+                    agent_id,
+                    chunks_received: 0,
+                    status: UpdateStatus::Failed,
+                    error: Some(format!("Base64 decode error: {}", e)),
+                });
+                return;
+            }
+        };
 
     let all_received = {
         let mut buffers = CHUNK_BUFFERS.lock().unwrap();
@@ -364,10 +362,7 @@ pub async fn handle_binary_chunk(
             error: None,
         });
 
-        tracing::info!(
-            "Air-gap update to v{} complete — restarting agent",
-            version
-        );
+        tracing::info!("Air-gap update to v{} complete — restarting agent", version);
         let _ = restart_agent(&current_exe);
     }
 }

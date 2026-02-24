@@ -65,7 +65,16 @@ pub async fn get_report(
         return Err(ApiError::Forbidden);
     }
 
-    let row = sqlx::query_as::<_, (Uuid, Uuid, String, serde_json::Value, chrono::DateTime<chrono::Utc>)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            serde_json::Value,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         "SELECT id, agent_id, hostname, report, scanned_at
          FROM discovery_reports WHERE id = $1",
     )
@@ -238,12 +247,10 @@ pub async fn infer(
     }
 
     // Get org_id from user
-    let org_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT organization_id FROM users WHERE id = $1",
-    )
-    .bind(user.user_id)
-    .fetch_one(&state.db)
-    .await?;
+    let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM users WHERE id = $1")
+        .bind(user.user_id)
+        .fetch_one(&state.db)
+        .await?;
 
     log_action(
         &state.db,
@@ -360,10 +367,7 @@ pub async fn apply_draft(
 
     let (_, org_id, name, status) = draft.ok_or(ApiError::NotFound)?;
     if status != "pending" {
-        return Err(ApiError::Conflict(format!(
-            "Draft is already {}",
-            status
-        )));
+        return Err(ApiError::Conflict(format!("Draft is already {}", status)));
     }
 
     log_action(

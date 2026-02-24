@@ -612,3 +612,48 @@ Fixes based on production engineer review. All items address identified weakness
 - [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
 - [x] `cargo test --workspace` — all unit tests pass (75+ across all crates)
 - [x] `cd frontend && npm run build` — clean
+
+---
+
+## Phase 12: Passive Discovery, Operation Estimation, MCP Server & Air-Gap Agent Update
+
+> New intelligence and automation features: auto-discover application topology, estimate operation durations, AI integration via MCP, and secure agent updates for air-gapped environments.
+
+### P12-1: Passive Discovery
+- [x] `crates/agent/src/discovery.rs` — Process scanner: enumerate running processes, listening ports, and established connections via sysinfo + /proc/net/tcp
+- [x] `crates/common/src/protocol.rs` — `AgentMessage::DiscoveryReport` with processes, listeners, connections, services
+- [x] `crates/common/src/protocol.rs` — `BackendMessage::RequestDiscovery` to trigger agent scan remotely
+- [x] `crates/backend/src/api/discovery.rs` — 7 endpoints: list/get reports, trigger scan, list/get drafts, infer topology, apply draft
+- [x] `crates/backend/src/websocket/mod.rs` — Handler stores `DiscoveryReport` as JSONB in `discovery_reports` table
+- [x] `migrations/V019__discovery_estimates_airgap.sql` — `discovery_reports`, `discovery_drafts`, `discovery_draft_components`, `discovery_draft_dependencies` tables
+- [ ] `frontend/src/pages/DiscoveryWizardPage.tsx` — Draft review wizard with React Flow graph (pending)
+- [x] Tests: process scanning, hex addr parsing, port filtering
+
+### P12-2: Operation Time Estimation
+- [x] `migrations/V019__discovery_estimates_airgap.sql` — `component_operation_stats` materialized view from `command_executions` (P50/P95 per component per operation)
+- [x] `crates/backend/src/api/estimates.rs` — DAG-aware wall-clock estimator: builds topological levels, computes MAX(P95) per level, sums for total
+- [x] `crates/backend/src/api/estimates.rs` — `GET /apps/:app_id/estimates?operation=start|stop|restart` returns per-component P50/P95, level breakdown, and confidence
+- [ ] `frontend/src/components/maps/EstimationOverlay.tsx` — Time estimation overlay on map (pending)
+
+### P12-3: MCP Server (AI Integration)
+- [x] `crates/mcp/Cargo.toml` — Standalone binary crate: serde, serde_json, tokio, reqwest, clap, anyhow, tracing
+- [x] `crates/mcp/src/main.rs` — JSON-RPC 2.0 server over stdio (reads stdin line-by-line, writes JSON-RPC responses to stdout)
+- [x] `crates/mcp/src/protocol.rs` — MCP protocol types: `initialize`, `tools/list`, `tools/call` handlers; capability negotiation; 10 tool definitions
+- [x] `crates/mcp/src/tools.rs` — McpClient with 10 tools: `list_apps`, `get_app_status`, `start_app`, `stop_app`, `diagnose_app`, `get_incidents`, `get_topology`, `estimate_time`, `get_activity`, `list_agents`
+- [x] `crates/mcp/src/tools.rs` — `resolve_app()` resolves app name or UUID, HTTP helpers with API key auth
+- [x] Claude Desktop compatible: `claude_desktop_config.json` example with `command: "appcontrol-mcp"` and `args: ["--api-url", "...", "--api-key", "..."]`
+- [x] `Cargo.toml` — Workspace member: `crates/mcp` added
+
+### P12-4: Air-Gap Agent Update
+- [x] `crates/common/src/protocol.rs` — `BackendMessage::UpdateBinaryChunk { update_id, target_version, checksum_sha256, chunk_index, total_chunks, total_size, data }` for chunked transfer
+- [x] `crates/common/src/protocol.rs` — `AgentMessage::UpdateProgress { update_id, status, message }` for progress reporting
+- [x] `crates/agent/src/self_update.rs` — `handle_binary_chunk()`: accumulates chunks in memory, SHA-256 verification, atomic replace via rename
+- [x] `crates/agent/src/connection.rs` — Handlers for `BackendMessage::UpdateBinaryChunk` and `BackendMessage::RequestDiscovery`
+- [x] `crates/backend/src/api/agent_update.rs` — `upload_binary`, `list_binaries`, `push_update_to_agent`, `push_update_batch`, `list_update_tasks`
+- [x] `migrations/V019__discovery_estimates_airgap.sql` — `agent_binaries` (BYTEA), `agent_update_tasks` tables
+- [x] Background chunked delivery: 256KB chunks with 50ms delay, progress tracking per task
+
+### Build Validation (Phase 12)
+- [x] `cargo build --workspace` — clean (0 errors)
+- [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
+- [x] `cargo test --workspace` — 134 unit tests pass (33 agent + 12 backend + 75 common + 14 gateway)
