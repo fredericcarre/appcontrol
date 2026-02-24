@@ -172,6 +172,8 @@ In development mode (`APP_ENV=development`, the default), the backend:
 
 - Accepts a simple `JWT_SECRET` for HMAC signing (no RSA key pair needed)
 - Auto-runs migrations on startup, creating the database schema
+- **Auto-seeds a default organization and admin user** on first start (when no users exist)
+- Provides a `POST /api/v1/auth/dev-login` endpoint for simple email-based login
 - Issues 24-hour JWT tokens stored in HttpOnly cookies
 
 **Minimal environment:**
@@ -181,52 +183,26 @@ export JWT_SECRET=dev-secret-change-in-production
 export DATABASE_URL=postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol
 ```
 
-**Seed a dev user and obtain a JWT token:**
+**Default dev credentials (auto-seeded on first start):**
 
-After the backend starts and migrations run, create an organization and admin user directly in the database:
+| Field | Value |
+|-------|-------|
+| Email | `admin@localhost` |
+| Role | `admin` |
+| Organization | `Dev Org` |
 
-```sql
--- Connect to PostgreSQL
-psql postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol
-
--- Create a default organization
-INSERT INTO organizations (id, name, slug)
-VALUES ('00000000-0000-0000-0000-000000000001', 'Dev Org', 'dev-org');
-
--- Create an admin user
-INSERT INTO users (id, organization_id, external_id, email, display_name, role)
-VALUES (
-  '00000000-0000-0000-0000-000000000002',
-  '00000000-0000-0000-0000-000000000001',
-  'dev-admin',
-  'admin@localhost',
-  'Dev Admin',
-  'admin'
-);
-```
-
-**Generate a JWT token for API access:**
+**Obtain a JWT token:**
 
 ```bash
-# Using the appctl CLI
-cargo run --bin appctl -- login --email admin@localhost --secret dev-secret-change-in-production
+# Use the dev-login endpoint (development mode only)
+TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/auth/dev-login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@localhost"}' | jq -r '.token')
 
-# Or generate a token manually with any JWT library.
-# Claims required:
-#   sub: "<user_id>"        (UUID)
-#   org: "<org_id>"         (UUID)
-#   email: "admin@localhost"
-#   role: "admin"
-#   iss: "appcontrol"       (must match JWT_ISSUER)
-#   exp: <unix_timestamp>   (now + 86400)
-
-# Quick one-liner with jq + base64 (for testing only):
-HEADER=$(echo -n '{"alg":"HS256","typ":"JWT"}' | base64 -w0 | tr '+/' '-_' | tr -d '=')
-PAYLOAD=$(echo -n "{\"sub\":\"00000000-0000-0000-0000-000000000002\",\"org\":\"00000000-0000-0000-0000-000000000001\",\"email\":\"admin@localhost\",\"role\":\"admin\",\"iss\":\"appcontrol\",\"iat\":$(date +%s),\"exp\":$(($(date +%s)+86400))}" | base64 -w0 | tr '+/' '-_' | tr -d '=')
-SIGNATURE=$(echo -n "${HEADER}.${PAYLOAD}" | openssl dgst -sha256 -hmac "dev-secret-change-in-production" -binary | base64 -w0 | tr '+/' '-_' | tr -d '=')
-TOKEN="${HEADER}.${PAYLOAD}.${SIGNATURE}"
 echo $TOKEN
 ```
+
+> **Note:** The `dev-login` endpoint only works when `APP_ENV=development`. It returns 404 in production.
 
 **Use the token:**
 
@@ -236,6 +212,26 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/apps | jq
 
 # Or via API key (after creating one -- see "Create API key" below)
 curl -H "X-Api-Key: ac_XXXXX" http://localhost:3000/api/v1/apps | jq
+```
+
+**Manual user creation (advanced):**
+
+If you need additional users beyond the auto-seeded admin:
+
+```sql
+-- Connect to PostgreSQL
+psql postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol
+
+-- Create an operator user
+INSERT INTO users (id, organization_id, external_id, email, display_name, role)
+VALUES (
+  gen_random_uuid(),
+  '00000000-0000-0000-0000-000000000001',
+  'dev-operator',
+  'operator@localhost',
+  'Dev Operator',
+  'operator'
+);
 ```
 
 ### With OIDC (Keycloak, Okta, Azure AD)

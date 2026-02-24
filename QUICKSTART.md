@@ -1,6 +1,6 @@
 # Quick Start - AppControl v4
 
-Get AppControl running in under 5 minutes — no build required.
+Get AppControl running — no build required.
 
 ## Prerequisites
 
@@ -54,7 +54,50 @@ curl http://localhost:3000/health
 # Should return: {"status":"ok"}
 ```
 
-## 3. Load example data
+## 3. Log in
+
+In development mode (the default), the backend automatically seeds a default admin user on first start.
+
+### Via the UI
+
+1. Open http://localhost:8080
+2. Enter the default credentials:
+
+| Field | Value |
+|-------|-------|
+| **Email** | `admin@localhost` |
+| **Password** | _(any value — password is not checked in dev mode)_ |
+
+3. Click **Sign in**
+
+### Via the API (CLI / scripts)
+
+```bash
+# Obtain a JWT token via the dev-login endpoint
+TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/auth/dev-login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@localhost"}' | jq -r '.token')
+
+echo $TOKEN
+```
+
+| Default user | Value |
+|-------------|-------|
+| Email | `admin@localhost` |
+| Display name | `Dev Admin` |
+| Role | `admin` (full access) |
+| Organization | `Dev Org` |
+
+> **Note:** The login endpoints are only available when `APP_ENV=development` (the default). In production, configure [OIDC or SAML](docs/CONFIGURATION.md#oidc-configuration) for enterprise SSO authentication.
+
+All subsequent API calls require the token:
+
+```bash
+# Via Authorization header
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/apps | jq
+```
+
+## 4. Load example data
 
 AppControl ships with example application maps in `examples/`. Import one:
 
@@ -62,17 +105,19 @@ AppControl ships with example application maps in `examples/`. Import one:
 # Import the 3-tier web app example
 curl -X POST http://localhost:3000/api/v1/apps/import \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d @examples/three-tier-webapp.json
 
 # Import the microservices example
 curl -X POST http://localhost:3000/api/v1/apps/import \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d @examples/microservices-ecommerce.json
 ```
 
 Then open http://localhost:8080 to see the maps.
 
-## 4. Download the CLI
+## 5. Download the CLI
 
 Download the pre-built `appctl` binary from the latest release:
 
@@ -96,7 +141,7 @@ Configure the endpoint:
 export APPCONTROL_URL=http://localhost:3000
 ```
 
-## 5. Register your first agent
+## 6. Register your first agent
 
 Download and run the agent from the release image:
 
@@ -121,7 +166,7 @@ appcontrol-agent \
   --labels env=production,zone=PRD
 ```
 
-## 6. Create your first application map
+## 7. Create your first application map
 
 ### Via the UI
 
@@ -138,19 +183,21 @@ appcontrol-agent \
 # Create an application
 APP_ID=$(curl -s -X POST http://localhost:3000/api/v1/apps \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "name": "My First App",
     "description": "A simple app with 2 components",
-    "site_id": "YOUR_SITE_UUID"
+    "site_id": null
   }' | jq -r '.id')
 
 # Add a database component
 DB_ID=$(curl -s -X POST http://localhost:3000/api/v1/apps/$APP_ID/components \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "name": "PostgreSQL",
     "component_type": "database",
-    "agent_id": "YOUR_AGENT_UUID",
+    "host": "db-server.local",
     "check_cmd": "pg_isready -h localhost -p 5432",
     "start_cmd": "systemctl start postgresql",
     "stop_cmd": "systemctl stop postgresql",
@@ -160,10 +207,11 @@ DB_ID=$(curl -s -X POST http://localhost:3000/api/v1/apps/$APP_ID/components \
 # Add a web server component
 WEB_ID=$(curl -s -X POST http://localhost:3000/api/v1/apps/$APP_ID/components \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "name": "Nginx",
-    "component_type": "webserver",
-    "agent_id": "YOUR_AGENT_UUID",
+    "component_type": "webfront",
+    "host": "web-server.local",
     "check_cmd": "curl -sf http://localhost:80/health",
     "start_cmd": "systemctl start nginx",
     "stop_cmd": "systemctl stop nginx",
@@ -173,10 +221,11 @@ WEB_ID=$(curl -s -X POST http://localhost:3000/api/v1/apps/$APP_ID/components \
 # Add dependency: Nginx depends on PostgreSQL
 curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/dependencies \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d "{\"from_component_id\": \"$WEB_ID\", \"to_component_id\": \"$DB_ID\"}"
 ```
 
-## 7. Operate your application
+## 8. Operate your application
 
 ```bash
 # Start full application (respects DAG order)
@@ -195,12 +244,12 @@ appctl start-branch $APP_ID --component $FAILED_COMPONENT_UUID --wait
 Or use the API directly:
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/start
-curl http://localhost:3000/api/v1/apps/$APP_ID/status
-curl -X POST http://localhost:3000/api/v1/apps/$APP_ID/stop
+curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/apps/$APP_ID/start
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/apps/$APP_ID/status
+curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/apps/$APP_ID/stop
 ```
 
-## 8. Run diagnostics
+## 9. Run diagnostics
 
 AppControl provides 3 diagnostic levels:
 
@@ -237,6 +286,16 @@ Migrations run automatically on backend startup. If needed manually:
 # Run migrations via the backend container
 docker compose -f docker/docker-compose.release.yaml exec backend \
   sqlx migrate run --source /app/migrations
+```
+
+### Gateway can't connect to backend (400 Bad Request)
+
+The gateway must connect to `/ws/gateway`, not `/ws`. Check `BACKEND_URL` in docker-compose:
+
+```yaml
+gateway:
+  environment:
+    BACKEND_URL: ws://backend:3000/ws/gateway  # NOT /ws
 ```
 
 ### Agent can't connect to gateway
@@ -276,6 +335,6 @@ docker compose -f docker/docker-compose.yaml up -d --build
 
 - Read the [example maps](examples/) for real-world configurations
 - Set up [DR switchover](docs/) for multi-site resilience
-- Configure [OIDC/SAML authentication](docs/) for enterprise SSO
+- Configure [OIDC/SAML authentication](docs/QUICKSTART.md#authentication-setup) for enterprise SSO
 - Deploy to Kubernetes with the [Helm chart](helm/)
 - See the [release procedure](RELEASE.md) for versioning and CI/CD

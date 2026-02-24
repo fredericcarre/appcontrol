@@ -90,7 +90,7 @@ describe('LoginPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => {
-      expect(client.post).toHaveBeenCalledWith('/auth/login', {
+      expect(client.post).toHaveBeenCalledWith('/v1/auth/login', {
         email: 'admin@example.com',
         password: 'password',
       });

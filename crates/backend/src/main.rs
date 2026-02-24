@@ -76,6 +76,12 @@ async fn main() -> anyhow::Result<()> {
 
     let heartbeat_batcher = appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
 
+    // In development mode, seed a default organization and admin user if none exist.
+    // This enables the quickstart flow without manual SQL or OIDC/SAML configuration.
+    if config.app_env == "development" {
+        seed_dev_user(&pool).await;
+    }
+
     // Auto-initialize PKI (CA) for all organizations that don't have one yet.
     // This eliminates the manual `POST /api/v1/pki/init` step.
     auto_init_pki(&pool).await;
@@ -281,6 +287,64 @@ async fn ensure_check_event_partitions(pool: &sqlx::PgPool) -> anyhow::Result<()
 
 use chrono::Datelike;
 
+/// Seed a default organization and admin user in development mode.
+///
+/// Only runs when `APP_ENV=development` (the default) and no users exist yet.
+/// Creates:
+///   - Organization "Dev Org" (slug: dev-org)
+///   - Admin user admin@localhost (role: admin)
+///
+/// Credentials: admin@localhost / dev-secret-change-in-production (JWT_SECRET)
+async fn seed_dev_user(pool: &sqlx::PgPool) {
+    let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+    if user_count > 0 {
+        return;
+    }
+
+    let org_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let user_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+
+    // Create default organization
+    let org_result = sqlx::query(
+        "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Dev Org', 'dev-org') ON CONFLICT DO NOTHING",
+    )
+    .bind(org_id)
+    .execute(pool)
+    .await;
+
+    if let Err(e) = org_result {
+        tracing::warn!("Failed to seed dev organization: {}", e);
+        return;
+    }
+
+    // Create default admin user
+    let user_result = sqlx::query(
+        "INSERT INTO users (id, organization_id, external_id, email, display_name, role) \
+         VALUES ($1, $2, 'dev-admin', 'admin@localhost', 'Dev Admin', 'admin') \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(org_id)
+    .execute(pool)
+    .await;
+
+    match user_result {
+        Ok(_) => {
+            tracing::info!(
+                "Dev user seeded: admin@localhost (org: Dev Org). \
+                 Use POST /api/v1/auth/dev-login with {{\"email\":\"admin@localhost\"}} to get a JWT."
+            );
+        }
+        Err(e) => {
+            tracing::warn!("Failed to seed dev user: {}", e);
+        }
+    }
+}
+
 /// Auto-initialize PKI (CA) for organizations that don't have one yet.
 ///
 /// On first startup, there's typically one organization (created by migration or seed).
@@ -433,8 +497,25 @@ async fn run_migrations(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
-    // Find migration files
-    let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    // Find migration files.
+    // Try multiple locations: CARGO_MANIFEST_DIR-relative (dev), /app/migrations (Docker),
+    // and MIGRATIONS_DIR env var (custom deployments).
+    let cargo_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    let docker_dir = std::path::PathBuf::from("/app/migrations");
+    let env_dir = std::env::var("MIGRATIONS_DIR")
+        .ok()
+        .map(std::path::PathBuf::from);
+
+    let migrations_dir = env_dir
+        .filter(|p| p.exists())
+        .or_else(|| {
+            if cargo_dir.exists() {
+                Some(cargo_dir)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(docker_dir);
 
     let mut entries: Vec<(i32, String, std::path::PathBuf)> = Vec::new();
 
@@ -472,12 +553,34 @@ async fn run_migrations(pool: &sqlx::PgPool) -> anyhow::Result<()> {
         let sql = std::fs::read_to_string(path)?;
         tracing::info!("Applying migration V{:03}: {}", version, name);
 
-        // Execute migration in a transaction
+        // Execute migration in a transaction.
+        // Migration files contain multiple SQL statements separated by semicolons.
+        // sqlx::query() uses the extended protocol which only supports one statement,
+        // so we split on semicolons and execute each statement individually.
         let mut tx = pool.begin().await?;
-        sqlx::query(&sql).execute(&mut *tx).await.map_err(|e| {
-            tracing::error!("Migration V{:03} failed: {}", version, e);
-            e
-        })?;
+        for statement in sql.split(';') {
+            // Strip comment-only lines before checking if the statement is empty.
+            // After splitting on ';', a chunk may start with "-- comment\nCREATE TABLE..."
+            // and we must not skip the whole chunk just because it starts with "--".
+            let stripped: String = statement
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("--"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let trimmed = stripped.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            sqlx::query(trimmed).execute(&mut *tx).await.map_err(|e| {
+                tracing::error!(
+                    "Migration V{:03} failed on statement: {}\nError: {}",
+                    version,
+                    &trimmed[..trimmed.len().min(100)],
+                    e
+                );
+                e
+            })?;
+        }
         sqlx::query("INSERT INTO _migrations (version, name) VALUES ($1, $2)")
             .bind(version)
             .bind(name)
