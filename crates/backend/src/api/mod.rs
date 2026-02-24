@@ -16,6 +16,7 @@ pub mod permissions;
 pub mod reports;
 pub mod switchover;
 pub mod teams;
+pub mod topology;
 pub mod variables;
 pub mod workspaces;
 
@@ -66,6 +67,14 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/components/:id/command/:cmd",
             post(components::execute_command),
+        )
+        .route(
+            "/components/:id/commands",
+            get(components::list_custom_commands),
+        )
+        .route(
+            "/components/:id/command-executions",
+            get(components::list_command_executions),
         )
         // Dependencies
         .route(
@@ -205,6 +214,17 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/commands/:command_id/params/:param_id",
             delete(command_params::delete_param),
+        )
+        // Topology export, plan, validation, dependency history
+        .route("/apps/:app_id/topology", get(topology::get_topology))
+        .route("/apps/:app_id/plan", get(topology::get_plan))
+        .route(
+            "/apps/:app_id/validate-sequence",
+            post(topology::validate_sequence),
+        )
+        .route(
+            "/apps/:app_id/dependency-history",
+            get(topology::dependency_history),
         )
         // YAML Map Import
         .route("/import/yaml", post(import::import_yaml_map))

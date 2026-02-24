@@ -3,13 +3,47 @@ import client from './client';
 
 export interface CommandExecution {
   id: string;
+  request_id: string;
   component_id: string;
   command_type: string;
   status: string;
-  output: string;
   exit_code: number | null;
-  started_at: string;
+  stdout: string | null;
+  stderr: string | null;
+  duration_ms: number | null;
+  dispatched_at: string;
   completed_at: string | null;
+}
+
+export interface CommandDispatchResult {
+  request_id: string;
+  command: string;
+  status: string;
+  component_id: string;
+  agent_id: string;
+}
+
+export interface CustomCommand {
+  id: string;
+  component_id: string;
+  name: string;
+  command: string;
+  description: string | null;
+  requires_confirmation: boolean;
+  min_permission_level: string;
+}
+
+export interface CommandInputParam {
+  id: string;
+  command_id: string;
+  name: string;
+  description: string | null;
+  default_value: string | null;
+  validation_regex: string | null;
+  required: boolean;
+  display_order: number;
+  param_type: string;
+  enum_values: string[] | null;
 }
 
 export function useComponentState(componentId: string) {
@@ -24,18 +58,63 @@ export function useComponentState(componentId: string) {
   });
 }
 
+export function useCustomCommands(componentId: string) {
+  return useQuery({
+    queryKey: ['components', componentId, 'commands'],
+    queryFn: async () => {
+      const { data } = await client.get<{ commands: CustomCommand[] }>(
+        `/components/${componentId}/commands`,
+      );
+      return data.commands;
+    },
+    enabled: !!componentId,
+  });
+}
+
+export function useCommandParams(commandId: string | null) {
+  return useQuery({
+    queryKey: ['commands', commandId, 'params'],
+    queryFn: async () => {
+      const { data } = await client.get<{ params: CommandInputParam[] }>(
+        `/commands/${commandId}/params`,
+      );
+      return data.params;
+    },
+    enabled: !!commandId,
+  });
+}
+
+export function useCommandExecutions(componentId: string, limit = 20) {
+  return useQuery({
+    queryKey: ['components', componentId, 'command-executions'],
+    queryFn: async () => {
+      const { data } = await client.get<{ executions: CommandExecution[] }>(
+        `/components/${componentId}/command-executions?limit=${limit}`,
+      );
+      return data.executions;
+    },
+    enabled: !!componentId,
+    refetchInterval: 10_000,
+  });
+}
+
 export function useExecuteCommand() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: { component_id: string; command_type: string; args?: string[] }) => {
-      const { data } = await client.post<CommandExecution>(
+    mutationFn: async (payload: {
+      component_id: string;
+      command_type: string;
+      parameters?: Record<string, string>;
+    }) => {
+      const { data } = await client.post<CommandDispatchResult>(
         `/components/${payload.component_id}/command/${payload.command_type}`,
-        { args: payload.args },
+        { parameters: payload.parameters },
       );
       return data;
     },
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['components', vars.component_id] });
+      qc.invalidateQueries({ queryKey: ['components', vars.component_id, 'command-executions'] });
     },
   });
 }

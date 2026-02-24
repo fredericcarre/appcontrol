@@ -27,6 +27,10 @@ pub struct ConnectionManager {
     tls_connector: Option<tokio_rustls::TlsConnector>,
     /// SHA-256 fingerprint of the agent's client certificate.
     cert_fingerprint: Option<String>,
+    /// Operating mode: "active" (full control) or "advisory" (observe-only).
+    /// In advisory mode, the agent runs health checks but refuses
+    /// start/stop/rebuild commands from the backend.
+    advisory_mode: bool,
 }
 
 impl ConnectionManager {
@@ -41,6 +45,7 @@ impl ConnectionManager {
         scheduler: Arc<CheckScheduler>,
         msg_tx: mpsc::UnboundedSender<AgentMessage>,
         tls_config: Option<&TlsSection>,
+        advisory_mode: bool,
     ) -> Self {
         let (tls_connector, cert_fingerprint) = match tls_config {
             Some(tls) if tls.enabled => {
@@ -81,6 +86,7 @@ impl ConnectionManager {
             sequence_counter: Arc::new(AtomicU64::new(1)),
             tls_connector,
             cert_fingerprint,
+            advisory_mode,
         }
     }
 
@@ -104,6 +110,7 @@ impl ConnectionManager {
             scheduler,
             msg_tx,
             None,
+            false,
         )
     }
 
@@ -343,6 +350,30 @@ impl ConnectionManager {
                 timeout_seconds,
                 exec_mode,
             } => {
+                // Advisory mode: refuse execution commands (start/stop/rebuild).
+                // Health checks are handled by the scheduler, not by ExecuteCommand.
+                if self.advisory_mode && exec_mode == "detached" {
+                    tracing::warn!(
+                        request_id = %request_id,
+                        component_id = %component_id,
+                        "ADVISORY MODE — refusing detached command execution: {}",
+                        command
+                    );
+                    let seq = self.sequence_counter.fetch_add(1, Ordering::SeqCst);
+                    let _ = self.msg_tx.send(AgentMessage::CommandResult {
+                        request_id,
+                        exit_code: -2,
+                        stdout: String::new(),
+                        stderr: "Agent is in advisory mode — command execution refused. \
+                                 Advisory mode is observation-only: health checks run, \
+                                 but start/stop/rebuild commands are not executed."
+                            .to_string(),
+                        duration_ms: 0,
+                        sequence_id: Some(seq),
+                    });
+                    return;
+                }
+
                 tracing::info!(
                     request_id = %request_id,
                     component_id = %component_id,
@@ -394,9 +425,19 @@ impl ConnectionManager {
                             }
                         }
                     } else {
-                        // Sync execution: wait for result (checks, diagnostics, custom commands)
+                        // Sync execution with streaming: send output chunks as they arrive
+                        let chunk_tx = msg_tx.clone();
                         let start = std::time::Instant::now();
-                        match crate::executor::execute_sync(&command, timeout).await {
+                        let on_chunk = move |stdout: String, stderr: String| {
+                            let _ = chunk_tx.send(AgentMessage::CommandOutputChunk {
+                                request_id,
+                                stdout,
+                                stderr,
+                            });
+                        };
+                        match crate::executor::execute_sync_streaming(&command, timeout, on_chunk)
+                            .await
+                        {
                             Ok(result) => {
                                 tracing::info!(
                                     request_id = %request_id,

@@ -55,6 +55,13 @@ pub enum AgentMessage {
         #[serde(default)]
         cert_fingerprint: Option<String>,
     },
+    /// Streaming output chunk from a running command.
+    /// Sent periodically during sync execution for real-time output.
+    CommandOutputChunk {
+        request_id: Uuid,
+        stdout: String,
+        stderr: String,
+    },
     /// Agent requests certificate renewal by sending a CSR.
     CertificateRenewal {
         agent_id: Uuid,
@@ -69,6 +76,7 @@ impl AgentMessage {
             AgentMessage::Heartbeat { .. } => MessagePriority::Low,
             AgentMessage::CheckResult(_) => MessagePriority::Normal,
             AgentMessage::CommandResult { .. } => MessagePriority::High,
+            AgentMessage::CommandOutputChunk { .. } => MessagePriority::Normal,
             AgentMessage::Register { .. } => MessagePriority::Critical,
             AgentMessage::CertificateRenewal { .. } => MessagePriority::High,
         }
@@ -156,6 +164,13 @@ pub enum WsEvent {
         request_id: Uuid,
         component_id: Uuid,
         exit_code: i32,
+        stdout: String,
+        stderr: String,
+    },
+    /// Streaming output chunk from a running command (real-time).
+    CommandOutputChunkEvent {
+        request_id: Uuid,
+        component_id: Uuid,
         stdout: String,
         stderr: String,
     },

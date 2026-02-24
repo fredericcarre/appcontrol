@@ -110,6 +110,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize connection manager with multi-gateway failover support
     let gateway_urls = config.gateway_urls();
+    let advisory = config.is_advisory();
     let connection = connection::ConnectionManager::new(
         gateway_urls.clone(),
         config.gateway.failover_strategy.clone(),
@@ -120,7 +121,14 @@ async fn main() -> anyhow::Result<()> {
         check_scheduler.clone(),
         msg_tx,
         config.tls.as_ref(),
+        advisory,
     );
+
+    if advisory {
+        tracing::warn!(
+            "Agent running in ADVISORY mode — health checks active, command execution disabled"
+        );
+    }
 
     tracing::info!(
         "Gateway failover: {} URLs configured (strategy={})",

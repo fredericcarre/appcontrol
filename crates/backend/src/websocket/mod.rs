@@ -351,6 +351,34 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             )
             .await;
 
+            // Broadcast CommandResultEvent to subscribed frontend clients
+            if let Ok(Some(comp_id)) = sqlx::query_scalar::<_, uuid::Uuid>(
+                "SELECT component_id FROM command_executions WHERE request_id = $1",
+            )
+            .bind(request_id)
+            .fetch_optional(&state.db)
+            .await
+            {
+                if let Ok(Some(app_id)) = sqlx::query_scalar::<_, uuid::Uuid>(
+                    "SELECT application_id FROM components WHERE id = $1",
+                )
+                .bind(comp_id)
+                .fetch_optional(&state.db)
+                .await
+                {
+                    state.ws_hub.broadcast(
+                        app_id,
+                        appcontrol_common::WsEvent::CommandResultEvent {
+                            request_id,
+                            component_id: comp_id,
+                            exit_code,
+                            stdout: stdout.clone(),
+                            stderr: stderr.clone(),
+                        },
+                    );
+                }
+            }
+
             // Send Ack back to agent if sequence_id was provided.
             // Uses the request_id → agent_id mapping recorded when ExecuteCommand was dispatched.
             if let Some(seq) = sequence_id {
@@ -378,6 +406,47 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                         request_id = %request_id,
                         sequence_id = seq,
                         "No agent mapping for request — Ack not routed"
+                    );
+                }
+            }
+        }
+        appcontrol_common::AgentMessage::CommandOutputChunk {
+            request_id,
+            stdout,
+            stderr,
+        } => {
+            tracing::trace!(
+                request_id = %request_id,
+                "Command output chunk received (stdout={} bytes, stderr={} bytes)",
+                stdout.len(),
+                stderr.len()
+            );
+
+            // Resolve component_id from command_executions to broadcast to subscribed clients
+            let component_id = sqlx::query_scalar::<_, uuid::Uuid>(
+                "SELECT component_id FROM command_executions WHERE request_id = $1",
+            )
+            .bind(request_id)
+            .fetch_optional(&state.db)
+            .await;
+
+            if let Ok(Some(comp_id)) = component_id {
+                // Resolve app_id for broadcast routing
+                if let Ok(Some(app_id)) = sqlx::query_scalar::<_, uuid::Uuid>(
+                    "SELECT application_id FROM components WHERE id = $1",
+                )
+                .bind(comp_id)
+                .fetch_optional(&state.db)
+                .await
+                {
+                    state.ws_hub.broadcast(
+                        app_id,
+                        appcontrol_common::WsEvent::CommandOutputChunkEvent {
+                            request_id,
+                            component_id: comp_id,
+                            stdout,
+                            stderr,
+                        },
                     );
                 }
             }
