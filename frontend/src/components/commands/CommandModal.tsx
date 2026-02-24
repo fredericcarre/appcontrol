@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   useExecuteCommand,
   useCustomCommands,
@@ -7,6 +7,7 @@ import {
   type CommandInputParam,
 } from '@/api/components';
 import { useWebSocketStore } from '@/stores/websocket';
+import type { WsMessage } from '@/stores/websocket';
 import {
   Dialog,
   DialogContent,
@@ -70,17 +71,16 @@ export function CommandModal({ componentId, open, onOpenChange }: CommandModalPr
     [customCommands],
   );
 
-  // Initialize param defaults when params load
-  useEffect(() => {
-    if (commandParams) {
-      const defaults: Record<string, string> = {};
-      for (const p of commandParams) {
-        if (p.default_value !== null) {
-          defaults[p.name] = p.default_value;
-        }
+  // Compute default values from command params definition (stable reference)
+  const paramDefaults = useMemo(() => {
+    if (!commandParams) return {};
+    const defaults: Record<string, string> = {};
+    for (const p of commandParams) {
+      if (p.default_value !== null) {
+        defaults[p.name] = p.default_value;
       }
-      setParamValues((prev) => ({ ...defaults, ...prev }));
     }
+    return defaults;
   }, [commandParams]);
 
   // Auto-scroll output
@@ -90,62 +90,58 @@ export function CommandModal({ componentId, open, onOpenChange }: CommandModalPr
     }
   }, [output]);
 
-  // Listen to WebSocket for streaming output and final result
-  const messages = useWebSocketStore((s) => s.messages);
-  useEffect(() => {
-    if (!activeRequestId) return;
-
-    const relevant = messages.filter(
-      (m) =>
-        (m.type === 'CommandOutputChunkEvent' || m.type === 'CommandResultEvent') &&
-        (m.payload as Record<string, unknown>).request_id === activeRequestId,
-    );
-
-    for (const msg of relevant) {
+  // Process a single WebSocket message related to the active request
+  const processWsMessage = useCallback(
+    (msg: WsMessage) => {
       const payload = msg.payload as Record<string, unknown>;
       if (msg.type === 'CommandOutputChunkEvent') {
         const stdout = payload.stdout as string;
         const stderr = payload.stderr as string;
-        if (stdout) {
-          setOutput((prev) => [
-            ...prev,
-            { text: stdout, timestamp: new Date().toISOString(), type: 'stdout' },
-          ]);
-        }
-        if (stderr) {
-          setOutput((prev) => [
-            ...prev,
-            { text: stderr, timestamp: new Date().toISOString(), type: 'stderr' },
-          ]);
-        }
+        const lines: OutputLine[] = [];
+        if (stdout) lines.push({ text: stdout, timestamp: new Date().toISOString(), type: 'stdout' });
+        if (stderr) lines.push({ text: stderr, timestamp: new Date().toISOString(), type: 'stderr' });
+        if (lines.length > 0) setOutput((prev) => [...prev, ...lines]);
       } else if (msg.type === 'CommandResultEvent') {
         const exitCode = payload.exit_code as number;
         const stdout = payload.stdout as string;
         const stderr = payload.stderr as string;
-        if (stdout) {
-          setOutput((prev) => [
-            ...prev,
-            { text: stdout, timestamp: new Date().toISOString(), type: 'stdout' },
-          ]);
-        }
-        if (stderr) {
-          setOutput((prev) => [
-            ...prev,
-            { text: stderr, timestamp: new Date().toISOString(), type: 'stderr' },
-          ]);
-        }
-        setOutput((prev) => [
-          ...prev,
-          {
-            text: `Exit code: ${exitCode}`,
-            timestamp: new Date().toISOString(),
-            type: exitCode === 0 ? 'info' : 'stderr',
-          },
-        ]);
+        const lines: OutputLine[] = [];
+        if (stdout) lines.push({ text: stdout, timestamp: new Date().toISOString(), type: 'stdout' });
+        if (stderr) lines.push({ text: stderr, timestamp: new Date().toISOString(), type: 'stderr' });
+        lines.push({
+          text: `Exit code: ${exitCode}`,
+          timestamp: new Date().toISOString(),
+          type: exitCode === 0 ? 'info' : 'stderr',
+        });
+        setOutput((prev) => [...prev, ...lines]);
         setActiveRequestId(null);
       }
+    },
+    [],
+  );
+
+  // Subscribe to WebSocket store messages for streaming output
+  const messages = useWebSocketStore((s) => s.messages);
+  const processedCountRef = useRef(0);
+  useEffect(() => {
+    if (!activeRequestId) {
+      processedCountRef.current = messages.length;
+      return;
     }
-  }, [messages, activeRequestId]);
+    // Process only new messages since last check
+    const newMessages = messages.slice(processedCountRef.current);
+    processedCountRef.current = messages.length;
+
+    for (const msg of newMessages) {
+      const payload = msg.payload as Record<string, unknown>;
+      if (
+        (msg.type === 'CommandOutputChunkEvent' || msg.type === 'CommandResultEvent') &&
+        payload.request_id === activeRequestId
+      ) {
+        processWsMessage(msg);
+      }
+    }
+  }, [messages, activeRequestId, processWsMessage]);
 
   const handleExecute = async () => {
     const now = new Date().toISOString();
@@ -161,7 +157,7 @@ export function CommandModal({ componentId, open, onOpenChange }: CommandModalPr
       const result = await executeCommand.mutateAsync({
         component_id: componentId,
         command_type: cmdLabel,
-        parameters: Object.keys(paramValues).length > 0 ? paramValues : undefined,
+        parameters: commandParams && commandParams.length > 0 ? { ...paramDefaults, ...paramValues } : undefined,
       });
 
       setActiveRequestId(result.request_id);
@@ -183,7 +179,7 @@ export function CommandModal({ componentId, open, onOpenChange }: CommandModalPr
   };
 
   const renderParamField = (param: CommandInputParam) => {
-    const value = paramValues[param.name] ?? '';
+    const value = paramValues[param.name] ?? paramDefaults[param.name] ?? '';
 
     switch (param.param_type) {
       case 'boolean':

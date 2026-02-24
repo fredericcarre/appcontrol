@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-interface WsMessage {
+export interface WsMessage {
   type: string;
   payload: Record<string, unknown>;
   timestamp: string;
