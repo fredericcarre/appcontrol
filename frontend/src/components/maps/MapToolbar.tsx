@@ -3,7 +3,7 @@ import { useReactFlow } from '@xyflow/react';
 import { Button } from '@/components/ui/button';
 import {
   ZoomIn, ZoomOut, Maximize, Play, Square,
-  GitBranch, Share2,
+  GitBranch, Share2, Activity,
 } from 'lucide-react';
 
 interface MapToolbarProps {
@@ -11,10 +11,12 @@ interface MapToolbarProps {
   onStopAll?: () => void;
   onRestartErrorBranch?: () => void;
   onShare?: () => void;
+  onToggleActivity?: () => void;
+  activityOpen?: boolean;
   canOperate?: boolean;
 }
 
-export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShare, canOperate }: MapToolbarProps) {
+export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShare, onToggleActivity, activityOpen, canOperate }: MapToolbarProps) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
 
   const handleFit = useCallback(() => fitView({ padding: 0.2 }), [fitView]);
@@ -50,6 +52,15 @@ export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShar
       <div className="flex gap-1 bg-card border border-border rounded-md p-1 shadow-sm">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onShare} title="Share">
           <Share2 className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={`h-8 w-8 ${activityOpen ? 'bg-primary/10 text-primary' : ''}`}
+          onClick={onToggleActivity}
+          title="Activity Feed"
+        >
+          <Activity className="h-4 w-4" />
         </Button>
       </div>
     </div>

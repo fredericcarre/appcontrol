@@ -936,6 +936,57 @@ pub async fn list_command_executions(
 }
 
 // ---------------------------------------------------------------------------
+// Component State Transitions History
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct StateTransitionRow {
+    pub id: Uuid,
+    pub component_id: Uuid,
+    pub from_state: String,
+    pub to_state: String,
+    pub trigger: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// List state transition history for a component.
+pub async fn list_state_transitions(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(component_id): Path<Uuid>,
+    axum::extract::Query(query): axum::extract::Query<ExecutionHistoryQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    let limit = query.limit.unwrap_or(50).min(200);
+    let offset = query.offset.unwrap_or(0);
+
+    let transitions = sqlx::query_as::<_, StateTransitionRow>(
+        "SELECT id, component_id, from_state, to_state, trigger, created_at \
+         FROM state_transitions \
+         WHERE component_id = $1 \
+         ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+    )
+    .bind(component_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(json!({ "transitions": transitions })))
+}
+
+// ---------------------------------------------------------------------------
 // Host → Agent resolution
 // ---------------------------------------------------------------------------
 

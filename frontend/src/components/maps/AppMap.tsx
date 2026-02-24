@@ -31,6 +31,8 @@ interface AppMapProps {
   onStopAll?: () => void;
   onRestartErrorBranch?: () => void;
   onShare?: () => void;
+  onToggleActivity?: () => void;
+  activityOpen?: boolean;
   onStartComponent?: (id: string) => void;
   onStopComponent?: (id: string) => void;
   onRestartComponent?: (id: string) => void;
@@ -104,6 +106,8 @@ export function AppMap({
   onStopAll,
   onRestartErrorBranch,
   onShare,
+  onToggleActivity,
+  activityOpen,
   onStartComponent,
   onStopComponent,
   onRestartComponent,
@@ -162,6 +166,8 @@ export function AppMap({
           onStopAll={onStopAll}
           onRestartErrorBranch={onRestartErrorBranch}
           onShare={onShare}
+          onToggleActivity={onToggleActivity}
+          activityOpen={activityOpen}
           canOperate={canOperate}
         />
       </ReactFlow>

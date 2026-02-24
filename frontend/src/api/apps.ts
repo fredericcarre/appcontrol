@@ -333,6 +333,82 @@ export function useCreateLink() {
   });
 }
 
+// ── Activity Feed ──────────────────────────────────────────────
+
+export interface ActivityEvent {
+  kind: 'state_change' | 'user_action' | 'command';
+  at: string;
+  component_id?: string;
+  component_name?: string;
+  // state_change fields
+  from_state?: string;
+  to_state?: string;
+  trigger?: string;
+  // user_action fields
+  user?: string;
+  action?: string;
+  details?: Record<string, unknown>;
+  // command fields
+  request_id?: string;
+  command_type?: string;
+  exit_code?: number | null;
+  duration_ms?: number | null;
+  dispatched_at?: string;
+  completed_at?: string | null;
+}
+
+export interface HealthSummary {
+  total_components: number;
+  state_breakdown: Array<{ state: string; count: number }>;
+  error_components: Array<{
+    component_id: string;
+    name: string;
+    state: string;
+    since: string;
+  }>;
+  agents: Array<{
+    agent_id: string;
+    hostname: string;
+    active: boolean;
+    last_heartbeat: string | null;
+    stale: boolean;
+  }>;
+  recent_incidents: Array<{
+    component_id: string;
+    component_name: string;
+    from_state: string;
+    at: string;
+  }>;
+}
+
+export function useActivityFeed(appId: string, limit = 50) {
+  return useQuery({
+    queryKey: ['apps', appId, 'activity'],
+    queryFn: async () => {
+      const { data } = await client.get<{ events: ActivityEvent[] }>(
+        `/apps/${appId}/activity?limit=${limit}`,
+      );
+      return data.events;
+    },
+    enabled: !!appId,
+    refetchInterval: 15_000,
+  });
+}
+
+export function useHealthSummary(appId: string) {
+  return useQuery({
+    queryKey: ['apps', appId, 'health-summary'],
+    queryFn: async () => {
+      const { data } = await client.get<HealthSummary>(
+        `/apps/${appId}/health-summary`,
+      );
+      return data;
+    },
+    enabled: !!appId,
+    refetchInterval: 10_000,
+  });
+}
+
 // ── YAML Import ────────────────────────────────────────────────
 
 export function useImportYaml() {

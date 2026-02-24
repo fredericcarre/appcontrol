@@ -8,6 +8,7 @@ import { AppMap } from '@/components/maps/AppMap';
 import { DetailPanel } from '@/components/maps/DetailPanel';
 import { ShareModal } from '@/components/share/ShareModal';
 import { CommandModal } from '@/components/commands/CommandModal';
+import { ActivityPanel } from '@/components/activity/ActivityPanel';
 
 export function MapViewPage() {
   const { appId } = useParams<{ appId: string }>();
@@ -26,6 +27,7 @@ export function MapViewPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandComponentId, setCommandComponentId] = useState<string | null>(null);
+  const [activityOpen, setActivityOpen] = useState(false);
 
   // Subscribe to app events
   if (appId) {
@@ -69,6 +71,14 @@ export function MapViewPage() {
     setCommandOpen(true);
   }, []);
 
+  const handleToggleActivity = useCallback(() => {
+    setActivityOpen((prev) => !prev);
+  }, []);
+
+  const handleActivitySelectComponent = useCallback((componentId: string) => {
+    setSelectedComponentId(componentId);
+  }, []);
+
   if (isLoading || !app) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -93,6 +103,8 @@ export function MapViewPage() {
           onStopAll={handleStopAll}
           onRestartErrorBranch={handleRestartErrorBranch}
           onShare={() => setShareOpen(true)}
+          onToggleActivity={handleToggleActivity}
+          activityOpen={activityOpen}
           onStartComponent={handleStartComponent}
           onStopComponent={handleStopComponent}
           onRestartComponent={handleStartComponent}
@@ -115,6 +127,14 @@ export function MapViewPage() {
           onForceStop={() => handleForceStopComponent(selectedComponent.id)}
           onStartWithDeps={() => handleStartWithDeps(selectedComponent.id)}
           canOperate={canOperate}
+        />
+      )}
+
+      {activityOpen && (
+        <ActivityPanel
+          appId={appId || ''}
+          onClose={() => setActivityOpen(false)}
+          onSelectComponent={handleActivitySelectComponent}
         />
       )}
 
