@@ -28,7 +28,10 @@ export function useExecuteCommand() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (payload: { component_id: string; command_type: string; args?: string[] }) => {
-      const { data } = await client.post<CommandExecution>(`/components/${payload.component_id}/execute`, payload);
+      const { data } = await client.post<CommandExecution>(
+        `/components/${payload.component_id}/command/${payload.command_type}`,
+        { args: payload.args },
+      );
       return data;
     },
     onSuccess: (_, vars) => {
@@ -65,5 +68,27 @@ export function useDiagnoseComponent() {
       const { data } = await client.post(`/components/${payload.component_id}/diagnose`, payload);
       return data;
     },
+  });
+}
+
+export function useForceStopComponent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (componentId: string) => {
+      const { data } = await client.post(`/components/${componentId}/force-stop`);
+      return data;
+    },
+    onSuccess: (_, id) => qc.invalidateQueries({ queryKey: ['components', id] }),
+  });
+}
+
+export function useStartWithDeps() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (componentId: string) => {
+      const { data } = await client.post(`/components/${componentId}/start-with-deps`);
+      return data;
+    },
+    onSuccess: (_, id) => qc.invalidateQueries({ queryKey: ['components', id] }),
   });
 }

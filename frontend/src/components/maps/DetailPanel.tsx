@@ -1,4 +1,4 @@
-import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield } from 'lucide-react';
+import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -14,6 +14,8 @@ interface DetailPanelProps {
   onRestart?: () => void;
   onCommand?: () => void;
   onDiagnose?: () => void;
+  onForceStop?: () => void;
+  onStartWithDeps?: () => void;
   canOperate?: boolean;
 }
 
@@ -25,6 +27,8 @@ export function DetailPanel({
   onRestart,
   onCommand,
   onDiagnose,
+  onForceStop,
+  onStartWithDeps,
   canOperate,
 }: DetailPanelProps) {
   const state = (component.state || 'UNKNOWN') as ComponentState;
@@ -55,16 +59,26 @@ export function DetailPanel({
         </div>
 
         {canOperate && (
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={onStart} className="flex-1">
-              <Play className="h-3.5 w-3.5 mr-1" /> Start
-            </Button>
-            <Button variant="outline" size="sm" onClick={onStop} className="flex-1">
-              <Square className="h-3.5 w-3.5 mr-1" /> Stop
-            </Button>
-            <Button variant="outline" size="sm" onClick={onRestart}>
-              <RotateCcw className="h-3.5 w-3.5" />
-            </Button>
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={onStart} className="flex-1">
+                <Play className="h-3.5 w-3.5 mr-1" /> Start
+              </Button>
+              <Button variant="outline" size="sm" onClick={onStop} className="flex-1">
+                <Square className="h-3.5 w-3.5 mr-1" /> Stop
+              </Button>
+              <Button variant="outline" size="sm" onClick={onRestart}>
+                <RotateCcw className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={onStartWithDeps} className="flex-1">
+                <GitBranch className="h-3.5 w-3.5 mr-1" /> Start with deps
+              </Button>
+              <Button variant="destructive" size="sm" onClick={onForceStop} className="flex-1">
+                <Skull className="h-3.5 w-3.5 mr-1" /> Force Kill
+              </Button>
+            </div>
           </div>
         )}
       </div>

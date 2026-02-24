@@ -472,6 +472,107 @@ pub async fn stop_component(
     Ok(Json(json!({ "status": "stopping" })))
 }
 
+pub async fn force_stop_component(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::Operate {
+        return Err(ApiError::Forbidden);
+    }
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "force_stop_component",
+        "component",
+        id,
+        json!({"reason": "production_incident", "bypass_dependencies": true}),
+    )
+    .await?;
+
+    // Force stop: bypass FSM and DAG dependencies
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::core::sequencer::force_stop_single_component(&state_clone, id).await
+        {
+            tracing::error!("Force stop failed for component {}: {}", id, e);
+        }
+    });
+
+    Ok(Json(
+        json!({ "status": "force_stopping", "message": "Force stop initiated (bypassing dependencies)" }),
+    ))
+}
+
+pub async fn start_with_deps(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::Operate {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Build DAG and find all upstream dependencies of this component
+    let dag = crate::core::dag::build_dag(&state.db, app_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut subset = dag.find_all_dependencies(id);
+    subset.insert(id); // Include the target component itself
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "start_with_deps",
+        "component",
+        id,
+        json!({"component_id": id, "dependency_count": subset.len() - 1}),
+    )
+    .await?;
+
+    // Acquire operation lock
+    let guard = state
+        .operation_lock
+        .try_lock(app_id, "start_with_deps", user.user_id)
+        .await
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+
+    let total_components = subset.len();
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        let _guard = guard;
+        if let Err(e) =
+            crate::core::sequencer::execute_start_subset(&state_clone, app_id, &subset).await
+        {
+            tracing::error!("Failed to start component {} with deps: {}", id, e);
+        }
+    });
+
+    Ok(Json(json!({
+        "status": "starting_with_deps",
+        "component_id": id,
+        "total_components": total_components,
+    })))
+}
+
 pub async fn execute_command(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,

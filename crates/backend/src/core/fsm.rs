@@ -145,6 +145,86 @@ pub async fn transition_component(
     Ok(())
 }
 
+/// Force-transition a component to a new state, bypassing FSM validation.
+///
+/// Used for emergency operations (force kill) where the normal FSM rules
+/// would block the transition. Still records the state change in the
+/// append-only state_transitions table for full audit trail.
+pub async fn force_transition_component(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+    new_state: ComponentState,
+) -> Result<(), FsmError> {
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    let row = sqlx::query_as::<_, (String, Uuid)>(
+        "SELECT current_state, application_id FROM components WHERE id = $1 FOR UPDATE",
+    )
+    .bind(component_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    let (current_str, app_id) = row.ok_or(FsmError::ComponentNotFound(component_id))?;
+    let current = parse_state(&current_str)?;
+
+    // No FSM validation — force the transition
+
+    sqlx::query(
+        r#"
+        INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
+        VALUES ($1, $2, $3, 'force')
+        "#,
+    )
+    .bind(component_id)
+    .bind(current.to_string())
+    .bind(new_state.to_string())
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    sqlx::query("UPDATE components SET current_state = $2, updated_at = now() WHERE id = $1")
+        .bind(component_id)
+        .bind(new_state.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    state.ws_hub.broadcast(
+        app_id,
+        appcontrol_common::WsEvent::StateChange {
+            component_id,
+            app_id,
+            from: current,
+            to: new_state,
+            at: chrono::Utc::now(),
+        },
+    );
+
+    let db = state.db.clone();
+    let event = crate::core::notifications::NotificationEvent::StateChange {
+        component_id,
+        app_id,
+        from: current.to_string(),
+        to: new_state.to_string(),
+    };
+    tokio::spawn(async move {
+        if let Err(e) = crate::core::notifications::dispatch_event(&db, app_id, event).await {
+            tracing::warn!("Notification dispatch failed: {}", e);
+        }
+    });
+
+    Ok(())
+}
+
 /// Process an incoming check result and update state if needed.
 pub async fn process_check_result(
     state: &Arc<AppState>,

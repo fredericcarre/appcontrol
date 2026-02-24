@@ -58,7 +58,13 @@ pub struct StartAppRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct StartBranchRequest {
-    pub component_id: Uuid,
+    pub component_id: Option<Uuid>,
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StartToRequest {
+    pub target_component_id: Uuid,
     pub dry_run: Option<bool>,
 }
 
@@ -348,17 +354,36 @@ pub async fn start_branch(
         return Err(ApiError::Forbidden);
     }
 
+    // If no component_id provided, find all FAILED components in this application.
+    let target_component_ids: Vec<Uuid> = if let Some(cid) = body.component_id {
+        vec![cid]
+    } else {
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM components WHERE application_id = $1 AND current_state = 'FAILED'",
+        )
+        .bind(id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    };
+
+    if target_component_ids.is_empty() {
+        return Ok(Json(
+            json!({ "status": "no_failed_components", "message": "No FAILED components found to restart" }),
+        ));
+    }
+
     log_action(
         &state.db,
         user.user_id,
         "start_branch",
         "application",
         id,
-        json!({"component_id": body.component_id}),
+        json!({"component_ids": target_component_ids}),
     )
     .await?;
 
-    let branch = crate::core::branch::detect_error_branch(&state.db, id, body.component_id)
+    let branch = crate::core::branch::detect_error_branch(&state.db, id, target_component_ids[0])
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -375,20 +400,22 @@ pub async fn start_branch(
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     let state_clone = state.clone();
-    let component_id = body.component_id;
     tokio::spawn(async move {
         let _guard = guard; // Hold the lock until the operation completes
-        if let Err(e) = crate::core::fsm::transition_component(
-            &state_clone,
-            component_id,
-            appcontrol_common::ComponentState::Failed,
-        )
-        .await
-        {
-            tracing::warn!(
-                "Could not force component to FAILED for branch restart: {}",
-                e
-            );
+        for component_id in &target_component_ids {
+            if let Err(e) = crate::core::fsm::transition_component(
+                &state_clone,
+                *component_id,
+                appcontrol_common::ComponentState::Failed,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Could not force component {} to FAILED for branch restart: {}",
+                    component_id,
+                    e
+                );
+            }
         }
         if let Err(e) = crate::core::sequencer::execute_start(&state_clone, id).await {
             tracing::error!("Failed to restart branch for app {}: {}", id, e);
@@ -398,4 +425,114 @@ pub async fn start_branch(
     Ok(Json(
         json!({ "status": "starting_branch", "branch": branch }),
     ))
+}
+
+pub async fn start_to(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<StartToRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
+    if perm < PermissionLevel::Operate {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Verify the target component belongs to this application
+    let target_app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(body.target_component_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or(ApiError::NotFound)?;
+
+    if target_app_id != id {
+        return Err(ApiError::Conflict(
+            "Target component does not belong to this application".to_string(),
+        ));
+    }
+
+    // Build DAG and find all upstream dependencies of the target
+    let dag = crate::core::dag::build_dag(&state.db, id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut subset = dag.find_all_dependencies(body.target_component_id);
+    subset.insert(body.target_component_id); // Include the target itself
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "start_to",
+        "application",
+        id,
+        json!({
+            "target_component_id": body.target_component_id,
+            "total_components": subset.len(),
+        }),
+    )
+    .await?;
+
+    let dry_run = body.dry_run.unwrap_or(false);
+    if dry_run {
+        // Build a plan for the subset
+        let sub_dag = dag.sub_dag(&subset);
+        let levels = sub_dag
+            .topological_levels()
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        let mut plan_levels = Vec::new();
+        for level in &levels {
+            let mut level_info = Vec::new();
+            for &comp_id in level {
+                let name =
+                    sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
+                        .bind(comp_id)
+                        .fetch_optional(&state.db)
+                        .await
+                        .map_err(|e| ApiError::Internal(e.to_string()))?
+                        .unwrap_or_else(|| comp_id.to_string());
+                level_info.push(json!({"component_id": comp_id, "name": name}));
+            }
+            plan_levels.push(level_info);
+        }
+
+        return Ok(Json(json!({
+            "dry_run": true,
+            "target_component_id": body.target_component_id,
+            "plan": { "levels": plan_levels, "total_levels": levels.len() },
+            "total_components": subset.len(),
+        })));
+    }
+
+    // Acquire operation lock
+    let guard = state
+        .operation_lock
+        .try_lock(id, "start_to", user.user_id)
+        .await
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+
+    let total_components = subset.len();
+    let state_clone = state.clone();
+    let target_id = body.target_component_id;
+    tokio::spawn(async move {
+        let _guard = guard;
+        if let Err(e) =
+            crate::core::sequencer::execute_start_subset(&state_clone, id, &subset).await
+        {
+            tracing::error!(
+                "Failed to start-to for app {} (target {}): {}",
+                id,
+                target_id,
+                e
+            );
+        }
+    });
+
+    Ok(Json(json!({
+        "status": "starting_to",
+        "target_component_id": body.target_component_id,
+        "total_components": total_components,
+    })))
 }

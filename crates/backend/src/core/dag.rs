@@ -94,6 +94,44 @@ impl Dag {
         Ok(levels)
     }
 
+    /// Find all upstream dependencies of a component (transitive closure).
+    /// Returns the set of component IDs that `component_id` depends on (directly or transitively).
+    /// Does NOT include `component_id` itself.
+    pub fn find_all_dependencies(&self, component_id: Uuid) -> HashSet<Uuid> {
+        let mut deps = HashSet::new();
+        let mut stack = vec![component_id];
+
+        while let Some(current) = stack.pop() {
+            if let Some(direct_deps) = self.adjacency.get(&current) {
+                for &dep in direct_deps {
+                    if deps.insert(dep) {
+                        stack.push(dep);
+                    }
+                }
+            }
+        }
+
+        deps
+    }
+
+    /// Build a sub-DAG containing only the specified nodes and edges between them.
+    pub fn sub_dag(&self, nodes: &HashSet<Uuid>) -> Dag {
+        let mut sub = Dag::new();
+        for &node in nodes {
+            sub.add_node(node);
+        }
+        for (&node, deps) in &self.adjacency {
+            if nodes.contains(&node) {
+                for &dep in deps {
+                    if nodes.contains(&dep) {
+                        sub.add_edge(node, dep);
+                    }
+                }
+            }
+        }
+        sub
+    }
+
     /// Check if adding edge from->to (from depends on to) would create a cycle.
     /// A cycle exists if `to` can already reach `from` through existing dependency edges.
     pub fn would_create_cycle(&self, from: Uuid, to: Uuid) -> bool {
@@ -281,5 +319,80 @@ mod tests {
         let levels = dag.topological_levels().unwrap();
         assert_eq!(levels.len(), 1);
         assert_eq!(levels[0], vec![a]);
+    }
+
+    #[test]
+    fn test_find_all_dependencies() {
+        let mut dag = Dag::new();
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let c = Uuid::from_u128(3);
+        let d = Uuid::from_u128(4);
+
+        dag.add_node(a);
+        dag.add_node(b);
+        dag.add_node(c);
+        dag.add_node(d);
+        // d depends on b and c, b depends on a, c depends on a
+        dag.add_edge(d, b);
+        dag.add_edge(d, c);
+        dag.add_edge(b, a);
+        dag.add_edge(c, a);
+
+        // d's dependencies: b, c, a (transitively)
+        let deps = dag.find_all_dependencies(d);
+        assert_eq!(deps.len(), 3);
+        assert!(deps.contains(&a));
+        assert!(deps.contains(&b));
+        assert!(deps.contains(&c));
+
+        // a has no dependencies
+        let deps_a = dag.find_all_dependencies(a);
+        assert!(deps_a.is_empty());
+
+        // b depends on a only
+        let deps_b = dag.find_all_dependencies(b);
+        assert_eq!(deps_b.len(), 1);
+        assert!(deps_b.contains(&a));
+    }
+
+    #[test]
+    fn test_sub_dag() {
+        let mut dag = Dag::new();
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let c = Uuid::from_u128(3);
+        let d = Uuid::from_u128(4);
+
+        dag.add_node(a);
+        dag.add_node(b);
+        dag.add_node(c);
+        dag.add_node(d);
+        dag.add_edge(d, b);
+        dag.add_edge(d, c);
+        dag.add_edge(b, a);
+        dag.add_edge(c, a);
+
+        // Sub-DAG with only a, b, d (exclude c)
+        let mut subset = HashSet::new();
+        subset.insert(a);
+        subset.insert(b);
+        subset.insert(d);
+        let sub = dag.sub_dag(&subset);
+
+        assert_eq!(sub.nodes.len(), 3);
+        assert!(sub.nodes.contains(&a));
+        assert!(sub.nodes.contains(&b));
+        assert!(sub.nodes.contains(&d));
+        // d→b and b→a edges should exist, d→c should not
+        assert!(sub.adjacency[&d].contains(&b));
+        assert!(!sub.adjacency[&d].contains(&c));
+        assert!(sub.adjacency[&b].contains(&a));
+
+        let levels = sub.topological_levels().unwrap();
+        assert_eq!(levels.len(), 3);
+        assert_eq!(levels[0], vec![a]);
+        assert_eq!(levels[1], vec![b]);
+        assert_eq!(levels[2], vec![d]);
     }
 }
