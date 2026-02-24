@@ -502,11 +502,19 @@ async fn run_migrations(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     // and MIGRATIONS_DIR env var (custom deployments).
     let cargo_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
     let docker_dir = std::path::PathBuf::from("/app/migrations");
-    let env_dir = std::env::var("MIGRATIONS_DIR").ok().map(std::path::PathBuf::from);
+    let env_dir = std::env::var("MIGRATIONS_DIR")
+        .ok()
+        .map(std::path::PathBuf::from);
 
     let migrations_dir = env_dir
         .filter(|p| p.exists())
-        .or_else(|| if cargo_dir.exists() { Some(cargo_dir) } else { None })
+        .or_else(|| {
+            if cargo_dir.exists() {
+                Some(cargo_dir)
+            } else {
+                None
+            }
+        })
         .unwrap_or(docker_dir);
 
     let mut entries: Vec<(i32, String, std::path::PathBuf)> = Vec::new();
