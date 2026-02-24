@@ -40,6 +40,10 @@ docker compose -f docker/docker-compose.yaml ps
 | Gateway | localhost:4443 | Agent WebSocket endpoint |
 | PostgreSQL | localhost:5432 | Database (appcontrol/appcontrol_dev) |
 
+### First Login
+
+Open http://localhost:8080 and click **"Dev Quick Login (admin@localhost)"** at the bottom of the login page. This logs you in instantly with the auto-seeded admin account -- no password needed in development mode.
+
 ### Verify Health
 
 ```bash
@@ -105,7 +109,7 @@ cd frontend
 npm run dev
 ```
 
-The Vite dev server starts on http://localhost:5173 with hot module replacement.
+The Vite dev server starts on http://localhost:5173 with hot module replacement. Click **"Dev Quick Login (admin@localhost)"** on the login page to sign in instantly.
 
 **Terminal 3 -- Gateway**
 
@@ -173,7 +177,7 @@ In development mode (`APP_ENV=development`, the default), the backend:
 - Accepts a simple `JWT_SECRET` for HMAC signing (no RSA key pair needed)
 - Auto-runs migrations on startup, creating the database schema
 - **Auto-seeds a default organization and admin user** on first start (when no users exist)
-- Provides a `POST /api/v1/auth/dev-login` endpoint for simple email-based login
+- Provides a **"Dev Quick Login"** button on the login page (no password needed)
 - Issues 24-hour JWT tokens stored in HttpOnly cookies
 
 **Minimal environment:**

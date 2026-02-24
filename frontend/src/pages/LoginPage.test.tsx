@@ -203,4 +203,44 @@ describe('LoginPage', () => {
       expect(screen.getByText('Login failed')).toBeInTheDocument();
     });
   });
+
+  it('should render dev quick login button', async () => {
+    const { LoginPage } = await import('./LoginPage');
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Dev Quick Login (admin@localhost)' })).toBeInTheDocument();
+  });
+
+  it('should call API with admin@localhost on dev quick login', async () => {
+    const mockUser = { id: '1', email: 'admin@localhost', name: 'Admin', org_id: 'org-1', role: 'admin' };
+    (client.post as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { token: 'dev-token', user: mockUser },
+    });
+
+    const { LoginPage } = await import('./LoginPage');
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dev Quick Login (admin@localhost)' }));
+
+    await waitFor(() => {
+      expect(client.post).toHaveBeenCalledWith('/v1/auth/login', {
+        email: 'admin@localhost',
+        password: undefined,
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('/');
+    });
+
+    expect(useAuthStore.getState().token).toBe('dev-token');
+  });
 });
