@@ -731,16 +731,17 @@ fn build_backend_tls_connector(
         let cert_path = tls.cert_file.as_deref().unwrap();
         let key_path = tls.key_file.as_deref().unwrap();
 
-        let cert_data = std::fs::read(cert_path)
-            .map_err(|e| anyhow::anyhow!("Failed to read backend client cert {}: {}", cert_path, e))?;
+        let cert_data = std::fs::read(cert_path).map_err(|e| {
+            anyhow::anyhow!("Failed to read backend client cert {}: {}", cert_path, e)
+        })?;
         let mut cert_reader = BufReader::new(cert_data.as_slice());
-        let client_certs: Vec<CertificateDer<'static>> =
-            rustls_pemfile::certs(&mut cert_reader)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| anyhow::anyhow!("Failed to parse backend client cert: {}", e))?;
+        let client_certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse backend client cert: {}", e))?;
 
-        let key_data = std::fs::read(key_path)
-            .map_err(|e| anyhow::anyhow!("Failed to read backend client key {}: {}", key_path, e))?;
+        let key_data = std::fs::read(key_path).map_err(|e| {
+            anyhow::anyhow!("Failed to read backend client key {}: {}", key_path, e)
+        })?;
         let mut key_reader = BufReader::new(key_data.as_slice());
         let client_key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
             .map_err(|e| anyhow::anyhow!("Failed to parse backend client key: {}", e))?
