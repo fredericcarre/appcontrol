@@ -50,7 +50,7 @@ services:
     environment:
       LISTEN_ADDR: "0.0.0.0"
       LISTEN_PORT: "4443"
-      BACKEND_URL: ws://backend:3000/ws
+      BACKEND_URL: ws://backend:3000/ws/gateway
       RUST_LOG: info,appcontrol_gateway=debug
     depends_on:
       - backend

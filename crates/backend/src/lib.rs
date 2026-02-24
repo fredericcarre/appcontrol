@@ -166,6 +166,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Auth routes (no auth middleware — these ARE the login endpoints)
         .nest("/api/v1", auth::oidc::oidc_routes())
         .nest("/api/v1", auth::saml::saml_routes())
+        .nest("/api/v1", auth::dev_login_routes())
         // Break-glass activation (no auth — this IS the emergency access)
         .route(
             "/api/v1/break-glass/activate",
