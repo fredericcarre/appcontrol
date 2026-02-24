@@ -6,6 +6,7 @@ members = [
     "crates/gateway",
     "crates/backend",
     "crates/cli",
+    "crates/mcp",
     "crates/e2e-tests",
     "crates/e2e-real-tests",
 ]

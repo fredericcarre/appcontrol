@@ -67,6 +67,25 @@ pub enum AgentMessage {
         agent_id: Uuid,
         csr_pem: String,
     },
+    /// Passive discovery report: processes, listeners, connections found on this host.
+    DiscoveryReport {
+        agent_id: Uuid,
+        hostname: String,
+        processes: Vec<crate::types::DiscoveredProcess>,
+        listeners: Vec<crate::types::DiscoveredListener>,
+        connections: Vec<crate::types::DiscoveredConnection>,
+        services: Vec<crate::types::DiscoveredService>,
+        scanned_at: DateTime<Utc>,
+    },
+    /// Progress of an air-gap binary update received via WebSocket chunks.
+    UpdateProgress {
+        update_id: Uuid,
+        agent_id: Uuid,
+        chunks_received: u32,
+        status: crate::types::UpdateStatus,
+        #[serde(default)]
+        error: Option<String>,
+    },
 }
 
 impl AgentMessage {
@@ -79,6 +98,8 @@ impl AgentMessage {
             AgentMessage::CommandOutputChunk { .. } => MessagePriority::Normal,
             AgentMessage::Register { .. } => MessagePriority::Critical,
             AgentMessage::CertificateRenewal { .. } => MessagePriority::High,
+            AgentMessage::DiscoveryReport { .. } => MessagePriority::Normal,
+            AgentMessage::UpdateProgress { .. } => MessagePriority::High,
         }
     }
 }
@@ -122,6 +143,21 @@ pub enum BackendMessage {
         request_id: Uuid,
         approved: bool,
     },
+    /// Air-gap binary update: send a chunk of the new agent binary via WebSocket.
+    UpdateBinaryChunk {
+        update_id: Uuid,
+        target_version: String,
+        checksum_sha256: String,
+        chunk_index: u32,
+        total_chunks: u32,
+        total_size: u64,
+        /// Base64-encoded binary data (~256KB per chunk).
+        data: String,
+    },
+    /// Request the agent to run a passive discovery scan and report back.
+    RequestDiscovery {
+        request_id: Uuid,
+    },
 }
 
 impl BackendMessage {
@@ -134,6 +170,8 @@ impl BackendMessage {
             BackendMessage::UpdateAgent { .. } => MessagePriority::Normal,
             BackendMessage::CertificateResponse { .. } => MessagePriority::High,
             BackendMessage::ApprovalResult { .. } => MessagePriority::Critical,
+            BackendMessage::UpdateBinaryChunk { .. } => MessagePriority::Normal,
+            BackendMessage::RequestDiscovery { .. } => MessagePriority::Normal,
         }
     }
 }

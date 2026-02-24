@@ -107,6 +107,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "appcontrol-common",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "futures-util",
@@ -275,6 +276,22 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "windows-service",
+]
+
+[[package]]
+name = "appcontrol-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

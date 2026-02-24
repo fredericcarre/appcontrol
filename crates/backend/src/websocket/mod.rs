@@ -510,6 +510,83 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             );
             // TODO: Forward CSR to CA, get signed cert, send CertificateResponse back
         }
+        appcontrol_common::AgentMessage::DiscoveryReport {
+            agent_id,
+            hostname,
+            ref processes,
+            ref listeners,
+            ref connections,
+            ref services,
+            scanned_at,
+        } => {
+            tracing::info!(
+                agent_id = %agent_id,
+                hostname = %hostname,
+                processes = processes.len(),
+                listeners = listeners.len(),
+                connections = connections.len(),
+                services = services.len(),
+                "Discovery report received"
+            );
+            // Store the full report as JSONB
+            let report_json = serde_json::to_value(serde_json::json!({
+                "processes": processes,
+                "listeners": listeners,
+                "connections": connections,
+                "services": services,
+            }))
+            .unwrap_or_default();
+
+            if let Err(e) = sqlx::query(
+                "INSERT INTO discovery_reports (agent_id, hostname, report, scanned_at)
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(agent_id)
+            .bind(&hostname)
+            .bind(&report_json)
+            .bind(scanned_at)
+            .execute(&state.db)
+            .await
+            {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    "Failed to store discovery report: {}", e
+                );
+            }
+        }
+        appcontrol_common::AgentMessage::UpdateProgress {
+            update_id,
+            agent_id,
+            chunks_received,
+            status,
+            ref error,
+        } => {
+            let status_str = match status {
+                appcontrol_common::UpdateStatus::Downloading => "in_progress",
+                appcontrol_common::UpdateStatus::Verifying => "verifying",
+                appcontrol_common::UpdateStatus::Applying => "applying",
+                appcontrol_common::UpdateStatus::Complete => "complete",
+                appcontrol_common::UpdateStatus::Failed => "failed",
+            };
+            tracing::info!(
+                update_id = %update_id,
+                agent_id = %agent_id,
+                chunks = chunks_received,
+                status = status_str,
+                "Agent update progress"
+            );
+            let _ = sqlx::query(
+                "UPDATE agent_update_tasks
+                 SET status = $2, error = $3,
+                     completed_at = CASE WHEN $2 IN ('complete', 'failed') THEN now() ELSE completed_at END
+                 WHERE id = $1",
+            )
+            .bind(update_id)
+            .bind(status_str)
+            .bind(error.as_deref())
+            .execute(&state.db)
+            .await;
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 mod buffer;
 mod config;
 mod connection;
+mod discovery;
 mod enroll;
 mod executor;
 mod native_commands;

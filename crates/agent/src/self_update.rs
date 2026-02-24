@@ -186,6 +186,192 @@ fn restart_agent(exe_path: &std::path::Path) -> Result<(), UpdateError> {
     std::process::exit(0);
 }
 
+// ---------------------------------------------------------------------------
+// Air-gap update: receive binary chunks via WebSocket, assemble, verify, apply
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use appcontrol_common::{AgentMessage, UpdateStatus};
+
+/// In-progress chunked downloads, keyed by update_id.
+static CHUNK_BUFFERS: std::sync::LazyLock<Mutex<HashMap<uuid::Uuid, ChunkBuffer>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+struct ChunkBuffer {
+    target_version: String,
+    checksum_sha256: String,
+    total_chunks: u32,
+    total_size: u64,
+    chunks: HashMap<u32, Vec<u8>>,
+}
+
+/// Handle an incoming binary chunk for air-gap update.
+/// Accumulates chunks in memory, and when all chunks are received,
+/// assembles the binary, verifies checksum, and applies the update.
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_binary_chunk(
+    update_id: uuid::Uuid,
+    target_version: &str,
+    checksum_sha256: &str,
+    chunk_index: u32,
+    total_chunks: u32,
+    total_size: u64,
+    data_base64: &str,
+    agent_id: uuid::Uuid,
+    msg_tx: &tokio::sync::mpsc::UnboundedSender<AgentMessage>,
+) {
+    // Decode base64 chunk
+    let chunk_data = match base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        data_base64,
+    ) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("Failed to decode base64 chunk: {}", e);
+            let _ = msg_tx.send(AgentMessage::UpdateProgress {
+                update_id,
+                agent_id,
+                chunks_received: 0,
+                status: UpdateStatus::Failed,
+                error: Some(format!("Base64 decode error: {}", e)),
+            });
+            return;
+        }
+    };
+
+    let all_received = {
+        let mut buffers = CHUNK_BUFFERS.lock().unwrap();
+        let buf = buffers.entry(update_id).or_insert_with(|| ChunkBuffer {
+            target_version: target_version.to_string(),
+            checksum_sha256: checksum_sha256.to_string(),
+            total_chunks,
+            total_size,
+            chunks: HashMap::new(),
+        });
+        buf.chunks.insert(chunk_index, chunk_data);
+        let received = buf.chunks.len() as u32;
+
+        let _ = msg_tx.send(AgentMessage::UpdateProgress {
+            update_id,
+            agent_id,
+            chunks_received: received,
+            status: UpdateStatus::Downloading,
+            error: None,
+        });
+
+        received == total_chunks
+    };
+
+    if all_received {
+        // Assemble and apply
+        let (version, checksum, assembled) = {
+            let mut buffers = CHUNK_BUFFERS.lock().unwrap();
+            if let Some(buf) = buffers.remove(&update_id) {
+                let mut binary = Vec::with_capacity(buf.total_size as usize);
+                for i in 0..buf.total_chunks {
+                    if let Some(chunk) = buf.chunks.get(&i) {
+                        binary.extend_from_slice(chunk);
+                    }
+                }
+                (buf.target_version, buf.checksum_sha256, binary)
+            } else {
+                return;
+            }
+        };
+
+        let _ = msg_tx.send(AgentMessage::UpdateProgress {
+            update_id,
+            agent_id,
+            chunks_received: total_chunks,
+            status: UpdateStatus::Verifying,
+            error: None,
+        });
+
+        // Write to temp file and verify
+        let current_exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(_) => {
+                let _ = msg_tx.send(AgentMessage::UpdateProgress {
+                    update_id,
+                    agent_id,
+                    chunks_received: total_chunks,
+                    status: UpdateStatus::Failed,
+                    error: Some("Cannot determine current exe path".to_string()),
+                });
+                return;
+            }
+        };
+        let parent_dir = current_exe.parent().unwrap();
+        let temp_path = parent_dir.join(format!(".appcontrol-agent-update-{}", version));
+
+        if let Err(e) = tokio::fs::write(&temp_path, &assembled).await {
+            let _ = msg_tx.send(AgentMessage::UpdateProgress {
+                update_id,
+                agent_id,
+                chunks_received: total_chunks,
+                status: UpdateStatus::Failed,
+                error: Some(format!("Write error: {}", e)),
+            });
+            return;
+        }
+
+        if let Err(e) = verify_checksum(&temp_path, &checksum).await {
+            let _ = msg_tx.send(AgentMessage::UpdateProgress {
+                update_id,
+                agent_id,
+                chunks_received: total_chunks,
+                status: UpdateStatus::Failed,
+                error: Some(format!("Checksum mismatch: {}", e)),
+            });
+            return;
+        }
+
+        let _ = msg_tx.send(AgentMessage::UpdateProgress {
+            update_id,
+            agent_id,
+            chunks_received: total_chunks,
+            status: UpdateStatus::Applying,
+            error: None,
+        });
+
+        // Set executable permission on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o755));
+        }
+
+        // Atomic replace and restart
+        let backup_path = parent_dir.join(".appcontrol-agent.old");
+        if let Err(e) = atomic_replace(&current_exe, &temp_path, &backup_path) {
+            let _ = msg_tx.send(AgentMessage::UpdateProgress {
+                update_id,
+                agent_id,
+                chunks_received: total_chunks,
+                status: UpdateStatus::Failed,
+                error: Some(format!("Atomic replace failed: {}", e)),
+            });
+            return;
+        }
+
+        let _ = msg_tx.send(AgentMessage::UpdateProgress {
+            update_id,
+            agent_id,
+            chunks_received: total_chunks,
+            status: UpdateStatus::Complete,
+            error: None,
+        });
+
+        tracing::info!(
+            "Air-gap update to v{} complete — restarting agent",
+            version
+        );
+        let _ = restart_agent(&current_exe);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

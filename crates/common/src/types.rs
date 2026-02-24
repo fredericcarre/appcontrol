@@ -185,3 +185,64 @@ impl OrgRole {
         matches!(self, OrgRole::Admin)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Discovery types (passive topology scanning)
+// ---------------------------------------------------------------------------
+
+/// A process discovered by the agent's passive scanner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredProcess {
+    pub pid: u32,
+    pub name: String,
+    pub cmdline: String,
+    pub user: String,
+    pub memory_bytes: u64,
+    pub cpu_pct: f32,
+    pub listening_ports: Vec<u16>,
+}
+
+/// A TCP listener discovered on the host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredListener {
+    pub port: u16,
+    pub protocol: String,
+    pub pid: Option<u32>,
+    pub process_name: Option<String>,
+    pub address: String,
+}
+
+/// An outbound TCP connection observed on the host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredConnection {
+    pub local_port: u16,
+    pub remote_addr: String,
+    pub remote_port: u16,
+    pub pid: Option<u32>,
+    pub process_name: Option<String>,
+    pub state: String,
+}
+
+/// A system service (systemd unit / Windows service) discovered on the host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredService {
+    pub name: String,
+    pub display_name: String,
+    pub status: String,
+    pub pid: Option<u32>,
+}
+
+// ---------------------------------------------------------------------------
+// Air-gap agent update types
+// ---------------------------------------------------------------------------
+
+/// Status of an in-progress agent binary update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateStatus {
+    Downloading,
+    Verifying,
+    Applying,
+    Complete,
+    Failed,
+}
