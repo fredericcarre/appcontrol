@@ -154,6 +154,184 @@ fn apply_resource_limits() {
     }
 }
 
+/// Execute a command synchronously with streaming output chunks.
+///
+/// Similar to `execute_sync`, but sends stdout/stderr chunks via a callback
+/// as they become available (every ~500ms or when buffer has data).
+/// This enables real-time output streaming to the frontend.
+pub async fn execute_sync_streaming<F>(
+    command: &str,
+    timeout: Duration,
+    mut on_chunk: F,
+) -> anyhow::Result<ExecResult>
+where
+    F: FnMut(String, String) + Send + 'static,
+{
+    use tokio::io::AsyncBufReadExt;
+    let start = std::time::Instant::now();
+
+    #[cfg(unix)]
+    let mut child = {
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg(command)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0);
+        cmd.spawn()?
+    };
+
+    #[cfg(windows)]
+    let mut child = {
+        use tokio::process::Command;
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C")
+            .arg(command)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .creation_flags(windows::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP.0);
+        cmd.spawn()?
+    };
+
+    let child_pid = child.id();
+    let child_stdout = child.stdout.take();
+    let child_stderr = child.stderr.take();
+
+    let mut all_stdout = String::new();
+    let mut all_stderr = String::new();
+
+    // Spawn readers for stdout and stderr
+    let (stdout_tx, mut stdout_rx) = tokio::sync::mpsc::channel::<String>(64);
+    let (stderr_tx, mut stderr_rx) = tokio::sync::mpsc::channel::<String>(64);
+
+    if let Some(stdout) = child_stdout {
+        let tx = stdout_tx;
+        tokio::spawn(async move {
+            let reader = tokio::io::BufReader::new(stdout);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if tx.send(line).await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    if let Some(stderr) = child_stderr {
+        let tx = stderr_tx;
+        tokio::spawn(async move {
+            let reader = tokio::io::BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if tx.send(line).await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    // Collect output and send chunks periodically
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut chunk_interval = tokio::time::interval(Duration::from_millis(500));
+    chunk_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    let mut pending_stdout = String::new();
+    let mut pending_stderr = String::new();
+    let mut stdout_closed = false;
+    let mut stderr_closed = false;
+
+    loop {
+        tokio::select! {
+            line = stdout_rx.recv(), if !stdout_closed => {
+                match line {
+                    Some(l) => {
+                        all_stdout.push_str(&l);
+                        all_stdout.push('\n');
+                        pending_stdout.push_str(&l);
+                        pending_stdout.push('\n');
+                    }
+                    None => stdout_closed = true,
+                }
+            }
+            line = stderr_rx.recv(), if !stderr_closed => {
+                match line {
+                    Some(l) => {
+                        all_stderr.push_str(&l);
+                        all_stderr.push('\n');
+                        pending_stderr.push_str(&l);
+                        pending_stderr.push('\n');
+                    }
+                    None => stderr_closed = true,
+                }
+            }
+            _ = chunk_interval.tick() => {
+                if !pending_stdout.is_empty() || !pending_stderr.is_empty() {
+                    on_chunk(
+                        std::mem::take(&mut pending_stdout),
+                        std::mem::take(&mut pending_stderr),
+                    );
+                }
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                // Timeout
+                tracing::warn!(command = %command, "Streaming command timed out after {:?}", timeout);
+                #[cfg(unix)]
+                if let Some(pid) = child_pid {
+                    unsafe { libc::kill(-(pid as i32), libc::SIGTERM); }
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    unsafe { libc::kill(-(pid as i32), libc::SIGKILL); }
+                }
+                #[cfg(windows)]
+                if let Some(pid) = child_pid {
+                    win_kill_process_tree(pid);
+                }
+                // Send remaining
+                if !pending_stdout.is_empty() || !pending_stderr.is_empty() {
+                    on_chunk(std::mem::take(&mut pending_stdout), std::mem::take(&mut pending_stderr));
+                }
+                let duration_ms = start.elapsed().as_millis() as u32;
+                return Ok(ExecResult {
+                    exit_code: -1,
+                    stdout: truncate_output(all_stdout),
+                    stderr: "Command timed out and was killed".to_string(),
+                    duration_ms,
+                });
+            }
+        }
+
+        // Check if child has exited and streams are closed
+        if stdout_closed && stderr_closed {
+            break;
+        }
+    }
+
+    // Send any remaining output
+    if !pending_stdout.is_empty() || !pending_stderr.is_empty() {
+        on_chunk(
+            std::mem::take(&mut pending_stdout),
+            std::mem::take(&mut pending_stderr),
+        );
+    }
+
+    let status = child.wait().await?;
+    let duration_ms = start.elapsed().as_millis() as u32;
+
+    Ok(ExecResult {
+        exit_code: status.code().unwrap_or(-1),
+        stdout: truncate_output(all_stdout),
+        stderr: truncate_output(all_stderr),
+        duration_ms,
+    })
+}
+
+fn truncate_output(s: String) -> String {
+    if s.len() > 4096 {
+        s[..4096].to_string()
+    } else {
+        s
+    }
+}
+
 /// Execute a command asynchronously with double-fork + setsid for process detachment.
 ///
 /// CRITICAL: The spawned process MUST survive agent crash.

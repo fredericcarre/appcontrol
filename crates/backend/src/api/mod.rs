@@ -68,6 +68,14 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/components/:id/command/:cmd",
             post(components::execute_command),
         )
+        .route(
+            "/components/:id/commands",
+            get(components::list_custom_commands),
+        )
+        .route(
+            "/components/:id/command-executions",
+            get(components::list_command_executions),
+        )
         // Dependencies
         .route(
             "/apps/:app_id/dependencies",

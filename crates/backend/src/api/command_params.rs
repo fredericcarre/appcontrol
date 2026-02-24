@@ -25,6 +25,8 @@ pub struct InputParamRow {
     pub validation_regex: Option<String>,
     pub required: bool,
     pub display_order: i32,
+    pub param_type: String,
+    pub enum_values: Option<serde_json::Value>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -36,6 +38,8 @@ pub struct CreateInputParamRequest {
     pub validation_regex: Option<String>,
     pub required: Option<bool>,
     pub display_order: Option<i32>,
+    pub param_type: Option<String>,
+    pub enum_values: Option<serde_json::Value>,
 }
 
 #[allow(dead_code)]
@@ -46,6 +50,8 @@ pub struct UpdateInputParamRequest {
     pub validation_regex: Option<String>,
     pub required: Option<bool>,
     pub display_order: Option<i32>,
+    pub param_type: Option<String>,
+    pub enum_values: Option<serde_json::Value>,
 }
 
 /// Resolve the application_id for a command through the component chain.
@@ -74,7 +80,8 @@ pub async fn list_params(
     }
 
     let params = sqlx::query_as::<_, InputParamRow>(
-        "SELECT id, command_id, name, description, default_value, validation_regex, required, display_order, created_at \
+        "SELECT id, command_id, name, description, default_value, validation_regex, required, display_order, \
+         param_type, enum_values, created_at \
          FROM command_input_params WHERE command_id = $1 ORDER BY display_order, name",
     )
     .bind(command_id)
@@ -121,11 +128,13 @@ pub async fn create_param(
     )
     .await?;
 
+    let param_type = body.param_type.as_deref().unwrap_or("string");
+
     let param = sqlx::query_as::<_, InputParamRow>(
         r#"
-        INSERT INTO command_input_params (id, command_id, name, description, default_value, validation_regex, required, display_order)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        RETURNING id, command_id, name, description, default_value, validation_regex, required, display_order, created_at
+        INSERT INTO command_input_params (id, command_id, name, description, default_value, validation_regex, required, display_order, param_type, enum_values)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING id, command_id, name, description, default_value, validation_regex, required, display_order, param_type, enum_values, created_at
         "#,
     )
     .bind(param_id)
@@ -136,6 +145,8 @@ pub async fn create_param(
     .bind(&body.validation_regex)
     .bind(body.required.unwrap_or(true))
     .bind(body.display_order.unwrap_or(0))
+    .bind(param_type)
+    .bind(&body.enum_values)
     .fetch_one(&state.db)
     .await?;
 
@@ -246,6 +257,8 @@ mod tests {
             validation_regex: regex.map(|s| s.to_string()),
             required,
             display_order: 0,
+            param_type: "string".to_string(),
+            enum_values: None,
             created_at: chrono::Utc::now(),
         }
     }

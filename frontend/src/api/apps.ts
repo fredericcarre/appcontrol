@@ -81,6 +81,8 @@ export interface CommandInputParam {
   validation_regex: string | null;
   required: boolean;
   display_order: number;
+  param_type: string;
+  enum_values: string[] | null;
 }
 
 export interface Dependency {

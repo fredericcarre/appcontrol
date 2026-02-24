@@ -573,36 +573,34 @@ pub async fn start_with_deps(
     })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ExecuteCommandBody {
+    #[serde(default)]
+    pub parameters: Option<std::collections::HashMap<String, String>>,
+}
+
 pub async fn execute_command(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path((id, cmd)): Path<(Uuid, String)>,
+    body: Option<Json<ExecuteCommandBody>>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_not_found()?;
+    let (app_id, agent_id) = sqlx::query_as::<_, (Uuid, Option<Uuid>)>(
+        "SELECT application_id, agent_id FROM components WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
     }
 
-    log_action(
-        &state.db,
-        user.user_id,
-        "execute_command",
-        "component",
-        id,
-        json!({"command": cmd}),
-    )
-    .await?;
-
-    // Look up the command from component_commands
-    let command = sqlx::query_scalar::<_, String>(
-        "SELECT command FROM component_commands WHERE component_id = $1 AND name = $2",
+    // Look up the command definition from component_commands
+    let cmd_row = sqlx::query_as::<_, (Uuid, String, bool)>(
+        "SELECT id, command, requires_confirmation FROM component_commands WHERE component_id = $1 AND name = $2",
     )
     .bind(id)
     .bind(&cmd)
@@ -610,10 +608,96 @@ pub async fn execute_command(
     .await?
     .ok_or_not_found()?;
 
+    let (command_id, command_template, _requires_confirmation) = cmd_row;
+
+    // Load parameter definitions and validate/interpolate
+    let params = sqlx::query_as::<_, crate::api::command_params::InputParamRow>(
+        "SELECT id, command_id, name, description, default_value, validation_regex, required, display_order, created_at \
+         FROM command_input_params WHERE command_id = $1 ORDER BY display_order, name",
+    )
+    .bind(command_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let param_values = body
+        .as_ref()
+        .and_then(|b| b.parameters.clone())
+        .unwrap_or_default();
+
+    let final_command = if params.is_empty() {
+        command_template.clone()
+    } else {
+        crate::api::command_params::validate_and_interpolate_params(
+            &command_template,
+            &params,
+            &param_values,
+        )
+        .map_err(|errors| ApiError::Validation(errors.join("; ")))?
+    };
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "execute_command",
+        "component",
+        id,
+        json!({"command": cmd, "parameters": param_values}),
+    )
+    .await?;
+
+    let agent_id = agent_id.ok_or(ApiError::Conflict(
+        "No agent assigned to this component".to_string(),
+    ))?;
+
     let request_id = Uuid::new_v4();
-    Ok(Json(
-        json!({ "request_id": request_id, "command": command, "status": "executing" }),
-    ))
+
+    // Record dispatch in command_executions for audit trail
+    if let Err(e) = sqlx::query(
+        "INSERT INTO command_executions (request_id, component_id, agent_id, command_type, status, user_id, command_text)
+         VALUES ($1, $2, $3, 'custom', 'dispatched', $4, $5)
+         ON CONFLICT (request_id) DO NOTHING",
+    )
+    .bind(request_id)
+    .bind(id)
+    .bind(agent_id)
+    .bind(user.user_id)
+    .bind(&final_command)
+    .execute(&state.db)
+    .await
+    {
+        tracing::warn!(request_id = %request_id, "Failed to record command dispatch: {}", e);
+    }
+
+    // Dispatch to agent via WebSocket hub (sync mode for custom commands)
+    let message = appcontrol_common::BackendMessage::ExecuteCommand {
+        request_id,
+        component_id: id,
+        command: final_command.clone(),
+        timeout_seconds: 300,
+        exec_mode: "sync".to_string(),
+    };
+
+    let dispatched = state.ws_hub.send_to_agent(agent_id, message);
+    if !dispatched {
+        return Err(ApiError::Conflict(
+            "Agent is not reachable — no gateway route available".to_string(),
+        ));
+    }
+
+    tracing::info!(
+        request_id = %request_id,
+        component_id = %id,
+        agent_id = %agent_id,
+        "Custom command dispatched to agent (sync)"
+    );
+
+    Ok(Json(json!({
+        "request_id": request_id,
+        "command": final_command,
+        "status": "dispatched",
+        "component_id": id,
+        "agent_id": agent_id,
+    })))
 }
 
 pub async fn list_dependencies(
@@ -723,6 +807,132 @@ pub async fn delete_dependency(
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Custom Commands listing
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct CustomCommandRow {
+    pub id: Uuid,
+    pub component_id: Uuid,
+    pub name: String,
+    pub command: String,
+    pub description: Option<String>,
+    pub requires_confirmation: bool,
+    pub min_permission_level: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// List custom commands for a component.
+pub async fn list_custom_commands(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(component_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    let commands = sqlx::query_as::<_, CustomCommandRow>(
+        "SELECT id, component_id, name, command, description, requires_confirmation, min_permission_level, created_at \
+         FROM component_commands WHERE component_id = $1 ORDER BY name",
+    )
+    .bind(component_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(json!({ "commands": commands })))
+}
+
+// ---------------------------------------------------------------------------
+// Command Execution History
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct CommandExecutionRow {
+    pub id: Uuid,
+    pub request_id: Uuid,
+    pub component_id: Uuid,
+    pub agent_id: Option<Uuid>,
+    pub command_type: String,
+    pub exit_code: Option<i16>,
+    pub stdout: Option<String>,
+    pub stderr: Option<String>,
+    pub duration_ms: Option<i32>,
+    pub status: String,
+    pub dispatched_at: chrono::DateTime<chrono::Utc>,
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExecutionHistoryQuery {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+    pub status: Option<String>,
+}
+
+/// List command execution history for a component.
+pub async fn list_command_executions(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(component_id): Path<Uuid>,
+    axum::extract::Query(query): axum::extract::Query<ExecutionHistoryQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    let limit = query.limit.unwrap_or(50).min(200);
+    let offset = query.offset.unwrap_or(0);
+
+    let executions = if let Some(ref status_filter) = query.status {
+        sqlx::query_as::<_, CommandExecutionRow>(
+            "SELECT id, request_id, component_id, agent_id, command_type, exit_code, \
+                    stdout, stderr, duration_ms, status, dispatched_at, completed_at \
+             FROM command_executions \
+             WHERE component_id = $1 AND status = $2 \
+             ORDER BY dispatched_at DESC LIMIT $3 OFFSET $4",
+        )
+        .bind(component_id)
+        .bind(status_filter)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as::<_, CommandExecutionRow>(
+            "SELECT id, request_id, component_id, agent_id, command_type, exit_code, \
+                    stdout, stderr, duration_ms, status, dispatched_at, completed_at \
+             FROM command_executions \
+             WHERE component_id = $1 \
+             ORDER BY dispatched_at DESC LIMIT $2 OFFSET $3",
+        )
+        .bind(component_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&state.db)
+        .await?
+    };
+
+    Ok(Json(json!({ "executions": executions })))
 }
 
 // ---------------------------------------------------------------------------

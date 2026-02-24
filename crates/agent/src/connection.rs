@@ -425,9 +425,19 @@ impl ConnectionManager {
                             }
                         }
                     } else {
-                        // Sync execution: wait for result (checks, diagnostics, custom commands)
+                        // Sync execution with streaming: send output chunks as they arrive
+                        let chunk_tx = msg_tx.clone();
                         let start = std::time::Instant::now();
-                        match crate::executor::execute_sync(&command, timeout).await {
+                        let on_chunk = move |stdout: String, stderr: String| {
+                            let _ = chunk_tx.send(AgentMessage::CommandOutputChunk {
+                                request_id,
+                                stdout,
+                                stderr,
+                            });
+                        };
+                        match crate::executor::execute_sync_streaming(&command, timeout, on_chunk)
+                            .await
+                        {
                             Ok(result) => {
                                 tracing::info!(
                                     request_id = %request_id,
