@@ -71,6 +71,9 @@ pub struct GatewayConfig {
     gateway: GatewaySection,
     backend: BackendSection,
     tls: Option<TlsSection>,
+    /// TLS configuration for the gateway→backend connection.
+    /// Required when `backend.url` uses `wss://` with an internal CA.
+    backend_tls: Option<BackendTlsSection>,
 }
 
 #[derive(Debug, serde::Deserialize, Clone)]
@@ -95,6 +98,21 @@ struct TlsSection {
     ca_file: String,
 }
 
+/// TLS settings for the outbound gateway→backend WebSocket connection.
+/// When `backend.url` is `wss://`, the gateway verifies the backend's certificate.
+/// If `ca_file` is set, only that CA is trusted (internal PKI). Otherwise, system
+/// roots are used. Optionally, `cert_file`+`key_file` enable mTLS to the backend.
+#[derive(Debug, serde::Deserialize, Clone)]
+struct BackendTlsSection {
+    /// CA certificate to verify the backend's server certificate (PEM).
+    /// If omitted, system root certificates are used.
+    ca_file: Option<String>,
+    /// Client certificate for mTLS to the backend (PEM). Optional.
+    cert_file: Option<String>,
+    /// Client private key for mTLS to the backend (PEM). Optional.
+    key_file: Option<String>,
+}
+
 impl GatewayConfig {
     fn load(path: &str) -> anyhow::Result<Self> {
         let mut config = if std::path::Path::new(path).exists() {
@@ -114,6 +132,7 @@ impl GatewayConfig {
                     reconnect_interval_secs: 5,
                 },
                 tls: None,
+                backend_tls: None,
             }
         };
 
@@ -140,7 +159,7 @@ impl GatewayConfig {
             }
         }
 
-        // TLS env var overrides
+        // TLS env var overrides (agent-facing server)
         let tls_enabled = std::env::var("TLS_ENABLED")
             .ok()
             .map(|v| v == "true" || v == "1");
@@ -159,6 +178,23 @@ impl GatewayConfig {
                 cert_file: tls_cert.unwrap_or(existing.cert_file),
                 key_file: tls_key.unwrap_or(existing.key_file),
                 ca_file: tls_ca.unwrap_or(existing.ca_file),
+            });
+        }
+
+        // Backend TLS env var overrides (gateway→backend connection)
+        let backend_tls_ca = std::env::var("BACKEND_TLS_CA_FILE").ok();
+        let backend_tls_cert = std::env::var("BACKEND_TLS_CERT_FILE").ok();
+        let backend_tls_key = std::env::var("BACKEND_TLS_KEY_FILE").ok();
+        if backend_tls_ca.is_some() || backend_tls_cert.is_some() {
+            let existing = config.backend_tls.unwrap_or(BackendTlsSection {
+                ca_file: None,
+                cert_file: None,
+                key_file: None,
+            });
+            config.backend_tls = Some(BackendTlsSection {
+                ca_file: backend_tls_ca.or(existing.ca_file),
+                cert_file: backend_tls_cert.or(existing.cert_file),
+                key_file: backend_tls_key.or(existing.key_file),
             });
         }
 
@@ -553,9 +589,27 @@ async fn handle_agent_connection(
 
 async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
     use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::connect_async;
 
-    let (ws_stream, _) = connect_async(&state.config.backend.url).await?;
+    let url = &state.config.backend.url;
+    let is_wss = url.starts_with("wss://");
+
+    if !is_wss {
+        tracing::warn!(
+            "Backend connection uses plaintext WebSocket ({}). \
+             This is acceptable for local development but MUST use wss:// in production. \
+             Set BACKEND_URL=wss://... and configure BACKEND_TLS_CA_FILE for internal PKI.",
+            url
+        );
+    }
+
+    let connector = if is_wss {
+        Some(build_backend_tls_connector(&state.config.backend_tls)?)
+    } else {
+        None
+    };
+
+    let (ws_stream, _) =
+        tokio_tungstenite::connect_async_tls_with_config(url, None, false, connector).await?;
     let (mut write, mut read) = ws_stream.split();
 
     tracing::info!("Connected to backend");
@@ -624,6 +678,88 @@ fn extract_client_cert_fingerprint(
     let first_cert = peer_certs.first()?;
     let fingerprint = sha2::Sha256::digest(first_cert.as_ref());
     Some(hex::encode(fingerprint))
+}
+
+/// Build a TLS connector for the gateway→backend WebSocket connection.
+///
+/// - If `backend_tls.ca_file` is set, only that CA is trusted (internal PKI).
+/// - If no CA is configured, the system's native root certificates are used.
+/// - If `cert_file` + `key_file` are set, the gateway presents a client certificate (mTLS).
+fn build_backend_tls_connector(
+    backend_tls: &Option<BackendTlsSection>,
+) -> anyhow::Result<tokio_tungstenite::Connector> {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use std::io::BufReader;
+
+    // Build the root certificate store
+    let root_store = if let Some(ca_path) = backend_tls.as_ref().and_then(|t| t.ca_file.as_deref())
+    {
+        // Internal PKI: trust only the configured CA
+        let ca_data = std::fs::read(ca_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read backend CA {}: {}", ca_path, e))?;
+        let mut ca_reader = BufReader::new(ca_data.as_slice());
+        let mut store = rustls::RootCertStore::empty();
+        for cert in rustls_pemfile::certs(&mut ca_reader) {
+            let cert =
+                cert.map_err(|e| anyhow::anyhow!("Failed to parse backend CA cert: {}", e))?;
+            store
+                .add(cert)
+                .map_err(|e| anyhow::anyhow!("Failed to add backend CA cert: {}", e))?;
+        }
+        tracing::info!("Backend TLS: using custom CA from {}", ca_path);
+        store
+    } else {
+        // No custom CA: use native system root certificates
+        let mut store = rustls::RootCertStore::empty();
+        let native_certs = rustls_native_certs::load_native_certs()
+            .map_err(|e| anyhow::anyhow!("Failed to load native root certificates: {}", e))?;
+        for cert in native_certs {
+            store.add(cert).ok();
+        }
+        tracing::info!("Backend TLS: using system root certificates");
+        store
+    };
+
+    // Build the client config, optionally with client certificate (mTLS to backend)
+    let has_client_cert = backend_tls
+        .as_ref()
+        .map(|t| t.cert_file.is_some() && t.key_file.is_some())
+        .unwrap_or(false);
+
+    let client_config = if has_client_cert {
+        let tls = backend_tls.as_ref().unwrap();
+        let cert_path = tls.cert_file.as_deref().unwrap();
+        let key_path = tls.key_file.as_deref().unwrap();
+
+        let cert_data = std::fs::read(cert_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read backend client cert {}: {}", cert_path, e))?;
+        let mut cert_reader = BufReader::new(cert_data.as_slice());
+        let client_certs: Vec<CertificateDer<'static>> =
+            rustls_pemfile::certs(&mut cert_reader)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| anyhow::anyhow!("Failed to parse backend client cert: {}", e))?;
+
+        let key_data = std::fs::read(key_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read backend client key {}: {}", key_path, e))?;
+        let mut key_reader = BufReader::new(key_data.as_slice());
+        let client_key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
+            .map_err(|e| anyhow::anyhow!("Failed to parse backend client key: {}", e))?
+            .ok_or_else(|| anyhow::anyhow!("No private key found in: {}", key_path))?;
+
+        tracing::info!("Backend TLS: mTLS enabled (presenting client certificate)");
+        rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_client_auth_cert(client_certs, client_key)
+            .map_err(|e| anyhow::anyhow!("Failed to build backend mTLS config: {}", e))?
+    } else {
+        rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth()
+    };
+
+    Ok(tokio_tungstenite::Connector::Rustls(Arc::new(
+        client_config,
+    )))
 }
 
 /// Build a rustls ServerConfig with mTLS: server cert + mandatory client cert verification.

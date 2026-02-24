@@ -118,7 +118,7 @@ export RUST_LOG=info,appcontrol_gateway=debug
 cargo run --bin appcontrol-gateway
 ```
 
-The gateway listens on port 4443 and bridges agent WebSocket connections to the backend.
+The gateway listens on port 4443 and bridges agent WebSocket connections to the backend. In dev mode, the gateway connects to the backend over `ws://` (plaintext). In production, always use `wss://` with TLS -- see the `BACKEND_TLS_CA_FILE` env var for internal PKI.
 
 **Terminal 4 -- Agent (optional)**
 
