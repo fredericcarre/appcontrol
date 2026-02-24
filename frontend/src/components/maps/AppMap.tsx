@@ -35,6 +35,8 @@ interface AppMapProps {
   onStopComponent?: (id: string) => void;
   onRestartComponent?: (id: string) => void;
   onDiagnoseComponent?: (id: string) => void;
+  onForceStopComponent?: (id: string) => void;
+  onStartWithDepsComponent?: (id: string) => void;
   canOperate?: boolean;
 }
 
@@ -45,6 +47,8 @@ function buildNodes(
   onStop?: (id: string) => void,
   onRestart?: (id: string) => void,
   onDiagnose?: (id: string) => void,
+  onForceStop?: (id: string) => void,
+  onStartWithDeps?: (id: string) => void,
 ): Node[] {
   const groupColorMap: Record<string, string> = {};
   if (groups) {
@@ -73,6 +77,8 @@ function buildNodes(
       onStop,
       onRestart,
       onDiagnose,
+      onForceStop,
+      onStartWithDeps,
     },
   }));
 }
@@ -102,11 +108,13 @@ export function AppMap({
   onStopComponent,
   onRestartComponent,
   onDiagnoseComponent,
+  onForceStopComponent,
+  onStartWithDepsComponent,
   canOperate,
 }: AppMapProps) {
   const initialNodes = useMemo(
-    () => buildNodes(components, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent),
-    [components, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent],
+    () => buildNodes(components, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent),
+    [components, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent],
   );
   const initialEdges = useMemo(() => buildEdges(dependencies), [dependencies]);
 

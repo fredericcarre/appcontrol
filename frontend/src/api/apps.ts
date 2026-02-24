@@ -181,6 +181,20 @@ export function useStartBranch() {
   });
 }
 
+export function useStartTo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { appId: string; targetComponentId: string; dryRun?: boolean }) => {
+      const { data } = await client.post(`/apps/${payload.appId}/start-to`, {
+        target_component_id: payload.targetComponentId,
+        dry_run: payload.dryRun,
+      });
+      return data;
+    },
+    onSuccess: (_, vars) => qc.invalidateQueries({ queryKey: ['apps', vars.appId] }),
+  });
+}
+
 export function useAppComponents(appId: string) {
   return useQuery({
     queryKey: ['apps', appId, 'components'],

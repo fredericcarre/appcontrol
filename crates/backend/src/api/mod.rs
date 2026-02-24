@@ -41,6 +41,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/apps/:id/start", post(apps::start_app))
         .route("/apps/:id/stop", post(apps::stop_app))
         .route("/apps/:id/start-branch", post(apps::start_branch))
+        .route("/apps/:id/start-to", post(apps::start_to))
         // Components
         .route(
             "/apps/:app_id/components",
@@ -54,6 +55,14 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .route("/components/:id/start", post(components::start_component))
         .route("/components/:id/stop", post(components::stop_component))
+        .route(
+            "/components/:id/force-stop",
+            post(components::force_stop_component),
+        )
+        .route(
+            "/components/:id/start-with-deps",
+            post(components::start_with_deps),
+        )
         .route(
             "/components/:id/command/:cmd",
             post(components::execute_command),

@@ -70,3 +70,25 @@ export function useDiagnoseComponent() {
     },
   });
 }
+
+export function useForceStopComponent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (componentId: string) => {
+      const { data } = await client.post(`/components/${componentId}/force-stop`);
+      return data;
+    },
+    onSuccess: (_, id) => qc.invalidateQueries({ queryKey: ['components', id] }),
+  });
+}
+
+export function useStartWithDeps() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (componentId: string) => {
+      const { data } = await client.post(`/components/${componentId}/start-with-deps`);
+      return data;
+    },
+    onSuccess: (_, id) => qc.invalidateQueries({ queryKey: ['components', id] }),
+  });
+}

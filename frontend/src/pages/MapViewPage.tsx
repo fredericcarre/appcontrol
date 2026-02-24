@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { useApp, useStartApp, useStopApp, useStartBranch } from '@/api/apps';
-import { useStartComponent, useStopComponent } from '@/api/components';
+import { useApp, useStartApp, useStopApp, useStartBranch, useStartTo } from '@/api/apps';
+import { useStartComponent, useStopComponent, useForceStopComponent, useStartWithDeps } from '@/api/components';
 import { usePermission } from '@/hooks/use-permission';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { AppMap } from '@/components/maps/AppMap';
@@ -18,6 +18,9 @@ export function MapViewPage() {
   const startBranch = useStartBranch();
   const startComponent = useStartComponent();
   const stopComponent = useStopComponent();
+  const forceStopComponent = useForceStopComponent();
+  const startWithDeps = useStartWithDeps();
+  const startTo = useStartTo();
   const { subscribe } = useWebSocket();
 
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
@@ -52,6 +55,20 @@ export function MapViewPage() {
     stopComponent.mutate(id);
   }, [stopComponent]);
 
+  const handleForceStopComponent = useCallback((id: string) => {
+    if (window.confirm('Force kill this component? This will ignore all dependencies.')) {
+      forceStopComponent.mutate(id);
+    }
+  }, [forceStopComponent]);
+
+  const handleStartWithDeps = useCallback((id: string) => {
+    startWithDeps.mutate(id);
+  }, [startWithDeps]);
+
+  const handleStartTo = useCallback((id: string) => {
+    if (appId) startTo.mutate({ appId, targetComponentId: id });
+  }, [appId, startTo]);
+
   const handleCommand = useCallback((componentId: string) => {
     setCommandComponentId(componentId);
     setCommandOpen(true);
@@ -85,6 +102,8 @@ export function MapViewPage() {
           onStopComponent={handleStopComponent}
           onRestartComponent={handleStartComponent}
           onDiagnoseComponent={(id) => handleCommand(id)}
+          onForceStopComponent={handleForceStopComponent}
+          onStartWithDepsComponent={handleStartWithDeps}
           canOperate={canOperate}
         />
       </div>
@@ -98,6 +117,8 @@ export function MapViewPage() {
           onRestart={() => handleStartComponent(selectedComponent.id)}
           onCommand={() => handleCommand(selectedComponent.id)}
           onDiagnose={() => handleCommand(selectedComponent.id)}
+          onForceStop={() => handleForceStopComponent(selectedComponent.id)}
+          onStartWithDeps={() => handleStartWithDeps(selectedComponent.id)}
           canOperate={canOperate}
         />
       )}

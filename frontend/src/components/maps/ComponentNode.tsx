@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { STATE_COLORS, COMPONENT_TYPE_ICONS, ComponentState, ComponentType } from '@/lib/colors';
 import {
   Database, Layers, Server, Globe, Cog, Clock, Box,
-  Play, Square, RotateCcw, Search,
+  Play, Square, RotateCcw, Search, Skull, GitBranch,
   Shield, Cloud, HardDrive, Cpu, Network, FileText, Zap,
   ExternalLink,
 } from 'lucide-react';
@@ -33,6 +33,8 @@ interface ComponentNodeData {
   onStop?: (id: string) => void;
   onRestart?: (id: string) => void;
   onDiagnose?: (id: string) => void;
+  onForceStop?: (id: string) => void;
+  onStartWithDeps?: (id: string) => void;
   [key: string]: unknown;
 }
 
@@ -47,6 +49,8 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
   const handleStop = useCallback(() => data.onStop?.(id), [data, id]);
   const handleRestart = useCallback(() => data.onRestart?.(id), [data, id]);
   const handleDiagnose = useCallback(() => data.onDiagnose?.(id), [data, id]);
+  const handleForceStop = useCallback(() => data.onForceStop?.(id), [data, id]);
+  const handleStartWithDeps = useCallback(() => data.onStartWithDeps?.(id), [data, id]);
 
   const isTransitioning = data.state === 'STARTING' || data.state === 'STOPPING';
   const displayLabel = data.displayName || data.label;
@@ -97,6 +101,12 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
               </button>
               <button onClick={handleRestart} className="p-1 rounded hover:bg-white/50" title="Restart">
                 <RotateCcw className="h-3.5 w-3.5 text-blue-600" />
+              </button>
+              <button onClick={handleStartWithDeps} className="p-1 rounded hover:bg-white/50" title="Start with dependencies">
+                <GitBranch className="h-3.5 w-3.5 text-teal-600" />
+              </button>
+              <button onClick={handleForceStop} className="p-1 rounded hover:bg-white/50" title="Force Kill (ignore dependencies)">
+                <Skull className="h-3.5 w-3.5 text-red-800" />
               </button>
               <button onClick={handleDiagnose} className="p-1 rounded hover:bg-white/50" title="Diagnose">
                 <Search className="h-3.5 w-3.5 text-purple-600" />

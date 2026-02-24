@@ -393,6 +393,156 @@ pub async fn record_command_result(
     }
 }
 
+/// Execute a start sequence on a subset of components within an application's DAG.
+///
+/// Builds a sub-DAG containing only the specified component IDs, computes
+/// topological levels, and starts them in order. Components already RUNNING
+/// are skipped. Used for "start up to component" and "start with dependencies".
+pub async fn execute_start_subset(
+    state: &Arc<AppState>,
+    app_id: Uuid,
+    component_ids: &HashSet<Uuid>,
+) -> Result<(), SequencerError> {
+    let full_dag = dag::build_dag(&state.db, app_id).await?;
+    let sub = full_dag.sub_dag(component_ids);
+    let levels = sub.topological_levels()?;
+
+    let dependents = build_dependents_map(&full_dag);
+
+    for (level_idx, level) in levels.iter().enumerate() {
+        let mut to_start = Vec::new();
+
+        for &comp_id in level {
+            let current = super::fsm::get_current_state(&state.db, comp_id).await?;
+
+            match current {
+                ComponentState::Running => {
+                    tracing::debug!(
+                        component_id = %comp_id,
+                        "Already RUNNING, skipping"
+                    );
+                }
+                ComponentState::Failed => {
+                    tracing::info!(
+                        component_id = %comp_id,
+                        level = level_idx,
+                        "FAILED component in subset — stopping dependents first"
+                    );
+                    let branch_deps = find_all_dependents(&dependents, comp_id);
+                    // Only stop dependents that are in our subset
+                    let subset_deps: HashSet<Uuid> =
+                        branch_deps.intersection(component_ids).copied().collect();
+                    stop_branch_dependents(state, &full_dag, &subset_deps).await?;
+                    to_start.push(comp_id);
+                }
+                _ => {
+                    to_start.push(comp_id);
+                }
+            }
+        }
+
+        if to_start.is_empty() {
+            continue;
+        }
+
+        tracing::info!(
+            "Starting subset level {} — {} components in parallel",
+            level_idx,
+            to_start.len()
+        );
+
+        let mut handles = Vec::new();
+        for comp_id in to_start {
+            let state_clone = state.clone();
+            handles.push(tokio::spawn(async move {
+                start_single_component(&state_clone, comp_id).await
+            }));
+        }
+
+        for handle in handles {
+            match handle.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::error!("Component start failed in subset: {}", e);
+                    return Err(e);
+                }
+                Err(e) => {
+                    tracing::error!("Task join error: {}", e);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Force-stop a single component: bypass FSM rules, send stop_cmd to agent.
+///
+/// Used for production incidents where you need to kill a component immediately
+/// without respecting DAG dependencies or FSM state machine rules.
+pub async fn force_stop_single_component(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+) -> Result<(), SequencerError> {
+    // Force transition to Stopping regardless of current state
+    super::fsm::force_transition_component(state, component_id, ComponentState::Stopping).await?;
+
+    let row = sqlx::query_as::<_, (Option<String>, i32, Option<Uuid>)>(
+        "SELECT stop_cmd, stop_timeout_seconds, agent_id FROM components WHERE id = $1",
+    )
+    .bind(component_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| SequencerError::Database(e.to_string()))?;
+
+    let (stop_cmd, timeout_secs, agent_id) = row;
+    let agent_id = agent_id.ok_or(SequencerError::NoAgent(component_id))?;
+
+    if let Some(cmd) = stop_cmd {
+        let request_id = Uuid::new_v4();
+        let message = BackendMessage::ExecuteCommand {
+            request_id,
+            component_id,
+            command: cmd,
+            timeout_seconds: timeout_secs as u32,
+            exec_mode: "detached".to_string(),
+        };
+
+        record_command_dispatch(&state.db, request_id, component_id, agent_id, "force_stop").await;
+
+        state.ws_hub.send_to_agent(agent_id, message);
+        tracing::warn!(
+            component_id = %component_id,
+            agent_id = %agent_id,
+            request_id = %request_id,
+            "FORCE STOP command dispatched to agent (bypassing dependencies)"
+        );
+    }
+
+    // Wait for Stopped state
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
+
+    loop {
+        let current = super::fsm::get_current_state(&state.db, component_id).await?;
+        match current {
+            ComponentState::Stopped => return Ok(()),
+            _ => {
+                if std::time::Instant::now() > deadline {
+                    // Force to FAILED on timeout
+                    let _ = super::fsm::force_transition_component(
+                        state,
+                        component_id,
+                        ComponentState::Failed,
+                    )
+                    .await;
+                    return Err(SequencerError::ComponentFailed(component_id));
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Pink branch helpers
 // ---------------------------------------------------------------------------
