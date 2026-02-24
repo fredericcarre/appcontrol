@@ -553,12 +553,26 @@ async fn run_migrations(pool: &sqlx::PgPool) -> anyhow::Result<()> {
         let sql = std::fs::read_to_string(path)?;
         tracing::info!("Applying migration V{:03}: {}", version, name);
 
-        // Execute migration in a transaction
+        // Execute migration in a transaction.
+        // Migration files contain multiple SQL statements separated by semicolons.
+        // sqlx::query() uses the extended protocol which only supports one statement,
+        // so we split on semicolons and execute each statement individually.
         let mut tx = pool.begin().await?;
-        sqlx::query(&sql).execute(&mut *tx).await.map_err(|e| {
-            tracing::error!("Migration V{:03} failed: {}", version, e);
-            e
-        })?;
+        for statement in sql.split(';') {
+            let trimmed = statement.trim();
+            if trimmed.is_empty() || trimmed.starts_with("--") {
+                continue;
+            }
+            sqlx::query(trimmed).execute(&mut *tx).await.map_err(|e| {
+                tracing::error!(
+                    "Migration V{:03} failed on statement: {}\nError: {}",
+                    version,
+                    &trimmed[..trimmed.len().min(100)],
+                    e
+                );
+                e
+            })?;
+        }
         sqlx::query("INSERT INTO _migrations (version, name) VALUES ($1, $2)")
             .bind(version)
             .bind(name)
