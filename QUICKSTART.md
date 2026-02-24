@@ -54,14 +54,26 @@ curl http://localhost:3000/health
 # Should return: {"status":"ok"}
 ```
 
-## 3. Authenticate
+## 3. Log in
 
 In development mode (the default), the backend automatically seeds a default admin user on first start.
 
-**Get a JWT token:**
+### Via the UI
+
+1. Open http://localhost:8080
+2. Enter the default credentials:
+
+| Field | Value |
+|-------|-------|
+| **Email** | `admin@localhost` |
+| **Password** | _(any value — password is not checked in dev mode)_ |
+
+3. Click **Sign in**
+
+### Via the API (CLI / scripts)
 
 ```bash
-# Obtain a token via the dev-login endpoint
+# Obtain a JWT token via the dev-login endpoint
 TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/auth/dev-login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@localhost"}' | jq -r '.token')
@@ -72,10 +84,11 @@ echo $TOKEN
 | Default user | Value |
 |-------------|-------|
 | Email | `admin@localhost` |
-| Role | `admin` |
+| Display name | `Dev Admin` |
+| Role | `admin` (full access) |
 | Organization | `Dev Org` |
 
-> **Note:** The `dev-login` endpoint is only available when `APP_ENV=development`. In production, configure [OIDC or SAML](docs/QUICKSTART.md#authentication-setup) for authentication.
+> **Note:** The login endpoints are only available when `APP_ENV=development` (the default). In production, configure [OIDC or SAML](docs/CONFIGURATION.md#oidc-configuration) for enterprise SSO authentication.
 
 All subsequent API calls require the token:
 

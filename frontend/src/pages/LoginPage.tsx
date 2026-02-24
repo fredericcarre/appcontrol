@@ -21,7 +21,7 @@ export function LoginPage() {
     setLoading(true);
 
     try {
-      const { data } = await client.post('/auth/login', { email, password });
+      const { data } = await client.post('/v1/auth/login', { email, password });
       setAuth(data.token, data.user);
       navigate('/');
     } catch (err: unknown) {
@@ -78,7 +78,7 @@ export function LoginPage() {
               {loading ? 'Signing in...' : 'Sign in'}
             </Button>
             <Button type="button" variant="outline" className="w-full" onClick={() => {
-              window.location.href = '/api/auth/oidc/login';
+              window.location.href = '/api/v1/auth/oidc/login';
             }}>
               Sign in with SSO
             </Button>
