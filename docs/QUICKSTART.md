@@ -772,6 +772,8 @@ Org admins (`role: "admin"`) have implicit owner access on all applications.
 
 ## Next Steps
 
+- **Scheduler Integration:** See [`docs/INTEGRATION_COOKBOOK.md`](./INTEGRATION_COOKBOOK.md) for Control-M, AutoSys, Dollar Universe, Jenkins, GitLab CI examples
+- **Monitoring:** Run `docker compose -f docker/docker-compose.yaml -f docker/docker-compose.monitoring.yaml up -d` for Prometheus + Grafana (http://localhost:3001, admin/admin)
 - **Full Configuration Reference:** See [`docs/CONFIGURATION.md`](./CONFIGURATION.md)
 - **Production Deployment:** See [`docs/PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md)
 - **Agent Installation:** See [`docs/AGENT_INSTALLATION.md`](./AGENT_INSTALLATION.md)
