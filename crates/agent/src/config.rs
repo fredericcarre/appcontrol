@@ -11,6 +11,16 @@ pub struct AgentConfig {
     /// Log level filter string (e.g. "info", "appcontrol_agent=debug").
     #[serde(default = "default_log_level")]
     pub log_level: Option<String>,
+    /// Agent operating mode: "active" (default) or "advisory".
+    /// In advisory mode the agent runs health checks and reports state
+    /// but refuses to execute start/stop/rebuild commands.
+    /// Useful for observation-only deployments during migration.
+    #[serde(default = "default_mode")]
+    pub mode: String,
+}
+
+fn default_mode() -> String {
+    "active".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -83,6 +93,7 @@ impl AgentConfig {
                 tls: None,
                 labels: std::collections::HashMap::new(),
                 log_level: default_log_level(),
+                mode: default_mode(),
             }
         };
 
@@ -99,6 +110,11 @@ impl AgentConfig {
         if let Ok(v) = std::env::var("GATEWAY_RECONNECT_SECS") {
             if let Ok(s) = v.parse() {
                 config.gateway.reconnect_interval_secs = s;
+            }
+        }
+        if let Ok(v) = std::env::var("AGENT_MODE") {
+            if v == "advisory" || v == "active" {
+                config.mode = v;
             }
         }
         // TLS env var overrides
@@ -165,6 +181,12 @@ impl AgentConfig {
     pub fn buffer_path(&self) -> String {
         let base = default_data_dir();
         format!("{}/buffer-{}", base, self.agent_id())
+    }
+
+    /// Returns true if the agent is in advisory (observation-only) mode.
+    /// In advisory mode, health checks run but start/stop/rebuild commands are refused.
+    pub fn is_advisory(&self) -> bool {
+        self.mode == "advisory"
     }
 
     /// Returns the configured log level filter string.

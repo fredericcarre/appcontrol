@@ -562,3 +562,53 @@ Fixes based on production engineer review. All items address identified weakness
 - [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
 - [x] `cargo test --workspace` — all pass
 - [x] `cd frontend && npm run build` — clean
+
+---
+
+## Phase 11: Positioning & Integration APIs
+
+> Clarify AppControl's positioning as the single source of truth for application dependency graphs.
+> New APIs for external tool integration. Advisory mode for progressive migration.
+
+### P11-1: Topology Export API
+- [x] `crates/backend/src/api/topology.rs` — `GET /apps/:id/topology` with format parameter (json, yaml, dot)
+- [x] JSON format: components, dependencies, start_order, stop_order (with parallel level grouping)
+- [x] YAML format: same structure serialized via serde_yaml
+- [x] DOT format: Graphviz digraph with state-colored nodes and labeled edges
+- [x] Registered in `crates/backend/src/api/mod.rs`
+
+### P11-2: Execution Plan API (Read-Only)
+- [x] `crates/backend/src/api/topology.rs` — `GET /apps/:id/plan?operation=start|stop&scope=component_id`
+- [x] Returns sequenced levels with predicted actions per component (start, stop, skip, restart)
+- [x] Optional scope parameter: computes plan for a single component and its dependencies
+- [x] State-aware predictions: skip RUNNING for start, skip STOPPED for stop
+
+### P11-3: Sequence Validation API
+- [x] `crates/backend/src/api/topology.rs` — `POST /apps/:id/validate-sequence`
+- [x] Accepts proposed component name sequence and operation type
+- [x] Detects dependency order violations (e.g., "A depends on B but starts before B")
+- [x] Reports unknown component names and missing components
+- [x] Returns expected order for comparison
+
+### P11-4: Dependency Changelog API
+- [x] `crates/backend/src/api/topology.rs` — `GET /apps/:id/dependency-history`
+- [x] Queries config_versions for dependency-related changes (create/delete dependency, import, update)
+- [x] Paginated with limit/offset
+
+### P11-5: Agent Advisory Mode
+- [x] `crates/agent/src/config.rs` — `mode` field: "active" (default) or "advisory", with `AGENT_MODE` env var override
+- [x] `crates/agent/src/config.rs` — `is_advisory()` helper method
+- [x] `crates/agent/src/connection.rs` — Advisory mode guard: refuses detached command execution with exit_code -2 and explanatory message
+- [x] `crates/agent/src/main.rs` — Advisory mode logging on startup
+- [x] Health checks continue running in advisory mode (scheduler unaffected)
+
+### P11-6: Documentation — Positioning & Integration
+- [x] `docs/POSITIONING.md` — What AppControl is/isn't, coexistence matrix, competitive positioning, migration scenarios
+- [x] `docs/INTEGRATION_COOKBOOK.md` — Copy-paste recipes: Control-M, AutoSys, Dollar Universe, XL Release, Jenkins, GitLab CI, PagerDuty, ServiceNow, topology export
+- [x] `docs/MIGRATION_FROM_SCRIPTS.md` — 5-phase migration guide (model → observe → validate → integrate → operate), advisory mode usage, hidden dependency identification tips
+
+### Build Validation (Phase 11)
+- [x] `cargo build --workspace` — clean (0 errors)
+- [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
+- [x] `cargo test --workspace` — all unit tests pass (75+ across all crates)
+- [x] `cd frontend && npm run build` — clean
