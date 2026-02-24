@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AppControl - Local Development Setup (macOS)
+# AppControl - Local Development Setup
 # Usage: ./docker/dev-setup.sh
 set -euo pipefail
 
@@ -37,10 +37,10 @@ check_cmd() {
 }
 
 MISSING=0
-check_cmd docker "brew install --cask docker" || MISSING=1
+check_cmd docker "https://docs.docker.com/get-docker/" || MISSING=1
 check_cmd cargo  "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" || MISSING=1
-check_cmd node   "brew install node@22" || MISSING=1
-check_cmd npm    "brew install node@22" || MISSING=1
+check_cmd node   "https://nodejs.org/ (v22+)" || MISSING=1
+check_cmd npm    "https://nodejs.org/ (v22+)" || MISSING=1
 
 if [ "$MISSING" -eq 1 ]; then
     err "Missing prerequisites. Install them and re-run this script."

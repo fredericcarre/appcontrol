@@ -1,4 +1,4 @@
-# Docker Compose for local development on macOS
+# Docker Compose for local development
 # Usage: docker compose -f docker/docker-compose.dev.yaml up -d
 #
 # This starts only the infrastructure services (PostgreSQL).
@@ -9,7 +9,6 @@ version: "3.8"
 services:
   postgres:
     image: postgres:16-alpine
-    platform: linux/arm64  # Native Apple Silicon, also works on Intel
     environment:
       POSTGRES_DB: appcontrol
       POSTGRES_USER: appcontrol

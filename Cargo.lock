@@ -261,6 +261,7 @@ dependencies = [
  "hyper-util",
  "reqwest",
  "rustls 0.22.4",
+ "rustls-native-certs 0.7.3",
  "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",

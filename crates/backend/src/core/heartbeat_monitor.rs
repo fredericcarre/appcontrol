@@ -129,6 +129,13 @@ async fn transition_to_unreachable(
     .await
     .map_err(|e| crate::core::fsm::FsmError::Database(e.to_string()))?;
 
+    metrics::counter!(
+        "state_transitions_total",
+        "from" => current_state.to_string(),
+        "to" => "UNREACHABLE".to_string()
+    )
+    .increment(1);
+
     // Push WebSocket event
     state.ws_hub.broadcast(
         comp.application_id,

@@ -15,13 +15,15 @@ export function LoginPage() {
   const setAuth = useAuthStore((s) => s.setAuth);
   const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const doLogin = async (loginEmail: string, loginPassword?: string) => {
     setError('');
     setLoading(true);
 
     try {
-      const { data } = await client.post('/v1/auth/login', { email, password });
+      const { data } = await client.post('/v1/auth/login', {
+        email: loginEmail,
+        password: loginPassword,
+      });
       setAuth(data.token, data.user);
       navigate('/');
     } catch (err: unknown) {
@@ -30,6 +32,15 @@ export function LoginPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await doLogin(email, password);
+  };
+
+  const handleDevLogin = () => {
+    doLogin('admin@localhost');
   };
 
   return (
@@ -56,7 +67,7 @@ export function LoginPage() {
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@example.com"
+                placeholder="admin@localhost"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -69,7 +80,6 @@ export function LoginPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                required
               />
             </div>
           </CardContent>
@@ -82,6 +92,17 @@ export function LoginPage() {
             }}>
               Sign in with SSO
             </Button>
+            <div className="w-full border-t pt-3">
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full text-muted-foreground"
+                disabled={loading}
+                onClick={handleDevLogin}
+              >
+                Dev Quick Login (admin@localhost)
+              </Button>
+            </div>
           </CardFooter>
         </form>
       </Card>

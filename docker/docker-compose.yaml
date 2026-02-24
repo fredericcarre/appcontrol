@@ -50,6 +50,9 @@ services:
     environment:
       LISTEN_ADDR: "0.0.0.0"
       LISTEN_PORT: "4443"
+      # SECURITY: ws:// is acceptable here because gateway and backend share the
+      # same Docker network (no external exposure). In production, use wss:// with
+      # BACKEND_TLS_CA_FILE pointing to your internal CA certificate.
       BACKEND_URL: ws://backend:3000/ws/gateway
       RUST_LOG: info,appcontrol_gateway=debug
     depends_on:

@@ -34,12 +34,28 @@ gateway:
 backend:
   url: wss://backend.internal:443/gateway
   reconnect_interval_secs: 5
-tls:
+tls:                                          # Agent-facing mTLS (server)
   cert_file: /etc/appcontrol/certs/gateway.crt
   key_file: /etc/appcontrol/certs/gateway.key
   ca_file: /etc/appcontrol/certs/ca.crt
   verify_clients: true
+backend_tls:                                  # Backend-facing TLS (client)
+  ca_file: /etc/appcontrol/certs/backend-ca.crt   # Internal PKI CA (optional, defaults to system roots)
+  cert_file: /etc/appcontrol/certs/gateway.crt    # Client cert for mTLS to backend (optional)
+  key_file: /etc/appcontrol/certs/gateway.key      # Client key for mTLS to backend (optional)
 ```
+
+### Environment Variables
+| Variable | Description |
+|----------|-------------|
+| `BACKEND_URL` | WebSocket URL to backend (`wss://` in production) |
+| `BACKEND_TLS_CA_FILE` | CA certificate to verify backend (internal PKI) |
+| `BACKEND_TLS_CERT_FILE` | Client certificate for mTLS to backend |
+| `BACKEND_TLS_KEY_FILE` | Client key for mTLS to backend |
+| `TLS_ENABLED` | Enable mTLS for agent connections |
+| `TLS_CERT_FILE` | Server certificate for agent connections |
+| `TLS_KEY_FILE` | Server key for agent connections |
+| `TLS_CA_FILE` | CA certificate to verify agent certificates |
 
 ## Tests
 - Agent connects, message forwarded to backend

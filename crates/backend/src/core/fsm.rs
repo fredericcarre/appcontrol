@@ -116,6 +116,13 @@ pub async fn transition_component(
         .await
         .map_err(|e| FsmError::Database(e.to_string()))?;
 
+    metrics::counter!(
+        "state_transitions_total",
+        "from" => current.to_string(),
+        "to" => new_state.to_string()
+    )
+    .increment(1);
+
     // Push WebSocket event (outside transaction — non-critical)
     state.ws_hub.broadcast(
         app_id,
@@ -197,6 +204,13 @@ pub async fn force_transition_component(
     tx.commit()
         .await
         .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    metrics::counter!(
+        "state_transitions_total",
+        "from" => current.to_string(),
+        "to" => new_state.to_string()
+    )
+    .increment(1);
 
     state.ws_hub.broadcast(
         app_id,

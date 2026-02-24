@@ -684,6 +684,8 @@ pub async fn execute_command(
         ));
     }
 
+    metrics::counter!("commands_executed_total", "command" => cmd.clone()).increment(1);
+
     tracing::info!(
         request_id = %request_id,
         component_id = %id,
