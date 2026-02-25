@@ -211,9 +211,10 @@ jobs:
       - name: Collect logs on failure
         if: failure()
         run: |
-          LOGS=$(docker compose -f docker/docker-compose.yaml logs --tail=80 backend 2>&1 | head -80 || true)
           PS=$(docker compose -f docker/docker-compose.yaml ps -a 2>&1 || true)
-          echo "::error::CONTAINERS: ${PS//$'\n'/ | } --- BACKEND LOGS: ${LOGS//$'\n'/ | }"
+          # Strip ANSI codes and get ONLY last 20 lines to see the actual error
+          TAIL=$(docker compose -f docker/docker-compose.yaml logs --tail=20 backend 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tail -20 || true)
+          echo "::error::CONTAINERS: ${PS//$'\n'/ | } --- LAST 20 BACKEND LINES: ${TAIL//$'\n'/ | }"
 
       - name: Tear down
         if: always()
