@@ -31,6 +31,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
   frontend:
     build:
@@ -39,7 +45,8 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
   gateway:
     build:
@@ -56,7 +63,8 @@ services:
       BACKEND_URL: ws://backend:3000/ws/gateway
       RUST_LOG: info,appcontrol_gateway=debug
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:
