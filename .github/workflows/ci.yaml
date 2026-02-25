@@ -58,9 +58,17 @@ jobs:
         run: cargo build --workspace
 
       - name: Unit tests
-        run: cargo test --workspace --exclude appcontrol-e2e-tests --exclude appcontrol-e2e-real
+        run: cargo test --workspace --exclude appcontrol-e2e-tests --exclude appcontrol-e2e-real -- --nocapture 2>&1 | tee /tmp/test-output.txt; exit ${PIPESTATUS[0]}
         env:
           DATABASE_URL: postgres://appcontrol:test@localhost:5432/appcontrol_test
+
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-output
+          path: /tmp/test-output.txt
+          retention-days: 5
 
   # ---------------------------------------------------------------------------
   # E2E Integration Tests — in-process backend + real PostgreSQL
