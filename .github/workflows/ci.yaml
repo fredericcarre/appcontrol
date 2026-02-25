@@ -203,17 +203,18 @@ jobs:
       - name: Collect logs on failure
         if: failure()
         run: |
-          docker compose -f docker/docker-compose.yaml ps
-          docker compose -f docker/docker-compose.yaml logs --tail=200 > /tmp/docker-smoke-logs.txt 2>&1
-          cat /tmp/docker-smoke-logs.txt
-
-      - name: Upload smoke test logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-smoke-logs
-          path: /tmp/docker-smoke-logs.txt
-          retention-days: 5
+          echo "## Docker Smoke Test Failure" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          docker compose -f docker/docker-compose.yaml ps >> $GITHUB_STEP_SUMMARY 2>&1
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "### Backend Logs" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          docker compose -f docker/docker-compose.yaml logs --tail=100 backend >> $GITHUB_STEP_SUMMARY 2>&1
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "### Postgres Logs" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          docker compose -f docker/docker-compose.yaml logs --tail=50 postgres >> $GITHUB_STEP_SUMMARY 2>&1
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Tear down
         if: always()
