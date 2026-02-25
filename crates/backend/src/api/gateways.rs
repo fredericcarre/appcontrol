@@ -324,7 +324,18 @@ pub async fn list_revoked_certificates(
         return Err(ApiError::Forbidden);
     }
 
-    let certs = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>, Option<Uuid>, String, chrono::DateTime<chrono::Utc>)>(
+    let certs = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<Uuid>,
+            Option<Uuid>,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         r#"SELECT id, fingerprint, cn, agent_id, gateway_id, reason, revoked_at
            FROM revoked_certificates
            WHERE organization_id = $1

@@ -206,12 +206,10 @@ pub async fn delete_site(
     .ok();
 
     // Check for applications linked to this site
-    let app_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM applications WHERE site_id = $1",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await?;
+    let app_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM applications WHERE site_id = $1")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await?;
 
     if app_count > 0 {
         return Err(ApiError::Conflict(format!(
@@ -220,13 +218,11 @@ pub async fn delete_site(
         )));
     }
 
-    let result = sqlx::query(
-        "DELETE FROM sites WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(id)
-    .bind(user.organization_id)
-    .execute(&state.db)
-    .await?;
+    let result = sqlx::query("DELETE FROM sites WHERE id = $1 AND organization_id = $2")
+        .bind(id)
+        .bind(user.organization_id)
+        .execute(&state.db)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound);

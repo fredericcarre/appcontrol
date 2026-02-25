@@ -305,7 +305,8 @@ async fn process_gateway_message(
                             );
                             let disconnect = appcontrol_common::BackendMessage::DisconnectAgent {
                                 agent_id,
-                                reason: "Certificate fingerprint does not match enrolled identity".to_string(),
+                                reason: "Certificate fingerprint does not match enrolled identity"
+                                    .to_string(),
                             };
                             state.ws_hub.send_to_agent(agent_id, disconnect);
                             return;

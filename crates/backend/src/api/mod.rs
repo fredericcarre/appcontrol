@@ -250,10 +250,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Agents
         .route("/agents", get(agents::list_agents))
         .route("/agents/:id", get(agents::get_agent))
-        .route(
-            "/agents/:id/revoke-cert",
-            post(gateways::revoke_agent_cert),
-        )
+        .route("/agents/:id/revoke-cert", post(gateways::revoke_agent_cert))
         // Gateways
         .route("/gateways", get(gateways::list_gateways))
         .route(
@@ -269,10 +266,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(gateways::list_revoked_certificates),
         )
         // Sites
-        .route(
-            "/sites",
-            get(sites::list_sites).post(sites::create_site),
-        )
+        .route("/sites", get(sites::list_sites).post(sites::create_site))
         .route(
             "/sites/:id",
             get(sites::get_site)
@@ -289,18 +283,9 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(organizations::get_organization).put(organizations::update_organization),
         )
         // Users
-        .route(
-            "/users",
-            get(users::list_users).post(users::create_user),
-        )
-        .route(
-            "/users/me",
-            get(users::get_me),
-        )
-        .route(
-            "/users/:id",
-            get(users::get_user).put(users::update_user),
-        )
+        .route("/users", get(users::list_users).post(users::create_user))
+        .route("/users/me", get(users::get_me))
+        .route("/users/:id", get(users::get_user).put(users::update_user))
         // Workspaces (site/zone access control)
         .route(
             "/workspaces",

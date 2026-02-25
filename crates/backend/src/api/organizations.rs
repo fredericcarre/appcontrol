@@ -41,7 +41,10 @@ pub struct OrgRow {
 }
 
 /// Check if the user is a platform super-admin.
-fn require_super_admin(_user: &AuthUser, db_platform_role: &Option<String>) -> Result<(), ApiError> {
+fn require_super_admin(
+    _user: &AuthUser,
+    db_platform_role: &Option<String>,
+) -> Result<(), ApiError> {
     match db_platform_role {
         Some(role) if role == "super_admin" => Ok(()),
         _ => Err(ApiError::Forbidden),
@@ -50,15 +53,13 @@ fn require_super_admin(_user: &AuthUser, db_platform_role: &Option<String>) -> R
 
 /// Fetch the platform_role for a user from the database.
 async fn get_platform_role(db: &sqlx::PgPool, user_id: Uuid) -> Option<String> {
-    sqlx::query_scalar::<_, Option<String>>(
-        "SELECT platform_role FROM users WHERE id = $1",
-    )
-    .bind(user_id)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten()
-    .flatten()
+    sqlx::query_scalar::<_, Option<String>>("SELECT platform_role FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
 }
 
 pub async fn list_organizations(
@@ -229,9 +230,7 @@ mod tests {
     #[test]
     fn test_slug_validation() {
         let valid = "my-org-01";
-        assert!(valid
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-'));
+        assert!(valid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
 
         let invalid = "my org!";
         assert!(!invalid
