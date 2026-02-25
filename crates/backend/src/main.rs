@@ -8,7 +8,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use appcontrol_backend::{config, create_router, db, middleware, websocket, AppState};
 
 #[derive(Parser)]
-#[command(name = "appcontrol-backend", about = "AppControl Backend API")]
+#[command(
+    name = "appcontrol-backend",
+    about = "AppControl Backend API",
+    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), " ", env!("BUILD_TIME"), ")")
+)]
 struct Args {
     #[command(subcommand)]
     command: Option<ServiceCommand>,
@@ -206,7 +210,12 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let addr = format!("0.0.0.0:{}", state.config.port);
-    tracing::info!("Starting AppControl backend on {}", addr);
+    tracing::info!(
+        "Starting AppControl backend v{} ({}) on {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("GIT_HASH"),
+        addr
+    );
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
     // Graceful shutdown on SIGTERM / Ctrl-C with configurable timeout

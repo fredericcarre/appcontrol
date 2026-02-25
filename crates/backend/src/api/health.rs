@@ -6,7 +6,11 @@ use crate::error::ApiError;
 use crate::AppState;
 
 pub async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok", "version": env!("CARGO_PKG_VERSION") }))
+    Json(json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "git_hash": env!("GIT_HASH"),
+    }))
 }
 
 pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
