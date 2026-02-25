@@ -17,8 +17,8 @@ CREATE TABLE IF NOT EXISTS discovery_reports (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_discovery_reports_agent ON discovery_reports(agent_id);
-CREATE INDEX idx_discovery_reports_created ON discovery_reports(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_discovery_reports_agent ON discovery_reports(agent_id);
+CREATE INDEX IF NOT EXISTS idx_discovery_reports_created ON discovery_reports(created_at DESC);
 
 -- ---------------------------------------------------------------------------
 -- 2. Discovery: inferred application drafts
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS discovery_draft_components (
     metadata        JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
-CREATE INDEX idx_draft_components_draft ON discovery_draft_components(draft_id);
+CREATE INDEX IF NOT EXISTS idx_draft_components_draft ON discovery_draft_components(draft_id);
 
 CREATE TABLE IF NOT EXISTS discovery_draft_dependencies (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS discovery_draft_dependencies (
     inferred_via    TEXT NOT NULL DEFAULT 'tcp_connection'  -- tcp_connection, port_match, manual
 );
 
-CREATE INDEX idx_draft_deps_draft ON discovery_draft_dependencies(draft_id);
+CREATE INDEX IF NOT EXISTS idx_draft_deps_draft ON discovery_draft_dependencies(draft_id);
 
 -- ---------------------------------------------------------------------------
 -- 3. Operation time estimation: materialized view over command_executions
@@ -110,5 +110,5 @@ CREATE TABLE IF NOT EXISTS agent_update_tasks (
     completed_at    TIMESTAMPTZ
 );
 
-CREATE INDEX idx_agent_update_tasks_agent ON agent_update_tasks(agent_id);
-CREATE INDEX idx_agent_update_tasks_status ON agent_update_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_agent_update_tasks_agent ON agent_update_tasks(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_update_tasks_status ON agent_update_tasks(status);
