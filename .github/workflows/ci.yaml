@@ -145,14 +145,42 @@ jobs:
 
       - name: Start the stack
         run: |
-          docker compose -f docker/docker-compose.yaml up -d --wait --wait-timeout 180
-          echo "All services healthy"
+          docker compose -f docker/docker-compose.yaml up -d
+          echo "Waiting for backend to be healthy..."
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
+              echo "Backend healthy after $((i * 2))s"
+              break
+            fi
+            if [ "$i" = "90" ]; then
+              echo "Backend failed to start within 180s"
+              echo "--- container status ---"
+              docker compose -f docker/docker-compose.yaml ps
+              echo "--- backend logs ---"
+              docker compose -f docker/docker-compose.yaml logs backend
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "Waiting for frontend..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/ > /dev/null 2>&1; then
+              echo "Frontend healthy after $((i * 2))s"
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "Frontend failed to start within 60s"
+              docker compose -f docker/docker-compose.yaml logs frontend
+              exit 1
+            fi
+            sleep 2
+          done
 
       - name: Verify health endpoint
         run: |
-          STATUS=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:3000/health)
-          echo "GET /health → $STATUS"
-          [ "$STATUS" = "200" ]
+          BODY=$(curl -sf http://localhost:3000/health)
+          echo "GET /health → $BODY"
+          echo "$BODY" | grep -q '"status":"ok"'
 
       - name: Verify ready endpoint
         run: |
@@ -174,7 +202,18 @@ jobs:
 
       - name: Collect logs on failure
         if: failure()
-        run: docker compose -f docker/docker-compose.yaml logs --tail=100
+        run: |
+          docker compose -f docker/docker-compose.yaml ps
+          docker compose -f docker/docker-compose.yaml logs --tail=200 > /tmp/docker-smoke-logs.txt 2>&1
+          cat /tmp/docker-smoke-logs.txt
+
+      - name: Upload smoke test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-smoke-logs
+          path: /tmp/docker-smoke-logs.txt
+          retention-days: 5
 
       - name: Tear down
         if: always()
