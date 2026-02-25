@@ -2,7 +2,11 @@ use clap::{Parser, Subcommand};
 use serde_json::Value;
 
 #[derive(Parser)]
-#[command(name = "appctl", about = "AppControl CLI — scheduler integration")]
+#[command(
+    name = "appctl",
+    about = "AppControl CLI — scheduler integration",
+    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), " ", env!("BUILD_TIME"), ")")
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

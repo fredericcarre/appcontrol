@@ -1,6 +1,7 @@
 mod buffer;
 mod config;
 mod connection;
+mod discovery;
 mod enroll;
 mod executor;
 mod native_commands;
@@ -16,7 +17,11 @@ use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
-#[command(name = "appcontrol-agent", about = "AppControl Agent")]
+#[command(
+    name = "appcontrol-agent",
+    about = "AppControl Agent",
+    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), " ", env!("BUILD_TIME"), ")")
+)]
 struct Args {
     /// Path to configuration file (default: platform-specific)
     #[arg(short, long, default_value_t = config::default_config_path(), global = true)]
@@ -99,7 +104,12 @@ async fn main() -> anyhow::Result<()> {
         None => config.agent_id(),
     };
 
-    tracing::info!("Starting AppControl Agent {}", agent_id);
+    tracing::info!(
+        "Starting AppControl Agent {} v{} ({})",
+        agent_id,
+        env!("CARGO_PKG_VERSION"),
+        env!("GIT_HASH")
+    );
 
     // Initialize offline buffer
     let buffer = buffer::OfflineBuffer::new(&config.buffer_path())?;

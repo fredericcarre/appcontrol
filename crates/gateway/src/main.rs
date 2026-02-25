@@ -35,7 +35,11 @@ fn default_config_path() -> String {
 }
 
 #[derive(Parser)]
-#[command(name = "appcontrol-gateway", about = "AppControl Gateway")]
+#[command(
+    name = "appcontrol-gateway",
+    about = "AppControl Gateway",
+    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), " ", env!("BUILD_TIME"), ")")
+)]
 struct Args {
     #[arg(short, long, default_value_t = default_config_path(), global = true)]
     config: String,

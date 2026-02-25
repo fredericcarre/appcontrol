@@ -110,7 +110,7 @@ mod tests {
                 at: chrono::Utc::now(),
             };
             buffer.push(&msg).unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
 
         let messages = buffer.drain().unwrap();

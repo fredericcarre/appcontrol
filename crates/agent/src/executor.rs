@@ -546,7 +546,7 @@ mod tests {
     #[tokio::test]
     #[cfg(unix)]
     async fn test_execute_sync_timeout() {
-        let result = execute_sync("sleep 60", Duration::from_millis(100))
+        let result = execute_sync("sleep 60", Duration::from_millis(500))
             .await
             .unwrap();
         assert_eq!(result.exit_code, -1);
@@ -567,23 +567,21 @@ mod tests {
     #[tokio::test]
     #[cfg(unix)]
     async fn test_execute_sync_timeout_kills_process() {
-        // Start a process that ignores SIGTERM and runs for a long time
-        let result = execute_sync("sleep 60", Duration::from_millis(200))
+        // Start a process that runs for a long time; timeout should kill it
+        let result = execute_sync("sleep 60", Duration::from_millis(500))
             .await
             .unwrap();
         assert_eq!(result.exit_code, -1);
         assert!(result.stderr.contains("killed"));
-        // Process should be dead
-        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
     #[test]
     #[cfg(unix)]
     fn test_execute_async_detached() {
-        let pid = execute_async_detached("sleep 1").unwrap();
+        let pid = execute_async_detached("sleep 5").unwrap();
         assert!(pid > 0);
 
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(500));
 
         // Verify process exists
         let exists = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok();

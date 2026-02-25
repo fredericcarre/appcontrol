@@ -542,6 +542,56 @@ impl ConnectionManager {
             } => {
                 tracing::info!("Approval result for {}: approved={}", request_id, approved);
             }
+            BackendMessage::RequestDiscovery { request_id } => {
+                tracing::info!(
+                    request_id = %request_id,
+                    "Received discovery scan request"
+                );
+                let agent_id = self.agent_id;
+                let msg_tx = self.msg_tx.clone();
+                tokio::spawn(async move {
+                    let hostname = crate::platform::gethostname();
+                    let report = crate::discovery::scan(agent_id, &hostname);
+                    if let Err(e) = msg_tx.send(report) {
+                        tracing::error!("Failed to send discovery report: {}", e);
+                    }
+                });
+            }
+            BackendMessage::UpdateBinaryChunk {
+                update_id,
+                target_version,
+                checksum_sha256,
+                chunk_index,
+                total_chunks,
+                total_size,
+                data,
+            } => {
+                tracing::info!(
+                    update_id = %update_id,
+                    chunk_index = chunk_index,
+                    total_chunks = total_chunks,
+                    "Received binary chunk {}/{} for air-gap update v{}",
+                    chunk_index + 1,
+                    total_chunks,
+                    target_version
+                );
+                let agent_id = self.agent_id;
+                let msg_tx = self.msg_tx.clone();
+                tokio::spawn(async move {
+                    crate::self_update::handle_binary_chunk(
+                        update_id,
+                        &target_version,
+                        &checksum_sha256,
+                        chunk_index,
+                        total_chunks,
+                        total_size,
+                        &data,
+                        agent_id,
+                        &msg_tx,
+                    )
+                    .await;
+                });
+            }
         }
     }
 }

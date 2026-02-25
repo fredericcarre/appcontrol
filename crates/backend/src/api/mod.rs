@@ -1,3 +1,4 @@
+pub mod agent_update;
 pub mod agents;
 pub mod api_keys;
 pub mod approvals;
@@ -6,7 +7,9 @@ pub mod break_glass;
 pub mod command_params;
 pub mod components;
 pub mod diagnostic;
+pub mod discovery;
 pub mod enrollment;
+pub mod estimates;
 pub mod groups;
 pub mod health;
 pub mod import;
@@ -310,6 +313,36 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(crate::auth::saml::saml_admin_routes())
         // PDF report export
         .route("/apps/:app_id/reports/export", get(reports::export_pdf))
+        // Operation time estimates
+        .route("/apps/:app_id/estimates", get(estimates::get_estimates))
+        // Discovery: passive topology scanning
+        .route("/discovery/reports", get(discovery::list_reports))
+        .route("/discovery/reports/:id", get(discovery::get_report))
+        .route(
+            "/discovery/trigger/:agent_id",
+            post(discovery::trigger_scan),
+        )
+        .route("/discovery/drafts", get(discovery::list_drafts))
+        .route("/discovery/drafts/:id", get(discovery::get_draft))
+        .route("/discovery/drafts/:id/apply", post(discovery::apply_draft))
+        .route("/discovery/infer", post(discovery::infer))
+        // Air-gap agent update
+        .route(
+            "/admin/agent-binaries",
+            get(agent_update::list_binaries).post(agent_update::upload_binary),
+        )
+        .route(
+            "/admin/agents/:id/update",
+            post(agent_update::push_update_to_agent),
+        )
+        .route(
+            "/admin/agents/update-batch",
+            post(agent_update::push_update_batch),
+        )
+        .route(
+            "/admin/agent-update-tasks",
+            get(agent_update::list_update_tasks),
+        )
         .route_layer(axum_middleware::from_fn_with_state(
             state,
             crate::middleware::auth::auth_middleware,
