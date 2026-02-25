@@ -145,24 +145,32 @@ jobs:
 
       - name: Start the stack
         run: |
-          docker compose -f docker/docker-compose.yaml up -d
-          echo "Waiting for backend to be healthy..."
+          set -x
+          docker compose -f docker/docker-compose.yaml up -d 2>&1 || true
+          echo "--- container status after up ---"
+          docker compose -f docker/docker-compose.yaml ps -a
+          echo "--- waiting for backend health ---"
           for i in $(seq 1 90); do
             if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
               echo "Backend healthy after $((i * 2))s"
               break
             fi
+            # Check if backend container is still running
+            BACKEND_STATUS=$(docker compose -f docker/docker-compose.yaml ps backend --format '{{.State}}' 2>/dev/null || echo "unknown")
+            if [ "$BACKEND_STATUS" = "exited" ]; then
+              echo "Backend container exited — dumping logs:"
+              docker compose -f docker/docker-compose.yaml logs backend
+              exit 1
+            fi
             if [ "$i" = "90" ]; then
               echo "Backend failed to start within 180s"
-              echo "--- container status ---"
-              docker compose -f docker/docker-compose.yaml ps
-              echo "--- backend logs ---"
+              docker compose -f docker/docker-compose.yaml ps -a
               docker compose -f docker/docker-compose.yaml logs backend
               exit 1
             fi
             sleep 2
           done
-          echo "Waiting for frontend..."
+          echo "--- waiting for frontend ---"
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8080/ > /dev/null 2>&1; then
               echo "Frontend healthy after $((i * 2))s"

@@ -45,8 +45,7 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
 
   gateway:
     build:
@@ -63,8 +62,7 @@ services:
       BACKEND_URL: ws://backend:3000/ws/gateway
       RUST_LOG: info,appcontrol_gateway=debug
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
 
 volumes:
   pgdata:
