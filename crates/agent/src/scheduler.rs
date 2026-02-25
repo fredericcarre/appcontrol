@@ -428,8 +428,8 @@ mod tests {
         }
         assert_eq!(count, 1, "First check should produce one result");
 
-        // Wait to make it due again
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // Wait to make it due again (generous buffer for slow CI runners)
+        tokio::time::sleep(Duration::from_secs(5)).await;
 
         // Second check with same exit code: should NOT send (delta dedup)
         scheduler.run_due_checks().await;
