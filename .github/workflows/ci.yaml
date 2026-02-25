@@ -58,17 +58,18 @@ jobs:
         run: cargo build --workspace
 
       - name: Unit tests
-        run: cargo test --workspace --exclude appcontrol-e2e-tests --exclude appcontrol-e2e-real -- --nocapture 2>&1 | tee /tmp/test-output.txt; exit ${PIPESTATUS[0]}
+        run: |
+          cargo test --workspace --exclude appcontrol-e2e-tests --exclude appcontrol-e2e-real -- --nocapture 2>&1 | tee /tmp/test-output.txt
+          TEST_EXIT=${PIPESTATUS[0]}
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "::error::Unit tests failed. Last 100 lines of output:"
+            tail -100 /tmp/test-output.txt | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit $TEST_EXIT
         env:
           DATABASE_URL: postgres://appcontrol:test@localhost:5432/appcontrol_test
-
-      - name: Upload test output
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-test-output
-          path: /tmp/test-output.txt
-          retention-days: 5
 
   # ---------------------------------------------------------------------------
   # E2E Integration Tests — in-process backend + real PostgreSQL
