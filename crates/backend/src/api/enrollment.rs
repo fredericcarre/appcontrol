@@ -434,8 +434,31 @@ pub async fn enroll(
 
     let fingerprint = appcontrol_common::fingerprint_pem(&issued.cert_pem).unwrap_or_default();
 
-    // Generate agent_id (deterministic from hostname, same as agent does locally)
-    let agent_id = Uuid::new_v5(&Uuid::NAMESPACE_DNS, req.hostname.as_bytes());
+    // Generate deterministic ID from hostname (same namespace for both agent and gateway)
+    let entity_id = Uuid::new_v5(&Uuid::NAMESPACE_DNS, req.hostname.as_bytes());
+
+    // Check if this fingerprint is already revoked (re-enrollment with a compromised host)
+    let is_revoked: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM revoked_certificates WHERE organization_id = $1 AND cn = $2)",
+    )
+    .bind(org_id)
+    .bind(&req.hostname)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
+
+    if is_revoked {
+        log_enrollment_event(
+            &state.db,
+            org_id,
+            Some(token_id),
+            "invalid_token",
+            &req.hostname,
+            &client_ip,
+        )
+        .await;
+        return Err(ApiError::Forbidden);
+    }
 
     // Increment token usage
     sqlx::query("UPDATE enrollment_tokens SET current_uses = current_uses + 1 WHERE id = $1")
@@ -443,24 +466,48 @@ pub async fn enroll(
         .execute(&state.db)
         .await?;
 
-    // Upsert agent record
-    sqlx::query(
-        r#"INSERT INTO agents (id, organization_id, hostname, is_active, certificate_fingerprint, certificate_cn, identity_verified)
-           VALUES ($1, $2, $3, true, $4, $5, true)
-           ON CONFLICT (id) DO UPDATE SET
-               hostname = EXCLUDED.hostname,
-               certificate_fingerprint = EXCLUDED.certificate_fingerprint,
-               certificate_cn = EXCLUDED.certificate_cn,
-               identity_verified = true,
-               is_active = true"#,
-    )
-    .bind(agent_id)
-    .bind(org_id)
-    .bind(&req.hostname)
-    .bind(&fingerprint)
-    .bind(&req.hostname)
-    .execute(&state.db)
-    .await?;
+    // Upsert the appropriate record based on scope
+    match scope.as_str() {
+        "gateway" => {
+            // Upsert gateway record with certificate identity
+            sqlx::query(
+                r#"INSERT INTO gateways (id, organization_id, name, zone, hostname, is_active, certificate_fingerprint, certificate_cn)
+                   VALUES ($1, $2, $3, 'default', $3, true, $4, $5)
+                   ON CONFLICT (id) DO UPDATE SET
+                       hostname = EXCLUDED.hostname,
+                       certificate_fingerprint = EXCLUDED.certificate_fingerprint,
+                       certificate_cn = EXCLUDED.certificate_cn,
+                       is_active = true"#,
+            )
+            .bind(entity_id)
+            .bind(org_id)
+            .bind(&req.hostname)
+            .bind(&fingerprint)
+            .bind(&req.hostname)
+            .execute(&state.db)
+            .await?;
+        }
+        _ => {
+            // Upsert agent record
+            sqlx::query(
+                r#"INSERT INTO agents (id, organization_id, hostname, is_active, certificate_fingerprint, certificate_cn, identity_verified)
+                   VALUES ($1, $2, $3, true, $4, $5, true)
+                   ON CONFLICT (id) DO UPDATE SET
+                       hostname = EXCLUDED.hostname,
+                       certificate_fingerprint = EXCLUDED.certificate_fingerprint,
+                       certificate_cn = EXCLUDED.certificate_cn,
+                       identity_verified = true,
+                       is_active = true"#,
+            )
+            .bind(entity_id)
+            .bind(org_id)
+            .bind(&req.hostname)
+            .bind(&fingerprint)
+            .bind(&req.hostname)
+            .execute(&state.db)
+            .await?;
+        }
+    }
 
     // Log enrollment event (APPEND-ONLY)
     sqlx::query(
@@ -472,31 +519,37 @@ pub async fn enroll(
     .bind(token_id)
     .bind(&req.hostname)
     .bind(client_ip.clone())
-    .bind(agent_id)
+    .bind(entity_id)
     .bind(&fingerprint)
     .bind(&req.hostname)
     .execute(&state.db)
     .await
     .ok();
 
-    // Log certificate event
-    sqlx::query(
+    // Log certificate event — link to the correct entity type
+    let cert_event_sql = if scope == "gateway" {
+        r#"INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
+           VALUES ($1, 'issued', $2, $3, now(), now() + $4 * interval '1 day')"#
+    } else {
         r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn, issued_at, expires_at)
-           VALUES ($1, 'issued', $2, $3, now(), now() + $4 * interval '1 day')"#,
-    )
-    .bind(agent_id)
-    .bind(&fingerprint)
-    .bind(&req.hostname)
-    .bind(validity_days as i32)
-    .execute(&state.db)
-    .await
-    .ok();
+           VALUES ($1, 'issued', $2, $3, now(), now() + $4 * interval '1 day')"#
+    };
+    sqlx::query(cert_event_sql)
+        .bind(entity_id)
+        .bind(&fingerprint)
+        .bind(&req.hostname)
+        .bind(validity_days as i32)
+        .execute(&state.db)
+        .await
+        .ok();
 
+    // Response field is "agent_id" for backward compat even for gateways
     Ok(Json(json!({
         "cert_pem": issued.cert_pem,
         "key_pem": issued.key_pem,
         "ca_pem": issued.ca_pem,
-        "agent_id": agent_id,
+        "agent_id": entity_id,
+        "scope": scope,
         "fingerprint": fingerprint,
         "expires_in_days": validity_days,
     })))

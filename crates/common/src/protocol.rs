@@ -158,6 +158,12 @@ pub enum BackendMessage {
     RequestDiscovery {
         request_id: Uuid,
     },
+    /// Disconnect an agent — sent from backend to gateway when cert
+    /// pinning fails or certificate has been revoked.
+    DisconnectAgent {
+        agent_id: Uuid,
+        reason: String,
+    },
 }
 
 impl BackendMessage {
@@ -172,6 +178,7 @@ impl BackendMessage {
             BackendMessage::ApprovalResult { .. } => MessagePriority::Critical,
             BackendMessage::UpdateBinaryChunk { .. } => MessagePriority::Normal,
             BackendMessage::RequestDiscovery { .. } => MessagePriority::Normal,
+            BackendMessage::DisconnectAgent { .. } => MessagePriority::Critical,
         }
     }
 }
