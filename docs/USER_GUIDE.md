@@ -403,6 +403,69 @@ Break-glass access ensures that critical operations are never blocked by permiss
 
 ## Administration
 
+### Initial Setup Workflow
+
+After deploying AppControl, the platform administrator follows this sequence:
+
+```
+1. First Login (admin@localhost in dev, OIDC/SAML in prod)
+2. Configure Authentication (OIDC and/or SAML)
+3. Create Sites (datacenters, DR sites, environments)
+4. Initialize PKI (auto on startup, or manual via API/CLI)
+5. Create Gateway Enrollment Tokens (scope: "gateway")
+6. Deploy & Enroll Gateways on each site
+7. Create Agent Enrollment Tokens (scope: "agent")
+8. Deploy & Enroll Agents on target servers
+9. Create Applications, Components, Dependencies
+10. Configure Teams, Permissions, Workspaces
+11. Set up SAML Group Mappings (for auto-provisioning)
+12. Create API Keys (for scheduler integration)
+```
+
+**Default admin account (development mode only):**
+
+| Field | Value |
+|-------|-------|
+| Email | `admin@localhost` |
+| Role | `admin` (platform super-administrator) |
+| Organization | `Dev Org` (ID: `00000000-0000-0000-0000-000000000001`) |
+
+In production, the first admin is provisioned via OIDC/SAML — users in the `SAML_ADMIN_GROUP` receive the `admin` role automatically.
+
+### Sites
+
+Sites represent physical or logical locations: datacenters, DR sites, staging environments. Every application belongs to a site.
+
+**Site types:** `primary` (production datacenter), `dr` (disaster recovery), `staging` (pre-production), `development`.
+
+Sites are created at setup time and bound to workspaces for access control. During DR switchover, AppControl orchestrates the transition from a primary site to a DR site.
+
+### Gateway & Agent Enrollment
+
+Gateways and agents authenticate via mTLS certificates issued during enrollment. The enrollment flow uses one-time tokens created by administrators.
+
+**Enrollment token scopes:**
+- `gateway` — Enroll gateways (which accept agent connections)
+- `agent` — Enroll agents (which execute commands on servers)
+
+**Gateway enrollment:** Admin creates token (`scope: "gateway"`) → deploy gateway binary on site → start with `--enrollment-token` → gateway calls `POST /api/v1/enroll` → receives mTLS cert signed by org CA → connects to backend.
+
+**Agent enrollment:** Admin creates token (`scope: "agent"`) → deploy agent binary on server → start with `--enrollment-token` and `--gateway-url` → agent calls `POST /api/v1/enroll` → receives mTLS cert → connects to gateway.
+
+**Token management (API):**
+- `POST /api/v1/enrollment/tokens` — Create token (admin only)
+- `GET /api/v1/enrollment/tokens` — List tokens with usage stats
+- `POST /api/v1/enrollment/tokens/:id/revoke` — Revoke a token
+- `GET /api/v1/enrollment/events` — Audit trail of all enrollment attempts
+
+**Token management (CLI):**
+```bash
+appctl pki create-token --name "gw-paris" --scope gateway --max-uses 3 --valid-hours 48
+appctl pki create-token --name "agents-paris" --scope agent --max-uses 100 --valid-hours 720
+appctl pki list-tokens
+appctl pki revoke-token <token-id>
+```
+
 ### User Roles
 
 AppControl defines four platform-level roles that determine baseline access:

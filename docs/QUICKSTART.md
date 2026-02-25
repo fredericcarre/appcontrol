@@ -361,11 +361,204 @@ IdP authenticates user --> POST /api/v1/auth/saml/acs (with SAMLResponse)
 Backend validates assertion --> syncs groups to teams --> sets HttpOnly cookie --> redirects to app
 ```
 
+### User Provisioning (Production)
+
+In production, users are **not created manually** — they are provisioned automatically by your identity provider (OIDC or SAML) on first login:
+
+```
+User authenticates via OIDC/SAML
+    → Backend receives identity claims (email, name, groups)
+    → User record is created/updated in AppControl
+    → SAML groups are mapped to AppControl teams (if configured)
+    → User receives JWT token and is logged in
+```
+
+**How to add users in production:**
+
+1. Add users to the appropriate groups in your IdP (Active Directory, Okta, Azure AD, etc.)
+2. Configure SAML group mappings so IdP groups map to AppControl teams:
+   ```bash
+   curl -X POST http://localhost:3000/api/v1/saml/group-mappings \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "saml_group": "CN=APP_OPERATORS,OU=Groups,DC=corp,DC=com",
+       "team_id": "<team-uuid>",
+       "default_role": "operator"
+     }'
+   ```
+3. Users log in via SSO — their account and team membership is created automatically
+4. The admin maps `SAML_ADMIN_GROUP` to grant org admin role to specific IdP groups
+
+**Roles assigned at login:**
+- Users in `SAML_ADMIN_GROUP` → `admin` role (platform super-admin)
+- Users with SAML group mappings → role from mapping (`operator`, `editor`, `viewer`)
+- Users without group mapping → `viewer` role (default, read-only)
+
+---
+
+## Understanding the Default Admin
+
+When you start AppControl in development mode, **a platform admin is automatically created**:
+
+| Field | Value |
+|-------|-------|
+| Email | `admin@localhost` |
+| Role | `admin` (platform administrator) |
+| Organization | `Dev Org` |
+
+This admin user has **implicit owner access on all applications** in the organization. In production, the first admin is created by your identity provider (OIDC/SAML) — see [Authentication Setup](#authentication-setup) above.
+
+### What Can the Admin Do?
+
+The admin (`role: admin`) is the **platform super-administrator** for their organization. They can:
+
+- Create and manage **sites** (datacenters, DR sites, environments)
+- Create **enrollment tokens** for gateways and agents
+- Initialize the **PKI** (Certificate Authority) for mTLS
+- Manage **teams**, **users**, and **permissions**
+- Perform all operations on all applications (implicit `owner`)
+- Access **break-glass** emergency controls
+- Configure **SAML group mappings** and **workspaces**
+
+Other roles (`operator`, `editor`, `viewer`) have progressively restricted access — see the [User Guide](./USER_GUIDE.md) for details.
+
 ---
 
 ## First Steps After Login
 
-### 1. Create Your First Application
+The typical setup flow follows this sequence:
+
+```
+1. Login as admin
+2. Create sites (datacenters/environments)
+3. Create gateway enrollment tokens (scoped to "gateway")
+4. Deploy and enroll gateways on each site
+5. Create agent enrollment tokens (scoped to "agent")
+6. Deploy and enroll agents on target servers
+7. Create applications with components
+8. Start operating
+```
+
+### 1. Create Sites
+
+Sites represent your datacenters, DR sites, or environments. Applications and agents are organized by site.
+
+Sites are managed through workspaces. First, list your workspaces:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/workspaces | jq
+```
+
+Then create a site and bind it to a workspace:
+
+```bash
+# Create a site via SQL (sites are typically provisioned at setup time)
+psql postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol -c "
+INSERT INTO sites (organization_id, name, code, site_type, location)
+VALUES (
+  '00000000-0000-0000-0000-000000000001',
+  'Paris Datacenter',
+  'PAR1',
+  'primary',
+  'Paris, France'
+) RETURNING id;
+"
+```
+
+```bash
+export SITE_ID=<returned-uuid>
+```
+
+For DR setups, create a secondary site:
+
+```bash
+psql postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol -c "
+INSERT INTO sites (organization_id, name, code, site_type, location)
+VALUES (
+  '00000000-0000-0000-0000-000000000001',
+  'London DR Site',
+  'LON1',
+  'dr',
+  'London, UK'
+) RETURNING id;
+"
+```
+
+### 2. Enroll a Gateway
+
+Gateways bridge agent WebSocket connections to the backend. Each site typically has one or more gateways.
+
+**Step 1: Create a gateway enrollment token (admin only):**
+
+```bash
+curl -X POST http://localhost:3000/api/v1/enrollment/tokens \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "gateway-paris-dc",
+    "scope": "gateway",
+    "max_uses": 5,
+    "valid_hours": 720
+  }' | jq
+```
+
+> **Important:** The returned `token` (starting with `ac_enroll_`) is shown **only once**. Copy it immediately.
+
+**Step 2: Deploy and start the gateway on the site:**
+
+```bash
+# On the gateway server in Paris DC
+./appcontrol-gateway \
+  --backend-url wss://backend.corp.com:3000/ws/gateway \
+  --enrollment-token "<token-from-step-1>" \
+  --listen-addr 0.0.0.0:4443
+```
+
+The gateway enrolls with the backend, receives its mTLS certificate signed by the organization CA, and begins accepting agent connections.
+
+### 3. Enroll Agents
+
+Agents run on your servers and execute health checks and commands.
+
+**Step 1: Create an agent enrollment token (admin only):**
+
+```bash
+curl -X POST http://localhost:3000/api/v1/enrollment/tokens \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "agents-paris-dc",
+    "scope": "agent",
+    "max_uses": 50,
+    "valid_hours": 720
+  }' | jq
+```
+
+Save the returned `token` value.
+
+**Step 2: Install and start the agent on each target server:**
+
+```bash
+# On the target server
+./appcontrol-agent \
+  --gateway-url wss://gateway-paris.corp.com:4443 \
+  --name app-server-01 \
+  --enrollment-token "<token-from-step-1>"
+```
+
+The agent registers with the gateway, receives its mTLS identity, and begins executing health checks for components assigned to its host.
+
+> **Tip:** You can use the same agent enrollment token for multiple servers (up to `max_uses`). Create separate tokens per site or team for better audit trail.
+
+**Or use the CLI:**
+
+```bash
+appctl pki create-token --name "agents-london-dr" --scope agent --max-uses 20 --valid-hours 168
+```
+
+### 4. Create Your First Application
 
 ```bash
 curl -X POST http://localhost:3000/api/v1/apps \
@@ -374,18 +567,17 @@ curl -X POST http://localhost:3000/api/v1/apps \
   -d '{
     "name": "Payment Gateway",
     "description": "SEPA payment processing system",
-    "environment": "production",
-    "site_id": null
+    "site_id": "'$SITE_ID'"
   }' | jq
 ```
 
-Save the returned `id` -- you will use it in subsequent commands.
+Save the returned `id`:
 
 ```bash
 export APP_ID=<returned-uuid>
 ```
 
-### 2. Add Components to the Application
+### 5. Add Components to the Application
 
 Components represent the individual services, databases, and processes that make up your application.
 
@@ -431,7 +623,7 @@ curl -X POST "http://localhost:3000/api/v1/apps/$APP_ID/dependencies" \
   }' | jq
 ```
 
-### 3. Start the Application (DAG Sequencing)
+### 6. Start the Application (DAG Sequencing)
 
 AppControl starts components in topological order, respecting dependencies:
 
@@ -445,38 +637,7 @@ curl -X POST "http://localhost:3000/api/v1/apps/$APP_ID/start" \
   -H "Authorization: Bearer $TOKEN" | jq
 ```
 
-### 4. Enroll an Agent
-
-Agents run on your servers and execute health checks and commands. To enroll an agent:
-
-**Step 1: Create an enrollment token (admin only):**
-
-```bash
-curl -X POST http://localhost:3000/api/v1/enrollment/tokens \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "datacenter-paris",
-    "max_uses": 50,
-    "expires_in_hours": 720
-  }' | jq
-```
-
-Save the returned `token` value.
-
-**Step 2: Install and start the agent on the target server:**
-
-```bash
-# On the target server
-./appcontrol-agent \
-  --gateway-url wss://gateway.corp.com:4443 \
-  --name app-server-01 \
-  --enrollment-token "<token-from-step-1>"
-```
-
-The agent registers with the gateway, receives its identity, and begins executing health checks for components assigned to its host.
-
-### 5. Create an API Key for Scheduler Integration
+### 7. Create an API Key for Scheduler Integration
 
 API keys enable schedulers (Control-M, AutoSys, Dollar Universe, TWS) to trigger operations without interactive login:
 
