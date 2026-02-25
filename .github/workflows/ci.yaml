@@ -54,8 +54,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
 
-      - name: Build
+      - name: Build (debug)
         run: cargo build --workspace
+
+      - name: Build (release)
+        run: cargo build --release --workspace
 
       - name: Unit tests
         run: cargo test --workspace --exclude appcontrol-e2e-tests --exclude appcontrol-e2e-real
