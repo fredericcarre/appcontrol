@@ -10,16 +10,20 @@ pub mod diagnostic;
 pub mod discovery;
 pub mod enrollment;
 pub mod estimates;
+pub mod gateways;
 pub mod groups;
 pub mod health;
 pub mod import;
 pub mod links;
 pub mod orchestration;
+pub mod organizations;
 pub mod permissions;
 pub mod reports;
+pub mod sites;
 pub mod switchover;
 pub mod teams;
 pub mod topology;
+pub mod users;
 pub mod variables;
 pub mod workspaces;
 
@@ -246,6 +250,42 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Agents
         .route("/agents", get(agents::list_agents))
         .route("/agents/:id", get(agents::get_agent))
+        .route("/agents/:id/revoke-cert", post(gateways::revoke_agent_cert))
+        // Gateways
+        .route("/gateways", get(gateways::list_gateways))
+        .route(
+            "/gateways/:id",
+            get(gateways::get_gateway).put(gateways::update_gateway),
+        )
+        .route(
+            "/gateways/:id/revoke-cert",
+            post(gateways::revoke_gateway_cert),
+        )
+        .route(
+            "/revoked-certificates",
+            get(gateways::list_revoked_certificates),
+        )
+        // Sites
+        .route("/sites", get(sites::list_sites).post(sites::create_site))
+        .route(
+            "/sites/:id",
+            get(sites::get_site)
+                .put(sites::update_site)
+                .delete(sites::delete_site),
+        )
+        // Organizations (super-admin)
+        .route(
+            "/organizations",
+            get(organizations::list_organizations).post(organizations::create_organization),
+        )
+        .route(
+            "/organizations/:id",
+            get(organizations::get_organization).put(organizations::update_organization),
+        )
+        // Users
+        .route("/users", get(users::list_users).post(users::create_user))
+        .route("/users/me", get(users::get_me))
+        .route("/users/:id", get(users::get_user).put(users::update_user))
         // Workspaces (site/zone access control)
         .route(
             "/workspaces",

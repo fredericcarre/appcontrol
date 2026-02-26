@@ -116,6 +116,15 @@ impl AgentRegistry {
             .get(&agent_id)
             .map(|entry| *entry.value())
     }
+
+    /// Remove an agent by its agent_id (used when backend orders a disconnect).
+    pub fn remove_by_agent_id(&self, agent_id: Uuid) -> Option<AgentInfo> {
+        if let Some((_, conn_id)) = self.agent_to_conn.remove(&agent_id) {
+            self.agents.remove(&conn_id).map(|(_, info)| info)
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]

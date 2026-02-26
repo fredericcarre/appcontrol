@@ -256,6 +256,64 @@ async fn process_gateway_message(
             // Copy the value out and drop the MutexGuard before any .await
             let gw_id = { *gateway_id_cell.lock().unwrap() };
             if let Some(gw_id) = gw_id {
+                // ── Certificate revocation check ──
+                // If the agent presents a cert fingerprint, check if it's been revoked.
+                if let Some(ref fp) = cert_fingerprint {
+                    let is_revoked: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM revoked_certificates WHERE fingerprint = $1)",
+                    )
+                    .bind(fp)
+                    .fetch_one(&state.db)
+                    .await
+                    .unwrap_or(false);
+
+                    if is_revoked {
+                        tracing::warn!(
+                            agent_id = %agent_id,
+                            fingerprint = %fp,
+                            "REJECTED: agent presented a revoked certificate"
+                        );
+                        // Order the gateway to disconnect this agent
+                        let disconnect = appcontrol_common::BackendMessage::DisconnectAgent {
+                            agent_id,
+                            reason: "Certificate has been revoked".to_string(),
+                        };
+                        state.ws_hub.send_to_agent(agent_id, disconnect);
+                        return;
+                    }
+                }
+
+                // ── Certificate pinning check ──
+                // If the agent already has a stored fingerprint, verify it matches.
+                if let Some(ref fp) = cert_fingerprint {
+                    let stored_fp: Option<Option<String>> = sqlx::query_scalar(
+                        "SELECT certificate_fingerprint FROM agents WHERE id = $1",
+                    )
+                    .bind(agent_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten();
+
+                    if let Some(Some(ref stored)) = stored_fp {
+                        if !stored.is_empty() && stored != fp {
+                            tracing::warn!(
+                                agent_id = %agent_id,
+                                stored = %stored,
+                                presented = %fp,
+                                "REJECTED: agent cert fingerprint mismatch (possible impersonation)"
+                            );
+                            let disconnect = appcontrol_common::BackendMessage::DisconnectAgent {
+                                agent_id,
+                                reason: "Certificate fingerprint does not match enrolled identity"
+                                    .to_string(),
+                            };
+                            state.ws_hub.send_to_agent(agent_id, disconnect);
+                            return;
+                        }
+                    }
+                }
+
                 tracing::info!(
                     agent_id = %agent_id,
                     hostname = %hostname,
@@ -266,8 +324,6 @@ async fn process_gateway_message(
                 state.ws_hub.register_agent_route(agent_id, gw_id);
 
                 // Push component config to the agent so its scheduler starts health checks.
-                // This is the critical link: without UpdateConfig, the agent has no components
-                // to check and the health check loop that drives STARTING→RUNNING never fires.
                 send_config_to_agent(state, agent_id).await;
 
                 // Store certificate fingerprint for identity verification

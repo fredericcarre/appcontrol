@@ -192,7 +192,7 @@ export DATABASE_URL=postgres://appcontrol:appcontrol_dev@localhost:5432/appcontr
 | Field | Value |
 |-------|-------|
 | Email | `admin@localhost` |
-| Role | `admin` |
+| Role | `admin` (org) + `super_admin` (platform) |
 | Organization | `Dev Org` |
 
 **Obtain a JWT token:**
@@ -218,24 +218,36 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/apps | jq
 curl -H "X-Api-Key: ac_XXXXX" http://localhost:3000/api/v1/apps | jq
 ```
 
-**Manual user creation (advanced):**
+**User management (via API):**
 
-If you need additional users beyond the auto-seeded admin:
+Org admins can create and manage users directly through the API:
 
-```sql
--- Connect to PostgreSQL
-psql postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol
+```bash
+# Create an operator user
+curl -X POST http://localhost:3000/api/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "operator@localhost",
+    "display_name": "Dev Operator",
+    "role": "operator"
+  }' | jq
 
--- Create an operator user
-INSERT INTO users (id, organization_id, external_id, email, display_name, role)
-VALUES (
-  gen_random_uuid(),
-  '00000000-0000-0000-0000-000000000001',
-  'dev-operator',
-  'operator@localhost',
-  'Dev Operator',
-  'operator'
-);
+# List all users
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/users | jq
+
+# Update a user's role
+curl -X PUT http://localhost:3000/api/v1/users/<user-uuid> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "editor"}' | jq
+
+# Deactivate a user
+curl -X PUT http://localhost:3000/api/v1/users/<user-uuid> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"is_active": false}' | jq
 ```
 
 ### With OIDC (Keycloak, Okta, Azure AD)
@@ -361,11 +373,221 @@ IdP authenticates user --> POST /api/v1/auth/saml/acs (with SAMLResponse)
 Backend validates assertion --> syncs groups to teams --> sets HttpOnly cookie --> redirects to app
 ```
 
+### User Provisioning (Production)
+
+In production, users are **not created manually** — they are provisioned automatically by your identity provider (OIDC or SAML) on first login:
+
+```
+User authenticates via OIDC/SAML
+    → Backend receives identity claims (email, name, groups)
+    → User record is created/updated in AppControl
+    → SAML groups are mapped to AppControl teams (if configured)
+    → User receives JWT token and is logged in
+```
+
+**How to add users in production:**
+
+1. Add users to the appropriate groups in your IdP (Active Directory, Okta, Azure AD, etc.)
+2. Configure SAML group mappings so IdP groups map to AppControl teams:
+   ```bash
+   curl -X POST http://localhost:3000/api/v1/saml/group-mappings \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "saml_group": "CN=APP_OPERATORS,OU=Groups,DC=corp,DC=com",
+       "team_id": "<team-uuid>",
+       "default_role": "operator"
+     }'
+   ```
+3. Users log in via SSO — their account and team membership is created automatically
+4. The admin maps `SAML_ADMIN_GROUP` to grant org admin role to specific IdP groups
+
+**Roles assigned at login:**
+- Users in `SAML_ADMIN_GROUP` → `admin` role (platform super-admin)
+- Users with SAML group mappings → role from mapping (`operator`, `editor`, `viewer`)
+- Users without group mapping → `viewer` role (default, read-only)
+
+---
+
+## Understanding the Admin Hierarchy
+
+AppControl distinguishes two levels of administration:
+
+### Platform Super-Admin (`platform_role: super_admin`)
+
+The super-admin is a **platform-level** role. Super-admins can:
+- **Create and manage organizations** (`POST /api/v1/organizations`)
+- View all organizations on the platform
+- The dev seed user (`admin@localhost`) is automatically a super-admin
+
+### Org Admin (`role: admin`)
+
+The org admin manages **a single organization**. Org admins can:
+- Create and manage **sites** (`POST /api/v1/sites`)
+- Create and manage **users** (`POST /api/v1/users`)
+- Create **enrollment tokens** for gateways and agents
+- Manage **teams**, **permissions**, and **workspaces**
+- Perform all operations on all applications (implicit `owner`)
+- Access **break-glass** emergency controls
+- Revoke agent/gateway certificates
+
+### Dev Mode Default User
+
+When you start AppControl in development mode, **a platform admin is automatically created**:
+
+| Field | Value |
+|-------|-------|
+| Email | `admin@localhost` |
+| Org Role | `admin` (org administrator) |
+| Platform Role | `super_admin` (can create orgs) |
+| Organization | `Dev Org` |
+
+In production, the super-admin is typically the first user who logs in via OIDC/SAML with the `SAML_ADMIN_GROUP` group. Super-admin status must then be granted explicitly in the database:
+
+```sql
+UPDATE users SET platform_role = 'super_admin' WHERE email = 'first-admin@corp.com';
+```
+
+### Other Roles
+
+| Role | Can Do |
+|------|--------|
+| `operator` | Start, stop, restart applications (where granted `operate` permission) |
+| `editor` | Modify application config: components, dependencies, commands (where granted `edit` permission) |
+| `viewer` | Read-only: view status, maps, logs, reports (where granted `view` permission) |
+
 ---
 
 ## First Steps After Login
 
-### 1. Create Your First Application
+The typical setup flow follows this sequence:
+
+```
+1. Login as admin
+2. Create sites (datacenters/environments)
+3. Create gateway enrollment tokens (scoped to "gateway")
+4. Deploy and enroll gateways on each site
+5. Create agent enrollment tokens (scoped to "agent")
+6. Deploy and enroll agents on target servers
+7. Create applications with components
+8. Start operating
+```
+
+### 1. Create Sites
+
+Sites represent your datacenters, DR sites, or environments. Applications, gateways, and agents are organized by site.
+
+```bash
+# Create a primary site
+curl -X POST http://localhost:3000/api/v1/sites \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Paris Datacenter",
+    "code": "PAR1",
+    "site_type": "primary",
+    "location": "Paris, France"
+  }' | jq
+```
+
+```bash
+export SITE_ID=<returned-id>
+```
+
+For DR setups, create a secondary site:
+
+```bash
+curl -X POST http://localhost:3000/api/v1/sites \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "London DR Site",
+    "code": "LON1",
+    "site_type": "dr",
+    "location": "London, UK"
+  }' | jq
+```
+
+List all sites:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/sites | jq
+```
+
+### 2. Enroll a Gateway
+
+Gateways bridge agent WebSocket connections to the backend. Each site typically has one or more gateways.
+
+**Step 1: Create a gateway enrollment token (admin only):**
+
+```bash
+curl -X POST http://localhost:3000/api/v1/enrollment/tokens \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "gateway-paris-dc",
+    "scope": "gateway",
+    "max_uses": 5,
+    "valid_hours": 720
+  }' | jq
+```
+
+> **Important:** The returned `token` (starting with `ac_enroll_`) is shown **only once**. Copy it immediately.
+
+**Step 2: Deploy and start the gateway on the site:**
+
+```bash
+# On the gateway server in Paris DC
+./appcontrol-gateway \
+  --backend-url wss://backend.corp.com:3000/ws/gateway \
+  --enrollment-token "<token-from-step-1>" \
+  --listen-addr 0.0.0.0:4443
+```
+
+The gateway enrolls with the backend, receives its mTLS certificate signed by the organization CA, and begins accepting agent connections.
+
+### 3. Enroll Agents
+
+Agents run on your servers and execute health checks and commands.
+
+**Step 1: Create an agent enrollment token (admin only):**
+
+```bash
+curl -X POST http://localhost:3000/api/v1/enrollment/tokens \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "agents-paris-dc",
+    "scope": "agent",
+    "max_uses": 50,
+    "valid_hours": 720
+  }' | jq
+```
+
+Save the returned `token` value.
+
+**Step 2: Install and start the agent on each target server:**
+
+```bash
+# On the target server
+./appcontrol-agent \
+  --gateway-url wss://gateway-paris.corp.com:4443 \
+  --name app-server-01 \
+  --enrollment-token "<token-from-step-1>"
+```
+
+The agent registers with the gateway, receives its mTLS identity, and begins executing health checks for components assigned to its host.
+
+> **Tip:** You can use the same agent enrollment token for multiple servers (up to `max_uses`). Create separate tokens per site or team for better audit trail.
+
+**Or use the CLI:**
+
+```bash
+appctl pki create-token --name "agents-london-dr" --scope agent --max-uses 20 --valid-hours 168
+```
+
+### 4. Create Your First Application
 
 ```bash
 curl -X POST http://localhost:3000/api/v1/apps \
@@ -374,18 +596,17 @@ curl -X POST http://localhost:3000/api/v1/apps \
   -d '{
     "name": "Payment Gateway",
     "description": "SEPA payment processing system",
-    "environment": "production",
-    "site_id": null
+    "site_id": "'$SITE_ID'"
   }' | jq
 ```
 
-Save the returned `id` -- you will use it in subsequent commands.
+Save the returned `id`:
 
 ```bash
 export APP_ID=<returned-uuid>
 ```
 
-### 2. Add Components to the Application
+### 5. Add Components to the Application
 
 Components represent the individual services, databases, and processes that make up your application.
 
@@ -431,7 +652,7 @@ curl -X POST "http://localhost:3000/api/v1/apps/$APP_ID/dependencies" \
   }' | jq
 ```
 
-### 3. Start the Application (DAG Sequencing)
+### 6. Start the Application (DAG Sequencing)
 
 AppControl starts components in topological order, respecting dependencies:
 
@@ -445,38 +666,7 @@ curl -X POST "http://localhost:3000/api/v1/apps/$APP_ID/start" \
   -H "Authorization: Bearer $TOKEN" | jq
 ```
 
-### 4. Enroll an Agent
-
-Agents run on your servers and execute health checks and commands. To enroll an agent:
-
-**Step 1: Create an enrollment token (admin only):**
-
-```bash
-curl -X POST http://localhost:3000/api/v1/enrollment/tokens \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "datacenter-paris",
-    "max_uses": 50,
-    "expires_in_hours": 720
-  }' | jq
-```
-
-Save the returned `token` value.
-
-**Step 2: Install and start the agent on the target server:**
-
-```bash
-# On the target server
-./appcontrol-agent \
-  --gateway-url wss://gateway.corp.com:4443 \
-  --name app-server-01 \
-  --enrollment-token "<token-from-step-1>"
-```
-
-The agent registers with the gateway, receives its identity, and begins executing health checks for components assigned to its host.
-
-### 5. Create an API Key for Scheduler Integration
+### 7. Create an API Key for Scheduler Integration
 
 API keys enable schedulers (Control-M, AutoSys, Dollar Universe, TWS) to trigger operations without interactive login:
 
@@ -585,6 +775,114 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   "http://localhost:3000/api/v1/apps/$APP_ID/switchover" | jq
 ```
 
+### Organizations (Super-Admin Only)
+
+```bash
+# List all organizations (super-admin only)
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/organizations | jq
+
+# Create a new organization with its initial admin
+curl -X POST http://localhost:3000/api/v1/organizations \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Acme Corp",
+    "slug": "acme-corp",
+    "admin_email": "admin@acme.com",
+    "admin_display_name": "Acme Admin"
+  }' | jq
+# → Returns org details + admin_user_id. PKI (CA) is auto-initialized.
+```
+
+### Sites (Admin Only)
+
+```bash
+# List sites
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/sites | jq
+
+# Create site
+curl -X POST http://localhost:3000/api/v1/sites \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Paris DC", "code": "PAR1", "site_type": "primary", "location": "Paris"}' | jq
+
+# Update site
+curl -X PUT "http://localhost:3000/api/v1/sites/$SITE_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"location": "Paris, France"}' | jq
+
+# Delete site (fails if applications are linked)
+curl -X DELETE "http://localhost:3000/api/v1/sites/$SITE_ID" \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+### Users (Admin Only)
+
+```bash
+# List users (with filters)
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:3000/api/v1/users?role=operator&is_active=true" | jq
+
+# Create local user
+curl -X POST http://localhost:3000/api/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "operator@corp.com", "display_name": "Jane Doe", "role": "operator"}' | jq
+
+# Update user role
+curl -X PUT "http://localhost:3000/api/v1/users/$USER_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "editor"}' | jq
+
+# Deactivate user
+curl -X PUT "http://localhost:3000/api/v1/users/$USER_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"is_active": false}' | jq
+
+# Get current user info
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/users/me | jq
+```
+
+### Gateways (Admin Only)
+
+```bash
+# List gateways
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/gateways | jq
+
+# Assign gateway to a site
+curl -X PUT "http://localhost:3000/api/v1/gateways/$GW_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"site_id": "'$SITE_ID'"}' | jq
+```
+
+### Certificate Revocation (Admin Only)
+
+```bash
+# Revoke an agent's certificate (deactivates the agent)
+curl -X POST "http://localhost:3000/api/v1/agents/$AGENT_ID/revoke-cert" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Agent compromised — server decommissioned"}' | jq
+
+# Revoke a gateway's certificate (deactivates the gateway)
+curl -X POST "http://localhost:3000/api/v1/gateways/$GW_ID/revoke-cert" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Gateway certificate leaked"}' | jq
+
+# List all revoked certificates
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/revoked-certificates | jq
+```
+
 ### Health & Observability
 
 ```bash
@@ -618,6 +916,47 @@ curl -H "Authorization: Bearer $TOKEN" \
 curl -X DELETE -H "Authorization: Bearer $TOKEN" \
   "http://localhost:3000/api/v1/api-keys/$KEY_ID"
 ```
+
+---
+
+## Security: Preventing Gateway & Agent Impersonation
+
+AppControl uses multiple layers to ensure that gateways and agents cannot be spoofed:
+
+### Layer 1: Token-Based Enrollment
+
+- Enrollment tokens are **SHA-256 hashed** — the plaintext is never stored in the database
+- Tokens have **expiration**, **max usage counts**, and can be **revoked** at any time
+- Each enrollment attempt (success or failure) is logged in the **append-only** `enrollment_events` table
+- Tokens are **scoped** (`gateway` or `agent`) — a gateway token cannot enroll an agent and vice versa
+
+### Layer 2: mTLS (Mutual TLS)
+
+- Each organization has its own **Certificate Authority (CA)**, auto-generated at startup
+- During enrollment, the backend signs a certificate for the agent/gateway using the org's CA private key
+- After enrollment, **all connections are mTLS**: both sides present certificates signed by the same CA
+- Gateway certificates include `ServerAuth + ClientAuth` extended key usage and support SANs (DNS/IP)
+- Agent certificates include the hostname as CN and SAN
+
+### Layer 3: Certificate Pinning
+
+- The **SHA-256 fingerprint** of each issued certificate is stored in the database (`agents.certificate_fingerprint`, `gateways.certificate_fingerprint`)
+- On every connection, the gateway extracts the client certificate fingerprint and verifies it matches the stored value
+- This prevents a valid cert from a **different** agent being reused on an unauthorized host
+
+### Layer 4: Certificate Revocation
+
+- Admins can **immediately revoke** any agent or gateway certificate via the API
+- Revoked fingerprints are stored in the `revoked_certificates` table (append-only)
+- The gateway checks this table on each connection — a revoked cert is rejected even if it's still cryptographically valid
+- Revocation also deactivates the agent/gateway record and marks `identity_verified = false`
+
+### Layer 5: Audit Trail
+
+Every security event is logged with full traceability:
+- `enrollment_events` — who enrolled, when, from what IP, with what token
+- `certificate_events` — cert issued, renewed, revoked, with fingerprints
+- `action_log` — admin actions (token creation, cert revocation, etc.)
 
 ---
 

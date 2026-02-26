@@ -403,6 +403,115 @@ Break-glass access ensures that critical operations are never blocked by permiss
 
 ## Administration
 
+### Admin Hierarchy
+
+AppControl distinguishes two levels of administration:
+
+| Level | Role | Scope | Can Do |
+|-------|------|-------|--------|
+| **Platform Super-Admin** | `platform_role = 'super_admin'` | All organizations | Create/manage organizations, assign initial org admins |
+| **Org Admin** | `role = 'admin'` | Single organization | Manage sites, users, teams, tokens, certs, apps |
+| **Operator** | `role = 'operator'` | Per-app permission | Start, stop, restart applications |
+| **Editor** | `role = 'editor'` | Per-app permission | Modify components, dependencies, commands |
+| **Viewer** | `role = 'viewer'` | Per-app permission | Read-only access to maps, logs, reports |
+
+**How users are created:**
+
+| Method | Who Creates | When |
+|--------|-------------|------|
+| **Dev seed** | Auto | Backend startup in dev mode (`admin@localhost`, super-admin) |
+| **OIDC/SAML** | Auto | First login via identity provider |
+| **API** | Org admin | `POST /api/v1/users` (local users) |
+| **Super-admin** | Super-admin | `POST /api/v1/organizations` creates org + initial admin |
+
+### Initial Setup Workflow
+
+```
+1. Super-admin logs in
+2. Super-admin creates organizations (POST /api/v1/organizations)
+   → Each org gets an initial admin + auto-generated PKI (CA)
+3. Org admin logs in to their organization
+4. Org admin creates sites (POST /api/v1/sites)
+5. Org admin creates gateway enrollment tokens (scope: "gateway")
+6. Deploy & enroll gateways → they register in gateways table
+7. Org admin assigns gateways to sites (PUT /api/v1/gateways/:id)
+8. Org admin creates agent enrollment tokens (scope: "agent")
+9. Deploy & enroll agents → they register in agents table
+10. Org admin creates applications with components and dependencies
+11. Org admin configures teams, permissions, workspaces
+12. Org admin sets up SAML group mappings (for auto-provisioning)
+13. Org admin creates API keys (for scheduler integration)
+```
+
+**Default dev account:**
+
+| Field | Value |
+|-------|-------|
+| Email | `admin@localhost` |
+| Org Role | `admin` |
+| Platform Role | `super_admin` |
+| Organization | `Dev Org` (ID: `00000000-0000-0000-0000-000000000001`) |
+
+In production, the first super-admin is bootstrapped via OIDC/SAML + database: `UPDATE users SET platform_role = 'super_admin' WHERE email = 'first-admin@corp.com'`.
+
+### Sites
+
+Sites represent physical or logical locations: datacenters, DR sites, staging environments. Every application and gateway belongs to a site.
+
+**Site types:** `primary` (production datacenter), `dr` (disaster recovery), `staging` (pre-production), `development`.
+
+**API endpoints:**
+- `GET /api/v1/sites` — List sites (filterable by `site_type`, `is_active`)
+- `POST /api/v1/sites` — Create site (admin only)
+- `GET /api/v1/sites/:id` — Get site details
+- `PUT /api/v1/sites/:id` — Update site (admin only)
+- `DELETE /api/v1/sites/:id` — Delete site (fails if applications are linked)
+
+Sites are created at setup time and bound to workspaces for access control. During DR switchover, AppControl orchestrates the transition from a primary site to a DR site.
+
+### Gateway & Agent Enrollment
+
+Gateways and agents authenticate via mTLS certificates issued during enrollment. The enrollment flow uses one-time tokens created by administrators.
+
+**Enrollment token scopes:**
+- `gateway` — Enroll gateways (which accept agent connections)
+- `agent` — Enroll agents (which execute commands on servers)
+
+**Gateway enrollment:** Admin creates token (`scope: "gateway"`) → deploy gateway binary on site → start with `--enrollment-token` → gateway calls `POST /api/v1/enroll` → receives mTLS cert signed by org CA → connects to backend.
+
+**Agent enrollment:** Admin creates token (`scope: "agent"`) → deploy agent binary on server → start with `--enrollment-token` and `--gateway-url` → agent calls `POST /api/v1/enroll` → receives mTLS cert → connects to gateway.
+
+**Token management (API):**
+- `POST /api/v1/enrollment/tokens` — Create token (admin only)
+- `GET /api/v1/enrollment/tokens` — List tokens with usage stats
+- `POST /api/v1/enrollment/tokens/:id/revoke` — Revoke a token
+- `GET /api/v1/enrollment/events` — Audit trail of all enrollment attempts
+
+**Token management (CLI):**
+```bash
+appctl pki create-token --name "gw-paris" --scope gateway --max-uses 3 --valid-hours 48
+appctl pki create-token --name "agents-paris" --scope agent --max-uses 100 --valid-hours 720
+appctl pki list-tokens
+appctl pki revoke-token <token-id>
+```
+
+### Certificate Security (Anti-Spoofing)
+
+AppControl prevents gateway and agent impersonation through five security layers:
+
+1. **Token-based enrollment** — SHA-256 hashed, scoped (`gateway`/`agent`), expirable, revocable, max-usage-limited
+2. **mTLS (Mutual TLS)** — Per-organization CA, certs signed during enrollment, all connections encrypted and mutually authenticated
+3. **Certificate pinning** — SHA-256 fingerprint stored at enrollment, verified on every connection. A valid cert from a different agent is rejected
+4. **Certificate revocation** — Admins revoke certs via API (`POST /agents/:id/revoke-cert`). Revoked fingerprints are checked in real-time. Revocation deactivates the agent/gateway immediately
+5. **Audit trail** — All enrollment attempts, cert issuances, and revocations logged in append-only tables
+
+**Revocation API:**
+- `POST /api/v1/agents/:id/revoke-cert` — Revoke agent cert (deactivates agent)
+- `POST /api/v1/gateways/:id/revoke-cert` — Revoke gateway cert (deactivates gateway)
+- `GET /api/v1/revoked-certificates` — List all revoked certificates
+
+When an agent connects with a revoked certificate, the backend sends a `DisconnectAgent` message to the gateway, which immediately drops the connection.
+
 ### User Roles
 
 AppControl defines four platform-level roles that determine baseline access:

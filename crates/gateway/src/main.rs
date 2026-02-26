@@ -835,6 +835,22 @@ fn handle_backend_message(state: &Arc<GatewayState>, text: &str) {
             target_agent_id,
             message,
         }) => {
+            // Handle DisconnectAgent specially — drop the agent connection
+            if let BackendMessage::DisconnectAgent {
+                agent_id,
+                ref reason,
+            } = message
+            {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    reason = %reason,
+                    "Backend ordered agent disconnect — dropping connection"
+                );
+                state.router.remove_agent(agent_id);
+                state.registry.remove_by_agent_id(agent_id);
+                return;
+            }
+
             // Serialize the inner BackendMessage (what the agent expects)
             let inner_json = match serde_json::to_string(&message) {
                 Ok(j) => j,

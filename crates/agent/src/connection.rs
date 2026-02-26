@@ -592,6 +592,14 @@ impl ConnectionManager {
                     .await;
                 });
             }
+            BackendMessage::DisconnectAgent { agent_id, reason } => {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    reason = %reason,
+                    "Backend ordered disconnect — shutting down connection"
+                );
+                // The connection will close when we stop processing messages
+            }
         }
     }
 }

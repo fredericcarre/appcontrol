@@ -330,10 +330,10 @@ async fn seed_dev_user(pool: &sqlx::PgPool) {
         return;
     }
 
-    // Create default admin user
+    // Create default admin user (platform super-admin + org admin)
     let user_result = sqlx::query(
-        "INSERT INTO users (id, organization_id, external_id, email, display_name, role) \
-         VALUES ($1, $2, 'dev-admin', 'admin@localhost', 'Dev Admin', 'admin') \
+        "INSERT INTO users (id, organization_id, external_id, email, display_name, role, platform_role, auth_provider) \
+         VALUES ($1, $2, 'dev-admin', 'admin@localhost', 'Dev Admin', 'admin', 'super_admin', 'local') \
          ON CONFLICT DO NOTHING",
     )
     .bind(user_id)
@@ -344,7 +344,7 @@ async fn seed_dev_user(pool: &sqlx::PgPool) {
     match user_result {
         Ok(_) => {
             tracing::info!(
-                "Dev user seeded: admin@localhost (org: Dev Org). \
+                "Dev user seeded: admin@localhost (org: Dev Org, platform: super_admin). \
                  Use POST /api/v1/auth/dev-login with {{\"email\":\"admin@localhost\"}} to get a JWT."
             );
         }
