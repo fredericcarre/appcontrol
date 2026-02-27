@@ -11,6 +11,7 @@ export interface Team {
 }
 
 export interface TeamMember {
+  id: string;
   user_id: string;
   email: string;
   name: string;
@@ -22,8 +23,8 @@ export function useTeams() {
   return useQuery({
     queryKey: ['teams'],
     queryFn: async () => {
-      const { data } = await client.get<Team[]>('/teams');
-      return data;
+      const { data } = await client.get<{ teams: Team[] }>('/teams');
+      return data.teams;
     },
   });
 }
@@ -43,8 +44,8 @@ export function useTeamMembers(teamId: string) {
   return useQuery({
     queryKey: ['teams', teamId, 'members'],
     queryFn: async () => {
-      const { data } = await client.get<TeamMember[]>(`/teams/${teamId}/members`);
-      return data;
+      const { data } = await client.get<{ members: TeamMember[] }>(`/teams/${teamId}/members`);
+      return data.members;
     },
     enabled: !!teamId,
   });
