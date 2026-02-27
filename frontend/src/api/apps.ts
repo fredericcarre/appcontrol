@@ -533,7 +533,6 @@ export function useExportAppMutation() {
 // ── Component Position Updates (for Map Designer) ──────────────
 
 export function useUpdateComponentPosition() {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: async (payload: { componentId: string; x: number; y: number }) => {
       await client.patch(`/components/${payload.componentId}/position`, {
@@ -541,21 +540,13 @@ export function useUpdateComponentPosition() {
         y: payload.y,
       });
     },
-    // Optimistic update - don't refetch the whole app
-    onSuccess: () => {
-      // Position updates are visual only; no need to invalidate
-    },
   });
 }
 
 export function useUpdateComponentPositions() {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: async (positions: Array<{ id: string; x: number; y: number }>) => {
       await client.patch('/components/batch-positions', { positions });
-    },
-    onSuccess: () => {
-      // Position updates are visual only; no need to invalidate
     },
   });
 }

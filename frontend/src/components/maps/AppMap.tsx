@@ -11,7 +11,6 @@ import {
   NodeTypes,
   BackgroundVariant,
   Connection,
-  addEdge,
   NodeChange,
   EdgeChange,
   applyNodeChanges,
@@ -162,8 +161,8 @@ function AppMapInner({
   );
   const initialEdges = useMemo(() => buildEdges(dependencies, editable), [dependencies, editable]);
 
-  const [nodes, setNodes, onNodesChangeInternal] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChangeInternal] = useEdgesState(initialEdges);
+  const [nodes, setNodes] = useNodesState(initialNodes);
+  const [edges, setEdges] = useEdgesState(initialEdges);
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {

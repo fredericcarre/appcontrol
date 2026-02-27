@@ -436,12 +436,14 @@ pub async fn update_position(
     // Note: We don't log position updates to avoid spamming action_log during drag operations.
     // Position is not a critical operational parameter.
 
-    sqlx::query("UPDATE components SET position_x = $2, position_y = $3, updated_at = now() WHERE id = $1")
-        .bind(id)
-        .bind(body.x)
-        .bind(body.y)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "UPDATE components SET position_x = $2, position_y = $3, updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(body.x)
+    .bind(body.y)
+    .execute(&state.db)
+    .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

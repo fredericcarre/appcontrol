@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Component, ComponentGroup, useComponentGroups } from '@/api/apps';
+import { useState, useMemo } from 'react';
+import { Component, useComponentGroups } from '@/api/apps';
 import { useAgents } from '@/api/reports';
 import { Button } from '@/components/ui/button';
 import {
@@ -69,23 +69,10 @@ export function ComponentEditor({
   const { data: groups } = useComponentGroups(appId);
   const { data: agents } = useAgents();
 
-  const [formData, setFormData] = useState<ComponentFormData>({
-    name: '',
-    display_name: '',
-    description: '',
-    component_type: initialType || 'service',
-    icon: 'cog',
-    host: '',
-    group_id: null,
-    check_cmd: '',
-    start_cmd: '',
-    stop_cmd: '',
-  });
-
-  // Update form when component changes
-  useEffect(() => {
+  // Compute initial form data based on component or initialType
+  const initialFormData = useMemo((): ComponentFormData => {
     if (component) {
-      setFormData({
+      return {
         name: component.name || '',
         display_name: component.display_name || '',
         description: component.description || '',
@@ -96,10 +83,11 @@ export function ComponentEditor({
         check_cmd: component.check_cmd || '',
         start_cmd: component.start_cmd || '',
         stop_cmd: component.stop_cmd || '',
-      });
-    } else if (initialType) {
+      };
+    }
+    if (initialType) {
       const typeInfo = COMPONENT_TYPES.find((t) => t.type === initialType);
-      setFormData({
+      return {
         name: '',
         display_name: '',
         description: '',
@@ -110,9 +98,32 @@ export function ComponentEditor({
         check_cmd: '',
         start_cmd: '',
         stop_cmd: '',
-      });
+      };
     }
+    return {
+      name: '',
+      display_name: '',
+      description: '',
+      component_type: 'service',
+      icon: 'cog',
+      host: '',
+      group_id: null,
+      check_cmd: '',
+      start_cmd: '',
+      stop_cmd: '',
+    };
   }, [component, initialType]);
+
+  // Use key to reset form state when component/initialType changes
+  const formKey = component?.id || initialType || 'new';
+  const [formData, setFormData] = useState<ComponentFormData>(initialFormData);
+
+  // Reset form when the key changes (dialog opens with different data)
+  const [lastKey, setLastKey] = useState(formKey);
+  if (formKey !== lastKey) {
+    setLastKey(formKey);
+    setFormData(initialFormData);
+  }
 
   const handleChange = (field: keyof ComponentFormData, value: string | null) => {
     setFormData((prev) => ({ ...prev, [field]: value }));

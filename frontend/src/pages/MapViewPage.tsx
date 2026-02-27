@@ -24,7 +24,7 @@ import { ActivityPanel } from '@/components/activity/ActivityPanel';
 import { ComponentPalette } from '@/components/maps/ComponentPalette';
 import { ComponentEditor, ComponentFormData } from '@/components/maps/ComponentEditor';
 import { Button } from '@/components/ui/button';
-import { Pencil, X, Download, Save, ArrowLeft } from 'lucide-react';
+import { Pencil, Download, Save, ArrowLeft } from 'lucide-react';
 
 export function MapViewPage() {
   const { appId } = useParams<{ appId: string }>();
@@ -225,6 +225,7 @@ export function MapViewPage() {
     setNewComponentPosition(null);
   }, []);
 
+  const appName = app?.name || 'app';
   const handleExport = useCallback(async () => {
     if (!appId) return;
     try {
@@ -234,7 +235,7 @@ export function MapViewPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${app?.name || 'app'}-export.json`;
+      a.download = `${appName}-export.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -242,7 +243,7 @@ export function MapViewPage() {
     } catch (error) {
       console.error('Export failed:', error);
     }
-  }, [appId, app?.name, exportApp]);
+  }, [appId, appName, exportApp]);
 
   if (isLoading || !app) {
     return (

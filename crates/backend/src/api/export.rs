@@ -304,10 +304,8 @@ pub async fn export_app_json(
     .fetch_all(&state.db)
     .await?;
 
-    let group_id_to_name: HashMap<Uuid, String> = group_rows
-        .iter()
-        .map(|g| (g.id, g.name.clone()))
-        .collect();
+    let group_id_to_name: HashMap<Uuid, String> =
+        group_rows.iter().map(|g| (g.id, g.name.clone())).collect();
 
     let groups: Vec<GroupExport> = group_rows
         .into_iter()
@@ -335,10 +333,8 @@ pub async fn export_app_json(
     .await?;
 
     // Build component ID → name map for dependencies
-    let comp_id_to_name: HashMap<Uuid, String> = comp_rows
-        .iter()
-        .map(|c| (c.id, c.name.clone()))
-        .collect();
+    let comp_id_to_name: HashMap<Uuid, String> =
+        comp_rows.iter().map(|c| (c.id, c.name.clone())).collect();
 
     // Fetch all custom commands
     let cmd_rows = sqlx::query_as::<_, CustomCmdRow>(
@@ -395,7 +391,10 @@ pub async fn export_app_json(
             requires_confirmation: cmd.requires_confirmation,
             parameters: params_by_cmd.remove(&cmd.id).unwrap_or_default(),
         };
-        cmds_by_comp.entry(cmd.component_id).or_default().push(custom_cmd);
+        cmds_by_comp
+            .entry(cmd.component_id)
+            .or_default()
+            .push(custom_cmd);
     }
 
     // Fetch all links
@@ -420,47 +419,55 @@ pub async fn export_app_json(
             url: link.url,
             link_type: link.link_type,
         };
-        links_by_comp.entry(link.component_id).or_default().push(link_export);
+        links_by_comp
+            .entry(link.component_id)
+            .or_default()
+            .push(link_export);
     }
 
     // Build component exports
     let components: Vec<ComponentExport> = comp_rows
         .into_iter()
         .map(|c| {
-            let commands = CommandsExport {
-                check: c.check_cmd.as_ref().map(|cmd| CommandDetailExport {
-                    cmd: cmd.clone(),
-                    timeout_seconds: Some(c.check_interval_seconds),
-                }),
-                start: c.start_cmd.as_ref().map(|cmd| CommandDetailExport {
-                    cmd: cmd.clone(),
-                    timeout_seconds: Some(c.start_timeout_seconds),
-                }),
-                stop: c.stop_cmd.as_ref().map(|cmd| CommandDetailExport {
-                    cmd: cmd.clone(),
-                    timeout_seconds: Some(c.stop_timeout_seconds),
-                }),
-                integrity_check: c.integrity_check_cmd.as_ref().map(|cmd| CommandDetailExport {
-                    cmd: cmd.clone(),
-                    timeout_seconds: None,
-                }),
-                post_start_check: c.post_start_check_cmd.as_ref().map(|cmd| CommandDetailExport {
-                    cmd: cmd.clone(),
-                    timeout_seconds: None,
-                }),
-                infra_check: c.infra_check_cmd.as_ref().map(|cmd| CommandDetailExport {
-                    cmd: cmd.clone(),
-                    timeout_seconds: None,
-                }),
-                rebuild: c.rebuild_cmd.as_ref().map(|cmd| CommandDetailExport {
-                    cmd: cmd.clone(),
-                    timeout_seconds: None,
-                }),
-                rebuild_infra: c.rebuild_infra_cmd.as_ref().map(|cmd| CommandDetailExport {
-                    cmd: cmd.clone(),
-                    timeout_seconds: None,
-                }),
-            };
+            let commands =
+                CommandsExport {
+                    check: c.check_cmd.as_ref().map(|cmd| CommandDetailExport {
+                        cmd: cmd.clone(),
+                        timeout_seconds: Some(c.check_interval_seconds),
+                    }),
+                    start: c.start_cmd.as_ref().map(|cmd| CommandDetailExport {
+                        cmd: cmd.clone(),
+                        timeout_seconds: Some(c.start_timeout_seconds),
+                    }),
+                    stop: c.stop_cmd.as_ref().map(|cmd| CommandDetailExport {
+                        cmd: cmd.clone(),
+                        timeout_seconds: Some(c.stop_timeout_seconds),
+                    }),
+                    integrity_check: c.integrity_check_cmd.as_ref().map(|cmd| {
+                        CommandDetailExport {
+                            cmd: cmd.clone(),
+                            timeout_seconds: None,
+                        }
+                    }),
+                    post_start_check: c.post_start_check_cmd.as_ref().map(|cmd| {
+                        CommandDetailExport {
+                            cmd: cmd.clone(),
+                            timeout_seconds: None,
+                        }
+                    }),
+                    infra_check: c.infra_check_cmd.as_ref().map(|cmd| CommandDetailExport {
+                        cmd: cmd.clone(),
+                        timeout_seconds: None,
+                    }),
+                    rebuild: c.rebuild_cmd.as_ref().map(|cmd| CommandDetailExport {
+                        cmd: cmd.clone(),
+                        timeout_seconds: None,
+                    }),
+                    rebuild_infra: c.rebuild_infra_cmd.as_ref().map(|cmd| CommandDetailExport {
+                        cmd: cmd.clone(),
+                        timeout_seconds: None,
+                    }),
+                };
 
             ComponentExport {
                 name: c.name.clone(),
@@ -468,7 +475,9 @@ pub async fn export_app_json(
                 description: c.description,
                 component_type: c.component_type,
                 icon: c.icon,
-                group: c.group_id.and_then(|gid| group_id_to_name.get(&gid).cloned()),
+                group: c
+                    .group_id
+                    .and_then(|gid| group_id_to_name.get(&gid).cloned()),
                 host: c.host,
                 commands,
                 custom_commands: cmds_by_comp.remove(&c.id).unwrap_or_default(),

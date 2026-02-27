@@ -818,14 +818,25 @@ pub async fn import_json_map(
         });
 
         let comp_type = comp.component_type.as_deref().unwrap_or("service");
-        let icon = comp.icon.as_deref().unwrap_or(default_icon_for_type(comp_type));
+        let icon = comp
+            .icon
+            .as_deref()
+            .unwrap_or(default_icon_for_type(comp_type));
 
         // Extract commands
         let check_cmd = comp.commands.check.as_ref().map(|c| c.cmd.clone());
         let start_cmd = comp.commands.start.as_ref().map(|c| c.cmd.clone());
         let stop_cmd = comp.commands.stop.as_ref().map(|c| c.cmd.clone());
-        let integrity_cmd = comp.commands.integrity_check.as_ref().map(|c| c.cmd.clone());
-        let post_start_cmd = comp.commands.post_start_check.as_ref().map(|c| c.cmd.clone());
+        let integrity_cmd = comp
+            .commands
+            .integrity_check
+            .as_ref()
+            .map(|c| c.cmd.clone());
+        let post_start_cmd = comp
+            .commands
+            .post_start_check
+            .as_ref()
+            .map(|c| c.cmd.clone());
         let infra_cmd = comp.commands.infra_check.as_ref().map(|c| c.cmd.clone());
         let rebuild_cmd = comp.commands.rebuild.as_ref().map(|c| c.cmd.clone());
         let rebuild_infra_cmd = comp.commands.rebuild_infra.as_ref().map(|c| c.cmd.clone());
@@ -896,7 +907,11 @@ pub async fn import_json_map(
 
             // Import parameters
             for (pidx, param) in custom_cmd.parameters.iter().enumerate() {
-                let enum_vals_json = param.enum_values.as_ref().map(|v| serde_json::to_value(v).ok()).flatten();
+                let enum_vals_json = param
+                    .enum_values
+                    .as_ref()
+                    .map(|v| serde_json::to_value(v).ok())
+                    .flatten();
 
                 sqlx::query(
                     r#"INSERT INTO command_input_params (
