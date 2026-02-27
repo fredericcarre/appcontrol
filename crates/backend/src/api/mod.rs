@@ -362,6 +362,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/discovery/trigger/:agent_id",
             post(discovery::trigger_scan),
         )
+        .route("/discovery/trigger-all", post(discovery::trigger_all))
         .route("/discovery/drafts", get(discovery::list_drafts))
         .route("/discovery/drafts/:id", get(discovery::get_draft))
         .route("/discovery/drafts/:id/apply", post(discovery::apply_draft))

@@ -12,10 +12,12 @@ import {
   Shield,
   Upload,
   KeyRound,
+  Radar,
 } from 'lucide-react';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/discovery', icon: Radar, label: 'Discovery' },
   { to: '/teams', icon: Users, label: 'Teams' },
   { to: '/agents', icon: Server, label: 'Agents' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },

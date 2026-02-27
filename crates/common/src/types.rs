@@ -200,6 +200,9 @@ pub struct DiscoveredProcess {
     pub memory_bytes: u64,
     pub cpu_pct: f32,
     pub listening_ports: Vec<u16>,
+    /// Key environment variables (filtered: HOME, PATH, DB_*, *_PORT, etc.)
+    #[serde(default)]
+    pub env_vars: std::collections::HashMap<String, String>,
 }
 
 /// A TCP listener discovered on the host.
