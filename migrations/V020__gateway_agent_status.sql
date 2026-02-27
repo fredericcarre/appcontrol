@@ -1,4 +1,4 @@
--- V019: Gateway and Agent status management
+-- V020: Gateway and Agent status management
 -- Adds explicit status column for suspend/activate/delete operations
 
 -- Add status column to gateways

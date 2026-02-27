@@ -1,4 +1,4 @@
--- V021: Enriched discovery — operational commands, config/log files, service matching
+-- V023: Enriched discovery — operational commands, config/log files, service matching
 --
 -- Adds operational columns to discovery_draft_components so that drafts carry
 -- check/start/stop commands, detected config files, log files, and matched

@@ -1,4 +1,4 @@
--- V020: Platform Admin, Gateway-Site Binding, Certificate Revocation
+-- V022: Platform Admin, Gateway-Site Binding, Certificate Revocation
 -- Adds super-admin role, links gateways to sites, and enables cert revocation.
 
 -- ============================================================================
