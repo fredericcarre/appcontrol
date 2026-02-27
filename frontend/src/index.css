@@ -53,3 +53,20 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Discovery topology edge animations */
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+.discovery-edge-animated {
+  stroke-dasharray: 10 5;
+  animation: flow-dash 0.8s linear infinite;
+}
+
+.discovery-node-glow {
+  box-shadow: 0 0 12px 4px rgba(59, 130, 246, 0.4);
+  transition: box-shadow 0.2s ease;
+}
