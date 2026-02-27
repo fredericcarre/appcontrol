@@ -203,6 +203,92 @@ pub struct DiscoveredProcess {
     /// Key environment variables (filtered: HOME, PATH, DB_*, *_PORT, etc.)
     #[serde(default)]
     pub env_vars: std::collections::HashMap<String, String>,
+    /// Working directory of the process (Linux: /proc/[pid]/cwd)
+    #[serde(default)]
+    pub working_dir: Option<String>,
+    /// Config files detected via open file descriptors
+    #[serde(default)]
+    pub config_files: Vec<DiscoveredConfigFile>,
+    /// Log files detected via open file descriptors
+    #[serde(default)]
+    pub log_files: Vec<DiscoveredLogFile>,
+    /// Suggested check/start/stop commands (from service cross-referencing)
+    #[serde(default)]
+    pub command_suggestion: Option<CommandSuggestion>,
+    /// Matched system service name (systemd unit / Windows service)
+    #[serde(default)]
+    pub matched_service: Option<String>,
+}
+
+/// A config file found open by a discovered process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredConfigFile {
+    pub path: String,
+    /// Extracted connection-relevant entries (host:port, URLs, DSNs)
+    #[serde(default)]
+    pub extracted_endpoints: Vec<ExtractedEndpoint>,
+}
+
+/// A connection endpoint extracted from a config file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractedEndpoint {
+    /// Config key or context (e.g. "spring.datasource.url", "REDIS_HOST")
+    pub key: String,
+    /// Raw value (e.g. "jdbc:postgresql://db-srv:5432/orders")
+    pub value: String,
+    /// Parsed hostname if available
+    #[serde(default)]
+    pub parsed_host: Option<String>,
+    /// Parsed port if available
+    #[serde(default)]
+    pub parsed_port: Option<u16>,
+    /// Inferred technology (e.g. "postgresql", "redis", "rabbitmq")
+    #[serde(default)]
+    pub technology: Option<String>,
+}
+
+/// A log file found open by a discovered process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredLogFile {
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+/// Suggested operational commands for a discovered process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandSuggestion {
+    pub check_cmd: String,
+    #[serde(default)]
+    pub start_cmd: Option<String>,
+    #[serde(default)]
+    pub stop_cmd: Option<String>,
+    #[serde(default)]
+    pub restart_cmd: Option<String>,
+    /// Confidence level: "high" (systemd/service), "medium" (pidfile), "low" (pgrep)
+    pub confidence: String,
+    /// Source of the suggestion: "systemd", "windows-service", "docker", "process"
+    pub source: String,
+}
+
+/// A scheduled job (cron, systemd timer, Windows Task Scheduler).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredScheduledJob {
+    pub name: String,
+    /// Cron expression or human-readable schedule
+    pub schedule: String,
+    /// The command that runs
+    pub command: String,
+    /// Which user runs this job
+    pub user: String,
+    /// Source: "crontab", "cron.d", "systemd-timer", "task-scheduler"
+    pub source: String,
+    /// Whether the job is currently enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A TCP listener discovered on the host.

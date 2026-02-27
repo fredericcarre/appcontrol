@@ -75,6 +75,9 @@ pub enum AgentMessage {
         listeners: Vec<crate::types::DiscoveredListener>,
         connections: Vec<crate::types::DiscoveredConnection>,
         services: Vec<crate::types::DiscoveredService>,
+        /// Scheduled jobs (cron, systemd timers, Windows Task Scheduler)
+        #[serde(default)]
+        scheduled_jobs: Vec<crate::types::DiscoveredScheduledJob>,
         scanned_at: DateTime<Utc>,
     },
     /// Progress of an air-gap binary update received via WebSocket chunks.

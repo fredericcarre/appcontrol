@@ -14,6 +14,11 @@ import {
   Plus,
   Eye,
   AlertTriangle,
+  FileText,
+  ScrollText,
+  Clock,
+  Terminal,
+  Shield,
 } from 'lucide-react';
 import {
   useDiscoveryReports,
@@ -28,6 +33,8 @@ import {
   type CorrelatedDependency,
   type UnresolvedConnection,
   type DiscoveryReportDetail,
+  type DiscoveredScheduledJob,
+  type CommandSuggestion,
 } from '@/api/discovery';
 import { useAgents, type Agent } from '@/api/reports';
 
@@ -41,7 +48,7 @@ const STEPS: { key: WizardStep; label: string; description: string }[] = [
   { key: 'collect', label: '1. Collect', description: 'Scan agents' },
   { key: 'review', label: '2. Review', description: 'View raw data' },
   { key: 'correlate', label: '3. Correlate', description: 'Cross-host analysis' },
-  { key: 'configure', label: '4. Configure', description: 'Name & validate' },
+  { key: 'configure', label: '4. Configure', description: 'Commands & validate' },
   { key: 'drafts', label: '5. Drafts', description: 'Apply to map' },
 ];
 
@@ -58,6 +65,7 @@ export function DiscoveryPage() {
   const [correlationServices, setCorrelationServices] = useState<CorrelatedService[]>([]);
   const [correlationDeps, setCorrelationDeps] = useState<CorrelatedDependency[]>([]);
   const [unresolvedConns, setUnresolvedConns] = useState<UnresolvedConnection[]>([]);
+  const [scheduledJobs, setScheduledJobs] = useState<DiscoveredScheduledJob[]>([]);
 
   // Configure step state
   const [appName, setAppName] = useState('');
@@ -115,10 +123,11 @@ export function DiscoveryPage() {
       {step === 'correlate' && (
         <CorrelateStep
           selectedAgents={selectedAgents}
-          onCorrelationDone={(services, deps, unresolved) => {
+          onCorrelationDone={(services, deps, unresolved, jobs) => {
             setCorrelationServices(services);
             setCorrelationDeps(deps);
             setUnresolvedConns(unresolved);
+            setScheduledJobs(jobs);
             // Pre-select all services and deps
             setEditedServices([...services]);
             setEnabledServiceIndices(new Set(services.map((_, i) => i)));
@@ -132,6 +141,7 @@ export function DiscoveryPage() {
           services={correlationServices}
           dependencies={correlationDeps}
           unresolvedConns={unresolvedConns}
+          scheduledJobs={scheduledJobs}
           appName={appName}
           setAppName={setAppName}
           editedServices={editedServices}
@@ -291,7 +301,7 @@ function ReviewStep({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Click a report to inspect processes, listeners, and connections on that host.
+          Click a report to inspect processes, listeners, connections, and detected configs on that host.
         </p>
         <button onClick={onNext} className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
           Next: Cross-host Analysis <ChevronRight className="h-4 w-4" />
@@ -336,7 +346,7 @@ function ReviewStep({
 }
 
 function ReportDetailPanel({ report }: { report: DiscoveryReportDetail }) {
-  const { processes = [], listeners = [], connections = [], services = [] } = report.report;
+  const { processes = [], listeners = [], connections = [], services = [], scheduled_jobs: scheduledJobs = [] } = report.report;
   const appProcesses = processes.filter(p => p.listening_ports?.length > 0);
 
   return (
@@ -349,6 +359,7 @@ function ReportDetailPanel({ report }: { report: DiscoveryReportDetail }) {
             <span>{listeners.length} listeners</span>
             <span>{connections.length} connections</span>
             <span>{services.length} services</span>
+            {scheduledJobs.length > 0 && <span>{scheduledJobs.length} jobs</span>}
           </div>
         </div>
 
@@ -359,7 +370,7 @@ function ReportDetailPanel({ report }: { report: DiscoveryReportDetail }) {
             <div className="border rounded-md max-h-40 overflow-y-auto">
               <Table>
                 <TableHeader><TableRow>
-                  <TableHead>Process</TableHead><TableHead>PID</TableHead><TableHead>Ports</TableHead><TableHead>User</TableHead>
+                  <TableHead>Process</TableHead><TableHead>PID</TableHead><TableHead>Ports</TableHead><TableHead>Service</TableHead><TableHead>User</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
                   {appProcesses.map((p) => (
@@ -373,6 +384,7 @@ function ReportDetailPanel({ report }: { report: DiscoveryReportDetail }) {
                           ))}
                         </div>
                       </TableCell>
+                      <TableCell className="text-xs">{p.matched_service || '-'}</TableCell>
                       <TableCell className="text-xs">{p.user}</TableCell>
                     </TableRow>
                   ))}
@@ -426,6 +438,32 @@ function ReportDetailPanel({ report }: { report: DiscoveryReportDetail }) {
             </div>
           </div>
         )}
+
+        {/* Scheduled Jobs */}
+        {scheduledJobs.length > 0 && (
+          <div>
+            <h4 className="text-sm font-semibold mb-1 flex items-center gap-1">
+              <Clock className="h-3.5 w-3.5" /> Scheduled Jobs ({scheduledJobs.length})
+            </h4>
+            <div className="border rounded-md max-h-32 overflow-y-auto">
+              <Table>
+                <TableHeader><TableRow>
+                  <TableHead>Name</TableHead><TableHead>Schedule</TableHead><TableHead>Command</TableHead><TableHead>User</TableHead>
+                </TableRow></TableHeader>
+                <TableBody>
+                  {scheduledJobs.map((j: any, i: number) => (
+                    <TableRow key={i}>
+                      <TableCell className="font-medium text-xs">{j.name}</TableCell>
+                      <TableCell className="font-mono text-xs">{j.schedule}</TableCell>
+                      <TableCell className="font-mono text-xs truncate max-w-[200px]">{j.command}</TableCell>
+                      <TableCell className="text-xs">{j.user}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -440,7 +478,7 @@ function CorrelateStep({
   onCorrelationDone,
 }: {
   selectedAgents: string[];
-  onCorrelationDone: (services: CorrelatedService[], deps: CorrelatedDependency[], unresolved: UnresolvedConnection[]) => void;
+  onCorrelationDone: (services: CorrelatedService[], deps: CorrelatedDependency[], unresolved: UnresolvedConnection[], jobs: DiscoveredScheduledJob[]) => void;
 }) {
   const correlate = useCorrelate();
   const { data: reports } = useDiscoveryReports();
@@ -453,7 +491,7 @@ function CorrelateStep({
   const runCorrelation = () => {
     correlate.mutate({ agent_ids: agentIds }, {
       onSuccess: (result) => {
-        onCorrelationDone(result.services, result.dependencies, result.unresolved_connections);
+        onCorrelationDone(result.services, result.dependencies, result.unresolved_connections, result.scheduled_jobs || []);
       },
     });
   };
@@ -467,7 +505,8 @@ function CorrelateStep({
         </h3>
         <p className="text-sm text-muted-foreground">
           The correlation engine will analyze scan data from {agentIds.length} agent(s), group processes
-          by service, and identify TCP connections between hosts to build a dependency graph.
+          by service, identify TCP connections and config-based dependencies between hosts,
+          suggest operational commands, and detect scheduled jobs.
         </p>
         <p className="text-sm text-muted-foreground">
           This is not magic — you will review and adjust the results in the next step.
@@ -498,13 +537,31 @@ function CorrelateStep({
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Configure — user reviews, names, enables/disables components
+// Confidence badge helper
+// ---------------------------------------------------------------------------
+
+function ConfidenceBadge({ confidence }: { confidence?: string }) {
+  switch (confidence) {
+    case 'high':
+      return <Badge variant="running" className="text-xs"><Shield className="h-3 w-3 mr-1" />high</Badge>;
+    case 'medium':
+      return <Badge variant="degraded" className="text-xs">medium</Badge>;
+    case 'low':
+      return <Badge variant="stopped" className="text-xs">low</Badge>;
+    default:
+      return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step 4: Configure — commands, configs, logs, batch jobs
 // ---------------------------------------------------------------------------
 
 function ConfigureStep({
   services,
   dependencies,
   unresolvedConns,
+  scheduledJobs,
   appName,
   setAppName,
   editedServices,
@@ -518,6 +575,7 @@ function ConfigureStep({
   services: CorrelatedService[];
   dependencies: CorrelatedDependency[];
   unresolvedConns: UnresolvedConnection[];
+  scheduledJobs: DiscoveredScheduledJob[];
   appName: string;
   setAppName: (v: string) => void;
   editedServices: CorrelatedService[];
@@ -529,12 +587,12 @@ function ConfigureStep({
   onDraftCreated: () => void;
 }) {
   const createDraft = useCreateDraft();
+  const [expandedService, setExpandedService] = useState<number | null>(null);
 
   const toggleService = useCallback((idx: number) => {
     const next = new Set(enabledServiceIndices);
     if (next.has(idx)) {
       next.delete(idx);
-      // Also disable deps referencing this service
       const nextDeps = new Set(enabledDepIndices);
       dependencies.forEach((d, di) => {
         if (d.from_service_index === idx || d.to_service_index === idx) {
@@ -567,6 +625,16 @@ function ConfigureStep({
     setEditedServices(copy);
   }, [editedServices, setEditedServices]);
 
+  const updateServiceCommand = useCallback((idx: number, field: keyof CommandSuggestion & string, value: string) => {
+    const copy = [...editedServices];
+    const current = copy[idx].command_suggestion || { check_cmd: '', confidence: 'low', source: 'manual' };
+    copy[idx] = {
+      ...copy[idx],
+      command_suggestion: { ...current, [field]: value || undefined },
+    };
+    setEditedServices(copy);
+  }, [editedServices, setEditedServices]);
+
   const handleCreateDraft = () => {
     const enabledServices = editedServices.filter((_, i) => enabledServiceIndices.has(i));
     const tempIds = new Map<number, string>();
@@ -583,6 +651,15 @@ function ConfigureStep({
       agent_id: s.agent_id,
       listening_ports: s.ports,
       component_type: s.component_type,
+      check_cmd: s.command_suggestion?.check_cmd,
+      start_cmd: s.command_suggestion?.start_cmd,
+      stop_cmd: s.command_suggestion?.stop_cmd,
+      restart_cmd: s.command_suggestion?.restart_cmd,
+      command_confidence: s.command_suggestion?.confidence || 'low',
+      command_source: s.command_suggestion?.source || 'process',
+      config_files: s.config_files,
+      log_files: s.log_files,
+      matched_service: s.matched_service,
     }));
 
     const deps = dependencies
@@ -620,16 +697,17 @@ function ConfigureStep({
         </CardContent>
       </Card>
 
-      {/* Components — user can enable/disable, rename, change type */}
+      {/* Components — with commands, configs, logs */}
       <Card>
         <CardContent className="p-6 space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-lg">
+            <h3 className="font-semibold text-lg flex items-center gap-2">
+              <Terminal className="h-5 w-5" />
               Discovered Components ({enabledServiceIndices.size}/{services.length})
             </h3>
-            <p className="text-xs text-muted-foreground">Uncheck components to exclude them</p>
+            <p className="text-xs text-muted-foreground">Click a row to edit commands and view details</p>
           </div>
-          <div className="border rounded-md max-h-72 overflow-y-auto">
+          <div className="border rounded-md">
             <Table>
               <TableHeader><TableRow>
                 <TableHead className="w-10"></TableHead>
@@ -638,54 +716,183 @@ function ConfigureStep({
                 <TableHead>Host</TableHead>
                 <TableHead>Ports</TableHead>
                 <TableHead>Type</TableHead>
+                <TableHead>Commands</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {editedServices.map((s, i) => (
-                  <TableRow key={i} className={!enabledServiceIndices.has(i) ? 'opacity-40' : ''}>
-                    <TableCell>
-                      <input
-                        type="checkbox"
-                        checked={enabledServiceIndices.has(i)}
-                        onChange={() => toggleService(i)}
-                        className="rounded"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <input
-                        type="text"
-                        value={s.suggested_name}
-                        onChange={(e) => updateServiceName(i, e.target.value)}
-                        className="w-full min-w-[160px] rounded border border-input bg-background px-2 py-1 text-sm"
-                        disabled={!enabledServiceIndices.has(i)}
-                      />
-                    </TableCell>
-                    <TableCell className="text-sm">{s.process_name}</TableCell>
-                    <TableCell className="text-sm font-mono">{s.hostname}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1 flex-wrap">
-                        {s.ports.map(p => (
-                          <Badge key={p} variant="secondary" className="text-xs font-mono">{p}</Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <select
-                        value={s.component_type}
-                        onChange={(e) => updateServiceType(i, e.target.value)}
-                        disabled={!enabledServiceIndices.has(i)}
-                        className="rounded border border-input bg-background px-2 py-1 text-xs"
-                      >
-                        <option value="service">service</option>
-                        <option value="database">database</option>
-                        <option value="cache">cache</option>
-                        <option value="queue">queue</option>
-                        <option value="proxy">proxy</option>
-                        <option value="web">web</option>
-                        <option value="search">search</option>
-                        <option value="batch">batch</option>
-                      </select>
-                    </TableCell>
-                  </TableRow>
+                  <>
+                    <TableRow
+                      key={`row-${i}`}
+                      className={`cursor-pointer ${!enabledServiceIndices.has(i) ? 'opacity-40' : ''} ${expandedService === i ? 'bg-accent/50' : ''}`}
+                      onClick={() => setExpandedService(expandedService === i ? null : i)}
+                    >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={enabledServiceIndices.has(i)}
+                          onChange={() => toggleService(i)}
+                          className="rounded"
+                        />
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="text"
+                          value={s.suggested_name}
+                          onChange={(e) => updateServiceName(i, e.target.value)}
+                          className="w-full min-w-[160px] rounded border border-input bg-background px-2 py-1 text-sm"
+                          disabled={!enabledServiceIndices.has(i)}
+                        />
+                      </TableCell>
+                      <TableCell className="text-sm">{s.process_name}</TableCell>
+                      <TableCell className="text-sm font-mono">{s.hostname}</TableCell>
+                      <TableCell>
+                        <div className="flex gap-1 flex-wrap">
+                          {s.ports.map(p => (
+                            <Badge key={p} variant="secondary" className="text-xs font-mono">{p}</Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={s.component_type}
+                          onChange={(e) => updateServiceType(i, e.target.value)}
+                          disabled={!enabledServiceIndices.has(i)}
+                          className="rounded border border-input bg-background px-2 py-1 text-xs"
+                        >
+                          <option value="service">service</option>
+                          <option value="database">database</option>
+                          <option value="cache">cache</option>
+                          <option value="queue">queue</option>
+                          <option value="proxy">proxy</option>
+                          <option value="web">web</option>
+                          <option value="search">search</option>
+                          <option value="batch">batch</option>
+                        </select>
+                      </TableCell>
+                      <TableCell>
+                        {s.command_suggestion ? (
+                          <ConfidenceBadge confidence={s.command_suggestion.confidence} />
+                        ) : (
+                          <Badge variant="outline" className="text-xs">none</Badge>
+                        )}
+                      </TableCell>
+                    </TableRow>
+
+                    {/* Expanded details */}
+                    {expandedService === i && enabledServiceIndices.has(i) && (
+                      <TableRow key={`detail-${i}`}>
+                        <TableCell colSpan={7} className="bg-accent/30 p-4">
+                          <div className="space-y-4">
+                            {/* Commands */}
+                            <div>
+                              <h5 className="text-sm font-semibold mb-2 flex items-center gap-1">
+                                <Terminal className="h-3.5 w-3.5" /> Commands
+                                {s.command_suggestion && (
+                                  <span className="font-normal text-xs text-muted-foreground ml-2">
+                                    (source: {s.command_suggestion.source})
+                                  </span>
+                                )}
+                              </h5>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-xs text-muted-foreground">Check</label>
+                                  <input
+                                    type="text"
+                                    value={s.command_suggestion?.check_cmd || ''}
+                                    onChange={(e) => updateServiceCommand(i, 'check_cmd', e.target.value)}
+                                    placeholder="e.g. systemctl is-active myservice"
+                                    className="w-full rounded border border-input bg-background px-2 py-1 text-xs font-mono"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-xs text-muted-foreground">Start</label>
+                                  <input
+                                    type="text"
+                                    value={s.command_suggestion?.start_cmd || ''}
+                                    onChange={(e) => updateServiceCommand(i, 'start_cmd', e.target.value)}
+                                    placeholder="e.g. systemctl start myservice"
+                                    className="w-full rounded border border-input bg-background px-2 py-1 text-xs font-mono"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-xs text-muted-foreground">Stop</label>
+                                  <input
+                                    type="text"
+                                    value={s.command_suggestion?.stop_cmd || ''}
+                                    onChange={(e) => updateServiceCommand(i, 'stop_cmd', e.target.value)}
+                                    placeholder="e.g. systemctl stop myservice"
+                                    className="w-full rounded border border-input bg-background px-2 py-1 text-xs font-mono"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-xs text-muted-foreground">Restart</label>
+                                  <input
+                                    type="text"
+                                    value={s.command_suggestion?.restart_cmd || ''}
+                                    onChange={(e) => updateServiceCommand(i, 'restart_cmd', e.target.value)}
+                                    placeholder="e.g. systemctl restart myservice"
+                                    className="w-full rounded border border-input bg-background px-2 py-1 text-xs font-mono"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Config files */}
+                            {s.config_files && s.config_files.length > 0 && (
+                              <div>
+                                <h5 className="text-sm font-semibold mb-1 flex items-center gap-1">
+                                  <FileText className="h-3.5 w-3.5" /> Config Files ({s.config_files.length})
+                                </h5>
+                                <div className="space-y-1">
+                                  {s.config_files.map((cf, ci) => (
+                                    <div key={ci} className="text-xs">
+                                      <code className="font-mono text-muted-foreground">{cf.path}</code>
+                                      {cf.extracted_endpoints && cf.extracted_endpoints.length > 0 && (
+                                        <div className="ml-4 mt-1 space-y-0.5">
+                                          {cf.extracted_endpoints.map((ep, ei) => (
+                                            <div key={ei} className="flex items-center gap-2">
+                                              <span className="text-xs font-medium">{ep.key}:</span>
+                                              <code className="text-xs text-muted-foreground">{ep.value}</code>
+                                              {ep.technology && (
+                                                <Badge variant="secondary" className="text-[10px]">{ep.technology}</Badge>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Log files */}
+                            {s.log_files && s.log_files.length > 0 && (
+                              <div>
+                                <h5 className="text-sm font-semibold mb-1 flex items-center gap-1">
+                                  <ScrollText className="h-3.5 w-3.5" /> Log Files ({s.log_files.length})
+                                </h5>
+                                <div className="space-y-0.5">
+                                  {s.log_files.map((lf, li) => (
+                                    <div key={li} className="text-xs flex items-center gap-2">
+                                      <code className="font-mono text-muted-foreground">{lf.path}</code>
+                                      <span className="text-muted-foreground">({formatBytes(lf.size_bytes)})</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {s.matched_service && (
+                              <div className="text-xs text-muted-foreground">
+                                Matched system service: <code className="font-mono">{s.matched_service}</code>
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </>
                 ))}
               </TableBody>
             </Table>
@@ -716,6 +923,7 @@ function ConfigureStep({
                   <TableHead></TableHead>
                   <TableHead>To</TableHead>
                   <TableHead>Via</TableHead>
+                  <TableHead>Detail</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
                   {dependencies.map((d, i) => {
@@ -734,7 +942,19 @@ function ConfigureStep({
                         <TableCell className="text-sm">{from?.suggested_name || d.from_process || '?'}</TableCell>
                         <TableCell><ArrowRight className="h-4 w-4 text-muted-foreground" /></TableCell>
                         <TableCell className="text-sm">{to?.suggested_name || '?'}</TableCell>
-                        <TableCell><Badge variant="outline" className="text-xs">{d.inferred_via}</Badge></TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={d.inferred_via === 'config_file' ? 'running' : 'outline'}
+                            className="text-xs"
+                          >
+                            {d.inferred_via}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {d.config_key && <span>{d.config_key}</span>}
+                          {d.technology && <Badge variant="secondary" className="text-[10px] ml-1">{d.technology}</Badge>}
+                          {!d.config_key && <span>{d.remote_addr}:{d.remote_port}</span>}
+                        </TableCell>
                       </TableRow>
                     );
                   })}
@@ -744,6 +964,46 @@ function ConfigureStep({
           )}
         </CardContent>
       </Card>
+
+      {/* Scheduled Jobs */}
+      {scheduledJobs.length > 0 && (
+        <Card>
+          <CardContent className="p-6 space-y-3">
+            <h3 className="font-semibold text-lg flex items-center gap-2">
+              <Clock className="h-5 w-5" />
+              Scheduled Jobs ({scheduledJobs.length})
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              Cron jobs, systemd timers, and scheduled tasks discovered on the scanned servers.
+              These can be promoted to batch components in the application map.
+            </p>
+            <div className="border rounded-md max-h-40 overflow-y-auto">
+              <Table>
+                <TableHeader><TableRow>
+                  <TableHead>Host</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Schedule</TableHead>
+                  <TableHead>Command</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>User</TableHead>
+                </TableRow></TableHeader>
+                <TableBody>
+                  {scheduledJobs.map((j, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="text-xs font-mono">{j.hostname || '-'}</TableCell>
+                      <TableCell className="font-medium text-xs">{j.name}</TableCell>
+                      <TableCell className="font-mono text-xs">{j.schedule}</TableCell>
+                      <TableCell className="font-mono text-xs truncate max-w-[200px]" title={j.command}>{j.command}</TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px]">{j.source}</Badge></TableCell>
+                      <TableCell className="text-xs">{j.user}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Unresolved connections */}
       {unresolvedConns.length > 0 && (
@@ -870,18 +1130,24 @@ function DraftsStep() {
 
             <div>
               <h4 className="text-sm font-semibold mb-1">Components</h4>
-              <div className="border rounded-md max-h-40 overflow-y-auto">
+              <div className="border rounded-md max-h-48 overflow-y-auto">
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>Name</TableHead><TableHead>Process</TableHead><TableHead>Host</TableHead><TableHead>Type</TableHead>
+                    <TableHead>Name</TableHead><TableHead>Host</TableHead><TableHead>Type</TableHead><TableHead>Check</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {draft.components.map(c => (
                       <TableRow key={c.id}>
                         <TableCell className="font-medium">{c.name}</TableCell>
-                        <TableCell className="text-muted-foreground">{c.process_name || '-'}</TableCell>
                         <TableCell className="font-mono text-xs">{c.host || '-'}</TableCell>
                         <TableCell><Badge variant="secondary">{c.component_type}</Badge></TableCell>
+                        <TableCell>
+                          {c.check_cmd ? (
+                            <ConfidenceBadge confidence={c.command_confidence} />
+                          ) : (
+                            <span className="text-xs text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -933,7 +1199,7 @@ function DraftsStep() {
                 {applyDraft.isSuccess && (
                   <div className="rounded-md bg-green-50 border border-green-200 p-3 text-sm text-green-800">
                     <CheckCircle className="h-4 w-4 inline mr-2" />
-                    Application "{draft.name}" created in advisory mode. Go to Dashboard to view the map.
+                    Application "{draft.name}" created with operational commands in advisory mode. Go to Dashboard to view the map.
                   </div>
                 )}
               </div>
@@ -956,4 +1222,12 @@ function DraftStatusBadge({ status }: { status: string }) {
     case 'dismissed': return <Badge variant="stopped">Dismissed</Badge>;
     default: return <Badge variant="outline">{status}</Badge>;
   }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }

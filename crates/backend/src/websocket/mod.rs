@@ -573,6 +573,7 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             ref listeners,
             ref connections,
             ref services,
+            ref scheduled_jobs,
             scanned_at,
         } => {
             tracing::info!(
@@ -582,6 +583,7 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                 listeners = listeners.len(),
                 connections = connections.len(),
                 services = services.len(),
+                scheduled_jobs = scheduled_jobs.len(),
                 "Discovery report received"
             );
             // Store the full report as JSONB
@@ -590,6 +592,7 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                 "listeners": listeners,
                 "connections": connections,
                 "services": services,
+                "scheduled_jobs": scheduled_jobs,
             }))
             .unwrap_or_default();
 
