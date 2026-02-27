@@ -451,7 +451,7 @@ function ReportDetailPanel({ report }: { report: DiscoveryReportDetail }) {
                   <TableHead>Name</TableHead><TableHead>Schedule</TableHead><TableHead>Command</TableHead><TableHead>User</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
-                  {scheduledJobs.map((j: any, i: number) => (
+                  {scheduledJobs.map((j: DiscoveredScheduledJob, i: number) => (
                     <TableRow key={i}>
                       <TableCell className="font-medium text-xs">{j.name}</TableCell>
                       <TableCell className="font-mono text-xs">{j.schedule}</TableCell>
