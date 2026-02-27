@@ -8,21 +8,22 @@ import { Shield } from 'lucide-react';
 import client from '@/api/client';
 
 export function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState('admin@localhost');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const setAuth = useAuthStore((s) => s.setAuth);
   const navigate = useNavigate();
 
-  const doLogin = async (loginEmail: string, loginPassword?: string) => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
       const { data } = await client.post('/v1/auth/login', {
-        email: loginEmail,
-        password: loginPassword,
+        email,
+        password: password || undefined,
       });
       setAuth(data.token, data.user);
       navigate('/');
@@ -32,15 +33,6 @@ export function LoginPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await doLogin(email, password);
-  };
-
-  const handleDevLogin = () => {
-    doLogin('admin@localhost');
   };
 
   return (
@@ -78,6 +70,7 @@ export function LoginPage() {
               <Input
                 id="password"
                 type="password"
+                placeholder="Leave empty in dev mode"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
@@ -92,17 +85,6 @@ export function LoginPage() {
             }}>
               Sign in with SSO
             </Button>
-            <div className="w-full border-t pt-3">
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full text-muted-foreground"
-                disabled={loading}
-                onClick={handleDevLogin}
-              >
-                Dev Quick Login (admin@localhost)
-              </Button>
-            </div>
           </CardFooter>
         </form>
       </Card>
