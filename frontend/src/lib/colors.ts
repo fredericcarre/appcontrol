@@ -26,3 +26,23 @@ export const ERROR_BRANCH_COLORS = {
 
 export type ComponentState = keyof typeof STATE_COLORS;
 export type ComponentType = keyof typeof COMPONENT_TYPE_ICONS;
+
+export const TECHNOLOGY_COLORS: Record<string, string> = {
+  postgresql: '#336791',
+  mysql: '#4479A1',
+  oracle: '#F80000',
+  sqlserver: '#CC2927',
+  redis: '#DC382D',
+  mongodb: '#47A248',
+  kafka: '#231F20',
+  rabbitmq: '#FF6600',
+  activemq: '#D5382F',
+  elasticsearch: '#FEC514',
+  http: '#4CAF50',
+  https: '#2E7D32',
+  ldap: '#7B1FA2',
+  smtp: '#1565C0',
+  ftp: '#795548',
+  ssh: '#263238',
+  default: '#94a3b8',
+};
