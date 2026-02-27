@@ -640,6 +640,7 @@ struct V4Commands {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct V4CommandDetail {
     cmd: String,
     timeout_seconds: Option<i32>,
@@ -910,8 +911,7 @@ pub async fn import_json_map(
                 let enum_vals_json = param
                     .enum_values
                     .as_ref()
-                    .map(|v| serde_json::to_value(v).ok())
-                    .flatten();
+                    .and_then(|v| serde_json::to_value(v).ok());
 
                 sqlx::query(
                     r#"INSERT INTO command_input_params (
