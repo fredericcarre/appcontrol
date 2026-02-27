@@ -5,6 +5,7 @@ export interface ComponentTypeDefinition {
   type: string;
   label: string;
   icon: React.ElementType;
+  iconName: string;
   color: string;
   description: string;
 }
@@ -14,6 +15,7 @@ export const COMPONENT_TYPES: ComponentTypeDefinition[] = [
     type: 'database',
     label: 'Database',
     icon: Database,
+    iconName: 'database',
     color: '#1565C0',
     description: 'SQL, NoSQL, or data stores',
   },
@@ -21,6 +23,7 @@ export const COMPONENT_TYPES: ComponentTypeDefinition[] = [
     type: 'middleware',
     label: 'Middleware',
     icon: Layers,
+    iconName: 'layers',
     color: '#6A1B9A',
     description: 'Message queues, cache, ESB',
   },
@@ -28,6 +31,7 @@ export const COMPONENT_TYPES: ComponentTypeDefinition[] = [
     type: 'appserver',
     label: 'App Server',
     icon: Server,
+    iconName: 'server',
     color: '#2E7D32',
     description: 'Application servers, backends',
   },
@@ -35,6 +39,7 @@ export const COMPONENT_TYPES: ComponentTypeDefinition[] = [
     type: 'webfront',
     label: 'Web Front',
     icon: Globe,
+    iconName: 'globe',
     color: '#E65100',
     description: 'Web servers, load balancers',
   },
@@ -42,6 +47,7 @@ export const COMPONENT_TYPES: ComponentTypeDefinition[] = [
     type: 'service',
     label: 'Service',
     icon: Cog,
+    iconName: 'cog',
     color: '#37474F',
     description: 'Microservices, APIs',
   },
@@ -49,6 +55,7 @@ export const COMPONENT_TYPES: ComponentTypeDefinition[] = [
     type: 'batch',
     label: 'Batch',
     icon: Clock,
+    iconName: 'clock',
     color: '#4E342E',
     description: 'Scheduled jobs, ETL',
   },
@@ -56,6 +63,7 @@ export const COMPONENT_TYPES: ComponentTypeDefinition[] = [
     type: 'custom',
     label: 'Custom',
     icon: Box,
+    iconName: 'box',
     color: '#455A64',
     description: 'Other component types',
   },

@@ -92,7 +92,7 @@ export function ComponentEditor({
         display_name: '',
         description: '',
         component_type: initialType,
-        icon: typeInfo?.icon?.name?.toLowerCase() || 'box',
+        icon: typeInfo?.iconName || 'box',
         host: '',
         group_id: null,
         check_cmd: '',
