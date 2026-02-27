@@ -15,6 +15,7 @@ import ImportPage from '@/pages/ImportPage';
 import { EnrollmentTokensPage } from '@/pages/EnrollmentTokens';
 import { ShareLinkPage } from '@/pages/ShareLinkPage';
 import { ApiKeysPage } from '@/pages/ApiKeysPage';
+import { DiscoveryPage } from '@/pages/DiscoveryPage';
 import { useUiStore } from '@/stores/ui';
 import { cn } from '@/lib/utils';
 
@@ -52,6 +53,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<AuthLayout><DashboardPage /></AuthLayout>} />
+      <Route path="/discovery" element={<AuthLayout><DiscoveryPage /></AuthLayout>} />
       <Route path="/apps/:appId" element={<AuthLayout><MapViewPage /></AuthLayout>} />
       <Route path="/teams" element={<AuthLayout><TeamsPage /></AuthLayout>} />
       <Route path="/agents" element={<AuthLayout><AgentsPage /></AuthLayout>} />

@@ -126,6 +126,50 @@ pub async fn trigger_scan(
     })))
 }
 
+/// Trigger discovery scan on ALL connected agents.
+pub async fn trigger_all(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    let request_id = Uuid::new_v4();
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "discovery_trigger_all",
+        "discovery",
+        Uuid::nil(),
+        json!({ "request_id": request_id }),
+    )
+    .await?;
+
+    // Get all active agents for this org
+    let agent_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM agents WHERE organization_id = $1 AND is_active = true",
+    )
+    .bind(user.organization_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut sent_count = 0u32;
+    for agent_id in &agent_ids {
+        let msg = appcontrol_common::BackendMessage::RequestDiscovery { request_id };
+        if state.ws_hub.send_to_agent(*agent_id, msg) {
+            sent_count += 1;
+        }
+    }
+
+    Ok(Json(json!({
+        "request_id": request_id,
+        "agents_targeted": agent_ids.len(),
+        "agents_sent": sent_count,
+    })))
+}
+
 /// List discovery drafts (inferred application topologies).
 pub async fn list_drafts(
     State(state): State<Arc<AppState>>,
@@ -231,10 +275,29 @@ pub async fn get_draft(
 /// Run inference on recent discovery reports to create a draft.
 /// Groups processes by listening port, matches outbound connections to listeners,
 /// and creates a draft application with inferred dependencies.
+///
+/// ## Inference Algorithm
+///
+/// 1. For each agent, extract listeners on application ports (1024–49151)
+///    and create a draft component per unique (process_name, port) pair.
+/// 2. For each agent, extract ESTABLISHED outbound connections.
+/// 3. Cross-correlate: if agent A has a connection to remote_addr:remote_port
+///    and agent B listens on that port, infer a dependency A→B.
+/// 4. Also match connections within the same host (process X → process Y).
 #[derive(Debug, Deserialize)]
 pub struct InferRequest {
     pub name: String,
     pub agent_ids: Vec<Uuid>,
+}
+
+/// In-memory representation of a component during inference.
+struct InferredComponent {
+    comp_id: Uuid,
+    agent_id: Uuid,
+    hostname: String,
+    process_name: String,
+    port: u16,
+    address: String,
 }
 
 pub async fn infer(
@@ -263,7 +326,7 @@ pub async fn infer(
     .await?;
 
     // Get the most recent report for each specified agent
-    let mut all_listeners: Vec<(Uuid, String, serde_json::Value)> = Vec::new();
+    let mut agent_reports: Vec<(Uuid, String, serde_json::Value)> = Vec::new();
 
     for agent_id in &body.agent_ids {
         let report = sqlx::query_as::<_, (Uuid, String, serde_json::Value)>(
@@ -276,11 +339,11 @@ pub async fn infer(
         .await?;
 
         if let Some(r) = report {
-            all_listeners.push(r);
+            agent_reports.push(r);
         }
     }
 
-    if all_listeners.is_empty() {
+    if agent_reports.is_empty() {
         return Err(ApiError::Validation(
             "No discovery reports found for the specified agents".to_string(),
         ));
@@ -298,9 +361,34 @@ pub async fn infer(
     .execute(&state.db)
     .await?;
 
-    // For each agent report, extract significant listeners as draft components
-    let mut component_count = 0u32;
-    for (_agent_id, _hostname, report) in &all_listeners {
+    // -----------------------------------------------------------------------
+    // Phase 1: Create components from listeners
+    // -----------------------------------------------------------------------
+    let mut components: Vec<InferredComponent> = Vec::new();
+
+    // Also collect agent IP addresses from the agents table for connection matching
+    let mut agent_ips: std::collections::HashMap<Uuid, Vec<String>> =
+        std::collections::HashMap::new();
+    for (agent_id, _, _) in &agent_reports {
+        let ips = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT COALESCE(ip_addresses, '[]'::jsonb) FROM agents WHERE id = $1",
+        )
+        .bind(agent_id)
+        .fetch_optional(&state.db)
+        .await?;
+
+        if let Some(ips_val) = ips {
+            if let Some(arr) = ips_val.as_array() {
+                let ip_list: Vec<String> = arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
+                agent_ips.insert(*agent_id, ip_list);
+            }
+        }
+    }
+
+    for (agent_id, hostname, report) in &agent_reports {
         let listeners = report.get("listeners").and_then(|l| l.as_array());
         if let Some(listeners) = listeners {
             for listener in listeners {
@@ -322,11 +410,12 @@ pub async fn infer(
                 let comp_id = Uuid::new_v4();
                 sqlx::query(
                     "INSERT INTO discovery_draft_components
-                     (id, draft_id, suggested_name, process_name, host, listening_ports, component_type)
-                     VALUES ($1, $2, $3, $4, $5, $6, 'service')",
+                     (id, draft_id, agent_id, suggested_name, process_name, host, listening_ports, component_type)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, 'service')",
                 )
                 .bind(comp_id)
                 .bind(draft_id)
+                .bind(agent_id)
                 .bind(format!("{}-{}", proc_name, port))
                 .bind(proc_name)
                 .bind(host)
@@ -334,7 +423,115 @@ pub async fn infer(
                 .execute(&state.db)
                 .await?;
 
-                component_count += 1;
+                components.push(InferredComponent {
+                    comp_id,
+                    agent_id: *agent_id,
+                    hostname: hostname.clone(),
+                    process_name: proc_name.to_string(),
+                    port: port as u16,
+                    address: host.to_string(),
+                });
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2: Infer dependencies from outbound connections
+    // -----------------------------------------------------------------------
+    // Build a lookup: (hostname_or_ip, port) → component_id
+    // A listener on 0.0.0.0 means it listens on ALL IPs of that host.
+    let mut listen_index: std::collections::HashMap<(String, u16), Uuid> =
+        std::collections::HashMap::new();
+
+    for comp in &components {
+        // Index by hostname:port
+        listen_index.insert(
+            (comp.hostname.clone().to_lowercase(), comp.port),
+            comp.comp_id,
+        );
+
+        // Index by each known IP of this agent
+        if let Some(ips) = agent_ips.get(&comp.agent_id) {
+            for ip in ips {
+                listen_index.insert((ip.clone(), comp.port), comp.comp_id);
+            }
+        }
+
+        // Also index by listen address if it's specific (not 0.0.0.0 or ::)
+        if comp.address != "0.0.0.0" && comp.address != "::" {
+            listen_index.insert((comp.address.clone(), comp.port), comp.comp_id);
+        }
+    }
+
+    let mut dep_count = 0u32;
+    // Track created deps to avoid duplicates
+    let mut created_deps: std::collections::HashSet<(Uuid, Uuid)> =
+        std::collections::HashSet::new();
+
+    for (agent_id, _hostname, report) in &agent_reports {
+        let connections = report.get("connections").and_then(|c| c.as_array());
+        if let Some(connections) = connections {
+            for conn in connections {
+                let remote_addr = conn
+                    .get("remote_addr")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("");
+                let remote_port = conn
+                    .get("remote_port")
+                    .and_then(|p| p.as_u64())
+                    .unwrap_or(0) as u16;
+                let local_port =
+                    conn.get("local_port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
+                let conn_proc = conn
+                    .get("process_name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("");
+
+                if remote_addr.is_empty() || remote_port == 0 {
+                    continue;
+                }
+
+                // Find the target component (the service being connected TO)
+                let target = listen_index.get(&(remote_addr.to_string(), remote_port));
+
+                if let Some(&target_comp_id) = target {
+                    // Find the source component: the process making the connection.
+                    // Match by agent_id + process_name, or by agent_id + local_port.
+                    let source_comp_id = components
+                        .iter()
+                        .find(|c| {
+                            c.agent_id == *agent_id
+                                && (!conn_proc.is_empty() && c.process_name == conn_proc)
+                        })
+                        .or_else(|| {
+                            // Fallback: source is any component on this agent listening on local_port
+                            components
+                                .iter()
+                                .find(|c| c.agent_id == *agent_id && c.port == local_port)
+                        })
+                        .map(|c| c.comp_id);
+
+                    if let Some(source_id) = source_comp_id {
+                        // Don't create self-dependencies
+                        if source_id != target_comp_id
+                            && !created_deps.contains(&(source_id, target_comp_id))
+                        {
+                            sqlx::query(
+                                "INSERT INTO discovery_draft_dependencies
+                                 (draft_id, from_component, to_component, inferred_via)
+                                 VALUES ($1, $2, $3, 'tcp_connection')",
+                            )
+                            .bind(draft_id)
+                            .bind(source_id)
+                            .bind(target_comp_id)
+                            .execute(&state.db)
+                            .await?;
+
+                            created_deps.insert((source_id, target_comp_id));
+                            dep_count += 1;
+                        }
+                    }
+                }
             }
         }
     }
@@ -342,7 +539,8 @@ pub async fn infer(
     Ok(Json(json!({
         "draft_id": draft_id,
         "name": body.name,
-        "components_inferred": component_count,
+        "components_inferred": components.len(),
+        "dependencies_inferred": dep_count,
         "status": "pending",
     })))
 }
