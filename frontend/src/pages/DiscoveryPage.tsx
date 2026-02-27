@@ -11,8 +11,6 @@ import {
   Server,
   ArrowRight,
   ChevronRight,
-  Trash2,
-  Edit2,
   Plus,
   Eye,
   AlertTriangle,
@@ -29,6 +27,7 @@ import {
   type CorrelatedService,
   type CorrelatedDependency,
   type UnresolvedConnection,
+  type DiscoveryReportDetail,
 } from '@/api/discovery';
 import { useAgents, type Agent } from '@/api/reports';
 
@@ -336,7 +335,7 @@ function ReviewStep({
   );
 }
 
-function ReportDetailPanel({ report }: { report: { hostname: string; scanned_at: string; report: { processes?: any[]; listeners?: any[]; connections?: any[]; services?: any[] } } }) {
+function ReportDetailPanel({ report }: { report: DiscoveryReportDetail }) {
   const { processes = [], listeners = [], connections = [], services = [] } = report.report;
   const appProcesses = processes.filter(p => p.listening_ports?.length > 0);
 
@@ -363,7 +362,7 @@ function ReportDetailPanel({ report }: { report: { hostname: string; scanned_at:
                   <TableHead>Process</TableHead><TableHead>PID</TableHead><TableHead>Ports</TableHead><TableHead>User</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
-                  {appProcesses.map((p: any) => (
+                  {appProcesses.map((p) => (
                     <TableRow key={p.pid}>
                       <TableCell className="font-medium">{p.name}</TableCell>
                       <TableCell className="font-mono text-xs">{p.pid}</TableCell>
@@ -392,7 +391,7 @@ function ReportDetailPanel({ report }: { report: { hostname: string; scanned_at:
                 <TableHead className="w-20">Port</TableHead><TableHead>Process</TableHead><TableHead>PID</TableHead><TableHead>Bind</TableHead>
               </TableRow></TableHeader>
               <TableBody>
-                {listeners.map((l: any, i: number) => (
+                {listeners.map((l, i) => (
                   <TableRow key={i}>
                     <TableCell className="font-mono font-semibold">{l.port}</TableCell>
                     <TableCell>{l.process_name || '-'}</TableCell>
@@ -415,7 +414,7 @@ function ReportDetailPanel({ report }: { report: { hostname: string; scanned_at:
                   <TableHead>Process</TableHead><TableHead>Remote</TableHead><TableHead>Local Port</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
-                  {connections.slice(0, 50).map((c: any, i: number) => (
+                  {connections.slice(0, 50).map((c, i) => (
                     <TableRow key={i}>
                       <TableCell>{c.process_name || '-'}</TableCell>
                       <TableCell className="font-mono text-xs">{c.remote_addr}:{c.remote_port}</TableCell>
