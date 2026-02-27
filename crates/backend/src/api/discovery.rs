@@ -1,12 +1,26 @@
-//! Discovery API: passive topology scanning and DAG inference.
+//! Discovery API: passive topology scanning and multi-step DAG creation.
+//!
+//! ## Workflow (not magic — user validates at each step)
+//!
+//! 1. **Collect**: `POST /trigger-all` or `/trigger/:agent_id` → agents scan and send reports
+//! 2. **Correlate**: `POST /correlate` → backend analyzes reports, returns structured analysis
+//!    (listeners grouped by service, cross-host connections, config-based deps, commands, cron jobs)
+//! 3. **Create draft**: `POST /drafts` → user sends validated components + dependencies + commands
+//! 4. **Edit draft**: `PUT /drafts/:id/components` and `PUT /drafts/:id/dependencies`
+//! 5. **Apply draft**: `POST /drafts/:id/apply` → creates a real application with components + DAG + commands
 //!
 //! Endpoints:
-//! - GET  /api/v1/discovery/reports         — list discovery reports from agents
-//! - POST /api/v1/discovery/trigger/:agent_id — request a discovery scan from an agent
-//! - GET  /api/v1/discovery/drafts          — list inferred application drafts
-//! - GET  /api/v1/discovery/drafts/:id      — get draft details with components + deps
-//! - POST /api/v1/discovery/drafts/:id/apply — create an application from a draft
-//! - POST /api/v1/discovery/infer           — run inference on recent reports
+//! - GET  /api/v1/discovery/reports             — list reports
+//! - GET  /api/v1/discovery/reports/:id         — get report with raw data
+//! - POST /api/v1/discovery/trigger/:agent_id   — trigger scan on one agent
+//! - POST /api/v1/discovery/trigger-all         — trigger scan on all agents
+//! - POST /api/v1/discovery/correlate           — analyze reports, return correlation
+//! - GET  /api/v1/discovery/drafts              — list drafts
+//! - GET  /api/v1/discovery/drafts/:id          — get draft details
+//! - POST /api/v1/discovery/drafts              — create draft from user-validated data
+//! - PUT  /api/v1/discovery/drafts/:id/components   — update draft components
+//! - PUT  /api/v1/discovery/drafts/:id/dependencies — update draft dependencies
+//! - POST /api/v1/discovery/drafts/:id/apply    — apply draft → create real app
 
 use axum::{
     extract::{Extension, Path, State},
@@ -21,6 +35,10 @@ use crate::auth::AuthUser;
 use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
+
+// ===========================================================================
+// Reports
+// ===========================================================================
 
 /// List recent discovery reports.
 pub async fn list_reports(
@@ -94,6 +112,10 @@ pub async fn get_report(
     }
 }
 
+// ===========================================================================
+// Scan triggers
+// ===========================================================================
+
 /// Trigger a discovery scan on a specific agent.
 pub async fn trigger_scan(
     State(state): State<Arc<AppState>>,
@@ -147,7 +169,6 @@ pub async fn trigger_all(
     )
     .await?;
 
-    // Get all active agents for this org
     let agent_ids = sqlx::query_scalar::<_, Uuid>(
         "SELECT id FROM agents WHERE organization_id = $1 AND is_active = true",
     )
@@ -170,7 +191,449 @@ pub async fn trigger_all(
     })))
 }
 
-/// List discovery drafts (inferred application topologies).
+// ===========================================================================
+// Correlate — the key analysis step (returns data, does NOT create a draft)
+// ===========================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct CorrelateRequest {
+    pub agent_ids: Vec<Uuid>,
+}
+
+/// Analyze recent discovery reports across selected agents.
+/// Returns a structured correlation: services grouped by (process, port),
+/// cross-host connections mapped to potential dependencies, config-based
+/// dependencies, command suggestions, scheduled jobs, and unresolved
+/// connections (to hosts not in the selected agent set).
+///
+/// The frontend displays this for human review. No draft is created here.
+pub async fn correlate(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<CorrelateRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    if body.agent_ids.is_empty() {
+        return Err(ApiError::Validation(
+            "At least one agent_id is required".to_string(),
+        ));
+    }
+
+    // Fetch latest report per agent
+    let mut reports: Vec<(Uuid, String, serde_json::Value)> = Vec::new();
+    for agent_id in &body.agent_ids {
+        let row = sqlx::query_as::<_, (Uuid, String, serde_json::Value)>(
+            "SELECT agent_id, hostname, report FROM discovery_reports
+             WHERE agent_id = $1
+             ORDER BY scanned_at DESC LIMIT 1",
+        )
+        .bind(agent_id)
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some(r) = row {
+            reports.push(r);
+        }
+    }
+
+    if reports.is_empty() {
+        return Err(ApiError::Validation(
+            "No discovery reports found for the specified agents".to_string(),
+        ));
+    }
+
+    // Fetch agent IPs for connection matching
+    let mut agent_ips: std::collections::HashMap<Uuid, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut agent_hostnames: std::collections::HashMap<Uuid, String> =
+        std::collections::HashMap::new();
+    for (agent_id, hostname, _) in &reports {
+        agent_hostnames.insert(*agent_id, hostname.clone());
+        let ips = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT COALESCE(ip_addresses, '[]'::jsonb) FROM agents WHERE id = $1",
+        )
+        .bind(agent_id)
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some(ips_val) = ips {
+            if let Some(arr) = ips_val.as_array() {
+                let ip_list: Vec<String> = arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
+                agent_ips.insert(*agent_id, ip_list);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Build services: group listeners by (agent, process_name)
+    // A "service" is a process that listens on one or more ports on a host.
+    // Now enriched with command suggestions, config files, log files.
+    // -----------------------------------------------------------------------
+    let mut services: Vec<Value> = Vec::new();
+    // Index: (remote_addr_or_hostname, port) → service index for dep matching
+    let mut listen_index: std::collections::HashMap<(String, u16), usize> =
+        std::collections::HashMap::new();
+
+    for (agent_id, hostname, report) in &reports {
+        // Group listeners by process_name on this agent
+        let mut proc_ports: std::collections::HashMap<String, Vec<Value>> =
+            std::collections::HashMap::new();
+
+        if let Some(listeners) = report.get("listeners").and_then(|l| l.as_array()) {
+            for listener in listeners {
+                let port = listener.get("port").and_then(|p| p.as_u64()).unwrap_or(0);
+                let proc_name = listener
+                    .get("process_name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let address = listener
+                    .get("address")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("0.0.0.0");
+
+                if !(1..=49151).contains(&port) {
+                    continue;
+                }
+
+                proc_ports.entry(proc_name).or_default().push(json!({
+                    "port": port,
+                    "address": address,
+                    "pid": listener.get("pid"),
+                }));
+            }
+        }
+
+        // Build a PID→process data lookup for enrichment
+        let processes = report
+            .get("processes")
+            .and_then(|p| p.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let pid_to_process: std::collections::HashMap<u64, &Value> = processes
+            .iter()
+            .filter_map(|p| {
+                let pid = p.get("pid").and_then(|v| v.as_u64())?;
+                Some((pid, p))
+            })
+            .collect();
+
+        // Create one service per unique process on this host
+        for (proc_name, ports) in &proc_ports {
+            let idx = services.len();
+            let port_list: Vec<u16> = ports
+                .iter()
+                .filter_map(|p| p.get("port").and_then(|v| v.as_u64()).map(|v| v as u16))
+                .collect();
+
+            // Find the process data for enrichment (use first matching PID)
+            let first_pid = ports
+                .iter()
+                .filter_map(|p| p.get("pid").and_then(|v| v.as_u64()))
+                .next();
+
+            let process_data = first_pid.and_then(|pid| pid_to_process.get(&pid));
+
+            // Extract enriched fields from the process
+            let command_suggestion = process_data
+                .and_then(|p| p.get("command_suggestion"))
+                .cloned();
+            let config_files = process_data
+                .and_then(|p| p.get("config_files"))
+                .cloned()
+                .unwrap_or(json!([]));
+            let log_files = process_data
+                .and_then(|p| p.get("log_files"))
+                .cloned()
+                .unwrap_or(json!([]));
+            let matched_service = process_data.and_then(|p| p.get("matched_service")).cloned();
+
+            services.push(json!({
+                "agent_id": agent_id,
+                "hostname": hostname,
+                "process_name": proc_name,
+                "ports": port_list,
+                "port_details": ports,
+                "suggested_name": format!("{}@{}", proc_name, hostname),
+                "component_type": guess_component_type(proc_name, &port_list),
+                "command_suggestion": command_suggestion,
+                "config_files": config_files,
+                "log_files": log_files,
+                "matched_service": matched_service,
+            }));
+
+            // Index by all reachable addresses
+            for &port in &port_list {
+                listen_index.insert((hostname.to_lowercase(), port), idx);
+                if let Some(ips) = agent_ips.get(agent_id) {
+                    for ip in ips {
+                        listen_index.insert((ip.clone(), port), idx);
+                    }
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Build connections: match outbound connections to services
+    // -----------------------------------------------------------------------
+    let mut resolved_deps: Vec<Value> = Vec::new();
+    let mut unresolved_conns: Vec<Value> = Vec::new();
+    let mut seen_deps: std::collections::HashSet<(usize, usize, String)> =
+        std::collections::HashSet::new();
+
+    for (agent_id, hostname, report) in &reports {
+        // TCP connection-based dependencies
+        if let Some(connections) = report.get("connections").and_then(|c| c.as_array()) {
+            for conn in connections {
+                let remote_addr = conn
+                    .get("remote_addr")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("");
+                let remote_port = conn
+                    .get("remote_port")
+                    .and_then(|p| p.as_u64())
+                    .unwrap_or(0) as u16;
+                let conn_proc = conn
+                    .get("process_name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("");
+
+                if remote_addr.is_empty() || remote_port == 0 {
+                    continue;
+                }
+
+                // Find target service
+                let target_idx = listen_index.get(&(remote_addr.to_string(), remote_port));
+
+                if let Some(&to_idx) = target_idx {
+                    let from_idx = find_service_index(&services, agent_id, conn_proc);
+
+                    if let Some(from_idx) = from_idx {
+                        let dep_key = (from_idx, to_idx, "tcp_connection".to_string());
+                        if from_idx != to_idx && !seen_deps.contains(&dep_key) {
+                            seen_deps.insert(dep_key);
+                            resolved_deps.push(json!({
+                                "from_service_index": from_idx,
+                                "to_service_index": to_idx,
+                                "from_process": conn_proc,
+                                "to_process": services[to_idx].get("process_name"),
+                                "remote_addr": remote_addr,
+                                "remote_port": remote_port,
+                                "inferred_via": "tcp_connection",
+                            }));
+                        }
+                    } else {
+                        resolved_deps.push(json!({
+                            "from_service_index": null,
+                            "to_service_index": to_idx,
+                            "from_process": conn_proc,
+                            "from_hostname": hostname,
+                            "from_agent_id": agent_id,
+                            "to_process": services[to_idx].get("process_name"),
+                            "remote_addr": remote_addr,
+                            "remote_port": remote_port,
+                            "inferred_via": "tcp_connection",
+                        }));
+                    }
+                } else {
+                    unresolved_conns.push(json!({
+                        "from_hostname": hostname,
+                        "from_agent_id": agent_id,
+                        "from_process": conn_proc,
+                        "remote_addr": remote_addr,
+                        "remote_port": remote_port,
+                    }));
+                }
+            }
+        }
+
+        // Config-based dependencies: extracted endpoints from config files
+        if let Some(processes) = report.get("processes").and_then(|p| p.as_array()) {
+            for proc in processes {
+                let proc_name = proc.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                if let Some(configs) = proc.get("config_files").and_then(|c| c.as_array()) {
+                    for config in configs {
+                        if let Some(endpoints) =
+                            config.get("extracted_endpoints").and_then(|e| e.as_array())
+                        {
+                            for ep in endpoints {
+                                let parsed_host =
+                                    ep.get("parsed_host").and_then(|h| h.as_str()).unwrap_or("");
+                                let parsed_port =
+                                    ep.get("parsed_port").and_then(|p| p.as_u64()).unwrap_or(0)
+                                        as u16;
+                                let config_key =
+                                    ep.get("key").and_then(|k| k.as_str()).unwrap_or("");
+                                let technology =
+                                    ep.get("technology").and_then(|t| t.as_str()).unwrap_or("");
+
+                                if parsed_host.is_empty() && parsed_port == 0 {
+                                    continue;
+                                }
+
+                                // Try to match to a known service by host+port
+                                let target_idx = if parsed_port > 0 {
+                                    listen_index
+                                        .get(&(parsed_host.to_lowercase(), parsed_port))
+                                        .copied()
+                                } else {
+                                    None
+                                };
+
+                                if let Some(to_idx) = target_idx {
+                                    let from_idx =
+                                        find_service_index(&services, agent_id, proc_name);
+                                    if let Some(from_idx) = from_idx {
+                                        let dep_key = (from_idx, to_idx, "config_file".to_string());
+                                        if from_idx != to_idx && !seen_deps.contains(&dep_key) {
+                                            seen_deps.insert(dep_key);
+                                            resolved_deps.push(json!({
+                                                "from_service_index": from_idx,
+                                                "to_service_index": to_idx,
+                                                "from_process": proc_name,
+                                                "to_process": services[to_idx].get("process_name"),
+                                                "remote_addr": parsed_host,
+                                                "remote_port": parsed_port,
+                                                "inferred_via": "config_file",
+                                                "config_key": config_key,
+                                                "technology": technology,
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Deduplicate unresolved connections by (remote_addr, remote_port)
+    let mut seen_unresolved: std::collections::HashSet<(String, u16)> =
+        std::collections::HashSet::new();
+    unresolved_conns.retain(|c| {
+        let addr = c
+            .get("remote_addr")
+            .and_then(|a| a.as_str())
+            .unwrap_or("")
+            .to_string();
+        let port = c.get("remote_port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
+        seen_unresolved.insert((addr, port))
+    });
+
+    // -----------------------------------------------------------------------
+    // Collect scheduled jobs from all reports
+    // -----------------------------------------------------------------------
+    let mut scheduled_jobs: Vec<Value> = Vec::new();
+    for (_, hostname, report) in &reports {
+        if let Some(jobs) = report.get("scheduled_jobs").and_then(|j| j.as_array()) {
+            for job in jobs {
+                let mut job_with_host = job.clone();
+                if let Some(obj) = job_with_host.as_object_mut() {
+                    obj.insert("hostname".to_string(), json!(hostname));
+                }
+                scheduled_jobs.push(job_with_host);
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "agents_analyzed": reports.len(),
+        "services": services,
+        "dependencies": resolved_deps,
+        "unresolved_connections": unresolved_conns,
+        "scheduled_jobs": scheduled_jobs,
+    })))
+}
+
+/// Find the index of a service in the services list by agent_id and process_name.
+fn find_service_index(services: &[Value], agent_id: &Uuid, proc_name: &str) -> Option<usize> {
+    if proc_name.is_empty() {
+        return None;
+    }
+    services.iter().position(|s| {
+        s.get("agent_id")
+            .and_then(|a| a.as_str())
+            .map(|a| a == agent_id.to_string())
+            .unwrap_or(false)
+            && s.get("process_name")
+                .and_then(|n| n.as_str())
+                .map(|n| n == proc_name)
+                .unwrap_or(false)
+    })
+}
+
+/// Heuristic: guess component type from process name and ports.
+fn guess_component_type(process_name: &str, ports: &[u16]) -> &'static str {
+    let name = process_name.to_lowercase();
+
+    // Databases
+    if name.contains("postgres") || name.contains("pgbouncer") {
+        return "database";
+    }
+    if name.contains("mysql") || name.contains("mariadb") {
+        return "database";
+    }
+    if name.contains("mongo") {
+        return "database";
+    }
+    if name.contains("oracle") || name.contains("tnslsnr") {
+        return "database";
+    }
+    if name.contains("redis") || name.contains("memcache") {
+        return "cache";
+    }
+    if name.contains("elasticsearch") || name.contains("solr") {
+        return "search";
+    }
+
+    // Message queues
+    if name.contains("kafka")
+        || name.contains("rabbit")
+        || name.contains("activemq")
+        || name.contains("mosquitto")
+    {
+        return "queue";
+    }
+
+    // Web servers / reverse proxies
+    if name.contains("nginx")
+        || name.contains("httpd")
+        || name.contains("apache")
+        || name.contains("haproxy")
+        || name.contains("envoy")
+        || name.contains("traefik")
+    {
+        return "proxy";
+    }
+
+    // Known ports
+    for port in ports {
+        match port {
+            5432 | 3306 | 1521 | 1433 | 27017 => return "database",
+            6379 | 11211 => return "cache",
+            9092 | 5672 | 61616 => return "queue",
+            9200 | 8983 => return "search",
+            80 | 443 | 8080 | 8443 => return "web",
+            _ => {}
+        }
+    }
+
+    "service"
+}
+
+// ===========================================================================
+// Drafts — user-created after reviewing correlation
+// ===========================================================================
+
+/// List discovery drafts.
 pub async fn list_drafts(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -182,9 +645,11 @@ pub async fn list_drafts(
     let rows = sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
         "SELECT id, name, status, inferred_at
          FROM discovery_drafts
+         WHERE organization_id = $1
          ORDER BY created_at DESC
          LIMIT 50",
     )
+    .bind(user.organization_id)
     .fetch_all(&state.db)
     .await?;
 
@@ -203,7 +668,7 @@ pub async fn list_drafts(
     Ok(Json(json!({ "drafts": drafts })))
 }
 
-/// Get full draft details: components + inferred dependencies.
+/// Get full draft details: components + dependencies (with operational fields).
 pub async fn get_draft(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -222,16 +687,41 @@ pub async fn get_draft(
 
     let (id, name, status, inferred_at) = draft.ok_or(ApiError::NotFound)?;
 
-    let components = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, String)>(
-        "SELECT id, suggested_name, process_name, host, component_type
+    #[allow(clippy::type_complexity)]
+    let components = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            serde_json::Value,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            serde_json::Value,
+            serde_json::Value,
+            Option<String>,
+        ),
+    >(
+        "SELECT id, suggested_name, process_name, host, component_type, metadata,
+                check_cmd, start_cmd, stop_cmd, restart_cmd,
+                command_confidence, command_source,
+                COALESCE(config_files, '[]'::jsonb),
+                COALESCE(log_files, '[]'::jsonb),
+                matched_service
          FROM discovery_draft_components WHERE draft_id = $1",
     )
     .bind(draft_id)
     .fetch_all(&state.db)
     .await?;
 
-    let deps = sqlx::query_as::<_, (Uuid, Uuid, String)>(
-        "SELECT from_component, to_component, inferred_via
+    let deps = sqlx::query_as::<_, (Uuid, Uuid, Uuid, String)>(
+        "SELECT id, from_component, to_component, inferred_via
          FROM discovery_draft_dependencies WHERE draft_id = $1",
     )
     .bind(draft_id)
@@ -240,21 +730,50 @@ pub async fn get_draft(
 
     let comp_json: Vec<Value> = components
         .iter()
-        .map(|(cid, name, proc, host, ctype)| {
-            json!({
-                "id": cid,
-                "name": name,
-                "process_name": proc,
-                "host": host,
-                "component_type": ctype,
-            })
-        })
+        .map(
+            |(
+                cid,
+                comp_name,
+                proc,
+                host,
+                ctype,
+                meta,
+                check,
+                start,
+                stop,
+                restart,
+                confidence,
+                source,
+                configs,
+                logs,
+                matched_svc,
+            )| {
+                json!({
+                    "id": cid,
+                    "name": comp_name,
+                    "process_name": proc,
+                    "host": host,
+                    "component_type": ctype,
+                    "metadata": meta,
+                    "check_cmd": check,
+                    "start_cmd": start,
+                    "stop_cmd": stop,
+                    "restart_cmd": restart,
+                    "command_confidence": confidence,
+                    "command_source": source,
+                    "config_files": configs,
+                    "log_files": logs,
+                    "matched_service": matched_svc,
+                })
+            },
+        )
         .collect();
 
     let dep_json: Vec<Value> = deps
         .iter()
-        .map(|(from, to, via)| {
+        .map(|(dep_id, from, to, via)| {
             json!({
+                "id": dep_id,
                 "from_component": from,
                 "to_component": to,
                 "inferred_via": via,
@@ -272,44 +791,63 @@ pub async fn get_draft(
     })))
 }
 
-/// Run inference on recent discovery reports to create a draft.
-/// Groups processes by listening port, matches outbound connections to listeners,
-/// and creates a draft application with inferred dependencies.
-///
-/// ## Inference Algorithm
-///
-/// 1. For each agent, extract listeners on application ports (1024–49151)
-///    and create a draft component per unique (process_name, port) pair.
-/// 2. For each agent, extract ESTABLISHED outbound connections.
-/// 3. Cross-correlate: if agent A has a connection to remote_addr:remote_port
-///    and agent B listens on that port, infer a dependency A→B.
-/// 4. Also match connections within the same host (process X → process Y).
+/// Create a draft from user-validated components + dependencies + commands.
 #[derive(Debug, Deserialize)]
-pub struct InferRequest {
+pub struct CreateDraftRequest {
     pub name: String,
-    pub agent_ids: Vec<Uuid>,
+    pub components: Vec<DraftComponentInput>,
+    pub dependencies: Vec<DraftDependencyInput>,
 }
 
-/// In-memory representation of a component during inference.
-struct InferredComponent {
-    comp_id: Uuid,
-    agent_id: Uuid,
-    hostname: String,
-    process_name: String,
-    port: u16,
-    address: String,
+#[derive(Debug, Deserialize)]
+pub struct DraftComponentInput {
+    /// Temporary client-side ID for dependency referencing
+    pub temp_id: String,
+    pub name: String,
+    pub process_name: Option<String>,
+    pub host: Option<String>,
+    pub agent_id: Option<Uuid>,
+    pub listening_ports: Vec<i32>,
+    pub component_type: String,
+    /// Operational commands (pre-filled from suggestions, user-editable)
+    #[serde(default)]
+    pub check_cmd: Option<String>,
+    #[serde(default)]
+    pub start_cmd: Option<String>,
+    #[serde(default)]
+    pub stop_cmd: Option<String>,
+    #[serde(default)]
+    pub restart_cmd: Option<String>,
+    #[serde(default)]
+    pub command_confidence: Option<String>,
+    #[serde(default)]
+    pub command_source: Option<String>,
+    /// Detected config/log files (informational)
+    #[serde(default)]
+    pub config_files: Option<serde_json::Value>,
+    #[serde(default)]
+    pub log_files: Option<serde_json::Value>,
+    #[serde(default)]
+    pub matched_service: Option<String>,
 }
 
-pub async fn infer(
+#[derive(Debug, Deserialize)]
+pub struct DraftDependencyInput {
+    /// References DraftComponentInput.temp_id
+    pub from_temp_id: String,
+    pub to_temp_id: String,
+    pub inferred_via: String,
+}
+
+pub async fn create_draft(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-    Json(body): Json<InferRequest>,
+    Json(body): Json<CreateDraftRequest>,
 ) -> Result<Json<Value>, ApiError> {
     if !user.is_admin() {
         return Err(ApiError::Forbidden);
     }
 
-    // Get org_id from user
     let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM users WHERE id = $1")
         .bind(user.user_id)
         .fetch_one(&state.db)
@@ -318,38 +856,13 @@ pub async fn infer(
     log_action(
         &state.db,
         user.user_id,
-        "discovery_infer",
+        "discovery_create_draft",
         "discovery",
         Uuid::nil(),
-        json!({ "name": &body.name, "agent_ids": &body.agent_ids }),
+        json!({ "name": &body.name, "components": body.components.len(), "dependencies": body.dependencies.len() }),
     )
     .await?;
 
-    // Get the most recent report for each specified agent
-    let mut agent_reports: Vec<(Uuid, String, serde_json::Value)> = Vec::new();
-
-    for agent_id in &body.agent_ids {
-        let report = sqlx::query_as::<_, (Uuid, String, serde_json::Value)>(
-            "SELECT agent_id, hostname, report FROM discovery_reports
-             WHERE agent_id = $1
-             ORDER BY scanned_at DESC LIMIT 1",
-        )
-        .bind(agent_id)
-        .fetch_optional(&state.db)
-        .await?;
-
-        if let Some(r) = report {
-            agent_reports.push(r);
-        }
-    }
-
-    if agent_reports.is_empty() {
-        return Err(ApiError::Validation(
-            "No discovery reports found for the specified agents".to_string(),
-        ));
-    }
-
-    // Create the draft
     let draft_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO discovery_drafts (id, organization_id, name)
@@ -361,191 +874,219 @@ pub async fn infer(
     .execute(&state.db)
     .await?;
 
-    // -----------------------------------------------------------------------
-    // Phase 1: Create components from listeners
-    // -----------------------------------------------------------------------
-    let mut components: Vec<InferredComponent> = Vec::new();
-
-    // Also collect agent IP addresses from the agents table for connection matching
-    let mut agent_ips: std::collections::HashMap<Uuid, Vec<String>> =
+    // Map temp_id → real UUID
+    let mut temp_to_real: std::collections::HashMap<String, Uuid> =
         std::collections::HashMap::new();
-    for (agent_id, _, _) in &agent_reports {
-        let ips = sqlx::query_scalar::<_, serde_json::Value>(
-            "SELECT COALESCE(ip_addresses, '[]'::jsonb) FROM agents WHERE id = $1",
+
+    for comp in &body.components {
+        let comp_id = Uuid::new_v4();
+        temp_to_real.insert(comp.temp_id.clone(), comp_id);
+
+        sqlx::query(
+            "INSERT INTO discovery_draft_components
+             (id, draft_id, agent_id, suggested_name, process_name, host,
+              listening_ports, component_type,
+              check_cmd, start_cmd, stop_cmd, restart_cmd,
+              command_confidence, command_source,
+              config_files, log_files, matched_service)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
         )
-        .bind(agent_id)
-        .fetch_optional(&state.db)
+        .bind(comp_id)
+        .bind(draft_id)
+        .bind(comp.agent_id)
+        .bind(&comp.name)
+        .bind(&comp.process_name)
+        .bind(&comp.host)
+        .bind(&comp.listening_ports)
+        .bind(&comp.component_type)
+        .bind(&comp.check_cmd)
+        .bind(&comp.start_cmd)
+        .bind(&comp.stop_cmd)
+        .bind(&comp.restart_cmd)
+        .bind(comp.command_confidence.as_deref().unwrap_or("low"))
+        .bind(&comp.command_source)
+        .bind(comp.config_files.as_ref().unwrap_or(&json!([])))
+        .bind(comp.log_files.as_ref().unwrap_or(&json!([])))
+        .bind(&comp.matched_service)
+        .execute(&state.db)
         .await?;
-
-        if let Some(ips_val) = ips {
-            if let Some(arr) = ips_val.as_array() {
-                let ip_list: Vec<String> = arr
-                    .iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect();
-                agent_ips.insert(*agent_id, ip_list);
-            }
-        }
-    }
-
-    for (agent_id, hostname, report) in &agent_reports {
-        let listeners = report.get("listeners").and_then(|l| l.as_array());
-        if let Some(listeners) = listeners {
-            for listener in listeners {
-                let port = listener.get("port").and_then(|p| p.as_u64()).unwrap_or(0);
-                let proc_name = listener
-                    .get("process_name")
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("unknown");
-                let host = listener
-                    .get("address")
-                    .and_then(|a| a.as_str())
-                    .unwrap_or("0.0.0.0");
-
-                // Skip ephemeral / system ports typically not application services
-                if !(1024..=49151).contains(&port) {
-                    continue;
-                }
-
-                let comp_id = Uuid::new_v4();
-                sqlx::query(
-                    "INSERT INTO discovery_draft_components
-                     (id, draft_id, agent_id, suggested_name, process_name, host, listening_ports, component_type)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, 'service')",
-                )
-                .bind(comp_id)
-                .bind(draft_id)
-                .bind(agent_id)
-                .bind(format!("{}-{}", proc_name, port))
-                .bind(proc_name)
-                .bind(host)
-                .bind([port as i32])
-                .execute(&state.db)
-                .await?;
-
-                components.push(InferredComponent {
-                    comp_id,
-                    agent_id: *agent_id,
-                    hostname: hostname.clone(),
-                    process_name: proc_name.to_string(),
-                    port: port as u16,
-                    address: host.to_string(),
-                });
-            }
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Phase 2: Infer dependencies from outbound connections
-    // -----------------------------------------------------------------------
-    // Build a lookup: (hostname_or_ip, port) → component_id
-    // A listener on 0.0.0.0 means it listens on ALL IPs of that host.
-    let mut listen_index: std::collections::HashMap<(String, u16), Uuid> =
-        std::collections::HashMap::new();
-
-    for comp in &components {
-        // Index by hostname:port
-        listen_index.insert(
-            (comp.hostname.clone().to_lowercase(), comp.port),
-            comp.comp_id,
-        );
-
-        // Index by each known IP of this agent
-        if let Some(ips) = agent_ips.get(&comp.agent_id) {
-            for ip in ips {
-                listen_index.insert((ip.clone(), comp.port), comp.comp_id);
-            }
-        }
-
-        // Also index by listen address if it's specific (not 0.0.0.0 or ::)
-        if comp.address != "0.0.0.0" && comp.address != "::" {
-            listen_index.insert((comp.address.clone(), comp.port), comp.comp_id);
-        }
     }
 
     let mut dep_count = 0u32;
-    // Track created deps to avoid duplicates
-    let mut created_deps: std::collections::HashSet<(Uuid, Uuid)> =
-        std::collections::HashSet::new();
-
-    for (agent_id, _hostname, report) in &agent_reports {
-        let connections = report.get("connections").and_then(|c| c.as_array());
-        if let Some(connections) = connections {
-            for conn in connections {
-                let remote_addr = conn
-                    .get("remote_addr")
-                    .and_then(|a| a.as_str())
-                    .unwrap_or("");
-                let remote_port = conn
-                    .get("remote_port")
-                    .and_then(|p| p.as_u64())
-                    .unwrap_or(0) as u16;
-                let local_port =
-                    conn.get("local_port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
-                let conn_proc = conn
-                    .get("process_name")
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("");
-
-                if remote_addr.is_empty() || remote_port == 0 {
-                    continue;
-                }
-
-                // Find the target component (the service being connected TO)
-                let target = listen_index.get(&(remote_addr.to_string(), remote_port));
-
-                if let Some(&target_comp_id) = target {
-                    // Find the source component: the process making the connection.
-                    // Match by agent_id + process_name, or by agent_id + local_port.
-                    let source_comp_id = components
-                        .iter()
-                        .find(|c| {
-                            c.agent_id == *agent_id
-                                && (!conn_proc.is_empty() && c.process_name == conn_proc)
-                        })
-                        .or_else(|| {
-                            // Fallback: source is any component on this agent listening on local_port
-                            components
-                                .iter()
-                                .find(|c| c.agent_id == *agent_id && c.port == local_port)
-                        })
-                        .map(|c| c.comp_id);
-
-                    if let Some(source_id) = source_comp_id {
-                        // Don't create self-dependencies
-                        if source_id != target_comp_id
-                            && !created_deps.contains(&(source_id, target_comp_id))
-                        {
-                            sqlx::query(
-                                "INSERT INTO discovery_draft_dependencies
-                                 (draft_id, from_component, to_component, inferred_via)
-                                 VALUES ($1, $2, $3, 'tcp_connection')",
-                            )
-                            .bind(draft_id)
-                            .bind(source_id)
-                            .bind(target_comp_id)
-                            .execute(&state.db)
-                            .await?;
-
-                            created_deps.insert((source_id, target_comp_id));
-                            dep_count += 1;
-                        }
-                    }
-                }
-            }
+    for dep in &body.dependencies {
+        if let (Some(&from_id), Some(&to_id)) = (
+            temp_to_real.get(&dep.from_temp_id),
+            temp_to_real.get(&dep.to_temp_id),
+        ) {
+            sqlx::query(
+                "INSERT INTO discovery_draft_dependencies
+                 (draft_id, from_component, to_component, inferred_via)
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(draft_id)
+            .bind(from_id)
+            .bind(to_id)
+            .bind(&dep.inferred_via)
+            .execute(&state.db)
+            .await?;
+            dep_count += 1;
         }
     }
 
     Ok(Json(json!({
         "draft_id": draft_id,
         "name": body.name,
-        "components_inferred": components.len(),
-        "dependencies_inferred": dep_count,
+        "components_created": body.components.len(),
+        "dependencies_created": dep_count,
         "status": "pending",
     })))
 }
 
+/// Update draft components (rename, change type, update commands).
+#[derive(Debug, Deserialize)]
+pub struct UpdateComponentsRequest {
+    pub components: Vec<UpdateComponentInput>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateComponentInput {
+    pub id: Uuid,
+    pub name: String,
+    pub component_type: String,
+    #[serde(default)]
+    pub check_cmd: Option<String>,
+    #[serde(default)]
+    pub start_cmd: Option<String>,
+    #[serde(default)]
+    pub stop_cmd: Option<String>,
+    #[serde(default)]
+    pub restart_cmd: Option<String>,
+}
+
+pub async fn update_draft_components(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(draft_id): Path<Uuid>,
+    Json(body): Json<UpdateComponentsRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Verify draft exists and is pending
+    let status =
+        sqlx::query_scalar::<_, String>("SELECT status FROM discovery_drafts WHERE id = $1")
+            .bind(draft_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+
+    if status != "pending" {
+        return Err(ApiError::Conflict(format!("Draft is already {}", status)));
+    }
+
+    let mut updated = 0u32;
+    for comp in &body.components {
+        let result = sqlx::query(
+            "UPDATE discovery_draft_components
+             SET suggested_name = $2, component_type = $3,
+                 check_cmd = $5, start_cmd = $6, stop_cmd = $7, restart_cmd = $8
+             WHERE id = $1 AND draft_id = $4",
+        )
+        .bind(comp.id)
+        .bind(&comp.name)
+        .bind(&comp.component_type)
+        .bind(draft_id)
+        .bind(&comp.check_cmd)
+        .bind(&comp.start_cmd)
+        .bind(&comp.stop_cmd)
+        .bind(&comp.restart_cmd)
+        .execute(&state.db)
+        .await?;
+        updated += result.rows_affected() as u32;
+    }
+
+    Ok(Json(json!({ "updated": updated, "draft_id": draft_id })))
+}
+
+/// Update draft dependencies (add/remove).
+#[derive(Debug, Deserialize)]
+pub struct UpdateDependenciesRequest {
+    pub add: Vec<AddDependencyInput>,
+    pub remove: Vec<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddDependencyInput {
+    pub from_component: Uuid,
+    pub to_component: Uuid,
+    pub inferred_via: String,
+}
+
+pub async fn update_draft_dependencies(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(draft_id): Path<Uuid>,
+    Json(body): Json<UpdateDependenciesRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    let status =
+        sqlx::query_scalar::<_, String>("SELECT status FROM discovery_drafts WHERE id = $1")
+            .bind(draft_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+
+    if status != "pending" {
+        return Err(ApiError::Conflict(format!("Draft is already {}", status)));
+    }
+
+    // Remove specified deps
+    let mut removed = 0u32;
+    for dep_id in &body.remove {
+        let result =
+            sqlx::query("DELETE FROM discovery_draft_dependencies WHERE id = $1 AND draft_id = $2")
+                .bind(dep_id)
+                .bind(draft_id)
+                .execute(&state.db)
+                .await?;
+        removed += result.rows_affected() as u32;
+    }
+
+    // Add new deps
+    let mut added = 0u32;
+    for dep in &body.add {
+        sqlx::query(
+            "INSERT INTO discovery_draft_dependencies
+             (draft_id, from_component, to_component, inferred_via)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(draft_id)
+        .bind(dep.from_component)
+        .bind(dep.to_component)
+        .bind(&dep.inferred_via)
+        .execute(&state.db)
+        .await?;
+        added += 1;
+    }
+
+    Ok(Json(json!({
+        "draft_id": draft_id,
+        "added": added,
+        "removed": removed,
+    })))
+}
+
+// ===========================================================================
+// Apply — create real application from finalized draft (with commands!)
+// ===========================================================================
+
 /// Apply a draft: create a real application from the discovery draft.
+/// Now sets check_cmd/start_cmd/stop_cmd on real components and creates
+/// component_commands for log viewing and config inspection.
 pub async fn apply_draft(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -555,7 +1096,6 @@ pub async fn apply_draft(
         return Err(ApiError::Forbidden);
     }
 
-    // Check draft exists and is pending
     let draft = sqlx::query_as::<_, (Uuid, Uuid, String, String)>(
         "SELECT id, organization_id, name, status FROM discovery_drafts WHERE id = $1",
     )
@@ -578,7 +1118,6 @@ pub async fn apply_draft(
     )
     .await?;
 
-    // Get the default site for this org
     let site_id = sqlx::query_scalar::<_, Uuid>(
         "SELECT id FROM sites WHERE organization_id = $1 ORDER BY created_at ASC LIMIT 1",
     )
@@ -590,7 +1129,7 @@ pub async fn apply_draft(
         "Organization has no sites — create a site first".to_string(),
     ))?;
 
-    // Create the application
+    // Create application
     let app_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO applications (id, organization_id, site_id, name, mode)
@@ -603,9 +1142,28 @@ pub async fn apply_draft(
     .execute(&state.db)
     .await?;
 
-    // Create components from draft
-    let draft_comps = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, String)>(
-        "SELECT id, suggested_name, process_name, host, component_type
+    // Create components WITH operational commands
+    #[allow(clippy::type_complexity)]
+    let draft_comps = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            serde_json::Value,
+            serde_json::Value,
+        ),
+    >(
+        "SELECT id, suggested_name, process_name, host, component_type, agent_id,
+                check_cmd, start_cmd, stop_cmd,
+                COALESCE(config_files, '[]'::jsonb),
+                COALESCE(log_files, '[]'::jsonb)
          FROM discovery_draft_components WHERE draft_id = $1",
     )
     .bind(draft_id)
@@ -614,24 +1172,81 @@ pub async fn apply_draft(
 
     let mut draft_to_real: std::collections::HashMap<Uuid, Uuid> = std::collections::HashMap::new();
 
-    for (draft_comp_id, comp_name, _process_name, host, comp_type) in &draft_comps {
+    for (
+        draft_comp_id,
+        comp_name,
+        _process_name,
+        host,
+        comp_type,
+        agent_id,
+        check_cmd,
+        start_cmd,
+        stop_cmd,
+        config_files,
+        log_files,
+    ) in &draft_comps
+    {
         let real_comp_id = Uuid::new_v4();
         sqlx::query(
-            "INSERT INTO components (id, application_id, name, component_type, host, current_state)
-             VALUES ($1, $2, $3, $4, $5, 'UNKNOWN')",
+            "INSERT INTO components (id, application_id, name, component_type, host, agent_id,
+                                     check_cmd, start_cmd, stop_cmd, current_state)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'UNKNOWN')",
         )
         .bind(real_comp_id)
         .bind(app_id)
         .bind(comp_name)
         .bind(comp_type)
         .bind(host)
+        .bind(agent_id)
+        .bind(check_cmd)
+        .bind(start_cmd)
+        .bind(stop_cmd)
         .execute(&state.db)
         .await?;
-
         draft_to_real.insert(*draft_comp_id, real_comp_id);
+
+        // Create custom commands for log files ("View Logs")
+        if let Some(logs) = log_files.as_array() {
+            for log_entry in logs {
+                if let Some(log_path) = log_entry.get("path").and_then(|p| p.as_str()) {
+                    let _ = sqlx::query(
+                        "INSERT INTO component_commands (component_id, label, command)
+                         VALUES ($1, $2, $3)",
+                    )
+                    .bind(real_comp_id)
+                    .bind(format!(
+                        "Logs: {}",
+                        log_path.rsplit('/').next().unwrap_or(log_path)
+                    ))
+                    .bind(format!("tail -100 {}", log_path))
+                    .execute(&state.db)
+                    .await;
+                }
+            }
+        }
+
+        // Create custom commands for config files ("View Config")
+        if let Some(configs) = config_files.as_array() {
+            for config_entry in configs {
+                if let Some(config_path) = config_entry.get("path").and_then(|p| p.as_str()) {
+                    let _ = sqlx::query(
+                        "INSERT INTO component_commands (component_id, label, command)
+                         VALUES ($1, $2, $3)",
+                    )
+                    .bind(real_comp_id)
+                    .bind(format!(
+                        "Config: {}",
+                        config_path.rsplit('/').next().unwrap_or(config_path)
+                    ))
+                    .bind(format!("cat {}", config_path))
+                    .execute(&state.db)
+                    .await;
+                }
+            }
+        }
     }
 
-    // Create dependencies from draft
+    // Create dependencies
     let draft_deps = sqlx::query_as::<_, (Uuid, Uuid)>(
         "SELECT from_component, to_component
          FROM discovery_draft_dependencies WHERE draft_id = $1",
@@ -640,6 +1255,7 @@ pub async fn apply_draft(
     .fetch_all(&state.db)
     .await?;
 
+    let mut dep_count = 0u32;
     for (from_draft, to_draft) in &draft_deps {
         if let (Some(&from_real), Some(&to_real)) =
             (draft_to_real.get(from_draft), draft_to_real.get(to_draft))
@@ -653,6 +1269,7 @@ pub async fn apply_draft(
             .bind(to_real)
             .execute(&state.db)
             .await?;
+            dep_count += 1;
         }
     }
 
@@ -670,6 +1287,6 @@ pub async fn apply_draft(
         "name": name,
         "mode": "advisory",
         "components_created": draft_comps.len(),
-        "dependencies_created": draft_deps.len(),
+        "dependencies_created": dep_count,
     })))
 }
