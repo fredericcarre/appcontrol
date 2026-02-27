@@ -190,7 +190,17 @@ pub async fn list_members(
     Extension(_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let members = sqlx::query_as::<_, (Uuid, Uuid, String, chrono::DateTime<chrono::Utc>, String, Option<String>)>(
+    let members = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            String,
+            Option<String>,
+        ),
+    >(
         r#"
         SELECT tm.id, tm.user_id, tm.role, tm.joined_at, u.email, u.display_name
         FROM team_members tm
