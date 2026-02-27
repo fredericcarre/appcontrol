@@ -190,8 +190,14 @@ pub async fn list_members(
     Extension(_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let members = sqlx::query_as::<_, (Uuid, Uuid, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, user_id, role, joined_at FROM team_members WHERE team_id = $1",
+    let members = sqlx::query_as::<_, (Uuid, Uuid, String, chrono::DateTime<chrono::Utc>, String, Option<String>)>(
+        r#"
+        SELECT tm.id, tm.user_id, tm.role, tm.joined_at, u.email, u.display_name
+        FROM team_members tm
+        JOIN users u ON u.id = tm.user_id
+        WHERE tm.team_id = $1
+        ORDER BY tm.role, u.display_name, u.email
+        "#,
     )
     .bind(id)
     .fetch_all(&state.db)
@@ -199,7 +205,16 @@ pub async fn list_members(
 
     let result: Vec<Value> = members
         .iter()
-        .map(|(mid, uid, role, joined)| json!({"id": mid, "user_id": uid, "role": role, "joined_at": joined}))
+        .map(|(mid, uid, role, joined, email, name)| {
+            json!({
+                "id": mid,
+                "user_id": uid,
+                "role": role,
+                "joined_at": joined,
+                "email": email,
+                "name": name.clone().unwrap_or_else(|| email.clone())
+            })
+        })
         .collect();
 
     Ok(Json(json!({ "members": result })))
