@@ -355,7 +355,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/apps/:app_id/reports/export", get(reports::export_pdf))
         // Operation time estimates
         .route("/apps/:app_id/estimates", get(estimates::get_estimates))
-        // Discovery: passive topology scanning
+        // Discovery: passive topology scanning + multi-step workflow
         .route("/discovery/reports", get(discovery::list_reports))
         .route("/discovery/reports/:id", get(discovery::get_report))
         .route(
@@ -363,10 +363,21 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             post(discovery::trigger_scan),
         )
         .route("/discovery/trigger-all", post(discovery::trigger_all))
-        .route("/discovery/drafts", get(discovery::list_drafts))
+        .route("/discovery/correlate", post(discovery::correlate))
+        .route(
+            "/discovery/drafts",
+            get(discovery::list_drafts).post(discovery::create_draft),
+        )
         .route("/discovery/drafts/:id", get(discovery::get_draft))
+        .route(
+            "/discovery/drafts/:id/components",
+            put(discovery::update_draft_components),
+        )
+        .route(
+            "/discovery/drafts/:id/dependencies",
+            put(discovery::update_draft_dependencies),
+        )
         .route("/discovery/drafts/:id/apply", post(discovery::apply_draft))
-        .route("/discovery/infer", post(discovery::infer))
         // Air-gap agent update
         .route(
             "/admin/agent-binaries",

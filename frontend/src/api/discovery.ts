@@ -56,6 +56,45 @@ export interface DiscoveredService {
   pid: number | null;
 }
 
+// --- Correlation result (from POST /correlate) ---
+
+export interface CorrelatedService {
+  agent_id: string;
+  hostname: string;
+  process_name: string;
+  ports: number[];
+  port_details: Array<{ port: number; address: string; pid: number | null }>;
+  suggested_name: string;
+  component_type: string;
+}
+
+export interface CorrelatedDependency {
+  from_service_index: number | null;
+  to_service_index: number;
+  from_process: string;
+  to_process: string;
+  remote_addr: string;
+  remote_port: number;
+  inferred_via: string;
+}
+
+export interface UnresolvedConnection {
+  from_hostname: string;
+  from_agent_id: string;
+  from_process: string;
+  remote_addr: string;
+  remote_port: number;
+}
+
+export interface CorrelationResult {
+  agents_analyzed: number;
+  services: CorrelatedService[];
+  dependencies: CorrelatedDependency[];
+  unresolved_connections: UnresolvedConnection[];
+}
+
+// --- Drafts ---
+
 export interface DiscoveryDraft {
   id: string;
   name: string;
@@ -69,9 +108,11 @@ export interface DraftComponent {
   process_name: string | null;
   host: string | null;
   component_type: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface DraftDependency {
+  id: string;
   from_component: string;
   to_component: string;
   inferred_via: string;
@@ -158,11 +199,36 @@ export function useTriggerAllScans() {
   });
 }
 
-export function useInferTopology() {
+export function useCorrelate() {
+  return useMutation<CorrelationResult, Error, { agent_ids: string[] }>({
+    mutationFn: async (params) => {
+      const { data } = await client.post('/v1/discovery/correlate', params);
+      return data;
+    },
+  });
+}
+
+export function useCreateDraft() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (params: { name: string; agent_ids: string[] }) => {
-      const { data } = await client.post('/v1/discovery/infer', params);
+    mutationFn: async (params: {
+      name: string;
+      components: Array<{
+        temp_id: string;
+        name: string;
+        process_name: string | null;
+        host: string | null;
+        agent_id: string | null;
+        listening_ports: number[];
+        component_type: string;
+      }>;
+      dependencies: Array<{
+        from_temp_id: string;
+        to_temp_id: string;
+        inferred_via: string;
+      }>;
+    }) => {
+      const { data } = await client.post('/v1/discovery/drafts', params);
       return data;
     },
     onSuccess: () => {
