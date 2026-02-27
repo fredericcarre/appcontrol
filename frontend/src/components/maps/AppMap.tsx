@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef, DragEvent } from 'react';
 import {
   ReactFlow,
   Background,
@@ -10,6 +10,14 @@ import {
   useEdgesState,
   NodeTypes,
   BackgroundVariant,
+  Connection,
+  addEdge,
+  NodeChange,
+  EdgeChange,
+  applyNodeChanges,
+  applyEdgeChanges,
+  useReactFlow,
+  ReactFlowProvider,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { ComponentNode } from './ComponentNode';
@@ -40,6 +48,14 @@ interface AppMapProps {
   onForceStopComponent?: (id: string) => void;
   onStartWithDepsComponent?: (id: string) => void;
   canOperate?: boolean;
+  // Edit mode props
+  editable?: boolean;
+  onNodePositionChange?: (nodeId: string, x: number, y: number) => void;
+  onConnect?: (sourceId: string, targetId: string) => void;
+  onDeleteEdge?: (edgeId: string) => void;
+  onDeleteNode?: (nodeId: string) => void;
+  onNodeDoubleClick?: (nodeId: string) => void;
+  onDrop?: (type: string, position: { x: number; y: number }) => void;
 }
 
 function buildNodes(
@@ -51,6 +67,7 @@ function buildNodes(
   onDiagnose?: (id: string) => void,
   onForceStop?: (id: string) => void,
   onStartWithDeps?: (id: string) => void,
+  editable?: boolean,
 ): Node[] {
   const groupColorMap: Record<string, string> = {};
   if (groups) {
@@ -66,6 +83,7 @@ function buildNodes(
       x: c.position_x ?? (i % 4) * 250 + 50,
       y: c.position_y ?? Math.floor(i / 4) * 180 + 50,
     },
+    draggable: editable,
     data: {
       label: c.name,
       displayName: c.display_name,
@@ -75,29 +93,31 @@ function buildNodes(
       state: (c.state || 'UNKNOWN') as ComponentState,
       componentType: (c.component_type || 'service') as ComponentType,
       host: c.host,
-      onStart,
-      onStop,
-      onRestart,
-      onDiagnose,
-      onForceStop,
-      onStartWithDeps,
+      onStart: editable ? undefined : onStart,
+      onStop: editable ? undefined : onStop,
+      onRestart: editable ? undefined : onRestart,
+      onDiagnose: editable ? undefined : onDiagnose,
+      onForceStop: editable ? undefined : onForceStop,
+      onStartWithDeps: editable ? undefined : onStartWithDeps,
+      editable,
     },
   }));
 }
 
-function buildEdges(dependencies: Dependency[]): Edge[] {
+function buildEdges(dependencies: Dependency[], editable?: boolean): Edge[] {
   return dependencies.map((d) => ({
     id: d.id,
     source: d.from_component_id,
     target: d.to_component_id,
     type: 'smoothstep',
     animated: false,
+    deletable: editable,
     style: { stroke: '#94a3b8', strokeWidth: 2 },
     label: d.dep_type !== 'strong' ? d.dep_type : undefined,
   }));
 }
 
-export function AppMap({
+function AppMapInner({
   components,
   dependencies,
   groups,
@@ -115,15 +135,87 @@ export function AppMap({
   onForceStopComponent,
   onStartWithDepsComponent,
   canOperate,
+  editable,
+  onNodePositionChange,
+  onConnect,
+  onDeleteEdge,
+  onDeleteNode,
+  onNodeDoubleClick,
+  onDrop,
 }: AppMapProps) {
-  const initialNodes = useMemo(
-    () => buildNodes(components, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent),
-    [components, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent],
-  );
-  const initialEdges = useMemo(() => buildEdges(dependencies), [dependencies]);
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const { screenToFlowPosition } = useReactFlow();
 
-  const [nodes, , onNodesChange] = useNodesState(initialNodes);
-  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
+  const initialNodes = useMemo(
+    () => buildNodes(
+      components,
+      groups,
+      onStartComponent,
+      onStopComponent,
+      onRestartComponent,
+      onDiagnoseComponent,
+      onForceStopComponent,
+      onStartWithDepsComponent,
+      editable,
+    ),
+    [components, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, editable],
+  );
+  const initialEdges = useMemo(() => buildEdges(dependencies, editable), [dependencies, editable]);
+
+  const [nodes, setNodes, onNodesChangeInternal] = useNodesState(initialNodes);
+  const [edges, setEdges, onEdgesChangeInternal] = useEdgesState(initialEdges);
+
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      // Apply changes to local state
+      setNodes((nds) => applyNodeChanges(changes, nds));
+
+      // Track position changes for saving
+      if (editable && onNodePositionChange) {
+        changes.forEach((change) => {
+          if (change.type === 'position' && change.position && change.dragging === false) {
+            // Position change completed (drag ended)
+            onNodePositionChange(change.id, change.position.x, change.position.y);
+          }
+        });
+      }
+
+      // Handle node removal
+      if (editable && onDeleteNode) {
+        changes.forEach((change) => {
+          if (change.type === 'remove') {
+            onDeleteNode(change.id);
+          }
+        });
+      }
+    },
+    [setNodes, editable, onNodePositionChange, onDeleteNode],
+  );
+
+  const handleEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      // Handle edge removal
+      if (editable && onDeleteEdge) {
+        changes.forEach((change) => {
+          if (change.type === 'remove') {
+            onDeleteEdge(change.id);
+          }
+        });
+      }
+      setEdges((eds) => applyEdgeChanges(changes, eds));
+    },
+    [setEdges, editable, onDeleteEdge],
+  );
+
+  const handleConnect = useCallback(
+    (connection: Connection) => {
+      if (!editable || !onConnect) return;
+      if (connection.source && connection.target) {
+        onConnect(connection.source, connection.target);
+      }
+    },
+    [editable, onConnect],
+  );
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
@@ -132,24 +224,70 @@ export function AppMap({
     [onSelectComponent],
   );
 
+  const handleNodeDoubleClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      if (editable && onNodeDoubleClick) {
+        onNodeDoubleClick(node.id);
+      }
+    },
+    [editable, onNodeDoubleClick],
+  );
+
   const onPaneClick = useCallback(() => {
     onSelectComponent(null);
   }, [onSelectComponent]);
 
+  // Drag and drop handlers
+  const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const handleDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      if (!editable || !onDrop) return;
+
+      const type = event.dataTransfer.getData('application/reactflow');
+      if (!type) return;
+
+      const position = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+
+      onDrop(type, position);
+    },
+    [editable, onDrop, screenToFlowPosition],
+  );
+
   return (
-    <div className="w-full h-full relative">
+    <div className="w-full h-full relative" ref={reactFlowWrapper}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
+        onNodesChange={handleNodesChange}
+        onEdgesChange={handleEdgesChange}
+        onConnect={handleConnect}
         onNodeClick={onNodeClick}
+        onNodeDoubleClick={handleNodeDoubleClick}
         onPaneClick={onPaneClick}
+        onDragOver={onDragOver}
+        onDrop={handleDrop}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         minZoom={0.1}
         maxZoom={2}
+        nodesDraggable={editable}
+        nodesConnectable={editable}
+        elementsSelectable={true}
+        deleteKeyCode={editable ? 'Delete' : null}
+        connectionLineStyle={{ stroke: '#6366F1', strokeWidth: 2 }}
+        defaultEdgeOptions={{
+          type: 'smoothstep',
+          style: { stroke: '#94a3b8', strokeWidth: 2 },
+        }}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
         <Controls showInteractive={false} />
@@ -161,16 +299,26 @@ export function AppMap({
           maskColor="rgba(0,0,0,0.1)"
           className="!bg-card !border-border"
         />
-        <MapToolbar
-          onStartAll={onStartAll}
-          onStopAll={onStopAll}
-          onRestartErrorBranch={onRestartErrorBranch}
-          onShare={onShare}
-          onToggleActivity={onToggleActivity}
-          activityOpen={activityOpen}
-          canOperate={canOperate}
-        />
+        {!editable && (
+          <MapToolbar
+            onStartAll={onStartAll}
+            onStopAll={onStopAll}
+            onRestartErrorBranch={onRestartErrorBranch}
+            onShare={onShare}
+            onToggleActivity={onToggleActivity}
+            activityOpen={activityOpen}
+            canOperate={canOperate}
+          />
+        )}
       </ReactFlow>
     </div>
+  );
+}
+
+export function AppMap(props: AppMapProps) {
+  return (
+    <ReactFlowProvider>
+      <AppMapInner {...props} />
+    </ReactFlowProvider>
   );
 }
