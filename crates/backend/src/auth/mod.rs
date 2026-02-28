@@ -143,10 +143,26 @@ pub async fn login(
     ))
 }
 
-/// Dev login route (no auth middleware — this IS a login endpoint).
+/// GET /api/v1/auth/info — Public endpoint returning auth configuration.
+///
+/// The frontend uses this to know whether dev mode is active and what
+/// email to pre-fill on the login form. No hardcoded values — everything
+/// comes from the SEED_* environment variables.
+pub async fn auth_info(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::AppState>>,
+) -> impl axum::response::IntoResponse {
+    let dev_mode = state.config.app_env != "production";
+    axum::Json(serde_json::json!({
+        "dev_mode": dev_mode,
+        "default_email": if dev_mode { Some(&state.config.seed.admin_email) } else { None },
+    }))
+}
+
+/// Auth routes (no auth middleware — these ARE login/info endpoints).
 pub fn dev_login_routes() -> axum::Router<std::sync::Arc<crate::AppState>> {
-    use axum::routing::post;
+    use axum::routing::{get, post};
     axum::Router::new()
         .route("/auth/dev-login", post(dev_login))
         .route("/auth/login", post(login))
+        .route("/auth/info", get(auth_info))
 }

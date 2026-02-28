@@ -68,9 +68,23 @@ docker compose -f docker/docker-compose.yaml ps
 
 ### First Login
 
-Open http://localhost:8080. The login form is pre-filled with `admin@localhost`. Leave the password field empty and click **Sign in**. This uses the auto-seeded admin account — no password is required in development mode.
+Open http://localhost:8080. The login form is pre-filled with the seeded admin email (default: `admin@localhost`). Leave the password field empty and click **Sign in**.
 
-> **Credentials:** email = `admin@localhost`, password = _(leave empty)_
+> **Credentials:** email = value of `SEED_ADMIN_EMAIL` (default `admin@localhost`), password = _(leave empty)_
+
+### Seed Configuration
+
+On first start (when the database is empty), the backend creates an initial organization and admin user. All values are configurable via environment variables in the docker-compose file:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SEED_ENABLED` | `true` (dev) / `false` (prod) | Whether to auto-seed an org + admin user |
+| `SEED_ADMIN_EMAIL` | `admin@localhost` | Email for the seeded admin |
+| `SEED_ADMIN_DISPLAY_NAME` | `Admin` | Display name for the seeded admin |
+| `SEED_ORG_NAME` | `Default Organization` | Organization name |
+| `SEED_ORG_SLUG` | `default` | Organization slug (URL-safe) |
+
+To customize, edit the `SEED_*` variables in `docker/docker-compose.release.yaml` before starting.
 
 ### Verify Health
 
@@ -204,8 +218,8 @@ In development mode (`APP_ENV=development`, the default), the backend:
 
 - Accepts a simple `JWT_SECRET` for HMAC signing (no RSA key pair needed)
 - Auto-runs migrations on startup, creating the database schema
-- **Auto-seeds a default organization and admin user** on first start (when no users exist)
-- Allows login with just an email (no password needed) — the login form is pre-filled with `admin@localhost`
+- **Auto-seeds an organization and admin user** on first start (when no users exist), using `SEED_*` env vars
+- Allows login with just an email (no password needed) — the login form auto-fills from `SEED_ADMIN_EMAIL`
 - Issues 24-hour JWT tokens stored in HttpOnly cookies
 
 **Minimal environment:**
@@ -215,13 +229,14 @@ export JWT_SECRET=dev-secret-change-in-production
 export DATABASE_URL=postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol
 ```
 
-**Default dev credentials (auto-seeded on first start):**
+**Default dev credentials (auto-seeded on first start, configurable via SEED_* env vars):**
 
-| Field | Value |
-|-------|-------|
-| Email | `admin@localhost` |
-| Role | `admin` (org) + `super_admin` (platform) |
-| Organization | `Dev Org` |
+| Field | Default | Env Var |
+|-------|---------|---------|
+| Email | `admin@localhost` | `SEED_ADMIN_EMAIL` |
+| Display Name | `Admin` | `SEED_ADMIN_DISPLAY_NAME` |
+| Role | `admin` (org) + `super_admin` (platform) | — |
+| Organization | `Default Organization` | `SEED_ORG_NAME` |
 
 **Obtain a JWT token:**
 
@@ -992,13 +1007,14 @@ Every security event is logged with full traceability:
 
 ### Can't log in / login page shows an error
 
-In development mode, login with email `admin@localhost` and leave the password empty.
+In development mode, login with the email from `SEED_ADMIN_EMAIL` (default: `admin@localhost`) and leave the password empty.
 
 **Fix:**
 
 1. Make sure the backend is healthy: `curl http://localhost:3000/health`
-2. If using Docker Compose, check backend logs: `docker compose -f docker/docker-compose.release.yaml logs backend`
-3. The admin account is auto-seeded on first startup when no users exist. If the database already has users from a previous run, the seed is skipped. To reset: `docker compose -f docker/docker-compose.release.yaml down -v && docker compose -f docker/docker-compose.release.yaml up -d`
+2. Check backend logs: `docker compose -f docker/docker-compose.release.yaml logs backend`
+3. Check the login form is pre-filled: `curl http://localhost:3000/api/v1/auth/info` — should return `{"dev_mode":true,"default_email":"admin@localhost"}`
+4. The admin account is auto-seeded on first startup when no users exist. If the database already has users from a previous run, the seed is skipped. To reset: `docker compose -f docker/docker-compose.release.yaml down -v && docker compose -f docker/docker-compose.release.yaml up -d`
 
 ### Backend fails to start: "FATAL: JWT_SECRET must be set"
 

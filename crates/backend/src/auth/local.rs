@@ -31,11 +31,8 @@ use uuid::Uuid;
 
 use crate::{auth::jwt, config::AuthMode, AppState};
 
-/// Well-known UUIDs for demo mode (deterministic for easier testing).
-const DEMO_ORG_ID: &str = "00000000-0000-0000-0000-000000000001";
-const DEMO_ADMIN_ID: &str = "00000000-0000-0000-0000-000000000002";
-const DEMO_OPERATOR_ID: &str = "00000000-0000-0000-0000-000000000003";
-const DEMO_VIEWER_ID: &str = "00000000-0000-0000-0000-000000000004";
+// All seed data comes from SEED_* environment variables via config::SeedConfig.
+// No hardcoded users, organizations, or credentials in this module.
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
@@ -85,33 +82,38 @@ pub async fn login(
     }
 }
 
-/// Demo mode login - predefined users, no password check
+/// Demo mode login - looks up user by email, no password check.
+/// Users must be seeded at startup via SEED_* config.
 async fn demo_login(
     state: &AppState,
     req: &LoginRequest,
 ) -> Result<Json<LoginResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Extract username from email (admin@local → admin)
-    let username = req.email.split('@').next().unwrap_or("");
+    let user: Option<(Uuid, Uuid, String, String, String)> = sqlx::query_as(
+        r#"SELECT u.id, u.organization_id, u.display_name, u.role, o.name
+           FROM users u JOIN organizations o ON o.id = u.organization_id
+           WHERE u.email = $1 AND u.is_active = true"#,
+    )
+    .bind(&req.email)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Database error during demo login: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { message: "Internal error".to_string() }))
+    })?;
 
-    let org_id: Uuid = DEMO_ORG_ID.parse().unwrap();
-    let (user_id, role, display_name) = match username {
-        "admin" => (DEMO_ADMIN_ID.parse::<Uuid>().unwrap(), "admin", "Admin"),
-        "operator" => (DEMO_OPERATOR_ID.parse::<Uuid>().unwrap(), "operator", "Operator"),
-        "viewer" => (DEMO_VIEWER_ID.parse::<Uuid>().unwrap(), "viewer", "Viewer"),
-        _ => {
+    let (user_id, org_id, display_name, role, org_name) = match user {
+        Some(u) => u,
+        None => {
             return Err((
                 StatusCode::UNAUTHORIZED,
                 Json(ErrorResponse {
-                    message: "Invalid credentials. Demo users: admin@local, operator@local, viewer@local".to_string(),
+                    message: "Invalid credentials. Check SEED_ADMIN_EMAIL in your configuration.".to_string(),
                 }),
             ));
         }
     };
 
-    // Ensure demo org and users exist (lazy creation)
-    ensure_demo_data(&state.db, org_id).await;
-
-    create_login_response(state, user_id, org_id, "Demo Organization", &req.email, display_name, role)
+    create_login_response(state, user_id, org_id, &org_name, &req.email, &display_name, &role)
 }
 
 /// Local mode login - verify password against bcrypt hash
@@ -219,43 +221,6 @@ fn create_login_response(
     }))
 }
 
-/// Ensure demo organization and users exist
-async fn ensure_demo_data(pool: &sqlx::PgPool, org_id: Uuid) {
-    let _ = sqlx::query(
-        r#"
-        INSERT INTO organizations (id, name, slug)
-        VALUES ($1, 'Demo Organization', 'demo')
-        ON CONFLICT (id) DO NOTHING
-        "#,
-    )
-    .bind(org_id)
-    .execute(pool)
-    .await;
-
-    for (uid, uname, urole) in [
-        (DEMO_ADMIN_ID, "admin", "admin"),
-        (DEMO_OPERATOR_ID, "operator", "operator"),
-        (DEMO_VIEWER_ID, "viewer", "viewer"),
-    ] {
-        let uid: Uuid = uid.parse().unwrap();
-        let _ = sqlx::query(
-            r#"
-            INSERT INTO users (id, organization_id, external_id, email, display_name, role, auth_provider)
-            VALUES ($1, $2, $3, $4, $5, $6, 'demo')
-            ON CONFLICT (id) DO NOTHING
-            "#,
-        )
-        .bind(uid)
-        .bind(org_id)
-        .bind(uname)
-        .bind(format!("{}@local", uname))
-        .bind(uname)
-        .bind(urole)
-        .execute(pool)
-        .await;
-    }
-}
-
 /// GET /api/v1/auth/mode — Return current auth mode
 pub async fn auth_mode(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(serde_json::json!({
@@ -265,19 +230,25 @@ pub async fn auth_mode(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     }))
 }
 
-/// GET /api/v1/auth/users — List available demo users (demo mode only)
+/// GET /api/v1/auth/users — List available users (demo mode only)
 pub async fn demo_users(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, StatusCode> {
     if state.config.auth_mode != AuthMode::Demo {
         return Err(StatusCode::NOT_FOUND);
     }
 
-    Ok(Json(serde_json::json!({
-        "users": [
-            {"email": "admin@local", "role": "admin", "description": "Full access"},
-            {"email": "operator@local", "role": "operator", "description": "Operate apps"},
-            {"email": "viewer@local", "role": "viewer", "description": "Read-only"}
-        ]
-    })))
+    // Return users from DB instead of hardcoded list
+    let users: Vec<(String, String)> = sqlx::query_as(
+        "SELECT email, role FROM users WHERE is_active = true ORDER BY role",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let user_list: Vec<serde_json::Value> = users.into_iter().map(|(email, role)| {
+        serde_json::json!({"email": email, "role": role})
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "users": user_list })))
 }
 
 /// Local auth routes

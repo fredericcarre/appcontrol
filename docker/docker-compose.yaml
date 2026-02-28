@@ -26,6 +26,13 @@ services:
       PORT: "3000"
       JWT_SECRET: dev-secret-change-in-production
       RUST_LOG: info,appcontrol_backend=debug
+      # ── Seed configuration ──
+      # On first start (empty DB), creates this org + admin user.
+      SEED_ENABLED: "true"
+      SEED_ADMIN_EMAIL: admin@localhost
+      SEED_ADMIN_DISPLAY_NAME: Admin
+      SEED_ORG_NAME: Default Organization
+      SEED_ORG_SLUG: default
     depends_on:
       postgres:
         condition: service_healthy

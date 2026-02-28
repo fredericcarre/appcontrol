@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth';
 import { Button } from '@/components/ui/button';
@@ -8,12 +8,25 @@ import { Shield } from 'lucide-react';
 import client from '@/api/client';
 
 export function LoginPage() {
-  const [email, setEmail] = useState('admin@localhost');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [devMode, setDevMode] = useState(false);
   const setAuth = useAuthStore((s) => s.setAuth);
   const navigate = useNavigate();
+
+  // Fetch auth info from backend to know dev mode status and default email
+  useEffect(() => {
+    client.get('/v1/auth/info').then(({ data }) => {
+      if (data.dev_mode && data.default_email) {
+        setEmail(data.default_email);
+        setDevMode(true);
+      }
+    }).catch(() => {
+      // Backend not reachable — leave form empty
+    });
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,7 +72,6 @@ export function LoginPage() {
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@localhost"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -70,7 +82,7 @@ export function LoginPage() {
               <Input
                 id="password"
                 type="password"
-                placeholder="Leave empty in dev mode"
+                placeholder={devMode ? 'Leave empty in dev mode' : ''}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
