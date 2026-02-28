@@ -340,8 +340,19 @@ Tables `action_log`, `state_transitions`, `check_events`, `switchover_log` are a
 
 ## Upgrade Procedure
 
+### Recommended upgrade order
+
+Upgrade components in this order to avoid protocol mismatches:
+
+1. **Backend** — handles database migrations and API changes
+2. **Frontend** — depends on updated API
+3. **Gateways** — stateless relays, safe to roll at any time
+4. **Agents** — depend on gateway + backend being ready
+
+### Backend, Frontend & Gateway (Helm rolling update)
+
 ```bash
-# 1. Update image tags in values
+# 1. Update image tags in production-values.yaml
 # 2. Helm upgrade (rolling update, zero downtime thanks to PDB)
 helm upgrade appcontrol ./helm/appcontrol \
   --namespace appcontrol \
@@ -356,7 +367,63 @@ kubectl rollout status -n appcontrol deployment/appcontrol-frontend
 kubectl exec -n appcontrol deploy/appcontrol-backend -- curl -s localhost:3000/ready
 ```
 
+Gateway upgrades are **zero-downtime** thanks to:
+
+- **PodDisruptionBudget** (`minAvailable: 1`) prevents all gateway pods from
+  terminating simultaneously.
+- **Agent-driven failover**: agents configured with multiple `gateway.urls`
+  automatically reconnect to the next available gateway when a pod terminates
+  during a rolling update.
+
+### Agent binary upgrades
+
+Agents run outside Kubernetes (on monitored servers) and require a separate
+upgrade path. Three options are available, detailed in the
+[Agent Installation Guide — Upgrading Agents](AGENT_INSTALLATION.md#12-upgrading-agents):
+
+| Method | Best for | Integrity check | Rollback | Centralized tracking |
+|--------|----------|:-:|:-:|:-:|
+| Managed update (API) | Air-gapped or production | Yes (SHA-256) | Automatic | Yes (`agent_update_tasks`) |
+| Direct download | Connected agents | Yes (SHA-256) | Automatic | Yes |
+| Manual replacement | Emergency or dev | No | Manual | No |
+
+**Recommended approach for production:**
+
+1. Upload the new agent binary to the backend via API.
+2. Push the update to 2–3 test agents. Verify health checks resume and the
+   correct version appears in the Agent Management UI.
+3. Batch-upgrade remaining agents using the batch update API.
+4. Monitor progress via `GET /api/v1/admin/agent-update-tasks`.
+
+### Gateway High Availability
+
+Gateways are **stateless WebSocket relays** with no database dependency. High
+availability is achieved through agent-driven failover, not server-side
+clustering.
+
+**Agent-side failover configuration** (in `agent.yaml`):
+
+```yaml
+gateway:
+  urls:
+    - "wss://gw-primary.prod:4443/ws"
+    - "wss://gw-secondary.prod:4443/ws"
+  failover_strategy: "ordered"   # or "round-robin"
+  primary_retry_secs: 300        # Retry primary every 5 minutes
+```
+
+**Gateway maintenance workflow:**
+
+1. Suspend the gateway in the UI or API (`is_active = false`).
+2. Connected agents detect the disconnection and failover to the next gateway.
+3. Perform maintenance or upgrade on the suspended gateway.
+4. Re-enable the gateway (`is_active = true`).
+5. Agents with `failover_strategy: "ordered"` will return to the primary
+   gateway within `primary_retry_secs`.
+
 ## Rollback
+
+### Backend, Frontend & Gateway
 
 ```bash
 # Helm rollback to previous revision
@@ -364,4 +431,16 @@ helm rollback appcontrol -n appcontrol
 
 # Verify
 kubectl rollout status -n appcontrol deployment/appcontrol-backend
+```
+
+### Agents
+
+If a managed update fails, the agent automatically restores the `.old` binary
+backup. For manual rollbacks:
+
+```bash
+# The previous binary is saved as .appcontrol-agent.old
+sudo systemctl stop appcontrol-agent
+sudo mv /usr/local/bin/.appcontrol-agent.old /usr/local/bin/appcontrol-agent
+sudo systemctl start appcontrol-agent
 ```

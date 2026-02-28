@@ -324,6 +324,32 @@ labels:
 log_level: "appcontrol_agent=info"
 ```
 
+### Gateway failover
+
+For high availability, configure multiple gateway URLs. The agent automatically
+fails over to the next gateway if the current one becomes unreachable.
+
+```yaml
+gateway:
+  urls:
+    - "wss://gw-primary.prod:4443/ws"
+    - "wss://gw-secondary.prod:4443/ws"
+  failover_strategy: "ordered"   # "ordered" or "round-robin"
+  primary_retry_secs: 300        # Retry primary every 5 minutes
+  reconnect_interval_secs: 10    # Delay between reconnection attempts
+```
+
+| Strategy | Behavior |
+|----------|----------|
+| `ordered` | Try URLs in sequence, always prefer the first. If the primary fails, connect to the next. Periodically retry the primary every `primary_retry_secs`. |
+| `round-robin` | Distribute connections across all gateways. Useful for load balancing when multiple gateways serve the same zone. |
+
+Gateways are **stateless WebSocket relays** — they hold no persistent state
+about agents. Any gateway can serve any agent, and agents can switch gateways
+transparently. Administrators can suspend a gateway for maintenance by setting
+`is_active = false` in the UI or API; connected agents will failover
+automatically.
+
 ### Environment variable overrides
 
 | Variable | Overrides | Example |
@@ -526,7 +552,252 @@ sudo launchctl start com.appcontrol.agent
 
 ---
 
-## 10. Quick reference
+## 10. Agent identity & resilience
+
+### How the agent ID works
+
+By default, the agent generates a **deterministic UUID** from the hostname:
+
+```
+UUID = Uuid::new_v5(NAMESPACE_DNS, hostname)
+```
+
+The same hostname always produces the same UUID across restarts and
+re-enrollments. This means:
+
+- Restarting the agent preserves its identity without any configuration.
+- Re-enrolling on the same host upserts the existing agent record in the
+  backend database (no duplicate).
+- The agent ID is predictable and reproducible.
+
+The ID can be overridden (highest priority first):
+
+| Method | Example |
+|--------|---------|
+| CLI flag | `appcontrol-agent --agent-id 550e8400-...` |
+| Environment variable | `AGENT_ID=550e8400-...` |
+| Config file | `agent: { id: "550e8400-..." }` in `agent.yaml` |
+| Auto (default) | `agent: { id: "auto" }` — deterministic from hostname |
+
+### Multi-agent on the same host
+
+Running multiple agents on the same host is **not supported with the default
+`id: "auto"` setting** — both agents would produce the same UUID and conflict
+in the backend.
+
+To run multiple agents on one host, assign each agent an **explicit unique
+UUID** via `--agent-id`, `AGENT_ID`, or the config file. Each agent must also
+use a separate config directory and TLS certificate set.
+
+In **container environments**, each container has its own hostname, so
+`id: "auto"` works without collision. No special configuration is needed.
+
+### Resilience model
+
+Agent-level high availability (active/passive on the same host) is
+**unnecessary by design**:
+
+1. **Process detachment.** Processes started by the agent use double-fork +
+   setsid. They survive agent crashes — a dead agent does not kill monitored
+   processes.
+2. **Automatic restart.** systemd restarts the agent within ~10 seconds
+   (`Restart=always`, `RestartSec=10`). The agent is typically back before
+   the heartbeat timeout (default 180 seconds) triggers.
+3. **Seamless reconnection.** On restart, the agent re-registers with the same
+   UUID and mTLS certificate. The backend updates its metadata (version, IPs,
+   heartbeat) — no re-enrollment needed.
+4. **No state loss.** The agent uses an on-disk offline buffer. Messages
+   queued during disconnection are replayed on reconnection.
+
+The backend marks an agent `UNREACHABLE` only after `heartbeat_timeout_seconds`
+(default 180s) of silence. With systemd auto-restart, the agent recovers well
+before this threshold.
+
+### Reconnection behavior
+
+When an agent reconnects (after restart, upgrade, or network recovery):
+
+1. The agent opens a WebSocket connection to the gateway (with mTLS).
+2. The agent sends a `Register` message containing: `agent_id`, `hostname`,
+   `ip_addresses`, `labels`, `version`, `cert_fingerprint`.
+3. The gateway forwards to the backend.
+4. The backend verifies the certificate fingerprint against the stored value
+   in `agents.certificate_fingerprint` (anti-spoofing).
+5. The backend updates: `version`, `ip_addresses`, `last_heartbeat_at`,
+   `is_active = true`.
+6. The backend pushes the current component configuration to the agent.
+
+IP addresses are auto-detected: all non-loopback interfaces (IPv4 + IPv6).
+This is useful in cloud environments where hostnames may be ephemeral but
+IP addresses are stable.
+
+---
+
+## 11. Version management
+
+### Version string format
+
+Agent and gateway binaries embed a version string at build time:
+
+```
+<cargo_version> (<git_hash> <build_time>)
+```
+
+Example: `0.2.0 (a3f1b7c 2026-02-28T14:32:15Z)`
+
+| Component | Source |
+|-----------|--------|
+| `cargo_version` | `version` field in `Cargo.toml` (workspace-level) |
+| `git_hash` | Short commit hash, injected by `build.rs` at compile time |
+| `build_time` | UTC timestamp, injected by `build.rs` at compile time |
+
+Display the version of a running binary:
+
+```bash
+appcontrol-agent --version
+# → appcontrol-agent 0.2.0 (a3f1b7c 2026-02-28T14:32:15Z)
+```
+
+### Version reporting
+
+Agents and gateways report their version in the `Register` message sent on
+every connection. The backend stores it:
+
+- `agents.version` — updated on every agent connection
+- `gateways.version` — updated on every gateway connection
+
+Query agent versions:
+
+```bash
+# Via API
+curl https://backend:3000/api/v1/agents \
+  -H "Authorization: Bearer $JWT"
+
+# Via CLI
+appctl agents list
+```
+
+### Release cycle
+
+Releases follow GitHub tags:
+
+1. Bump version in `Cargo.toml` (workspace-level `[workspace.package]`)
+2. Commit and push
+3. Create a git tag: `git tag v0.3.0 && git push origin v0.3.0`
+4. GitHub Actions `release.yaml` triggers automatically:
+   - Builds multi-platform binaries (Linux amd64/arm64, macOS x86_64/arm64, Windows amd64/arm64)
+   - Publishes Docker images tagged with the version
+   - Packages the Helm chart with the matching version
+   - Creates a GitHub Release with binary artifacts and SHA-256 checksums
+
+Pin a Docker Compose deployment to a specific version:
+
+```bash
+APPCONTROL_VERSION=0.3.0 docker compose -f docker/docker-compose.release.yaml up -d
+```
+
+---
+
+## 12. Upgrading agents
+
+Three upgrade paths are available, from most to least recommended.
+
+### 12.1 Managed update via API (recommended)
+
+The backend can push binary updates to connected agents, with integrity
+verification, progress tracking, and automatic rollback. This works even in
+air-gapped networks since the binary is transferred over the existing
+WebSocket connection.
+
+**Step 1: Upload the new binary to the backend**
+
+```bash
+curl -X POST https://backend:3000/api/v1/admin/agent-binaries \
+  -H "Authorization: Bearer $JWT" \
+  -F "binary=@appcontrol-agent-linux-amd64" \
+  -F "version=0.3.0" \
+  -F "platform=linux-amd64"
+```
+
+**Step 2: Push the update to agents**
+
+```bash
+# Single agent
+curl -X POST https://backend:3000/api/v1/admin/agents/<agent-id>/update \
+  -H "Authorization: Bearer $JWT"
+
+# Batch update
+curl -X POST https://backend:3000/api/v1/admin/agents/update-batch \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_ids": ["<id1>", "<id2>"], "version": "0.3.0"}'
+```
+
+**How it works:**
+
+1. The backend splits the binary into **256 KB chunks** and sends them via
+   WebSocket (`UpdateBinaryChunk` messages).
+2. The agent accumulates chunks in memory and sends `UpdateProgress` messages
+   back (status: `Downloading` → `Verifying` → `Applying` → `Complete`).
+3. Once all chunks are received, the agent writes the assembled binary to a
+   temp file and verifies its **SHA-256 checksum**.
+4. **Atomic swap**: the current binary is renamed to `.old`, the new binary
+   takes its place.
+5. **Re-exec**: on Unix the agent calls `exec()` to replace itself in-place,
+   preserving CLI arguments. On Windows a new process is spawned.
+6. **Automatic rollback**: if the swap fails, the `.old` binary is restored.
+
+Update progress is tracked in the `agent_update_tasks` table (status:
+`pending` → `in_progress` → `complete` / `failed`).
+
+### 12.2 Direct download
+
+For agents with internet access, the backend can instruct the agent to
+download a binary from a URL:
+
+- The agent downloads the binary, verifies the SHA-256 checksum, and performs
+  the same atomic swap + re-exec.
+- Same rollback behavior as the managed update.
+
+### 12.3 Manual binary replacement
+
+Replace the binary on disk and restart the service:
+
+```bash
+# Linux
+sudo systemctl stop appcontrol-agent
+sudo cp appcontrol-agent-0.3.0 /usr/local/bin/appcontrol-agent
+sudo chmod +x /usr/local/bin/appcontrol-agent
+sudo systemctl start appcontrol-agent
+```
+
+```powershell
+# Windows
+sc.exe stop AppControlAgent
+Copy-Item appcontrol-agent-0.3.0.exe "$env:ProgramFiles\AppControl\appcontrol-agent.exe"
+sc.exe start AppControlAgent
+```
+
+The agent's **identity is preserved** — certificates and config remain on disk.
+On reconnection the backend updates the `version` field automatically.
+
+**Trade-offs**: no integrity verification, no automatic rollback, no
+centralized progress tracking. Use this only when the managed update path is
+not available.
+
+### Recommended upgrade strategy
+
+1. **Upgrade the backend first** (Helm rolling update), then frontend, then
+   gateways, then agents.
+2. **Test on a subset**: upgrade 2-3 agents, verify health checks resume and
+   the correct version appears in the Agent Management UI.
+3. **Batch the rest**: use the batch update API to upgrade remaining agents.
+4. **Monitor**: check `agent_update_tasks` status and agent versions via the
+   API or UI.
+
+---
+
+## 13. Quick reference
 
 ### End-to-end: from zero to monitoring in 3 commands
 
