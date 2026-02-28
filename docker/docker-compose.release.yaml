@@ -4,7 +4,7 @@
 # Usage:
 #   docker compose -f docker/docker-compose.release.yaml up -d
 #   open http://localhost:8080
-#   Login: see SEED_ADMIN_EMAIL below (default: admin@localhost, no password)
+#   Login: admin@localhost / admin (change SEED_ADMIN_PASSWORD for production!)
 #
 #   # Pin a specific version:
 #   APPCONTROL_VERSION=0.2.0 docker compose -f docker/docker-compose.release.yaml up -d
@@ -43,18 +43,18 @@ services:
       PORT: "3000"
       JWT_SECRET: dev-secret-change-in-production
       RUST_LOG: info,appcontrol_backend=debug
-      # ── Application mode ──
-      # demo: Quick login (no password required), good for evaluation/testing
-      # production: Requires OIDC/SAML SSO, strict security
-      APP_ENV: demo
-      # ── Seed configuration ──
-      # On first start (empty DB), creates this org + admin user.
-      # Change these to match your environment.
+      # ── Initial admin user (created on first start) ──
       SEED_ENABLED: "true"
       SEED_ADMIN_EMAIL: admin@localhost
+      SEED_ADMIN_PASSWORD: admin
       SEED_ADMIN_DISPLAY_NAME: Admin
       SEED_ORG_NAME: Default Organization
       SEED_ORG_SLUG: default
+      # ── SSO (optional) ──
+      # OIDC_DISCOVERY_URL: https://login.example.com/.well-known/openid-configuration
+      # OIDC_CLIENT_ID: appcontrol
+      # OIDC_CLIENT_SECRET: your-secret
+      # SAML_IDP_SSO_URL: https://idp.example.com/sso
     depends_on:
       postgres:
         condition: service_healthy

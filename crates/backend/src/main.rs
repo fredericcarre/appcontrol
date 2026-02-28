@@ -299,7 +299,7 @@ use chrono::Datelike;
 
 /// Seed a default organization and admin user on first start.
 ///
-/// Only runs when SEED_ENABLED=true (default in dev) and no users exist yet.
+/// Only runs when SEED_ENABLED=true (default: true) and no users exist yet.
 /// All values come from SEED_* environment variables — nothing is hardcoded.
 ///
 /// Uses UPSERT to override any migration-seeded data with the configured values.
@@ -313,6 +313,15 @@ async fn seed_initial_user(pool: &sqlx::PgPool, seed: &config::SeedConfig) {
         tracing::debug!("Users already exist — skipping seed");
         return;
     }
+
+    // Hash the admin password
+    let password_hash = match bcrypt::hash(&seed.admin_password, bcrypt::DEFAULT_COST) {
+        Ok(hash) => hash,
+        Err(e) => {
+            tracing::error!("Failed to hash admin password: {}", e);
+            return;
+        }
+    };
 
     let org_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
     let user_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
@@ -335,14 +344,15 @@ async fn seed_initial_user(pool: &sqlx::PgPool, seed: &config::SeedConfig) {
 
     // Create or update the admin user (platform super-admin + org admin)
     let user_result = sqlx::query(
-        "INSERT INTO users (id, organization_id, external_id, email, display_name, role, platform_role, auth_provider) \
-         VALUES ($1, $2, 'seed-admin', $3, $4, 'admin', 'super_admin', 'local') \
-         ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name",
+        "INSERT INTO users (id, organization_id, external_id, email, display_name, role, platform_role, auth_provider, password_hash) \
+         VALUES ($1, $2, 'seed-admin', $3, $4, 'admin', 'super_admin', 'local', $5) \
+         ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, password_hash = EXCLUDED.password_hash",
     )
     .bind(user_id)
     .bind(org_id)
     .bind(&seed.admin_email)
     .bind(&seed.admin_display_name)
+    .bind(&password_hash)
     .execute(pool)
     .await;
 
@@ -352,7 +362,7 @@ async fn seed_initial_user(pool: &sqlx::PgPool, seed: &config::SeedConfig) {
                 email = %seed.admin_email,
                 org = %seed.org_name,
                 "Seeded initial admin user (super_admin). \
-                 Login with POST /api/v1/auth/login or the web UI."
+                 Login with email/password at /api/v1/auth/login or the web UI."
             );
         }
         Err(e) => {
