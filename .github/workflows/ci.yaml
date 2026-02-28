@@ -263,6 +263,8 @@ jobs:
             file: docker/Dockerfile.agent
           - image: gateway
             file: docker/Dockerfile.gateway
+          - image: azure-gateway
+            file: docker/Dockerfile.azure-gateway
     steps:
       - uses: actions/checkout@v4
 

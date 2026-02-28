@@ -1,0 +1,21 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: appcontrol-backend
+  labels:
+    app.kubernetes.io/name: appcontrol
+    app.kubernetes.io/component: backend
+  annotations:
+    # Long timeout for WebSocket connections (gateway connects here)
+    haproxy.router.openshift.io/timeout: 86400s
+spec:
+  host: "${BACKEND_ROUTE_HOST}"
+  to:
+    kind: Service
+    name: appcontrol-backend
+    weight: 100
+  port:
+    targetPort: 3000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

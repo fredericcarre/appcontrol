@@ -172,6 +172,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build and push azure-gateway
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.azure-gateway
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/appcontrol-azure-gateway:${{ steps.version.outputs.VERSION }}
+            ${{ env.REGISTRY }}/appcontrol-azure-gateway:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # ---------------------------------------------------------------------------
   # Package Helm chart
   # ---------------------------------------------------------------------------
@@ -276,6 +288,7 @@ jobs:
           docker pull ghcr.io/fredericcarre/appcontrol-frontend:${{ steps.version.outputs.VERSION }}
           docker pull ghcr.io/fredericcarre/appcontrol-gateway:${{ steps.version.outputs.VERSION }}
           docker pull ghcr.io/fredericcarre/appcontrol-agent:${{ steps.version.outputs.VERSION }}
+          docker pull ghcr.io/fredericcarre/appcontrol-azure-gateway:${{ steps.version.outputs.VERSION }}
           ```
 
           ### Assets
@@ -287,6 +300,7 @@ jobs:
           | `appcontrol-backend-{os}-{arch}[.exe]` | Backend API server binary |
           | `appcontrol-gateway-{os}-{arch}[.exe]` | Gateway binary |
           | `docker-compose.release.yaml` | Docker Compose for running from images |
+          | `appcontrol-azure-gateway` | Combined gateway+agent Docker image with Azure CLI |
           | `examples.tar.gz` | Example application maps |
           | `appcontrol-*.tgz` | Helm chart |
           | `checksums-sha256.txt` | SHA-256 checksums for all assets |
