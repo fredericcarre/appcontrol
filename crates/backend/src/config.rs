@@ -31,8 +31,7 @@ impl SeedConfig {
                 .unwrap_or_else(|_| "Admin".to_string()),
             org_name: std::env::var("SEED_ORG_NAME")
                 .unwrap_or_else(|_| "Default Organization".to_string()),
-            org_slug: std::env::var("SEED_ORG_SLUG")
-                .unwrap_or_else(|_| "default".to_string()),
+            org_slug: std::env::var("SEED_ORG_SLUG").unwrap_or_else(|_| "default".to_string()),
         }
     }
 }
