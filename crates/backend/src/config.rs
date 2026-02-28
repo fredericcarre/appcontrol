@@ -6,10 +6,13 @@ use crate::auth::saml::SamlConfig;
 #[derive(Debug, Clone)]
 pub struct SeedConfig {
     /// Whether to auto-seed an org + admin user on first start (when no users exist).
-    /// Default: true in development, false in production.
+    /// Default: true.
     pub enabled: bool,
     /// Email for the seeded admin user.
     pub admin_email: String,
+    /// Password for the seeded admin user (bcrypt hashed before storage).
+    /// Default: "admin" — change in production!
+    pub admin_password: String,
     /// Display name for the seeded admin user.
     pub admin_display_name: String,
     /// Organization name.
@@ -19,14 +22,16 @@ pub struct SeedConfig {
 }
 
 impl SeedConfig {
-    pub fn from_env(is_production: bool) -> Self {
+    pub fn from_env() -> Self {
         Self {
             enabled: std::env::var("SEED_ENABLED")
                 .ok()
                 .map(|v| v == "true" || v == "1")
-                .unwrap_or(!is_production),
+                .unwrap_or(true),
             admin_email: std::env::var("SEED_ADMIN_EMAIL")
                 .unwrap_or_else(|_| "admin@localhost".to_string()),
+            admin_password: std::env::var("SEED_ADMIN_PASSWORD")
+                .unwrap_or_else(|_| "admin".to_string()),
             admin_display_name: std::env::var("SEED_ADMIN_DISPLAY_NAME")
                 .unwrap_or_else(|_| "Admin".to_string()),
             org_name: std::env::var("SEED_ORG_NAME")
@@ -48,6 +53,7 @@ pub struct AppConfig {
     /// SAML configuration (optional — set SAML_IDP_SSO_URL to enable)
     pub saml: Option<SamlConfig>,
     /// Application environment: "production", "staging", "development"
+    /// Controls security strictness (JWT_SECRET requirements, default values).
     pub app_env: String,
     /// Seed configuration for initial org + admin user
     pub seed: SeedConfig,
@@ -158,7 +164,7 @@ impl AppConfig {
             jwt_issuer: std::env::var("JWT_ISSUER").unwrap_or_else(|_| "appcontrol".to_string()),
             oidc: OidcConfig::from_env(),
             saml: SamlConfig::from_env(),
-            seed: SeedConfig::from_env(is_production),
+            seed: SeedConfig::from_env(),
             app_env,
             rate_limit_auth: std::env::var("RATE_LIMIT_AUTH")
                 .ok()

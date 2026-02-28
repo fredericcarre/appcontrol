@@ -7,24 +7,28 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Shield } from 'lucide-react';
 import client from '@/api/client';
 
+interface AuthInfo {
+  local: boolean;
+  oidc: boolean;
+  saml: boolean;
+}
+
 export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [devMode, setDevMode] = useState(false);
+  const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
   const setAuth = useAuthStore((s) => s.setAuth);
   const navigate = useNavigate();
 
-  // Fetch auth info from backend to know dev mode status and default email
+  // Fetch auth info to know which login methods are available
   useEffect(() => {
     client.get('/v1/auth/info').then(({ data }) => {
-      if (data.dev_mode && data.default_email) {
-        setEmail(data.default_email);
-        setDevMode(true);
-      }
+      setAuthInfo(data);
     }).catch(() => {
-      // Backend not reachable — leave form empty
+      // Backend not reachable — assume local only
+      setAuthInfo({ local: true, oidc: false, saml: false });
     });
   }, []);
 
@@ -36,7 +40,7 @@ export function LoginPage() {
     try {
       const { data } = await client.post('/v1/auth/login', {
         email,
-        password: password || undefined,
+        password,
       });
       setAuth(data.token, data.user);
       navigate('/');
@@ -47,6 +51,8 @@ export function LoginPage() {
       setLoading(false);
     }
   };
+
+  const hasSso = authInfo?.oidc || authInfo?.saml;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -82,9 +88,9 @@ export function LoginPage() {
               <Input
                 id="password"
                 type="password"
-                placeholder={devMode ? 'Leave empty in dev mode' : ''}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                required
               />
             </div>
           </CardContent>
@@ -92,11 +98,15 @@ export function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Signing in...' : 'Sign in'}
             </Button>
-            <Button type="button" variant="outline" className="w-full" onClick={() => {
-              window.location.href = '/api/v1/auth/oidc/login';
-            }}>
-              Sign in with SSO
-            </Button>
+            {hasSso && (
+              <Button type="button" variant="outline" className="w-full" onClick={() => {
+                // Prefer OIDC if available, otherwise SAML
+                const ssoPath = authInfo?.oidc ? '/api/v1/auth/oidc/login' : '/api/v1/auth/saml/login';
+                window.location.href = ssoPath;
+              }}>
+                Sign in with SSO
+              </Button>
+            )}
           </CardFooter>
         </form>
       </Card>
