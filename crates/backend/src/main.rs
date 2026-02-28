@@ -80,10 +80,11 @@ async fn main() -> anyhow::Result<()> {
 
     let heartbeat_batcher = appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
 
-    // In development mode, seed a default organization and admin user if none exist.
-    // This enables the quickstart flow without manual SQL or OIDC/SAML configuration.
-    if config.app_env == "development" {
-        seed_dev_user(&pool).await;
+    // Seed a default organization and admin user if none exist.
+    // Controlled by SEED_ENABLED (default: true in dev, false in prod).
+    // All values come from SEED_* environment variables.
+    if config.seed.enabled {
+        seed_initial_user(&pool, &config.seed).await;
     }
 
     // Auto-initialize PKI (CA) for all organizations that don't have one yet.
@@ -296,60 +297,66 @@ async fn ensure_check_event_partitions(pool: &sqlx::PgPool) -> anyhow::Result<()
 
 use chrono::Datelike;
 
-/// Seed a default organization and admin user in development mode.
+/// Seed a default organization and admin user on first start.
 ///
-/// Only runs when `APP_ENV=development` (the default) and no users exist yet.
-/// Creates:
-///   - Organization "Dev Org" (slug: dev-org)
-///   - Admin user admin@localhost (role: admin)
+/// Only runs when SEED_ENABLED=true (default in dev) and no users exist yet.
+/// All values come from SEED_* environment variables — nothing is hardcoded.
 ///
-/// Credentials: admin@localhost / dev-secret-change-in-production (JWT_SECRET)
-async fn seed_dev_user(pool: &sqlx::PgPool) {
+/// Uses UPSERT to override any migration-seeded data with the configured values.
+async fn seed_initial_user(pool: &sqlx::PgPool, seed: &config::SeedConfig) {
     let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(pool)
         .await
         .unwrap_or(0);
 
     if user_count > 0 {
+        tracing::debug!("Users already exist — skipping seed");
         return;
     }
 
     let org_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
     let user_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
 
-    // Create default organization
+    // Create or update the default organization
     let org_result = sqlx::query(
-        "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Dev Org', 'dev-org') ON CONFLICT DO NOTHING",
+        "INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3) \
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug",
     )
     .bind(org_id)
+    .bind(&seed.org_name)
+    .bind(&seed.org_slug)
     .execute(pool)
     .await;
 
     if let Err(e) = org_result {
-        tracing::warn!("Failed to seed dev organization: {}", e);
+        tracing::warn!("Failed to seed organization: {}", e);
         return;
     }
 
-    // Create default admin user (platform super-admin + org admin)
+    // Create or update the admin user (platform super-admin + org admin)
     let user_result = sqlx::query(
         "INSERT INTO users (id, organization_id, external_id, email, display_name, role, platform_role, auth_provider) \
-         VALUES ($1, $2, 'dev-admin', 'admin@localhost', 'Dev Admin', 'admin', 'super_admin', 'local') \
-         ON CONFLICT DO NOTHING",
+         VALUES ($1, $2, 'seed-admin', $3, $4, 'admin', 'super_admin', 'local') \
+         ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name",
     )
     .bind(user_id)
     .bind(org_id)
+    .bind(&seed.admin_email)
+    .bind(&seed.admin_display_name)
     .execute(pool)
     .await;
 
     match user_result {
         Ok(_) => {
             tracing::info!(
-                "Dev user seeded: admin@localhost (org: Dev Org, platform: super_admin). \
-                 Use POST /api/v1/auth/dev-login with {{\"email\":\"admin@localhost\"}} to get a JWT."
+                email = %seed.admin_email,
+                org = %seed.org_name,
+                "Seeded initial admin user (super_admin). \
+                 Login with POST /api/v1/auth/login or the web UI."
             );
         }
         Err(e) => {
-            tracing::warn!("Failed to seed dev user: {}", e);
+            tracing::warn!("Failed to seed admin user: {}", e);
         }
     }
 }

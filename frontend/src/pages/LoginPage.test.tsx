@@ -8,6 +8,7 @@ import React from 'react';
 vi.mock('@/api/client', () => ({
   default: {
     post: vi.fn(),
+    get: vi.fn(),
   },
 }));
 
@@ -26,6 +27,10 @@ describe('LoginPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useAuthStore.setState({ token: null, user: null });
+    // Default: auth/info returns dev mode with admin@localhost
+    (client.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { dev_mode: true, default_email: 'admin@localhost' },
+    });
   });
 
   it('should render login form', async () => {
@@ -204,7 +209,11 @@ describe('LoginPage', () => {
     });
   });
 
-  it('should pre-fill email with admin@localhost', async () => {
+  it('should pre-fill email from auth/info API response', async () => {
+    (client.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { dev_mode: true, default_email: 'custom@mycompany.com' },
+    });
+
     const { LoginPage } = await import('./LoginPage');
     render(
       <MemoryRouter>
@@ -212,7 +221,30 @@ describe('LoginPage', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByLabelText('Email')).toHaveValue('admin@localhost');
+    await waitFor(() => {
+      expect(screen.getByLabelText('Email')).toHaveValue('custom@mycompany.com');
+    });
+    expect(client.get).toHaveBeenCalledWith('/v1/auth/info');
+  });
+
+  it('should leave email empty when auth/info returns production mode', async () => {
+    (client.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { dev_mode: false, default_email: null },
+    });
+
+    const { LoginPage } = await import('./LoginPage');
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    );
+
+    // Wait for the effect to run
+    await waitFor(() => {
+      expect(client.get).toHaveBeenCalledWith('/v1/auth/info');
+    });
+
+    expect(screen.getByLabelText('Email')).toHaveValue('');
   });
 
   it('should login with pre-filled email when no password is provided', async () => {
@@ -227,6 +259,11 @@ describe('LoginPage', () => {
         <LoginPage />
       </MemoryRouter>,
     );
+
+    // Wait for auth/info to populate the email
+    await waitFor(() => {
+      expect(screen.getByLabelText('Email')).toHaveValue('admin@localhost');
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 

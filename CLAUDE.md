@@ -76,6 +76,7 @@ appcontrol/
 8. **AppControl is NOT a scheduler.** It integrates with schedulers. Never position as competitor.
 9. **Delta-only sync.** Agent sends changes only, not full status on every check.
 10. **Config snapshots.** Every config change → `config_versions` with before/after JSONB.
+11. **No hardcoded credentials or seed data.** No emails, passwords, organization names, user accounts, or default values baked into source code. All configurable values MUST come from environment variables (SEED_*, JWT_SECRET, DATABASE_URL, etc.). The docker-compose files are the single source of truth for configuration — reading them should tell you everything needed to run the system.
 
 ## How to Work
 

@@ -1,6 +1,41 @@
 use crate::auth::oidc::OidcConfig;
 use crate::auth::saml::SamlConfig;
 
+/// Seed configuration for the initial organization and admin user.
+/// All values are read from environment variables at startup.
+#[derive(Debug, Clone)]
+pub struct SeedConfig {
+    /// Whether to auto-seed an org + admin user on first start (when no users exist).
+    /// Default: true in development, false in production.
+    pub enabled: bool,
+    /// Email for the seeded admin user.
+    pub admin_email: String,
+    /// Display name for the seeded admin user.
+    pub admin_display_name: String,
+    /// Organization name.
+    pub org_name: String,
+    /// Organization slug (URL-safe identifier).
+    pub org_slug: String,
+}
+
+impl SeedConfig {
+    pub fn from_env(is_production: bool) -> Self {
+        Self {
+            enabled: std::env::var("SEED_ENABLED")
+                .ok()
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(!is_production),
+            admin_email: std::env::var("SEED_ADMIN_EMAIL")
+                .unwrap_or_else(|_| "admin@localhost".to_string()),
+            admin_display_name: std::env::var("SEED_ADMIN_DISPLAY_NAME")
+                .unwrap_or_else(|_| "Admin".to_string()),
+            org_name: std::env::var("SEED_ORG_NAME")
+                .unwrap_or_else(|_| "Default Organization".to_string()),
+            org_slug: std::env::var("SEED_ORG_SLUG").unwrap_or_else(|_| "default".to_string()),
+        }
+    }
+}
+
 /// Application configuration loaded from environment variables.
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -14,6 +49,8 @@ pub struct AppConfig {
     pub saml: Option<SamlConfig>,
     /// Application environment: "production", "staging", "development"
     pub app_env: String,
+    /// Seed configuration for initial org + admin user
+    pub seed: SeedConfig,
     /// Rate limiting: auth endpoints (per IP per minute)
     pub rate_limit_auth: u32,
     /// Rate limiting: operation endpoints (per user per minute)
@@ -121,6 +158,7 @@ impl AppConfig {
             jwt_issuer: std::env::var("JWT_ISSUER").unwrap_or_else(|_| "appcontrol".to_string()),
             oidc: OidcConfig::from_env(),
             saml: SamlConfig::from_env(),
+            seed: SeedConfig::from_env(is_production),
             app_env,
             rate_limit_auth: std::env::var("RATE_LIMIT_AUTH")
                 .ok()

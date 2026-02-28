@@ -2,13 +2,14 @@
 # No local build required — pulls pre-built images from GHCR.
 #
 # Usage:
-#   # Start the full stack
 #   docker compose -f docker/docker-compose.release.yaml up -d
+#   open http://localhost:8080
+#   Login: see SEED_ADMIN_EMAIL below (default: admin@localhost, no password)
 #
-#   # Use a specific version (default: latest)
+#   # Pin a specific version:
 #   APPCONTROL_VERSION=0.2.0 docker compose -f docker/docker-compose.release.yaml up -d
 #
-#   # Tear down
+#   # Tear down:
 #   docker compose -f docker/docker-compose.release.yaml down -v
 
 version: "3.8"
@@ -42,6 +43,14 @@ services:
       PORT: "3000"
       JWT_SECRET: dev-secret-change-in-production
       RUST_LOG: info,appcontrol_backend=debug
+      # ── Seed configuration ──
+      # On first start (empty DB), creates this org + admin user.
+      # Change these to match your environment.
+      SEED_ENABLED: "true"
+      SEED_ADMIN_EMAIL: admin@localhost
+      SEED_ADMIN_DISPLAY_NAME: Admin
+      SEED_ORG_NAME: Default Organization
+      SEED_ORG_SLUG: default
     depends_on:
       postgres:
         condition: service_healthy
