@@ -1,4 +1,4 @@
--- V018: Typed command parameters and output streaming support
+-- V019: Typed command parameters and output streaming support
 --
 -- 1. Add param_type and enum_values to command_input_params
 --    Supports: string, number, boolean, enum, date, password

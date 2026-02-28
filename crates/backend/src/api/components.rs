@@ -403,6 +403,106 @@ pub async fn delete_component(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ── Position Update (for Map Designer) ─────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePositionRequest {
+    pub x: f32,
+    pub y: f32,
+}
+
+/// PATCH /api/v1/components/:id/position
+/// Update component position on the map canvas (for drag & drop editing).
+/// Requires Edit permission (not just Operate) since it modifies configuration.
+pub async fn update_position(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdatePositionRequest>,
+) -> Result<StatusCode, ApiError> {
+    // Get app_id for permission check
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::Edit {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Note: We don't log position updates to avoid spamming action_log during drag operations.
+    // Position is not a critical operational parameter.
+
+    sqlx::query(
+        "UPDATE components SET position_x = $2, position_y = $3, updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(body.x)
+    .bind(body.y)
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// PATCH /api/v1/components/batch-positions
+/// Update multiple component positions at once (for batch save after editing session).
+#[derive(Debug, Deserialize)]
+pub struct BatchPositionUpdate {
+    pub positions: Vec<ComponentPosition>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ComponentPosition {
+    pub id: Uuid,
+    pub x: f32,
+    pub y: f32,
+}
+
+pub async fn update_positions_batch(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<BatchPositionUpdate>,
+) -> Result<StatusCode, ApiError> {
+    if body.positions.is_empty() {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    // Get app_id from first component (all should be in same app)
+    let first_id = body.positions[0].id;
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(first_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::Edit {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Update all positions in a transaction
+    let mut tx = state.db.begin().await?;
+
+    for pos in &body.positions {
+        sqlx::query("UPDATE components SET position_x = $2, position_y = $3, updated_at = now() WHERE id = $1 AND application_id = $4")
+            .bind(pos.id)
+            .bind(pos.x)
+            .bind(pos.y)
+            .bind(app_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn start_component(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,

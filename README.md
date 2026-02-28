@@ -67,18 +67,14 @@ git clone https://github.com/fredericcarre/appcontrol.git && cd appcontrol
 # Start the full stack from the latest release
 docker compose -f docker/docker-compose.release.yaml up -d
 
-# Verify
+# Verify backend is healthy
 curl http://localhost:3000/health   # → {"status":"ok"}
-
-# Load an example map (requires authentication — include a valid JWT token)
-curl -X POST http://localhost:3000/api/v1/apps/import \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <your-jwt-token>" \
-  -d @examples/three-tier-webapp.json
 
 # Open the UI
 open http://localhost:8080
 ```
+
+**Login:** The form is pre-filled with `admin@localhost`. Leave the password empty and click **Sign in**.
 
 Pin a specific version:
 

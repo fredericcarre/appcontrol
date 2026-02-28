@@ -10,6 +10,7 @@ pub mod diagnostic;
 pub mod discovery;
 pub mod enrollment;
 pub mod estimates;
+pub mod export;
 pub mod gateways;
 pub mod groups;
 pub mod health;
@@ -29,7 +30,7 @@ pub mod workspaces;
 
 use axum::{
     middleware as axum_middleware,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use std::sync::Arc;
@@ -86,6 +87,15 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/components/:id/state-transitions",
             get(components::list_state_transitions),
+        )
+        // Component positions (for map designer)
+        .route(
+            "/components/:id/position",
+            patch(components::update_position),
+        )
+        .route(
+            "/components/batch-positions",
+            patch(components::update_positions_batch),
         )
         // Dependencies
         .route(
@@ -239,8 +249,11 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/apps/:app_id/dependency-history",
             get(topology::dependency_history),
         )
-        // YAML Map Import
+        // Map Import (YAML v3 legacy, JSON v4 native)
         .route("/import/yaml", post(import::import_yaml_map))
+        .route("/import/json", post(import::import_json_map))
+        // JSON Export
+        .route("/apps/:app_id/export", get(export::export_app_json))
         // API Keys
         .route(
             "/api-keys",

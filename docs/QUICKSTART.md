@@ -19,15 +19,41 @@ Get AppControl v4 running in under 10 minutes. This guide covers two deployment 
 
 This brings up the full stack in containers: PostgreSQL, backend API, frontend SPA, and gateway.
 
+### Using pre-built images (recommended)
+
+Pre-built images from GitHub Container Registry — no local build required:
+
+```bash
+git clone https://github.com/fredericcarre/appcontrol.git
+cd appcontrol
+docker compose -f docker/docker-compose.release.yaml up -d
+```
+
+Pin a specific version:
+
+```bash
+APPCONTROL_VERSION=0.2.0 docker compose -f docker/docker-compose.release.yaml up -d
+```
+
+### Building from source
+
+If you prefer to build images locally:
+
 ```bash
 git clone https://github.com/fredericcarre/appcontrol.git
 cd appcontrol
 docker compose -f docker/docker-compose.yaml up -d
 ```
 
-Wait approximately 60 seconds for the images to build on first run. Verify all services are healthy:
+Wait approximately 60 seconds for the images to build on first run.
+
+### Verify services are running
 
 ```bash
+# For pre-built images:
+docker compose -f docker/docker-compose.release.yaml ps
+
+# For local build:
 docker compose -f docker/docker-compose.yaml ps
 ```
 
@@ -42,7 +68,9 @@ docker compose -f docker/docker-compose.yaml ps
 
 ### First Login
 
-Open http://localhost:8080 and click **"Dev Quick Login (admin@localhost)"** at the bottom of the login page. This logs you in instantly with the auto-seeded admin account -- no password needed in development mode.
+Open http://localhost:8080. The login form is pre-filled with `admin@localhost`. Leave the password field empty and click **Sign in**. This uses the auto-seeded admin account — no password is required in development mode.
+
+> **Credentials:** email = `admin@localhost`, password = _(leave empty)_
 
 ### Verify Health
 
@@ -63,10 +91,10 @@ curl -s http://localhost:3000/openapi.json | jq '.info'
 
 ```bash
 # Stop containers (keep data)
-docker compose -f docker/docker-compose.yaml down
+docker compose -f docker/docker-compose.release.yaml down
 
 # Stop and wipe all data
-docker compose -f docker/docker-compose.yaml down -v
+docker compose -f docker/docker-compose.release.yaml down -v
 ```
 
 ---
@@ -109,7 +137,7 @@ cd frontend
 npm run dev
 ```
 
-The Vite dev server starts on http://localhost:5173 with hot module replacement. Click **"Dev Quick Login (admin@localhost)"** on the login page to sign in instantly.
+The Vite dev server starts on http://localhost:5173 with hot module replacement. The login form is pre-filled with `admin@localhost` — leave the password empty and click **Sign in**.
 
 **Terminal 3 -- Gateway**
 
@@ -177,7 +205,7 @@ In development mode (`APP_ENV=development`, the default), the backend:
 - Accepts a simple `JWT_SECRET` for HMAC signing (no RSA key pair needed)
 - Auto-runs migrations on startup, creating the database schema
 - **Auto-seeds a default organization and admin user** on first start (when no users exist)
-- Provides a **"Dev Quick Login"** button on the login page (no password needed)
+- Allows login with just an email (no password needed) — the login form is pre-filled with `admin@localhost`
 - Issues 24-hour JWT tokens stored in HttpOnly cookies
 
 **Minimal environment:**
@@ -962,6 +990,16 @@ Every security event is logged with full traceability:
 
 ## Troubleshooting
 
+### Can't log in / login page shows an error
+
+In development mode, login with email `admin@localhost` and leave the password empty.
+
+**Fix:**
+
+1. Make sure the backend is healthy: `curl http://localhost:3000/health`
+2. If using Docker Compose, check backend logs: `docker compose -f docker/docker-compose.release.yaml logs backend`
+3. The admin account is auto-seeded on first startup when no users exist. If the database already has users from a previous run, the seed is skipped. To reset: `docker compose -f docker/docker-compose.release.yaml down -v && docker compose -f docker/docker-compose.release.yaml up -d`
+
 ### Backend fails to start: "FATAL: JWT_SECRET must be set"
 
 This occurs when `APP_ENV=production` and `JWT_SECRET` is not set or is insecure.
@@ -982,13 +1020,13 @@ PostgreSQL is not reachable or `DATABASE_URL` is not set.
 
 ```bash
 # Verify PostgreSQL is running
-docker compose -f docker/docker-compose.yaml ps postgres
+docker compose -f docker/docker-compose.release.yaml ps postgres
 
 # Check connectivity
 psql postgres://appcontrol:appcontrol_dev@localhost:5432/appcontrol -c "SELECT 1"
 
 # If using Docker Compose, ensure the backend depends on the postgres service
-# The provided docker-compose.yaml already handles this
+# The provided compose files already handle this
 ```
 
 ### "Connection refused" on port 3000
@@ -1002,7 +1040,7 @@ The backend is not running or is still starting up.
 curl -s http://localhost:3000/health || echo "Backend not reachable"
 
 # In Docker Compose, check logs
-docker compose -f docker/docker-compose.yaml logs backend
+docker compose -f docker/docker-compose.release.yaml logs backend
 
 # In local dev, check terminal output for errors
 ```
@@ -1015,10 +1053,10 @@ If migrations fail with schema conflicts, you may have a stale database.
 
 ```bash
 # Wipe and recreate (development only!)
-docker compose -f docker/docker-compose.yaml down -v
-docker compose -f docker/docker-compose.yaml up -d
+docker compose -f docker/docker-compose.release.yaml down -v
+docker compose -f docker/docker-compose.release.yaml up -d
 
-# Or for local dev
+# Or for local dev (source build)
 docker compose -f docker/docker-compose.dev.yaml down -v
 docker compose -f docker/docker-compose.dev.yaml up -d
 ```
@@ -1036,7 +1074,7 @@ export RUST_LOG=debug
 ./appcontrol-agent --gateway-url wss://localhost:4443 --name test
 
 # In Docker, check gateway logs
-docker compose -f docker/docker-compose.yaml logs gateway
+docker compose -f docker/docker-compose.release.yaml logs gateway
 ```
 
 ### CORS errors in the browser

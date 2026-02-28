@@ -409,15 +409,194 @@ export function useHealthSummary(appId: string) {
   });
 }
 
-// ── YAML Import ────────────────────────────────────────────────
+// ── Import ─────────────────────────────────────────────────────
+
+export interface ImportResult {
+  application_id: string;
+  application_name: string;
+  components_created: number;
+  groups_created: number;
+  variables_created: number;
+  commands_created: number;
+  dependencies_created: number;
+  links_created: number;
+  warnings: string[];
+}
 
 export function useImportYaml() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (payload: { yaml: string; site_id: string }) => {
-      const { data } = await client.post('/import/yaml', payload);
+      const { data } = await client.post<ImportResult>('/import/yaml', payload);
       return data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['apps'] }),
+  });
+}
+
+export function useImportJson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { json: string; site_id: string }) => {
+      const { data } = await client.post<ImportResult>('/import/json', payload);
+      return data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['apps'] }),
+  });
+}
+
+// ── Export ─────────────────────────────────────────────────────
+
+export interface ExportedApplication {
+  format_version: string;
+  exported_at: string;
+  application: {
+    name: string;
+    description: string | null;
+    tags: string[];
+    variables: Array<{
+      name: string;
+      value: string;
+      description: string | null;
+      is_secret: boolean;
+    }>;
+    groups: Array<{
+      name: string;
+      description: string | null;
+      color: string | null;
+      display_order: number;
+    }>;
+    components: Array<{
+      name: string;
+      display_name: string | null;
+      description: string | null;
+      type: string;
+      icon: string | null;
+      group: string | null;
+      host: string | null;
+      commands: Record<string, { cmd: string; timeout_seconds?: number } | undefined>;
+      custom_commands: Array<{
+        name: string;
+        command: string;
+        description: string | null;
+        requires_confirmation: boolean;
+        parameters: Array<{
+          name: string;
+          description: string | null;
+          default_value: string | null;
+          validation_regex: string | null;
+          required: boolean;
+          param_type: string;
+          enum_values: string[] | null;
+        }>;
+      }>;
+      links: Array<{
+        label: string;
+        url: string;
+        link_type: string;
+      }>;
+      position_x: number | null;
+      position_y: number | null;
+      check_interval_seconds: number;
+      start_timeout_seconds: number;
+      stop_timeout_seconds: number;
+      is_optional: boolean;
+    }>;
+    dependencies: Array<{
+      from: string;
+      to: string;
+      dep_type?: string;
+    }>;
+  };
+}
+
+export function useExportApp(appId: string) {
+  return useQuery({
+    queryKey: ['apps', appId, 'export'],
+    queryFn: async () => {
+      const { data } = await client.get<ExportedApplication>(`/apps/${appId}/export`);
+      return data;
+    },
+    enabled: false, // Manual fetch only
+  });
+}
+
+export function useExportAppMutation() {
+  return useMutation({
+    mutationFn: async (appId: string) => {
+      const { data } = await client.get<ExportedApplication>(`/apps/${appId}/export`);
+      return data;
+    },
+  });
+}
+
+// ── Component Position Updates (for Map Designer) ──────────────
+
+export function useUpdateComponentPosition() {
+  return useMutation({
+    mutationFn: async (payload: { componentId: string; x: number; y: number }) => {
+      await client.patch(`/components/${payload.componentId}/position`, {
+        x: payload.x,
+        y: payload.y,
+      });
+    },
+  });
+}
+
+export function useUpdateComponentPositions() {
+  return useMutation({
+    mutationFn: async (positions: Array<{ id: string; x: number; y: number }>) => {
+      await client.patch('/components/batch-positions', { positions });
+    },
+  });
+}
+
+// ── Delete Dependency ──────────────────────────────────────────
+
+export function useDeleteDependency() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { app_id: string; dependency_id: string }) => {
+      await client.delete(`/dependencies/${payload.dependency_id}`);
+    },
+    onSuccess: (_, vars) => qc.invalidateQueries({ queryKey: ['apps', vars.app_id] }),
+  });
+}
+
+// ── Update Component ───────────────────────────────────────────
+
+export function useUpdateComponent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      id: string;
+      app_id: string;
+      name?: string;
+      display_name?: string;
+      description?: string;
+      component_type?: string;
+      icon?: string;
+      host?: string;
+      group_id?: string | null;
+      check_cmd?: string;
+      start_cmd?: string;
+      stop_cmd?: string;
+    }) => {
+      const { data } = await client.put(`/components/${payload.id}`, payload);
+      return data;
+    },
+    onSuccess: (_, vars) => qc.invalidateQueries({ queryKey: ['apps', vars.app_id] }),
+  });
+}
+
+// ── Delete Component ───────────────────────────────────────────
+
+export function useDeleteComponent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { id: string; app_id: string }) => {
+      await client.delete(`/components/${payload.id}`);
+    },
+    onSuccess: (_, vars) => qc.invalidateQueries({ queryKey: ['apps', vars.app_id] }),
   });
 }

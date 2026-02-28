@@ -1,4 +1,4 @@
--- V019: Discovery, Operation Estimates, Air-Gap Agent Updates
+-- V021: Discovery, Operation Estimates, Air-Gap Agent Updates
 -- Features:
 --   1. Passive topology discovery (agent → backend reports, inferred DAGs)
 --   2. Operation time estimation (materialized stats from command_executions)

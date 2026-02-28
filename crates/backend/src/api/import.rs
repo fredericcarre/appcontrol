@@ -1,10 +1,10 @@
-//! YAML Map Importer: converts old AppControl (v3) YAML maps to v4 model.
+//! Map Importers: converts various formats to v4 model.
 //!
-//! The old format uses a YAML structure with:
-//! - `application.name` / `application.description`
-//! - `application.components[]` with actions, variables, groups, hypertext links
+//! Supported formats:
+//! - YAML (v3 legacy): Old AppControl YAML maps with actions, variables, groups
+//! - JSON (v4 native): Current v4 format with full structure
 //!
-//! This importer creates:
+//! Both importers create:
 //! - Application + site (if needed)
 //! - Component groups
 //! - Components with all commands
@@ -534,4 +534,482 @@ fn map_link_type(old_type: Option<&str>) -> &str {
         Some("runbook") | Some("procedure") => "runbook",
         _ => "other",
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// JSON v4 Import
+// ══════════════════════════════════════════════════════════════════════
+
+/// v4 native JSON format structures (matching export.rs output)
+#[derive(Debug, Deserialize)]
+pub struct JsonImportRequest {
+    pub json: String,
+    pub site_id: Uuid,
+    /// Optional: If set, import into an existing application (merge mode)
+    pub merge_into_app_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+struct V4Import {
+    format_version: Option<String>,
+    application: V4Application,
+}
+
+#[derive(Debug, Deserialize)]
+struct V4Application {
+    name: String,
+    description: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    variables: Vec<V4Variable>,
+    #[serde(default)]
+    groups: Vec<V4Group>,
+    #[serde(default)]
+    components: Vec<V4Component>,
+    #[serde(default)]
+    dependencies: Vec<V4Dependency>,
+}
+
+#[derive(Debug, Deserialize)]
+struct V4Variable {
+    name: String,
+    value: String,
+    description: Option<String>,
+    #[serde(default)]
+    is_secret: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct V4Group {
+    name: String,
+    description: Option<String>,
+    color: Option<String>,
+    #[serde(default)]
+    display_order: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct V4Component {
+    name: String,
+    display_name: Option<String>,
+    description: Option<String>,
+    #[serde(alias = "type")]
+    component_type: Option<String>,
+    icon: Option<String>,
+    group: Option<String>,
+    host: Option<String>,
+    #[serde(default)]
+    commands: V4Commands,
+    #[serde(default)]
+    custom_commands: Vec<V4CustomCommand>,
+    #[serde(default)]
+    links: Vec<V4Link>,
+    position_x: Option<f32>,
+    position_y: Option<f32>,
+    #[serde(default = "default_check_interval")]
+    check_interval_seconds: i32,
+    #[serde(default = "default_start_timeout")]
+    start_timeout_seconds: i32,
+    #[serde(default = "default_stop_timeout")]
+    stop_timeout_seconds: i32,
+    #[serde(default)]
+    is_optional: bool,
+}
+
+fn default_check_interval() -> i32 {
+    30
+}
+fn default_start_timeout() -> i32 {
+    300
+}
+fn default_stop_timeout() -> i32 {
+    120
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct V4Commands {
+    check: Option<V4CommandDetail>,
+    start: Option<V4CommandDetail>,
+    stop: Option<V4CommandDetail>,
+    integrity_check: Option<V4CommandDetail>,
+    post_start_check: Option<V4CommandDetail>,
+    infra_check: Option<V4CommandDetail>,
+    rebuild: Option<V4CommandDetail>,
+    rebuild_infra: Option<V4CommandDetail>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct V4CommandDetail {
+    cmd: String,
+    timeout_seconds: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct V4CustomCommand {
+    name: String,
+    command: String,
+    description: Option<String>,
+    #[serde(default)]
+    requires_confirmation: bool,
+    #[serde(default)]
+    parameters: Vec<V4CommandParam>,
+}
+
+#[derive(Debug, Deserialize)]
+struct V4CommandParam {
+    name: String,
+    description: Option<String>,
+    default_value: Option<String>,
+    validation_regex: Option<String>,
+    #[serde(default = "default_required")]
+    required: bool,
+    #[serde(default = "default_param_type")]
+    param_type: String,
+    enum_values: Option<Vec<String>>,
+}
+
+fn default_required() -> bool {
+    true
+}
+fn default_param_type() -> String {
+    "string".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+struct V4Link {
+    label: String,
+    url: String,
+    #[serde(default = "default_link_type")]
+    link_type: String,
+}
+
+fn default_link_type() -> String {
+    "other".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+struct V4Dependency {
+    from: String,
+    to: String,
+    dep_type: Option<String>,
+}
+
+/// POST /api/v1/import/json
+/// Import a v4 native JSON map into the database.
+pub async fn import_json_map(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<JsonImportRequest>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    // Parse JSON
+    let import: V4Import = serde_json::from_str(&body.json).map_err(|e| {
+        tracing::warn!("JSON parse error: {}", e);
+        ApiError::Validation(format!("Invalid JSON: {}", e))
+    })?;
+
+    // Validate format version (if present)
+    if let Some(ref ver) = import.format_version {
+        if !ver.starts_with("4.") {
+            return Err(ApiError::Validation(format!(
+                "Unsupported format version '{}'. Expected 4.x",
+                ver
+            )));
+        }
+    }
+
+    let app_data = &import.application;
+    let mut warnings: Vec<String> = Vec::new();
+
+    let app_id = Uuid::new_v4();
+
+    // Log import action BEFORE creating
+    log_action(
+        &state.db,
+        user.user_id,
+        "import_json",
+        "application",
+        app_id,
+        json!({"name": &app_data.name}),
+    )
+    .await?;
+
+    // Create application
+    let tags_json = serde_json::to_value(&app_data.tags).unwrap_or(Value::Null);
+    sqlx::query(
+        "INSERT INTO applications (id, name, description, organization_id, site_id, tags) VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(app_id)
+    .bind(&app_data.name)
+    .bind(&app_data.description)
+    .bind(user.organization_id)
+    .bind(body.site_id)
+    .bind(&tags_json)
+    .execute(&state.db)
+    .await?;
+
+    // Grant owner to importing user
+    let _ = sqlx::query(
+        "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) VALUES ($1, $2, 'owner', $2)",
+    )
+    .bind(app_id)
+    .bind(user.user_id)
+    .execute(&state.db)
+    .await;
+
+    // ── Import variables ────────────────────────────────────────────
+    let mut variables_created = 0;
+    for var in &app_data.variables {
+        sqlx::query(
+            "INSERT INTO app_variables (application_id, name, value, description, is_secret) VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(app_id)
+        .bind(&var.name)
+        .bind(&var.value)
+        .bind(&var.description)
+        .bind(var.is_secret)
+        .execute(&state.db)
+        .await?;
+
+        variables_created += 1;
+    }
+
+    // ── Import groups ───────────────────────────────────────────────
+    let mut group_map: HashMap<String, Uuid> = HashMap::new();
+    let mut groups_created = 0;
+
+    for group in &app_data.groups {
+        let group_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO component_groups (id, application_id, name, description, color, display_order) VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(group_id)
+        .bind(app_id)
+        .bind(&group.name)
+        .bind(&group.description)
+        .bind(&group.color)
+        .bind(group.display_order)
+        .execute(&state.db)
+        .await?;
+
+        group_map.insert(group.name.clone(), group_id);
+        groups_created += 1;
+    }
+
+    // ── Import components ───────────────────────────────────────────
+    let mut comp_name_to_id: HashMap<String, Uuid> = HashMap::new();
+    let mut components_created = 0;
+    let mut commands_created = 0;
+    let mut links_created = 0;
+
+    for (idx, comp) in app_data.components.iter().enumerate() {
+        let comp_id = Uuid::new_v4();
+
+        // Resolve group by name
+        let group_id = comp.group.as_ref().and_then(|g| {
+            let id = group_map.get(g).copied();
+            if id.is_none() && !g.is_empty() {
+                warnings.push(format!(
+                    "Component '{}' references unknown group '{}'",
+                    comp.name, g
+                ));
+            }
+            id
+        });
+
+        let comp_type = comp.component_type.as_deref().unwrap_or("service");
+        let icon = comp
+            .icon
+            .as_deref()
+            .unwrap_or(default_icon_for_type(comp_type));
+
+        // Extract commands
+        let check_cmd = comp.commands.check.as_ref().map(|c| c.cmd.clone());
+        let start_cmd = comp.commands.start.as_ref().map(|c| c.cmd.clone());
+        let stop_cmd = comp.commands.stop.as_ref().map(|c| c.cmd.clone());
+        let integrity_cmd = comp
+            .commands
+            .integrity_check
+            .as_ref()
+            .map(|c| c.cmd.clone());
+        let post_start_cmd = comp
+            .commands
+            .post_start_check
+            .as_ref()
+            .map(|c| c.cmd.clone());
+        let infra_cmd = comp.commands.infra_check.as_ref().map(|c| c.cmd.clone());
+        let rebuild_cmd = comp.commands.rebuild.as_ref().map(|c| c.cmd.clone());
+        let rebuild_infra_cmd = comp.commands.rebuild_infra.as_ref().map(|c| c.cmd.clone());
+
+        // Calculate grid position if not specified
+        let pos_x = comp.position_x.unwrap_or((idx % 5) as f32 * 250.0);
+        let pos_y = comp.position_y.unwrap_or((idx / 5) as f32 * 200.0);
+
+        sqlx::query(
+            r#"INSERT INTO components (
+                id, application_id, name, display_name, description, component_type,
+                icon, group_id, host, check_cmd, start_cmd, stop_cmd,
+                integrity_check_cmd, post_start_check_cmd, infra_check_cmd,
+                rebuild_cmd, rebuild_infra_cmd,
+                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds,
+                is_optional, position_x, position_y
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+            )"#,
+        )
+        .bind(comp_id)
+        .bind(app_id)
+        .bind(&comp.name)
+        .bind(&comp.display_name)
+        .bind(&comp.description)
+        .bind(comp_type)
+        .bind(icon)
+        .bind(group_id)
+        .bind(&comp.host)
+        .bind(&check_cmd)
+        .bind(&start_cmd)
+        .bind(&stop_cmd)
+        .bind(&integrity_cmd)
+        .bind(&post_start_cmd)
+        .bind(&infra_cmd)
+        .bind(&rebuild_cmd)
+        .bind(&rebuild_infra_cmd)
+        .bind(comp.check_interval_seconds)
+        .bind(comp.start_timeout_seconds)
+        .bind(comp.stop_timeout_seconds)
+        .bind(comp.is_optional)
+        .bind(pos_x)
+        .bind(pos_y)
+        .execute(&state.db)
+        .await?;
+
+        comp_name_to_id.insert(comp.name.clone(), comp_id);
+        components_created += 1;
+
+        // ── Import custom commands ─────────────────────────────────────
+        for custom_cmd in &comp.custom_commands {
+            let cmd_id = Uuid::new_v4();
+
+            sqlx::query(
+                r#"INSERT INTO component_commands (id, component_id, name, command, description, requires_confirmation)
+                VALUES ($1, $2, $3, $4, $5, $6)"#,
+            )
+            .bind(cmd_id)
+            .bind(comp_id)
+            .bind(&custom_cmd.name)
+            .bind(&custom_cmd.command)
+            .bind(&custom_cmd.description)
+            .bind(custom_cmd.requires_confirmation)
+            .execute(&state.db)
+            .await?;
+
+            commands_created += 1;
+
+            // Import parameters
+            for (pidx, param) in custom_cmd.parameters.iter().enumerate() {
+                let enum_vals_json = param
+                    .enum_values
+                    .as_ref()
+                    .and_then(|v| serde_json::to_value(v).ok());
+
+                sqlx::query(
+                    r#"INSERT INTO command_input_params (
+                        command_id, name, description, default_value, validation_regex,
+                        required, param_type, enum_values, display_order
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+                )
+                .bind(cmd_id)
+                .bind(&param.name)
+                .bind(&param.description)
+                .bind(&param.default_value)
+                .bind(&param.validation_regex)
+                .bind(param.required)
+                .bind(&param.param_type)
+                .bind(&enum_vals_json)
+                .bind(pidx as i32)
+                .execute(&state.db)
+                .await?;
+            }
+        }
+
+        // ── Import links ───────────────────────────────────────────────
+        for (lidx, link) in comp.links.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO component_links (component_id, label, url, link_type, display_order) VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(comp_id)
+            .bind(&link.label)
+            .bind(&link.url)
+            .bind(&link.link_type)
+            .bind(lidx as i32)
+            .execute(&state.db)
+            .await?;
+
+            links_created += 1;
+        }
+    }
+
+    // ── Import dependencies ─────────────────────────────────────────
+    let mut dependencies_created = 0;
+
+    for dep in &app_data.dependencies {
+        let from_id = match comp_name_to_id.get(&dep.from) {
+            Some(id) => *id,
+            None => {
+                warnings.push(format!(
+                    "Dependency from '{}' to '{}': source component not found",
+                    dep.from, dep.to
+                ));
+                continue;
+            }
+        };
+
+        let to_id = match comp_name_to_id.get(&dep.to) {
+            Some(id) => *id,
+            None => {
+                warnings.push(format!(
+                    "Dependency from '{}' to '{}': target component not found",
+                    dep.from, dep.to
+                ));
+                continue;
+            }
+        };
+
+        let dep_type = dep.dep_type.as_deref().unwrap_or("strong");
+
+        sqlx::query(
+            "INSERT INTO dependencies (application_id, from_component_id, to_component_id, dep_type) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(app_id)
+        .bind(from_id)
+        .bind(to_id)
+        .bind(dep_type)
+        .execute(&state.db)
+        .await?;
+
+        dependencies_created += 1;
+    }
+
+    // Validate DAG (no cycles)
+    let dag_result = crate::core::dag::build_dag(&state.db, app_id).await;
+    if let Ok(dag) = dag_result {
+        if let Err(cycle_err) = dag.topological_levels() {
+            warnings.push(format!("Warning: DAG contains a cycle - {}", cycle_err));
+        }
+    }
+
+    let result = ImportResult {
+        application_id: app_id,
+        application_name: app_data.name.clone(),
+        components_created,
+        groups_created,
+        variables_created,
+        commands_created,
+        dependencies_created,
+        links_created,
+        warnings,
+    };
+
+    Ok((StatusCode::CREATED, Json(json!(result))))
 }

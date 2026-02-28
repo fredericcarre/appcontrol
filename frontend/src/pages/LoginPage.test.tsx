@@ -204,7 +204,7 @@ describe('LoginPage', () => {
     });
   });
 
-  it('should render dev quick login button', async () => {
+  it('should pre-fill email with admin@localhost', async () => {
     const { LoginPage } = await import('./LoginPage');
     render(
       <MemoryRouter>
@@ -212,10 +212,10 @@ describe('LoginPage', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('button', { name: 'Dev Quick Login (admin@localhost)' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Email')).toHaveValue('admin@localhost');
   });
 
-  it('should call API with admin@localhost on dev quick login', async () => {
+  it('should login with pre-filled email when no password is provided', async () => {
     const mockUser = { id: '1', email: 'admin@localhost', name: 'Admin', org_id: 'org-1', role: 'admin' };
     (client.post as ReturnType<typeof vi.fn>).mockResolvedValue({
       data: { token: 'dev-token', user: mockUser },
@@ -228,7 +228,7 @@ describe('LoginPage', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Dev Quick Login (admin@localhost)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => {
       expect(client.post).toHaveBeenCalledWith('/v1/auth/login', {

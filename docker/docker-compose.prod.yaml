@@ -1,0 +1,89 @@
+# Docker Compose for AppControl Production
+#
+# Uses local authentication with bcrypt password hashing.
+# A default admin user is created by migration V018.
+#
+# Usage:
+#   # Copy and customize the environment file
+#   cp docker/.env.example docker/.env
+#   # Edit docker/.env with your settings
+#
+#   # Start the stack
+#   docker compose -f docker/docker-compose.prod.yaml up -d
+#
+#   # Default login: admin@local / admin (CHANGE THIS!)
+#   open http://localhost:8080
+#
+# For SSO (OIDC/SAML), set AUTH_MODE=oidc or AUTH_MODE=saml and configure the provider.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-appcontrol}
+      POSTGRES_USER: ${POSTGRES_USER:-appcontrol}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appcontrol}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/fredericcarre/appcontrol-backend:${APPCONTROL_VERSION:-latest}
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-appcontrol}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-appcontrol}
+      PORT: "3000"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (use: openssl rand -base64 48)}
+      JWT_ISSUER: ${JWT_ISSUER:-appcontrol}
+      # Authentication mode: local (password), oidc, or saml
+      AUTH_MODE: ${AUTH_MODE:-local}
+      APP_ENV: production
+      # OIDC configuration (if AUTH_MODE=oidc)
+      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      # SAML configuration (if AUTH_MODE=saml)
+      SAML_IDP_SSO_URL: ${SAML_IDP_SSO_URL:-}
+      SAML_IDP_CERT: ${SAML_IDP_CERT:-}
+      SAML_SP_ENTITY_ID: ${SAML_SP_ENTITY_ID:-}
+      # CORS
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # Logging
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/fredericcarre/appcontrol-frontend:${APPCONTROL_VERSION:-latest}
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  gateway:
+    image: ghcr.io/fredericcarre/appcontrol-gateway:${APPCONTROL_VERSION:-latest}
+    ports:
+      - "${GATEWAY_PORT:-4443}:4443"
+    environment:
+      LISTEN_ADDR: "0.0.0.0"
+      LISTEN_PORT: "4443"
+      BACKEND_URL: ws://backend:3000/ws/gateway
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
