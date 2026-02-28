@@ -679,16 +679,24 @@ appctl agents list
 
 ### Release cycle
 
-Releases follow GitHub tags:
+Releases follow GitHub tags. The version is **automatically injected from the
+tag** — no manual version bump in `Cargo.toml` is needed:
 
-1. Bump version in `Cargo.toml` (workspace-level `[workspace.package]`)
-2. Commit and push
-3. Create a git tag: `git tag v0.3.0 && git push origin v0.3.0`
-4. GitHub Actions `release.yaml` triggers automatically:
-   - Builds multi-platform binaries (Linux amd64/arm64, macOS x86_64/arm64, Windows amd64/arm64)
-   - Publishes Docker images tagged with the version
+1. Create and push a git tag: `git tag v0.3.0 && git push origin v0.3.0`
+2. GitHub Actions `release.yaml` triggers automatically:
+   - **Injects the version** from the tag into the workspace `Cargo.toml`
+     (e.g., `v0.3.0` → `version = "0.3.0"`). All crates inherit this version
+     via `version.workspace = true`.
+   - Builds multi-platform binaries (Linux amd64/arm64, macOS x86_64/arm64,
+     Windows amd64/arm64) — each binary reports the correct version
+   - Publishes Docker images tagged with the version — the binary inside the
+     image also reports the correct version
    - Packages the Helm chart with the matching version
    - Creates a GitHub Release with binary artifacts and SHA-256 checksums
+
+This ensures that `appcontrol-agent --version` always matches the release tag
+and the Docker image tag. The backend can compare agent-reported versions
+against the latest available version to detect outdated agents.
 
 Pin a Docker Compose deployment to a specific version:
 
