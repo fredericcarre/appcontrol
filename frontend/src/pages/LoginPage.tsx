@@ -12,16 +12,18 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [devMode, setDevMode] = useState(false);
+  const [quickLogin, setQuickLogin] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
   const setAuth = useAuthStore((s) => s.setAuth);
   const navigate = useNavigate();
 
-  // Fetch auth info from backend to know dev mode status and default email
+  // Fetch auth info from backend to know login mode and default email
   useEffect(() => {
     client.get('/v1/auth/info').then(({ data }) => {
-      if (data.dev_mode && data.default_email) {
+      if (data.quick_login && data.default_email) {
         setEmail(data.default_email);
-        setDevMode(true);
+        setQuickLogin(true);
+        setDemoMode(data.demo_mode || false);
       }
     }).catch(() => {
       // Backend not reachable — leave form empty
@@ -58,7 +60,13 @@ export function LoginPage() {
             </div>
           </div>
           <CardTitle className="text-2xl">AppControl</CardTitle>
-          <CardDescription>Sign in to your account</CardDescription>
+          <CardDescription>
+            {quickLogin && !demoMode && (
+              <span className="text-amber-600 dark:text-amber-400">Development Mode</span>
+            )}
+            {quickLogin && demoMode && 'Quick Start — No password required'}
+            {!quickLogin && 'Sign in to your account'}
+          </CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
@@ -82,7 +90,7 @@ export function LoginPage() {
               <Input
                 id="password"
                 type="password"
-                placeholder={devMode ? 'Leave empty in dev mode' : ''}
+                placeholder={quickLogin ? 'Optional — leave empty for quick login' : ''}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />

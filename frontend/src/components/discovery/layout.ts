@@ -1,4 +1,4 @@
-import ELK, { type ElkNode, type ElkExtendedEdge } from 'elkjs/lib/elk.bundled.js';
+import ELK, { type ElkNode, type ElkExtendedEdge } from 'elkjs/lib/elk.bundled';
 import type { Node, Edge } from '@xyflow/react';
 import type { CorrelationResult } from '@/api/discovery';
 import type {
@@ -155,7 +155,7 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
 
   // Host group nodes
   for (const [hostname, indices] of hostMap) {
-    const elkHost = layoutResult.children?.find((c) => c.id === `host-${hostname}`);
+    const elkHost = layoutResult.children?.find((c: ElkNode) => c.id === `host-${hostname}`);
     if (!elkHost) continue;
 
     const agentId = services[indices[0]]?.agent_id || '';
@@ -177,7 +177,7 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
     // Service nodes (children of host group)
     for (const idx of indices) {
       const svc = services[idx];
-      const elkSvc = elkHost.children?.find((c) => c.id === `svc-${idx}`);
+      const elkSvc = elkHost.children?.find((c: ElkNode) => c.id === `svc-${idx}`);
       if (!elkSvc) continue;
 
       rfNodes.push({
@@ -207,7 +207,7 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
   // External nodes
   if (showUnresolved) {
     for (const [key, ext] of externalNodes) {
-      const elkExt = layoutResult.children?.find((c) => c.id === `ext-${key}`);
+      const elkExt = layoutResult.children?.find((c: ElkNode) => c.id === `ext-${key}`);
       rfNodes.push({
         id: `ext-${key}`,
         type: 'external',
@@ -223,7 +223,7 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
   // Batch job nodes
   if (showBatchJobs) {
     scheduled_jobs.forEach((job, i) => {
-      const elkBatch = layoutResult.children?.find((c) => c.id === `batch-${i}`);
+      const elkBatch = layoutResult.children?.find((c: ElkNode) => c.id === `batch-${i}`);
       rfNodes.push({
         id: `batch-${i}`,
         type: 'batch',

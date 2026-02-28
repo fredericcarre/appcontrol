@@ -32,7 +32,8 @@ pub async fn dev_login(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::AppState>>,
     axum::Json(body): axum::Json<DevLoginRequest>,
 ) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
-    if state.config.app_env != "development" {
+    // Allow quick login in both development and demo modes
+    if state.config.app_env != "development" && state.config.app_env != "demo" {
         return Err(axum::http::StatusCode::NOT_FOUND);
     }
 
@@ -94,14 +95,14 @@ pub struct DevLoginResponse {
 
 /// POST /api/v1/auth/login — Email + password login endpoint.
 ///
-/// In development mode (`APP_ENV=development`), accepts any password (or none)
-/// and authenticates by email only. In production, this endpoint returns 404
-/// (use OIDC or SAML instead).
+/// In development or demo mode, accepts any password (or none) and authenticates
+/// by email only. In production, this endpoint returns 404 (use OIDC or SAML instead).
 pub async fn login(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::AppState>>,
     axum::Json(body): axum::Json<LoginRequest>,
 ) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
-    if state.config.app_env != "development" {
+    // Allow quick login in both development and demo modes
+    if state.config.app_env != "development" && state.config.app_env != "demo" {
         return Err(axum::http::StatusCode::NOT_FOUND);
     }
 
@@ -145,16 +146,27 @@ pub async fn login(
 
 /// GET /api/v1/auth/info — Public endpoint returning auth configuration.
 ///
-/// The frontend uses this to know whether dev mode is active and what
+/// The frontend uses this to know which login mode is active and what
 /// email to pre-fill on the login form. No hardcoded values — everything
 /// comes from the SEED_* environment variables.
+///
+/// Returns:
+/// - `quick_login`: true if password-less login is available (demo or dev mode)
+/// - `dev_mode`: true if in development mode (shows "Dev Quick Login" in UI)
+/// - `demo_mode`: true if in demo mode (shows "Quick Login" in UI)
+/// - `default_email`: pre-filled email for quick login
 pub async fn auth_info(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::AppState>>,
 ) -> impl axum::response::IntoResponse {
-    let dev_mode = state.config.app_env != "production";
+    let is_dev = state.config.app_env == "development";
+    let is_demo = state.config.app_env == "demo";
+    let quick_login = is_dev || is_demo;
+
     axum::Json(serde_json::json!({
-        "dev_mode": dev_mode,
-        "default_email": if dev_mode { Some(&state.config.seed.admin_email) } else { None },
+        "quick_login": quick_login,
+        "dev_mode": is_dev,
+        "demo_mode": is_demo,
+        "default_email": if quick_login { Some(&state.config.seed.admin_email) } else { None },
     }))
 }
 

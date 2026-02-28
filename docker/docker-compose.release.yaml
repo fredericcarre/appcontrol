@@ -43,6 +43,10 @@ services:
       PORT: "3000"
       JWT_SECRET: dev-secret-change-in-production
       RUST_LOG: info,appcontrol_backend=debug
+      # ── Application mode ──
+      # demo: Quick login (no password required), good for evaluation/testing
+      # production: Requires OIDC/SAML SSO, strict security
+      APP_ENV: demo
       # ── Seed configuration ──
       # On first start (empty DB), creates this org + admin user.
       # Change these to match your environment.

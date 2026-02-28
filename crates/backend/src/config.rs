@@ -47,7 +47,10 @@ pub struct AppConfig {
     pub oidc: Option<OidcConfig>,
     /// SAML configuration (optional — set SAML_IDP_SSO_URL to enable)
     pub saml: Option<SamlConfig>,
-    /// Application environment: "production", "staging", "development"
+    /// Application environment: "production", "staging", "development", "demo"
+    /// - production: Strict security, requires strong JWT_SECRET, no quick login
+    /// - demo: Allows quick login (no password), shows "Quick Login" in UI
+    /// - development: Like demo but shows "Dev Quick Login" in UI
     pub app_env: String,
     /// Seed configuration for initial org + admin user
     pub seed: SeedConfig,
