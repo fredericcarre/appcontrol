@@ -1,0 +1,44 @@
+{
+  "_comment": "Example AppControl application definition for Azure VM management",
+  "_usage": "Import via API: curl -X POST https://<backend>/api/v1/applications -H 'Authorization: Bearer <token>' -d @example-app.json",
+  "name": "Azure Demo Infrastructure",
+  "description": "Demo application managing Azure VMs via AppControl",
+  "components": [
+    {
+      "name": "database-vm",
+      "description": "PostgreSQL database server VM",
+      "host": "azure-gateway-01",
+      "check_cmd": "az vm get-instance-view -g ${AZURE_RG} -n db-server --query \"instanceView.statuses[?starts_with(code,'PowerState/')].displayStatus\" -o tsv | grep -q 'VM running'",
+      "start_cmd": "az vm start -g ${AZURE_RG} -n db-server --no-wait",
+      "stop_cmd": "az vm deallocate -g ${AZURE_RG} -n db-server --no-wait",
+      "check_interval_seconds": 30,
+      "start_timeout_seconds": 300,
+      "stop_timeout_seconds": 120,
+      "dependencies": []
+    },
+    {
+      "name": "app-server-vm",
+      "description": "Application server VM",
+      "host": "azure-gateway-01",
+      "check_cmd": "az vm get-instance-view -g ${AZURE_RG} -n app-server --query \"instanceView.statuses[?starts_with(code,'PowerState/')].displayStatus\" -o tsv | grep -q 'VM running'",
+      "start_cmd": "az vm start -g ${AZURE_RG} -n app-server --no-wait",
+      "stop_cmd": "az vm deallocate -g ${AZURE_RG} -n app-server --no-wait",
+      "check_interval_seconds": 30,
+      "start_timeout_seconds": 300,
+      "stop_timeout_seconds": 120,
+      "dependencies": ["database-vm"]
+    },
+    {
+      "name": "web-frontend-vm",
+      "description": "Web frontend / reverse proxy VM",
+      "host": "azure-gateway-01",
+      "check_cmd": "az vm get-instance-view -g ${AZURE_RG} -n web-frontend --query \"instanceView.statuses[?starts_with(code,'PowerState/')].displayStatus\" -o tsv | grep -q 'VM running'",
+      "start_cmd": "az vm start -g ${AZURE_RG} -n web-frontend --no-wait",
+      "stop_cmd": "az vm deallocate -g ${AZURE_RG} -n web-frontend --no-wait",
+      "check_interval_seconds": 30,
+      "start_timeout_seconds": 300,
+      "stop_timeout_seconds": 120,
+      "dependencies": ["app-server-vm"]
+    }
+  ]
+}

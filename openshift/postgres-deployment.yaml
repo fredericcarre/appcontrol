@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: appcontrol-postgres
+  labels:
+    app.kubernetes.io/name: appcontrol
+    app.kubernetes.io/component: postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: appcontrol
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: appcontrol
+        app.kubernetes.io/component: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: registry.redhat.io/rhel9/postgresql-16:latest
+          ports:
+            - containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRESQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: appcontrol-postgres
+                  key: POSTGRES_DB
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: appcontrol-postgres
+                  key: POSTGRES_USER
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: appcontrol-postgres
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/pgsql/data
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - psql -U $POSTGRESQL_USER -d $POSTGRESQL_DATABASE -c 'SELECT 1'
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - psql -U $POSTGRESQL_USER -d $POSTGRESQL_DATABASE -c 'SELECT 1'
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: appcontrol-postgres-data

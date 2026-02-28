@@ -1,0 +1,57 @@
+# =============================================================================
+# AppControl Azure Gateway + Agent
+# Combined image for Azure Container Instances with Managed Identity support.
+# Runs both the gateway and agent in a single container, with Azure CLI
+# pre-installed for VM start/stop orchestration.
+# =============================================================================
+
+# Stage 1: Build Rust binaries
+FROM rust:1.88-bookworm AS builder
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ crates/
+RUN cargo build --release --bin appcontrol-gateway --bin appcontrol-agent
+
+# Stage 2: Runtime with Azure CLI
+FROM debian:bookworm-slim
+
+# Install base dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    curl \
+    gnupg \
+    lsb-release \
+    jq \
+    supervisor \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Azure CLI
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN groupadd -r appcontrol && useradd -r -g appcontrol -m -s /bin/bash appcontrol
+
+# Copy binaries
+COPY --from=builder /app/target/release/appcontrol-gateway /usr/local/bin/
+COPY --from=builder /app/target/release/appcontrol-agent /usr/local/bin/
+
+# Create config and data directories
+RUN mkdir -p /etc/appcontrol /var/log/appcontrol /var/lib/appcontrol \
+    && chown -R appcontrol:appcontrol /etc/appcontrol /var/log/appcontrol /var/lib/appcontrol
+
+# Supervisord configuration — runs both gateway and agent
+COPY docker/supervisord-azure.conf /etc/supervisor/conf.d/appcontrol.conf
+
+# Entrypoint script for Azure Managed Identity login
+COPY docker/azure-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/azure-entrypoint.sh
+
+# Gateway listens on 4443 for agents (in case of local agents)
+EXPOSE 4443
+
+ENV RUST_LOG=info
+
+ENTRYPOINT ["/usr/local/bin/azure-entrypoint.sh"]
