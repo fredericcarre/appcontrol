@@ -275,6 +275,80 @@ pub async fn get_me(
     })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+/// POST /api/v1/users/me/password — Change own password (local auth only)
+pub async fn change_my_password(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<Json<Value>, ApiError> {
+    // Fetch current user's auth info
+    let user_info: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT auth_provider, password_hash FROM users WHERE id = $1",
+    )
+    .bind(user.user_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (auth_provider, password_hash) = user_info.ok_or_not_found()?;
+
+    // Only local users can change password
+    if auth_provider != "local" {
+        return Err(ApiError::Validation(
+            "Password change is only available for local accounts. SSO users should change password through their identity provider.".to_string(),
+        ));
+    }
+
+    // Verify current password
+    let current_hash = password_hash.ok_or_else(|| {
+        ApiError::Validation("No password set for this account".to_string())
+    })?;
+
+    let password_valid = bcrypt::verify(&req.current_password, &current_hash)
+        .map_err(|_| ApiError::Internal("Password verification failed".to_string()))?;
+
+    if !password_valid {
+        return Err(ApiError::Validation("Current password is incorrect".to_string()));
+    }
+
+    // Validate new password
+    if req.new_password.len() < 4 {
+        return Err(ApiError::Validation(
+            "New password must be at least 4 characters".to_string(),
+        ));
+    }
+
+    // Hash new password
+    let new_hash = bcrypt::hash(&req.new_password, bcrypt::DEFAULT_COST)
+        .map_err(|_| ApiError::Internal("Failed to hash password".to_string()))?;
+
+    // Log before execute
+    crate::middleware::audit::log_action(
+        &state.db,
+        user.user_id,
+        "change_password",
+        "user",
+        user.user_id,
+        serde_json::json!({}),
+    )
+    .await
+    .ok();
+
+    // Update password
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&new_hash)
+        .bind(user.user_id)
+        .execute(&state.db)
+        .await?;
+
+    Ok(Json(serde_json::json!({ "status": "ok", "message": "Password changed successfully" })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

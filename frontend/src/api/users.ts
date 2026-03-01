@@ -86,3 +86,15 @@ export function useToggleUserActive() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
 }
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: async ({ currentPassword, newPassword }: { currentPassword: string; newPassword: string }) => {
+      const { data } = await client.post<{ status: string; message: string }>('/users/me/password', {
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      return data;
+    },
+  });
+}

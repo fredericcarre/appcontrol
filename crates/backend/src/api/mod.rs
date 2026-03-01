@@ -303,6 +303,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Users
         .route("/users", get(users::list_users).post(users::create_user))
         .route("/users/me", get(users::get_me))
+        .route("/users/me/password", post(users::change_my_password))
         .route("/users/:id", get(users::get_user).put(users::update_user))
         // Workspaces (site/zone access control)
         .route(
