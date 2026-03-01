@@ -48,13 +48,23 @@ describe('Header', () => {
     expect(screen.getByText('A')).toBeInTheDocument();
   });
 
-  it('should display ?? when no user name', () => {
+  it('should display ? when no user', () => {
     useAuthStore.setState({
       token: 'test-token',
       user: null,
     });
     renderHeader();
-    expect(screen.getByText('??')).toBeInTheDocument();
+    expect(screen.getByText('?')).toBeInTheDocument();
+  });
+
+  it('should display email-based initials when user has no name', () => {
+    useAuthStore.setState({
+      token: 'test-token',
+      user: { id: '1', email: 'john.doe@example.com', name: undefined, org_id: 'org-1', role: 'admin' },
+    });
+    renderHeader();
+    // Should extract 'john.doe' from email, split by '.', and show 'JD' initials
+    expect(screen.getByText('JD')).toBeInTheDocument();
   });
 
   it('should show Connected when WebSocket is connected', () => {
@@ -92,13 +102,35 @@ describe('Header', () => {
     expect(useUiStore.getState().theme).toBe('dark');
   });
 
-  it('should call logout when logout button is clicked', () => {
+  it('should show logout confirmation dialog when logout button is clicked', () => {
     renderHeader();
 
     const buttons = screen.getAllByRole('button');
     // The last button should be the logout button
     const lastButton = buttons[buttons.length - 1];
     fireEvent.click(lastButton);
+
+    // Should show confirmation dialog with confirmation text
+    expect(screen.getByText(/Are you sure you want to sign out/)).toBeInTheDocument();
+  });
+
+  it('should logout when confirming in the dialog', async () => {
+    renderHeader();
+
+    const buttons = screen.getAllByRole('button');
+    // The last button should be the logout button
+    const lastButton = buttons[buttons.length - 1];
+    fireEvent.click(lastButton);
+
+    // Find the destructive variant button (Sign out confirm button)
+    const allButtons = screen.getAllByRole('button');
+    const confirmButton = allButtons.find((btn) =>
+      btn.classList.contains('bg-destructive') && btn.textContent?.includes('Sign out')
+    );
+
+    if (confirmButton) {
+      fireEvent.click(confirmButton);
+    }
 
     expect(useAuthStore.getState().token).toBeNull();
     expect(useAuthStore.getState().user).toBeNull();
