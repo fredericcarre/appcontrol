@@ -24,7 +24,7 @@ export function LoginPage() {
 
   // Fetch auth info to know which login methods are available
   useEffect(() => {
-    client.get('/v1/auth/info').then(({ data }) => {
+    client.get('/auth/info').then(({ data }) => {
       setAuthInfo(data);
     }).catch(() => {
       // Backend not reachable — assume local only
@@ -38,7 +38,7 @@ export function LoginPage() {
     setLoading(true);
 
     try {
-      const { data } = await client.post('/v1/auth/login', {
+      const { data } = await client.post('/auth/login', {
         email,
         password,
       });

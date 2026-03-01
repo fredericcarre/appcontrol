@@ -190,7 +190,7 @@ export function useDiscoveryReports() {
   return useQuery<DiscoveryReport[]>({
     queryKey: ['discovery', 'reports'],
     queryFn: async () => {
-      const { data } = await client.get('/v1/discovery/reports');
+      const { data } = await client.get('/discovery/reports');
       return data.reports;
     },
   });
@@ -200,7 +200,7 @@ export function useDiscoveryReport(reportId: string | undefined) {
   return useQuery<DiscoveryReportDetail>({
     queryKey: ['discovery', 'reports', reportId],
     queryFn: async () => {
-      const { data } = await client.get(`/v1/discovery/reports/${reportId}`);
+      const { data } = await client.get(`/discovery/reports/${reportId}`);
       return data;
     },
     enabled: !!reportId,
@@ -211,7 +211,7 @@ export function useDiscoveryDrafts() {
   return useQuery<DiscoveryDraft[]>({
     queryKey: ['discovery', 'drafts'],
     queryFn: async () => {
-      const { data } = await client.get('/v1/discovery/drafts');
+      const { data } = await client.get('/discovery/drafts');
       return data.drafts;
     },
   });
@@ -221,7 +221,7 @@ export function useDiscoveryDraft(draftId: string | undefined) {
   return useQuery<DraftDetail>({
     queryKey: ['discovery', 'drafts', draftId],
     queryFn: async () => {
-      const { data } = await client.get(`/v1/discovery/drafts/${draftId}`);
+      const { data } = await client.get(`/discovery/drafts/${draftId}`);
       return data;
     },
     enabled: !!draftId,
@@ -236,7 +236,7 @@ export function useTriggerScan() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (agentId: string) => {
-      const { data } = await client.post(`/v1/discovery/trigger/${agentId}`);
+      const { data } = await client.post(`/discovery/trigger/${agentId}`);
       return data;
     },
     onSuccess: () => {
@@ -249,7 +249,7 @@ export function useTriggerAllScans() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async () => {
-      const { data } = await client.post('/v1/discovery/trigger-all');
+      const { data } = await client.post('/discovery/trigger-all');
       return data;
     },
     onSuccess: () => {
@@ -261,7 +261,7 @@ export function useTriggerAllScans() {
 export function useCorrelate() {
   return useMutation<CorrelationResult, Error, { agent_ids: string[] }>({
     mutationFn: async (params) => {
-      const { data } = await client.post('/v1/discovery/correlate', params);
+      const { data } = await client.post('/discovery/correlate', params);
       return data;
     },
   });
@@ -296,7 +296,7 @@ export function useCreateDraft() {
         inferred_via: string;
       }>;
     }) => {
-      const { data } = await client.post('/v1/discovery/drafts', params);
+      const { data } = await client.post('/discovery/drafts', params);
       return data;
     },
     onSuccess: () => {
@@ -309,7 +309,7 @@ export function useApplyDraft() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (draftId: string) => {
-      const { data } = await client.post(`/v1/discovery/drafts/${draftId}/apply`);
+      const { data } = await client.post(`/discovery/drafts/${draftId}/apply`);
       return data;
     },
     onSuccess: () => {

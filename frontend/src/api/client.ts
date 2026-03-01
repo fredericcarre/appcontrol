@@ -2,7 +2,7 @@ import axios from 'axios';
 import { useAuthStore } from '@/stores/auth';
 
 const client = axios.create({
-  baseURL: '/api',
+  baseURL: '/api/v1',
   headers: { 'Content-Type': 'application/json' },
   // Send HttpOnly cookies automatically with every request.
   // The JWT is stored in an HttpOnly cookie set by the backend

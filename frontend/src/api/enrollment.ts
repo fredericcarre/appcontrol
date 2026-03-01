@@ -54,7 +54,7 @@ export function useEnrollmentTokens() {
   return useQuery({
     queryKey: ['enrollment', 'tokens'],
     queryFn: async () => {
-      const { data } = await client.get<EnrollmentToken[]>('/v1/enrollment/tokens');
+      const { data } = await client.get<EnrollmentToken[]>('/enrollment/tokens');
       return data;
     },
   });
@@ -64,7 +64,7 @@ export function useEnrollmentEvents() {
   return useQuery({
     queryKey: ['enrollment', 'events'],
     queryFn: async () => {
-      const { data } = await client.get<EnrollmentEvent[]>('/v1/enrollment/events');
+      const { data } = await client.get<EnrollmentEvent[]>('/enrollment/events');
       return data;
     },
   });
@@ -76,7 +76,7 @@ export function useCreateEnrollmentToken() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (payload: CreateEnrollmentTokenPayload) => {
-      const { data } = await client.post<CreateEnrollmentTokenResponse>('/v1/enrollment/tokens', payload);
+      const { data } = await client.post<CreateEnrollmentTokenResponse>('/enrollment/tokens', payload);
       return data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['enrollment', 'tokens'] }),
@@ -87,7 +87,7 @@ export function useRevokeEnrollmentToken() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (tokenId: string) => {
-      await client.post(`/v1/enrollment/tokens/${tokenId}/revoke`);
+      await client.post(`/enrollment/tokens/${tokenId}/revoke`);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['enrollment', 'tokens'] });

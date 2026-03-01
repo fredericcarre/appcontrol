@@ -58,7 +58,7 @@ describe('LoginPage', () => {
 
     // Wait for auth/info to load
     await waitFor(() => {
-      expect(client.get).toHaveBeenCalledWith('/v1/auth/info');
+      expect(client.get).toHaveBeenCalledWith('/auth/info');
     });
 
     expect(screen.queryByRole('button', { name: 'Sign in with SSO' })).not.toBeInTheDocument();
@@ -134,7 +134,7 @@ describe('LoginPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => {
-      expect(client.post).toHaveBeenCalledWith('/v1/auth/login', {
+      expect(client.post).toHaveBeenCalledWith('/auth/login', {
         email: 'admin@example.com',
         password: 'password',
       });

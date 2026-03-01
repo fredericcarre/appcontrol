@@ -65,7 +65,7 @@ describe('API client', () => {
 
   it('should create axios instance with correct config', () => {
     expect(axios.create).toHaveBeenCalledWith({
-      baseURL: '/api',
+      baseURL: '/api/v1',
       headers: { 'Content-Type': 'application/json' },
       withCredentials: true,
     });
