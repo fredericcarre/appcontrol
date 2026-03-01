@@ -268,8 +268,13 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/gateways", get(gateways::list_gateways))
         .route(
             "/gateways/:id",
-            get(gateways::get_gateway).put(gateways::update_gateway),
+            get(gateways::get_gateway)
+                .put(gateways::update_gateway)
+                .delete(gateways::delete_gateway),
         )
+        .route("/gateways/:id/agents", get(gateways::list_gateway_agents))
+        .route("/gateways/:id/suspend", post(gateways::suspend_gateway))
+        .route("/gateways/:id/activate", post(gateways::activate_gateway))
         .route(
             "/gateways/:id/revoke-cert",
             post(gateways::revoke_gateway_cert),

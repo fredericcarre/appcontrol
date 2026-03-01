@@ -5,6 +5,7 @@
 
 use axum::{
     extract::{Extension, Path, State},
+    http::StatusCode,
     response::Json,
 };
 use serde::{Deserialize, Serialize};
@@ -38,26 +39,64 @@ pub struct GatewayRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Response struct for gateway list with additional computed fields
+#[derive(Debug, Serialize)]
+pub struct GatewayListItem {
+    pub id: Uuid,
+    pub name: String,
+    pub zone: String,
+    pub status: String,
+    pub agent_count: i64,
+    pub connected: bool,
+}
+
 pub async fn list_gateways(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    if !user.is_admin() {
-        return Err(ApiError::Forbidden);
-    }
-
-    let gateways = sqlx::query_as::<_, GatewayRow>(
-        r#"SELECT id, organization_id, name, zone, hostname, port, site_id,
-                  certificate_fingerprint, is_active, last_heartbeat_at, created_at
-           FROM gateways
-           WHERE organization_id = $1
-           ORDER BY name"#,
+    // Allow all authenticated users to view gateways (read-only)
+    let gateways = sqlx::query_as::<_, (Uuid, String, String, bool, Option<chrono::DateTime<chrono::Utc>>, i64)>(
+        r#"SELECT
+               g.id,
+               g.name,
+               g.zone,
+               g.is_active,
+               g.last_heartbeat_at,
+               COALESCE((SELECT COUNT(*) FROM agents a WHERE a.gateway_id = g.id), 0) as agent_count
+           FROM gateways g
+           WHERE g.organization_id = $1
+           ORDER BY g.name"#,
     )
     .bind(user.organization_id)
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(json!({ "gateways": gateways })))
+    // Determine connected status: active + heartbeat within last 60 seconds
+    let now = chrono::Utc::now();
+    let gateway_list: Vec<GatewayListItem> = gateways
+        .into_iter()
+        .map(|(id, name, zone, is_active, last_heartbeat, agent_count)| {
+            let status = if !is_active {
+                "suspended".to_string()
+            } else {
+                "active".to_string()
+            };
+            let connected = is_active
+                && last_heartbeat
+                    .map(|hb| (now - hb).num_seconds() < 60)
+                    .unwrap_or(false);
+            GatewayListItem {
+                id,
+                name,
+                zone,
+                status,
+                agent_count,
+                connected,
+            }
+        })
+        .collect();
+
+    Ok(Json(json!({ "gateways": gateway_list })))
 }
 
 pub async fn get_gateway(
@@ -141,6 +180,163 @@ pub async fn update_gateway(
     .ok_or_not_found()?;
 
     Ok(Json(json!(gw)))
+}
+
+/// GET /api/v1/gateways/:id/agents — List agents connected to a gateway
+pub async fn list_gateway_agents(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(gateway_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    // Verify gateway belongs to user's org
+    let gateway_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM gateways WHERE id = $1 AND organization_id = $2)",
+    )
+    .bind(gateway_id)
+    .bind(user.organization_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    if !gateway_exists {
+        return Err(ApiError::NotFound);
+    }
+
+    let agents = sqlx::query_as::<_, (Uuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
+        r#"SELECT id, hostname, is_active, last_heartbeat_at
+           FROM agents
+           WHERE gateway_id = $1 AND organization_id = $2
+           ORDER BY hostname"#,
+    )
+    .bind(gateway_id)
+    .bind(user.organization_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let agents_json: Vec<Value> = agents
+        .into_iter()
+        .map(|(id, hostname, is_active, last_heartbeat_at)| {
+            json!({
+                "id": id,
+                "hostname": hostname,
+                "is_active": is_active,
+                "last_heartbeat_at": last_heartbeat_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "agents": agents_json })))
+}
+
+/// POST /api/v1/gateways/:id/suspend — Suspend a gateway
+pub async fn suspend_gateway(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(gateway_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    crate::middleware::audit::log_action(
+        &state.db,
+        user.user_id,
+        "suspend_gateway",
+        "gateway",
+        gateway_id,
+        json!({}),
+    )
+    .await
+    .ok();
+
+    let gw = sqlx::query_as::<_, GatewayRow>(
+        r#"UPDATE gateways SET is_active = false
+           WHERE id = $1 AND organization_id = $2
+           RETURNING id, organization_id, name, zone, hostname, port, site_id,
+                     certificate_fingerprint, is_active, last_heartbeat_at, created_at"#,
+    )
+    .bind(gateway_id)
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    Ok(Json(json!(gw)))
+}
+
+/// POST /api/v1/gateways/:id/activate — Activate a suspended gateway
+pub async fn activate_gateway(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(gateway_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    crate::middleware::audit::log_action(
+        &state.db,
+        user.user_id,
+        "activate_gateway",
+        "gateway",
+        gateway_id,
+        json!({}),
+    )
+    .await
+    .ok();
+
+    let gw = sqlx::query_as::<_, GatewayRow>(
+        r#"UPDATE gateways SET is_active = true
+           WHERE id = $1 AND organization_id = $2
+           RETURNING id, organization_id, name, zone, hostname, port, site_id,
+                     certificate_fingerprint, is_active, last_heartbeat_at, created_at"#,
+    )
+    .bind(gateway_id)
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    Ok(Json(json!(gw)))
+}
+
+/// DELETE /api/v1/gateways/:id — Delete a gateway
+pub async fn delete_gateway(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(gateway_id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    crate::middleware::audit::log_action(
+        &state.db,
+        user.user_id,
+        "delete_gateway",
+        "gateway",
+        gateway_id,
+        json!({}),
+    )
+    .await
+    .ok();
+
+    // First disconnect all agents from this gateway
+    sqlx::query("UPDATE agents SET gateway_id = NULL WHERE gateway_id = $1")
+        .bind(gateway_id)
+        .execute(&state.db)
+        .await?;
+
+    let result = sqlx::query("DELETE FROM gateways WHERE id = $1 AND organization_id = $2")
+        .bind(gateway_id)
+        .bind(user.organization_id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------

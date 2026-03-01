@@ -7,6 +7,7 @@ import { DashboardPage } from '@/pages/DashboardPage';
 import { MapViewPage } from '@/pages/MapViewPage';
 import { TeamsPage } from '@/pages/TeamsPage';
 import { AgentsPage } from '@/pages/AgentsPage';
+import { GatewaysPage } from '@/pages/GatewaysPage';
 import { ReportsPage } from '@/pages/ReportsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { OnboardingPage } from '@/pages/OnboardingPage';
@@ -58,6 +59,7 @@ export default function App() {
       <Route path="/apps/:appId" element={<AuthLayout><MapViewPage /></AuthLayout>} />
       <Route path="/teams" element={<AuthLayout><TeamsPage /></AuthLayout>} />
       <Route path="/users" element={<AuthLayout><UsersPage /></AuthLayout>} />
+      <Route path="/gateways" element={<AuthLayout><GatewaysPage /></AuthLayout>} />
       <Route path="/agents" element={<AuthLayout><AgentsPage /></AuthLayout>} />
       <Route path="/reports" element={<AuthLayout><ReportsPage /></AuthLayout>} />
       <Route path="/settings" element={<AuthLayout><SettingsPage /></AuthLayout>} />
