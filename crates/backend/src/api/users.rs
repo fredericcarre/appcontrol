@@ -22,6 +22,8 @@ pub struct CreateUserRequest {
     pub display_name: String,
     /// Role: admin, operator, editor, viewer
     pub role: Option<String>,
+    /// Password for local auth (will be hashed with bcrypt)
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +31,8 @@ pub struct UpdateUserRequest {
     pub display_name: Option<String>,
     pub role: Option<String>,
     pub is_active: Option<bool>,
+    /// New password (will be hashed with bcrypt)
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,9 +143,24 @@ pub async fn create_user(
 
     let external_id = format!("local-{}", req.email);
 
+    // Hash password if provided
+    let password_hash = if let Some(ref password) = req.password {
+        if password.len() < 4 {
+            return Err(ApiError::Validation(
+                "Password must be at least 4 characters".to_string(),
+            ));
+        }
+        Some(
+            bcrypt::hash(password, bcrypt::DEFAULT_COST)
+                .map_err(|_| ApiError::Internal("Failed to hash password".to_string()))?,
+        )
+    } else {
+        None
+    };
+
     let new_user = sqlx::query_as::<_, UserRow>(
-        r#"INSERT INTO users (organization_id, external_id, email, display_name, role, auth_provider)
-           VALUES ($1, $2, $3, $4, $5, 'local')
+        r#"INSERT INTO users (organization_id, external_id, email, display_name, role, auth_provider, password_hash)
+           VALUES ($1, $2, $3, $4, $5, 'local', $6)
            RETURNING id, organization_id, email, display_name, role, auth_provider,
                      is_active, last_login_at, created_at"#,
     )
@@ -150,6 +169,7 @@ pub async fn create_user(
     .bind(&req.email)
     .bind(&req.display_name)
     .bind(role)
+    .bind(&password_hash)
     .fetch_one(&state.db)
     .await?;
 
@@ -176,6 +196,21 @@ pub async fn update_user(
         }
     }
 
+    // Hash password if provided
+    let password_hash = if let Some(ref password) = req.password {
+        if password.len() < 4 {
+            return Err(ApiError::Validation(
+                "Password must be at least 4 characters".to_string(),
+            ));
+        }
+        Some(
+            bcrypt::hash(password, bcrypt::DEFAULT_COST)
+                .map_err(|_| ApiError::Internal("Failed to hash password".to_string()))?,
+        )
+    } else {
+        None
+    };
+
     // Log before execute
     crate::middleware::audit::log_action(
         &state.db,
@@ -183,7 +218,7 @@ pub async fn update_user(
         "update_user",
         "user",
         id,
-        json!({ "role": &req.role, "is_active": req.is_active }),
+        json!({ "role": &req.role, "is_active": req.is_active, "password_changed": req.password.is_some() }),
     )
     .await
     .ok();
@@ -192,7 +227,8 @@ pub async fn update_user(
         r#"UPDATE users SET
                display_name = COALESCE($3, display_name),
                role = COALESCE($4, role),
-               is_active = COALESCE($5, is_active)
+               is_active = COALESCE($5, is_active),
+               password_hash = COALESCE($6, password_hash)
            WHERE id = $1 AND organization_id = $2
            RETURNING id, organization_id, email, display_name, role, auth_provider,
                      is_active, last_login_at, created_at"#,
@@ -202,6 +238,7 @@ pub async fn update_user(
     .bind(&req.display_name)
     .bind(&req.role)
     .bind(req.is_active)
+    .bind(&password_hash)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
