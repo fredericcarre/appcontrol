@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useUiStore } from '@/stores/ui';
+import { useAuthStore } from '@/stores/auth';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard,
@@ -20,10 +21,10 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/discovery', icon: Radar, label: 'Discovery' },
   { to: '/teams', icon: Users, label: 'Teams' },
-  { to: '/users', icon: UserCog, label: 'Users' },
+  { to: '/users', icon: UserCog, label: 'Users', adminOnly: true },
   { to: '/agents', icon: Server, label: 'Agents' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
-  { to: '/enrollment', icon: KeyRound, label: 'Enrollment' },
+  { to: '/enrollment', icon: KeyRound, label: 'Enrollment', adminOnly: true },
   { to: '/import', icon: Upload, label: 'Import' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
@@ -31,6 +32,10 @@ const navItems = [
 export function Sidebar() {
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
   const toggle = useUiStore((s) => s.toggleSidebar);
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = user?.role === 'admin';
+
+  const visibleItems = navItems.filter((item) => !item.adminOnly || isAdmin);
 
   return (
     <aside
@@ -47,7 +52,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 py-4 space-y-1 overflow-y-auto px-2">
-        {navItems.map(({ to, icon: Icon, label }) => (
+        {visibleItems.map(({ to, icon: Icon, label }) => (
           <NavLink
             key={to}
             to={to}
