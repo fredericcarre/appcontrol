@@ -96,8 +96,8 @@ export function useApps() {
   return useQuery({
     queryKey: ['apps'],
     queryFn: async () => {
-      const { data } = await client.get<Application[]>('/apps');
-      return data;
+      const { data } = await client.get<{ apps: Application[]; total: number }>('/apps');
+      return data.apps;
     },
   });
 }
