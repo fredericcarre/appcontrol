@@ -77,11 +77,11 @@ export function useUpdateUser() {
   });
 }
 
-export function useDeleteUser() {
+export function useToggleUserActive() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (userId: string) => {
-      await client.put(`/users/${userId}`, { is_active: false });
+    mutationFn: async ({ userId, is_active }: { userId: string; is_active: boolean }) => {
+      await client.put(`/users/${userId}`, { is_active });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });

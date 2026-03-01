@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useUsers, useCreateUser, useUpdateUser, useDeleteUser, User } from '@/api/users';
+import { useUsers, useCreateUser, useUpdateUser, useToggleUserActive, User } from '@/api/users';
 import { useAuthStore } from '@/stores/auth';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -34,7 +34,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Plus, User as UserIcon, MoreHorizontal, Pencil, Trash2, ShieldAlert } from 'lucide-react';
+import { Plus, User as UserIcon, MoreHorizontal, Pencil, UserX, UserCheck, ShieldAlert } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 
 function getRoleBadgeVariant(role: string) {
@@ -53,11 +53,11 @@ export function UsersPage() {
   const { data: users, isLoading } = useUsers();
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
-  const deleteUser = useDeleteUser();
+  const toggleUserActive = useToggleUserActive();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<User | null>(null);
+  const [toggleConfirm, setToggleConfirm] = useState<User | null>(null);
 
   // Create form state
   const [email, setEmail] = useState('');
@@ -104,10 +104,13 @@ export function UsersPage() {
     setEditPassword('');
   };
 
-  const handleDelete = async () => {
-    if (!deleteConfirm) return;
-    await deleteUser.mutateAsync(deleteConfirm.id);
-    setDeleteConfirm(null);
+  const handleToggleActive = async () => {
+    if (!toggleConfirm) return;
+    await toggleUserActive.mutateAsync({
+      userId: toggleConfirm.id,
+      is_active: !toggleConfirm.is_active,
+    });
+    setToggleConfirm(null);
   };
 
   const openEditDialog = (user: User) => {
@@ -191,14 +194,24 @@ export function UsersPage() {
                             <Pencil className="h-4 w-4 mr-2" />
                             Edit
                           </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => setDeleteConfirm(user)}
-                            className="text-destructive"
-                            disabled={user.id === currentUser?.id}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete
-                          </DropdownMenuItem>
+                          {user.is_active ? (
+                            <DropdownMenuItem
+                              onClick={() => setToggleConfirm(user)}
+                              className="text-destructive"
+                              disabled={user.id === currentUser?.id}
+                            >
+                              <UserX className="h-4 w-4 mr-2" />
+                              Deactivate
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem
+                              onClick={() => setToggleConfirm(user)}
+                              className="text-green-600"
+                            >
+                              <UserCheck className="h-4 w-4 mr-2" />
+                              Activate
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -324,26 +337,46 @@ export function UsersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
+      {/* Activate/Deactivate Confirmation Dialog */}
+      <Dialog open={!!toggleConfirm} onOpenChange={(open) => !open && setToggleConfirm(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ShieldAlert className="h-5 w-5 text-destructive" />
-              Delete User
+              {toggleConfirm?.is_active ? (
+                <UserX className="h-5 w-5 text-destructive" />
+              ) : (
+                <UserCheck className="h-5 w-5 text-green-600" />
+              )}
+              {toggleConfirm?.is_active ? 'Deactivate' : 'Activate'} User
             </DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete{' '}
-              <span className="font-medium">{deleteConfirm?.display_name || deleteConfirm?.email}</span>?
-              This action will deactivate the user account.
+              {toggleConfirm?.is_active ? (
+                <>
+                  Are you sure you want to deactivate{' '}
+                  <span className="font-medium">{toggleConfirm?.display_name || toggleConfirm?.email}</span>?
+                  They will no longer be able to log in.
+                </>
+              ) : (
+                <>
+                  Are you sure you want to activate{' '}
+                  <span className="font-medium">{toggleConfirm?.display_name || toggleConfirm?.email}</span>?
+                  They will be able to log in again.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteConfirm(null)}>
+            <Button variant="outline" onClick={() => setToggleConfirm(null)}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={deleteUser.isPending}>
-              {deleteUser.isPending ? 'Deleting...' : 'Delete'}
+            <Button
+              variant={toggleConfirm?.is_active ? 'destructive' : 'default'}
+              onClick={handleToggleActive}
+              disabled={toggleUserActive.isPending}
+            >
+              {toggleUserActive.isPending
+                ? (toggleConfirm?.is_active ? 'Deactivating...' : 'Activating...')
+                : (toggleConfirm?.is_active ? 'Deactivate' : 'Activate')}
             </Button>
           </DialogFooter>
         </DialogContent>
