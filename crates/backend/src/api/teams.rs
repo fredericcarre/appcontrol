@@ -236,6 +236,21 @@ pub async fn add_member(
     Path(id): Path<Uuid>,
     Json(body): Json<AddMemberRequest>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
+    // Only admins and team leads can add members
+    if !user.is_admin() {
+        let is_lead = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead')",
+        )
+        .bind(id)
+        .bind(user.user_id)
+        .fetch_one(&state.db)
+        .await?;
+
+        if !is_lead {
+            return Err(ApiError::Forbidden);
+        }
+    }
+
     log_action(
         &state.db,
         user.user_id,
@@ -267,6 +282,21 @@ pub async fn remove_member(
     Extension(user): Extension<AuthUser>,
     Path((team_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
+    // Only admins and team leads can remove members
+    if !user.is_admin() {
+        let is_lead = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead')",
+        )
+        .bind(team_id)
+        .bind(user.user_id)
+        .fetch_one(&state.db)
+        .await?;
+
+        if !is_lead {
+            return Err(ApiError::Forbidden);
+        }
+    }
+
     log_action(
         &state.db,
         user.user_id,
