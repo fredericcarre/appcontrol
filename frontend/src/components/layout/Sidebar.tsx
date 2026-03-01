@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import {
   LayoutDashboard,
   Users,
+  UserCog,
   Server,
   BarChart3,
   Settings,
@@ -19,6 +20,7 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/discovery', icon: Radar, label: 'Discovery' },
   { to: '/teams', icon: Users, label: 'Teams' },
+  { to: '/users', icon: UserCog, label: 'Users' },
   { to: '/agents', icon: Server, label: 'Agents' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
   { to: '/enrollment', icon: KeyRound, label: 'Enrollment' },
