@@ -34,7 +34,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Plus, User as UserIcon, MoreHorizontal, Pencil, UserX, UserCheck, ShieldAlert } from 'lucide-react';
+import { Plus, User as UserIcon, MoreHorizontal, Pencil, UserX, UserCheck, Eye, EyeOff } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 
 function getRoleBadgeVariant(role: string) {
@@ -58,6 +58,7 @@ export function UsersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [toggleConfirm, setToggleConfirm] = useState<User | null>(null);
+  const [showInactive, setShowInactive] = useState(false);
 
   // Create form state
   const [email, setEmail] = useState('');
@@ -128,13 +129,39 @@ export function UsersPage() {
     );
   }
 
+  // Filter users based on showInactive toggle
+  const filteredUsers = users?.filter((user) => showInactive || user.is_active) || [];
+  const inactiveCount = users?.filter((user) => !user.is_active).length || 0;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Users</h1>
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" /> New User
-        </Button>
+        <div className="flex items-center gap-3">
+          {inactiveCount > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowInactive(!showInactive)}
+              className="gap-2"
+            >
+              {showInactive ? (
+                <>
+                  <EyeOff className="h-4 w-4" />
+                  Hide inactive ({inactiveCount})
+                </>
+              ) : (
+                <>
+                  <Eye className="h-4 w-4" />
+                  Show inactive ({inactiveCount})
+                </>
+              )}
+            </Button>
+          )}
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" /> New User
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -152,14 +179,14 @@ export function UsersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {!users?.length ? (
+              {!filteredUsers.length ? (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                    No users yet
+                    {users?.length ? 'No active users (toggle to show inactive)' : 'No users yet'}
                   </TableCell>
                 </TableRow>
               ) : (
-                users.map((user) => (
+                filteredUsers.map((user) => (
                   <TableRow key={user.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">
