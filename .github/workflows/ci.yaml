@@ -252,7 +252,8 @@ jobs:
 
       - name: Verify ready endpoint
         run: |
-          STATUS=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:3000/ready)
+          # Backend not exposed to host, use docker exec
+          STATUS=$(docker compose -f docker/docker-compose.yaml exec -T backend curl -sf -o /dev/null -w '%{http_code}' http://localhost:3000/ready)
           echo "GET /ready → $STATUS"
           [ "$STATUS" = "200" ]
 
@@ -264,7 +265,8 @@ jobs:
 
       - name: Verify API requires auth
         run: |
-          STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/v1/apps)
+          # Backend not exposed to host, use docker exec
+          STATUS=$(docker compose -f docker/docker-compose.yaml exec -T backend curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/v1/apps)
           echo "GET /api/v1/apps (no auth) → $STATUS"
           [ "$STATUS" = "401" ]
 
