@@ -80,6 +80,47 @@ function TokenStatusBadge({ status }: { status: TokenStatus }) {
   }
 }
 
+// ── Command copy button ────────────────────────────────────────
+
+function CopyCommandButton({ command, label }: { command: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(command);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleCopy}
+          className="h-6 px-2 text-xs"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3 mr-1 text-green-600" />
+              Copied!
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3 mr-1" />
+              Copy
+            </>
+          )}
+        </Button>
+      </div>
+      <pre className="rounded-md border bg-muted px-3 py-2 text-xs font-mono break-all whitespace-pre-wrap select-all overflow-x-auto">
+        {command}
+      </pre>
+    </div>
+  );
+}
+
 // ── Created token display (shown once) ────────────────────────
 
 function CreatedTokenDisplay({
@@ -90,8 +131,101 @@ function CreatedTokenDisplay({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [selectedOs, setSelectedOs] = useState<'linux' | 'macos' | 'windows'>('linux');
+  const [selectedArch, setSelectedArch] = useState<'amd64' | 'arm64'>('amd64');
 
-  const handleCopy = async () => {
+  // Get the current server URL for enrollment
+  const serverUrl = window.location.origin;
+  const gatewayUrl = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
+
+  // Binary download URLs (from GitHub releases)
+  const binaryName = token.scope === 'gateway' ? 'appcontrol-gateway' : 'appcontrol-agent';
+  const releaseBaseUrl = 'https://github.com/fredericcarre/appcontrol/releases/latest/download';
+
+  const getBinarySuffix = () => {
+    if (selectedOs === 'windows') {
+      return `${selectedArch === 'arm64' ? 'windows-arm64' : 'windows-amd64'}.exe`;
+    }
+    if (selectedOs === 'macos') {
+      return selectedArch === 'arm64' ? 'darwin-arm64' : 'darwin-amd64';
+    }
+    return selectedArch === 'arm64' ? 'linux-arm64' : 'linux-amd64';
+  };
+
+  const binaryUrl = `${releaseBaseUrl}/${binaryName}-${getBinarySuffix()}`;
+  const isWindows = selectedOs === 'windows';
+  const ext = isWindows ? '.exe' : '';
+
+  // Generate commands based on scope
+  const generateCommands = () => {
+    if (token.scope === 'gateway') {
+      // Gateway enrollment commands
+      const downloadCmd = isWindows
+        ? `Invoke-WebRequest -Uri "${binaryUrl}" -OutFile "appcontrol-gateway${ext}"`
+        : `curl -fsSL -o appcontrol-gateway "${binaryUrl}" && chmod +x appcontrol-gateway`;
+
+      const enrollCmd = isWindows
+        ? `.\\appcontrol-gateway${ext} --enroll --token "${token.token}" --backend-url "${gatewayUrl}/ws/gateway" --name "gateway-01" --zone "default"`
+        : `./appcontrol-gateway --enroll --token "${token.token}" --backend-url "${gatewayUrl}/ws/gateway" --name "gateway-01" --zone "default"`;
+
+      const serviceCmd = isWindows
+        ? `# Install as Windows service (run as Administrator)
+New-Service -Name "AppControlGateway" -BinaryPathName "$(Get-Location)\\appcontrol-gateway${ext} --config gateway.yaml" -StartupType Automatic
+Start-Service AppControlGateway`
+        : `# Install as systemd service (Linux)
+sudo mv appcontrol-gateway /usr/local/bin/
+sudo tee /etc/systemd/system/appcontrol-gateway.service > /dev/null << 'EOF'
+[Unit]
+Description=AppControl Gateway
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/appcontrol-gateway --config /etc/appcontrol/gateway.yaml
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl enable --now appcontrol-gateway`;
+
+      return { downloadCmd, enrollCmd, serviceCmd };
+    } else {
+      // Agent enrollment commands
+      const downloadCmd = isWindows
+        ? `Invoke-WebRequest -Uri "${binaryUrl}" -OutFile "appcontrol-agent${ext}"`
+        : `curl -fsSL -o appcontrol-agent "${binaryUrl}" && chmod +x appcontrol-agent`;
+
+      const enrollCmd = isWindows
+        ? `.\\appcontrol-agent${ext} --enroll --token "${token.token}" --gateway-url "${gatewayUrl.replace('ws', 'wss')}:8443"`
+        : `./appcontrol-agent --enroll --token "${token.token}" --gateway-url "${gatewayUrl.replace('ws', 'wss')}:8443"`;
+
+      const serviceCmd = isWindows
+        ? `# Install as Windows service (run as Administrator)
+New-Service -Name "AppControlAgent" -BinaryPathName "$(Get-Location)\\appcontrol-agent${ext} --config agent.yaml" -StartupType Automatic
+Start-Service AppControlAgent`
+        : `# Install as systemd service (Linux)
+sudo mv appcontrol-agent /usr/local/bin/
+sudo tee /etc/systemd/system/appcontrol-agent.service > /dev/null << 'EOF'
+[Unit]
+Description=AppControl Agent
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/appcontrol-agent --config /etc/appcontrol/agent.yaml
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl enable --now appcontrol-agent`;
+
+      return { downloadCmd, enrollCmd, serviceCmd };
+    }
+  };
+
+  const { downloadCmd, enrollCmd, serviceCmd } = generateCommands();
+
+  const handleCopyToken = async () => {
     await navigator.clipboard.writeText(token.token);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -99,48 +233,100 @@ function CreatedTokenDisplay({
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Token Created</DialogTitle>
+          <DialogTitle>
+            {token.scope === 'gateway' ? 'Gateway' : 'Agent'} Enrollment Token Created
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-4">
-          <p className="text-sm text-muted-foreground">
-            Copy this token now. It will not be shown again.
-          </p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 rounded-md border bg-muted px-3 py-2 text-sm font-mono break-all select-all">
-              {token.token}
-            </code>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={handleCopy}
-              aria-label="Copy token"
-            >
-              {copied ? (
-                <Check className="h-4 w-4 text-green-600" />
-              ) : (
-                <Copy className="h-4 w-4" />
-              )}
-            </Button>
+          {/* Token display */}
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">
+              Copy this token now. It will not be shown again.
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 rounded-md border bg-muted px-3 py-2 text-sm font-mono break-all select-all">
+                {token.token}
+              </code>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={handleCopyToken}
+                aria-label="Copy token"
+              >
+                {copied ? (
+                  <Check className="h-4 w-4 text-green-600" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
           </div>
-          <div className="text-sm space-y-1">
+
+          {/* Token details */}
+          <div className="text-sm grid grid-cols-2 gap-2 p-3 rounded-md bg-muted/50">
             <p>
-              <span className="font-medium">Name:</span> {token.name}
+              <span className="text-muted-foreground">Name:</span> {token.name}
             </p>
             <p>
-              <span className="font-medium">Scope:</span> {token.scope}
+              <span className="text-muted-foreground">Scope:</span> {token.scope}
             </p>
             <p>
-              <span className="font-medium">Max uses:</span>{' '}
+              <span className="text-muted-foreground">Max uses:</span>{' '}
               {token.max_uses ?? 'Unlimited'}
             </p>
             <p>
-              <span className="font-medium">Expires:</span>{' '}
+              <span className="text-muted-foreground">Expires:</span>{' '}
               {token.expires_at
                 ? new Date(token.expires_at).toLocaleString()
                 : 'Never'}
             </p>
+          </div>
+
+          {/* OS/Arch selector */}
+          <div className="flex items-center gap-4 pt-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Platform:</span>
+              <Select value={selectedOs} onValueChange={(v) => setSelectedOs(v as 'linux' | 'macos' | 'windows')}>
+                <SelectTrigger className="w-28 h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="linux">Linux</SelectItem>
+                  <SelectItem value="macos">macOS</SelectItem>
+                  <SelectItem value="windows">Windows</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Arch:</span>
+              <Select value={selectedArch} onValueChange={(v) => setSelectedArch(v as 'amd64' | 'arm64')}>
+                <SelectTrigger className="w-24 h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="amd64">x64</SelectItem>
+                  <SelectItem value="arm64">ARM64</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Commands */}
+          <div className="space-y-3 pt-2">
+            <CopyCommandButton
+              label="1. Download binary"
+              command={downloadCmd}
+            />
+            <CopyCommandButton
+              label="2. Enroll"
+              command={enrollCmd}
+            />
+            <CopyCommandButton
+              label="3. Install as service (optional)"
+              command={serviceCmd}
+            />
           </div>
         </div>
         <DialogFooter>
