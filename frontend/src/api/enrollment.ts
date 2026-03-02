@@ -6,15 +6,21 @@ import client from './client';
 export interface EnrollmentToken {
   id: string;
   name: string;
-  token: string;
+  token_prefix: string;
   scope: 'agent' | 'gateway';
   max_uses: number | null;
   current_uses: number;
   expires_at: string | null;
-  status: 'active' | 'revoked' | 'expired' | 'exhausted';
-  created_by: string;
   created_at: string;
   revoked_at: string | null;
+}
+
+// Computed status based on token fields
+export function getTokenStatus(token: EnrollmentToken): 'active' | 'revoked' | 'expired' | 'exhausted' {
+  if (token.revoked_at) return 'revoked';
+  if (token.expires_at && new Date(token.expires_at) < new Date()) return 'expired';
+  if (token.max_uses !== null && token.current_uses >= token.max_uses) return 'exhausted';
+  return 'active';
 }
 
 export interface CreateEnrollmentTokenPayload {
@@ -54,8 +60,8 @@ export function useEnrollmentTokens() {
   return useQuery({
     queryKey: ['enrollment', 'tokens'],
     queryFn: async () => {
-      const { data } = await client.get<EnrollmentToken[]>('/enrollment/tokens');
-      return data;
+      const { data } = await client.get<{ tokens: EnrollmentToken[] }>('/enrollment/tokens');
+      return data.tokens;
     },
   });
 }
@@ -64,9 +70,44 @@ export function useEnrollmentEvents() {
   return useQuery({
     queryKey: ['enrollment', 'events'],
     queryFn: async () => {
-      const { data } = await client.get<EnrollmentEvent[]>('/enrollment/events');
+      const { data } = await client.get<{ events: EnrollmentEvent[] }>('/enrollment/events');
+      return data.events;
+    },
+  });
+}
+
+// ── PKI API ──────────────────────────────────────────────────
+
+export interface PkiStatus {
+  initialized: boolean;
+  ca_fingerprint?: string;
+}
+
+export function usePkiStatus() {
+  return useQuery({
+    queryKey: ['pki', 'status'],
+    queryFn: async () => {
+      try {
+        const { data } = await client.get<{ ca_cert_pem: string; fingerprint: string }>('/pki/ca');
+        return { initialized: true, ca_fingerprint: data.fingerprint };
+      } catch {
+        return { initialized: false };
+      }
+    },
+  });
+}
+
+export function useInitPki() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { org_name: string; validity_days?: number }) => {
+      const { data } = await client.post<{ status: string; ca_fingerprint: string; validity_days: number }>(
+        '/pki/init',
+        payload
+      );
       return data;
     },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pki', 'status'] }),
   });
 }
 

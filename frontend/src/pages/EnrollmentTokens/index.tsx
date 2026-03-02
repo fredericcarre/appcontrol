@@ -4,6 +4,9 @@ import {
   useCreateEnrollmentToken,
   useRevokeEnrollmentToken,
   useEnrollmentEvents,
+  usePkiStatus,
+  useInitPki,
+  getTokenStatus,
   type EnrollmentToken,
   type CreateEnrollmentTokenPayload,
   type CreateEnrollmentTokenResponse,
@@ -43,11 +46,15 @@ import {
   XCircle,
   Clock,
   Shield,
+  AlertTriangle,
+  CheckCircle,
 } from 'lucide-react';
 
 // ── Status badge helper ───────────────────────────────────────
 
-function TokenStatusBadge({ status }: { status: EnrollmentToken['status'] }) {
+type TokenStatus = 'active' | 'revoked' | 'expired' | 'exhausted';
+
+function TokenStatusBadge({ status }: { status: TokenStatus }) {
   switch (status) {
     case 'active':
       return <Badge variant="running">Active</Badge>;
@@ -329,54 +336,57 @@ function TokensTable({
                 </TableCell>
               </TableRow>
             ) : (
-              tokens.map((token) => (
-                <TableRow key={token.id}>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Key className="h-4 w-4 text-muted-foreground" />
-                      <span className="font-medium">{token.name}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="secondary">{token.scope}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-sm">
-                      {token.current_uses}
-                      {token.max_uses != null ? ` / ${token.max_uses}` : ''}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-sm">
-                    {token.expires_at ? (
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {new Date(token.expires_at).toLocaleString()}
+              tokens.map((token) => {
+                const status = getTokenStatus(token);
+                return (
+                  <TableRow key={token.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Key className="h-4 w-4 text-muted-foreground" />
+                        <span className="font-medium">{token.name}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{token.scope}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-sm">
+                        {token.current_uses}
+                        {token.max_uses != null ? ` / ${token.max_uses}` : ''}
                       </span>
-                    ) : (
-                      'Never'
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <TokenStatusBadge status={token.status} />
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-sm">
-                    {new Date(token.created_at).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell>
-                    {token.status === 'active' && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => onRevoke(token)}
-                        className="text-destructive hover:text-destructive"
-                      >
-                        <XCircle className="h-4 w-4 mr-1" />
-                        Revoke
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-sm">
+                      {token.expires_at ? (
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {new Date(token.expires_at).toLocaleString()}
+                        </span>
+                      ) : (
+                        'Never'
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <TokenStatusBadge status={status} />
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-sm">
+                      {new Date(token.created_at).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell>
+                      {status === 'active' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onRevoke(token)}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          <XCircle className="h-4 w-4 mr-1" />
+                          Revoke
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
@@ -455,6 +465,100 @@ function EventsTable() {
   );
 }
 
+// ── PKI initialization card ────────────────────────────────────
+
+function PkiInitCard() {
+  const { data: pkiStatus, isLoading } = usePkiStatus();
+  const initPki = useInitPki();
+  const [orgName, setOrgName] = useState('');
+  const [showInit, setShowInit] = useState(false);
+
+  if (isLoading) {
+    return null;
+  }
+
+  if (pkiStatus?.initialized) {
+    return (
+      <Card className="border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950">
+        <CardContent className="flex items-start gap-3 pt-4">
+          <CheckCircle className="h-5 w-5 text-green-600 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium text-green-800 dark:text-green-200">PKI Initialized</p>
+            <p className="text-sm text-green-700 dark:text-green-300">
+              <span className="text-muted-foreground">CA Fingerprint: </span>
+              <code className="text-xs font-mono">{pkiStatus.ca_fingerprint}</code>
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const handleInit = async () => {
+    if (!orgName.trim()) return;
+    await initPki.mutateAsync({ org_name: orgName.trim() });
+    setShowInit(false);
+    setOrgName('');
+  };
+
+  return (
+    <>
+      <Card className="border-yellow-300 bg-yellow-50 dark:border-yellow-900 dark:bg-yellow-950">
+        <CardContent className="flex items-start gap-3 pt-4">
+          <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="font-medium text-yellow-800 dark:text-yellow-200">PKI Not Initialized</p>
+            <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
+              You must initialize the PKI before agents or gateways can enroll. This creates the Certificate Authority for your organization.
+            </p>
+            <div className="mt-3">
+              <Button size="sm" onClick={() => setShowInit(true)}>
+                Initialize PKI
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={showInit} onOpenChange={setShowInit}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Initialize PKI</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              This will create a Certificate Authority (CA) for your organization.
+              The CA will be used to sign certificates for agents and gateways.
+            </p>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Organization Name</label>
+              <Input
+                value={orgName}
+                onChange={(e) => setOrgName(e.target.value)}
+                placeholder="e.g. Acme Corp"
+              />
+              <p className="text-xs text-muted-foreground">
+                This name will appear in the CA certificate
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowInit(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleInit}
+              disabled={!orgName.trim() || initPki.isPending}
+            >
+              {initPki.isPending ? 'Initializing...' : 'Initialize'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────
 
 export function EnrollmentTokensPage() {
@@ -483,6 +587,8 @@ export function EnrollmentTokensPage() {
           <Plus className="h-4 w-4 mr-2" /> Create Token
         </Button>
       </div>
+
+      <PkiInitCard />
 
       <Tabs defaultValue="tokens">
         <TabsList>
