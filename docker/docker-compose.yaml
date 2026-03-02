@@ -104,8 +104,6 @@ services:
       - "8443:8443" # mTLS passthrough to gateway
     volumes:
       - certs:/certs:ro
-      # Mount frontend static files
-      - frontend-static:/usr/share/nginx/html:ro
     depends_on:
       init-certs:
         condition: service_completed_successfully
@@ -120,18 +118,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # Copy frontend build to shared volume for nginx
-  frontend-static:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.frontend
-    command: ["sh", "-c", "cp -r /usr/share/nginx/html/* /static/"]
-    volumes:
-      - frontend-static:/static
-    depends_on:
-      - frontend
-
 volumes:
   pgdata:
   certs:
-  frontend-static:

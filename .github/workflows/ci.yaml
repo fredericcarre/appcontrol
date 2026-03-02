@@ -319,14 +319,25 @@ jobs:
         include:
           - image: backend
             file: docker/Dockerfile.backend
+            context: .
           - image: frontend
             file: docker/Dockerfile.frontend
+            context: .
           - image: agent
             file: docker/Dockerfile.agent
+            context: .
           - image: gateway
             file: docker/Dockerfile.gateway
+            context: .
           - image: azure-gateway
             file: docker/Dockerfile.azure-gateway
+            context: .
+          - image: init-certs
+            file: docker/init-certs/Dockerfile
+            context: docker/init-certs
+          - image: nginx
+            file: docker/nginx/Dockerfile
+            context: docker/nginx
     steps:
       - uses: actions/checkout@v4
 
@@ -336,7 +347,7 @@ jobs:
       - name: Build ${{ matrix.image }} image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           push: false
           cache-from: type=gha
@@ -370,12 +381,22 @@ jobs:
         include:
           - image: backend
             file: docker/Dockerfile.backend
+            context: .
           - image: frontend
             file: docker/Dockerfile.frontend
+            context: .
           - image: agent
             file: docker/Dockerfile.agent
+            context: .
           - image: gateway
             file: docker/Dockerfile.gateway
+            context: .
+          - image: init-certs
+            file: docker/init-certs/Dockerfile
+            context: docker/init-certs
+          - image: nginx
+            file: docker/nginx/Dockerfile
+            context: docker/nginx
     steps:
       - uses: actions/checkout@v4
 
@@ -383,7 +404,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build ${{ matrix.image }} image for scanning
-        run: docker build -t appcontrol/${{ matrix.image }}:scan -f ${{ matrix.file }} .
+        run: docker build -t appcontrol/${{ matrix.image }}:scan -f ${{ matrix.file }} ${{ matrix.context }}
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
