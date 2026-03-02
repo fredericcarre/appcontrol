@@ -269,6 +269,94 @@ pub async fn get_ca_cert(
 }
 
 // ---------------------------------------------------------------------------
+// PKI import — use client's existing CA
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ImportPkiRequest {
+    /// PEM-encoded CA certificate
+    pub ca_cert_pem: String,
+    /// PEM-encoded CA private key
+    pub ca_key_pem: String,
+    /// Force overwrite if CA already exists
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Import an existing CA certificate and key for the organization.
+///
+/// This allows enterprises to use their own PKI infrastructure.
+/// The imported CA will be used to sign all agent and gateway certificates.
+pub async fn import_pki(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(req): Json<ImportPkiRequest>,
+) -> Result<Json<Value>, ApiError> {
+    // Validate PEM format
+    if !req.ca_cert_pem.contains("-----BEGIN CERTIFICATE-----") {
+        return Err(ApiError::Validation(
+            "Invalid certificate PEM format".to_string(),
+        ));
+    }
+    if !req.ca_key_pem.contains("-----BEGIN") || !req.ca_key_pem.contains("PRIVATE KEY-----") {
+        return Err(ApiError::Validation(
+            "Invalid private key PEM format".to_string(),
+        ));
+    }
+
+    // Validate that cert and key match by attempting to parse them
+    appcontrol_common::validate_ca_keypair(&req.ca_cert_pem, &req.ca_key_pem)
+        .map_err(|e| ApiError::Validation(format!("Invalid CA keypair: {}", e)))?;
+
+    // Check if CA already exists
+    let existing: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
+            .bind(user.organization_id)
+            .fetch_optional(&state.db)
+            .await?;
+
+    if let Some((Some(_),)) = existing {
+        if !req.force {
+            return Err(ApiError::Conflict(
+                "CA already exists. Use force=true to overwrite (will invalidate all existing certs).".to_string(),
+            ));
+        }
+    }
+
+    let fingerprint = appcontrol_common::fingerprint_pem(&req.ca_cert_pem).unwrap_or_default();
+
+    // Log before execute (Critical Rule #3)
+    crate::middleware::audit::log_action(
+        &state.db,
+        user.user_id,
+        "import_pki",
+        "organization",
+        user.organization_id,
+        json!({ "fingerprint": &fingerprint, "force": req.force }),
+    )
+    .await
+    .ok();
+
+    sqlx::query("UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1")
+        .bind(user.organization_id)
+        .bind(&req.ca_cert_pem)
+        .bind(&req.ca_key_pem)
+        .execute(&state.db)
+        .await?;
+
+    tracing::info!(
+        org_id = %user.organization_id,
+        fingerprint = %fingerprint,
+        "Imported external CA"
+    );
+
+    Ok(Json(json!({
+        "status": "imported",
+        "ca_fingerprint": fingerprint,
+    })))
+}
+
+// ---------------------------------------------------------------------------
 // Agent/Gateway enrollment (UNAUTHENTICATED — token-based)
 // ---------------------------------------------------------------------------
 

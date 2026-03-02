@@ -367,6 +367,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         // PKI management
         .route("/pki/init", post(enrollment::init_pki))
+        .route("/pki/import", post(enrollment::import_pki))
         .route("/pki/ca", get(enrollment::get_ca_cert))
         // SAML group mapping admin API (requires auth)
         .merge(crate::auth::saml::saml_admin_routes())

@@ -6,6 +6,7 @@ import {
   useEnrollmentEvents,
   usePkiStatus,
   useInitPki,
+  useImportPki,
   getTokenStatus,
   type EnrollmentToken,
   type CreateEnrollmentTokenPayload,
@@ -48,7 +49,9 @@ import {
   Shield,
   AlertTriangle,
   CheckCircle,
+  Upload,
 } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 
 // ── Status badge helper ───────────────────────────────────────
 
@@ -470,8 +473,13 @@ function EventsTable() {
 function PkiInitCard() {
   const { data: pkiStatus, isLoading } = usePkiStatus();
   const initPki = useInitPki();
+  const importPki = useImportPki();
   const [orgName, setOrgName] = useState('');
   const [showInit, setShowInit] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [caCertPem, setCaCertPem] = useState('');
+  const [caKeyPem, setCaKeyPem] = useState('');
+  const [importError, setImportError] = useState('');
 
   if (isLoading) {
     return null;
@@ -501,6 +509,33 @@ function PkiInitCard() {
     setOrgName('');
   };
 
+  const handleImport = async () => {
+    setImportError('');
+    if (!caCertPem.trim() || !caKeyPem.trim()) {
+      setImportError('Both certificate and private key are required');
+      return;
+    }
+    try {
+      await importPki.mutateAsync({
+        ca_cert_pem: caCertPem.trim(),
+        ca_key_pem: caKeyPem.trim(),
+      });
+      setShowImport(false);
+      setCaCertPem('');
+      setCaKeyPem('');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { message?: string } } };
+      setImportError(axiosErr.response?.data?.message || 'Failed to import CA');
+    }
+  };
+
+  const closeImportDialog = () => {
+    setShowImport(false);
+    setCaCertPem('');
+    setCaKeyPem('');
+    setImportError('');
+  };
+
   return (
     <>
       <Card className="border-yellow-300 bg-yellow-50 dark:border-yellow-900 dark:bg-yellow-950">
@@ -509,25 +544,31 @@ function PkiInitCard() {
           <div className="flex-1">
             <p className="font-medium text-yellow-800 dark:text-yellow-200">PKI Not Initialized</p>
             <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-              You must initialize the PKI before agents or gateways can enroll. This creates the Certificate Authority for your organization.
+              You must initialize the PKI before agents or gateways can enroll.
+              Generate a new CA or import your enterprise CA.
             </p>
-            <div className="mt-3">
+            <div className="mt-3 flex gap-2">
               <Button size="sm" onClick={() => setShowInit(true)}>
-                Initialize PKI
+                Generate CA
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setShowImport(true)}>
+                <Upload className="h-4 w-4 mr-1" />
+                Import CA
               </Button>
             </div>
           </div>
         </CardContent>
       </Card>
 
+      {/* Generate CA Dialog */}
       <Dialog open={showInit} onOpenChange={setShowInit}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Initialize PKI</DialogTitle>
+            <DialogTitle>Generate Certificate Authority</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <p className="text-sm text-muted-foreground">
-              This will create a Certificate Authority (CA) for your organization.
+              This will create a new self-signed Certificate Authority (CA) for your organization.
               The CA will be used to sign certificates for agents and gateways.
             </p>
             <div className="space-y-2">
@@ -550,7 +591,60 @@ function PkiInitCard() {
               onClick={handleInit}
               disabled={!orgName.trim() || initPki.isPending}
             >
-              {initPki.isPending ? 'Initializing...' : 'Initialize'}
+              {initPki.isPending ? 'Generating...' : 'Generate CA'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import CA Dialog */}
+      <Dialog open={showImport} onOpenChange={(open) => !open && closeImportDialog()}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Import Enterprise CA</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Import your existing enterprise Certificate Authority. All agent and gateway
+              certificates will be signed by this CA, enabling seamless mTLS with your infrastructure.
+            </p>
+            {importError && (
+              <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                {importError}
+              </div>
+            )}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">CA Certificate (PEM)</label>
+              <Textarea
+                value={caCertPem}
+                onChange={(e) => setCaCertPem(e.target.value)}
+                placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+                className="font-mono text-xs h-32"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">CA Private Key (PEM)</label>
+              <Textarea
+                value={caKeyPem}
+                onChange={(e) => setCaKeyPem(e.target.value)}
+                placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+                className="font-mono text-xs h-32"
+              />
+              <p className="text-xs text-muted-foreground">
+                The private key is stored encrypted and never leaves the server.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeImportDialog}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleImport}
+              disabled={!caCertPem.trim() || !caKeyPem.trim() || importPki.isPending}
+            >
+              {importPki.isPending ? 'Importing...' : 'Import CA'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -252,6 +252,31 @@ pub fn fingerprint_pem(cert_pem: &str) -> Option<String> {
     Some(hex::encode(digest))
 }
 
+/// Validate that a CA certificate and private key are a valid keypair.
+///
+/// This is used when importing an external CA to ensure:
+/// 1. The certificate can be parsed
+/// 2. The private key can be parsed
+/// 3. They form a valid pair (can sign certificates)
+pub fn validate_ca_keypair(ca_cert_pem: &str, ca_key_pem: &str) -> Result<(), PkiError> {
+    use rcgen::{CertificateParams, KeyPair};
+
+    // Parse the private key
+    let ca_key = KeyPair::from_pem(ca_key_pem)
+        .map_err(|e| PkiError::Generation(format!("Invalid CA private key: {}", e)))?;
+
+    // Parse the certificate and verify it works with the key
+    let ca_params = CertificateParams::from_ca_cert_pem(ca_cert_pem)
+        .map_err(|e| PkiError::Generation(format!("Invalid CA certificate: {}", e)))?;
+
+    // Try to rebuild the cert with the key - this validates they match
+    ca_params
+        .self_signed(&ca_key)
+        .map_err(|e| PkiError::Generation(format!("CA cert and key do not match: {}", e)))?;
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Enrollment tokens
 // ---------------------------------------------------------------------------

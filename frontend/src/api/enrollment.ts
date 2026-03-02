@@ -111,6 +111,20 @@ export function useInitPki() {
   });
 }
 
+export function useImportPki() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { ca_cert_pem: string; ca_key_pem: string; force?: boolean }) => {
+      const { data } = await client.post<{ status: string; ca_fingerprint: string }>(
+        '/pki/import',
+        payload
+      );
+      return data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pki', 'status'] }),
+  });
+}
+
 // ── Mutations ──────────────────────────────────────────────────
 
 export function useCreateEnrollmentToken() {
