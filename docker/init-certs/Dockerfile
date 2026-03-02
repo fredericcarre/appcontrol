@@ -13,9 +13,9 @@ RUN apk add --no-cache \
 COPY init-certs.sh /init-certs.sh
 RUN chmod +x /init-certs.sh
 
-# Run as non-root (OpenShift compatible)
-RUN adduser -D -u 1000 certbot
-USER certbot
+# Note: Run as root to write to the Docker volume
+# For OpenShift, the volume should be pre-created with correct permissions
+# or use a PVC with the appropriate security context
 
 # Default environment
 ENV CERT_DIR=/certs \
