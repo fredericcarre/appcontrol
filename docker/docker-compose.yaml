@@ -59,6 +59,10 @@ services:
     ports:
       - "4443:4443"
     environment:
+      # Gateway identity
+      GATEWAY_NAME: "gateway-default"
+      GATEWAY_ZONE: "default"
+      # Network
       LISTEN_ADDR: "0.0.0.0"
       LISTEN_PORT: "4443"
       # SECURITY: ws:// is acceptable here because gateway and backend share the

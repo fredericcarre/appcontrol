@@ -83,6 +83,9 @@ pub struct GatewayConfig {
 #[derive(Debug, serde::Deserialize, Clone)]
 struct GatewaySection {
     id: String,
+    /// Human-readable name displayed in the UI.
+    #[serde(default)]
+    name: Option<String>,
     zone: String,
     listen_addr: String,
     listen_port: u16,
@@ -127,6 +130,7 @@ impl GatewayConfig {
             GatewayConfig {
                 gateway: GatewaySection {
                     id: "gateway-01".to_string(),
+                    name: None,
                     zone: "default".to_string(),
                     listen_addr: "0.0.0.0".to_string(),
                     listen_port: 4443,
@@ -142,6 +146,9 @@ impl GatewayConfig {
 
         if let Ok(v) = std::env::var("GATEWAY_ID") {
             config.gateway.id = v;
+        }
+        if let Ok(v) = std::env::var("GATEWAY_NAME") {
+            config.gateway.name = Some(v);
         }
         if let Ok(v) = std::env::var("GATEWAY_ZONE") {
             config.gateway.zone = v;
@@ -621,6 +628,7 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
     // Send gateway registration
     let register_msg = GatewayMessage::Register {
         gateway_id: state.gateway_id,
+        name: state.config.gateway.name.clone(),
         zone: state.config.gateway.zone.clone(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     };

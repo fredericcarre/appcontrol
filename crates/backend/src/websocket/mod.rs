@@ -228,11 +228,13 @@ async fn process_gateway_message(
     match msg {
         appcontrol_common::GatewayMessage::Register {
             gateway_id,
+            name,
             zone,
             version,
         } => {
             tracing::info!(
                 gateway_id = %gateway_id,
+                name = ?name,
                 zone = %zone,
                 version = %version,
                 "Gateway registered"
@@ -244,18 +246,23 @@ async fn process_gateway_message(
                 .ws_hub
                 .register_gateway(gateway_id, zone.clone(), gw_tx.clone());
 
+            // Use the provided name, or generate one from the gateway_id
+            let display_name =
+                name.unwrap_or_else(|| format!("Gateway-{}", &gateway_id.to_string()[..8]));
+
             // Auto-register/update gateway in database (upsert)
             // This ensures the gateway appears in the UI even if not pre-created
             if let Err(e) = sqlx::query(
                 r#"INSERT INTO gateways (id, organization_id, name, zone, is_active, last_heartbeat_at)
                    VALUES ($1, (SELECT id FROM organizations LIMIT 1), $2, $3, true, now())
                    ON CONFLICT (id) DO UPDATE SET
+                       name = EXCLUDED.name,
                        zone = EXCLUDED.zone,
                        is_active = true,
                        last_heartbeat_at = now()"#,
             )
             .bind(gateway_id)
-            .bind(format!("Gateway-{}", &gateway_id.to_string()[..8]))
+            .bind(&display_name)
             .bind(&zone)
             .execute(&state.db)
             .await

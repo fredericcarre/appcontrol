@@ -260,6 +260,9 @@ pub enum GatewayMessage {
     /// Gateway self-registration when connecting to backend.
     Register {
         gateway_id: Uuid,
+        /// Human-readable name for this gateway (e.g., "gateway-prd-01").
+        #[serde(default)]
+        name: Option<String>,
         zone: String,
         version: String,
     },
@@ -560,6 +563,7 @@ mod tests {
         let gw_id = Uuid::new_v4();
         let msg = super::GatewayMessage::Register {
             gateway_id: gw_id,
+            name: Some("gateway-prd-01".to_string()),
             zone: "PRD".to_string(),
             version: "0.1.0".to_string(),
         };
@@ -567,9 +571,13 @@ mod tests {
         let deserialized: super::GatewayMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
             super::GatewayMessage::Register {
-                gateway_id, zone, ..
+                gateway_id,
+                name,
+                zone,
+                ..
             } => {
                 assert_eq!(gateway_id, gw_id);
+                assert_eq!(name, Some("gateway-prd-01".to_string()));
                 assert_eq!(zone, "PRD");
             }
             _ => panic!("Expected Register"),
