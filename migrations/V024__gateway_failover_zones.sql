@@ -16,13 +16,7 @@ ALTER TABLE gateways ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 0;
 
 -- Track when gateway last reported healthy (for failover detection)
 -- Note: last_heartbeat_at may already exist from V011, this is idempotent
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'gateways' AND column_name = 'last_heartbeat_at') THEN
-        ALTER TABLE gateways ADD COLUMN last_heartbeat_at TIMESTAMPTZ;
-    END IF;
-END $$;
+ALTER TABLE gateways ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
 
 -- Ensure only one primary per zone per organization
 -- This allows multiple standby gateways in the same zone
