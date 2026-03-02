@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   useEnrollmentTokens,
   useCreateEnrollmentToken,
@@ -16,6 +16,27 @@ import {
   type CreateEnrollmentTokenPayload,
   type CreateEnrollmentTokenResponse,
 } from '@/api/enrollment';
+
+// Fetch the latest release version from GitHub API
+function useLatestReleaseVersion() {
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('https://api.github.com/repos/fredericcarre/appcontrol/releases')
+      .then((res) => res.json())
+      .then((releases: Array<{ tag_name: string }>) => {
+        if (releases && releases.length > 0) {
+          setVersion(releases[0].tag_name);
+        }
+      })
+      .catch(() => {
+        // Fallback to a default version
+        setVersion('latest');
+      });
+  }, []);
+
+  return version;
+}
 import { useGatewayZones } from '@/api/gateways';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -134,12 +155,18 @@ function CreatedTokenDisplay({
   const [selectedOs, setSelectedOs] = useState<'linux' | 'macos' | 'windows'>('linux');
   const [selectedArch, setSelectedArch] = useState<'amd64' | 'arm64'>('amd64');
 
+  // Fetch latest release version
+  const latestVersion = useLatestReleaseVersion();
+
   // Get the current server URL for enrollment
   const gatewayUrl = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
 
   // Binary download URLs (from GitHub releases)
   const binaryName = token.scope === 'gateway' ? 'appcontrol-gateway' : 'appcontrol-agent';
-  const releaseBaseUrl = 'https://github.com/fredericcarre/appcontrol/releases/latest/download';
+  // Use specific version tag instead of /latest/download which doesn't work for pre-releases
+  const releaseBaseUrl = latestVersion
+    ? `https://github.com/fredericcarre/appcontrol/releases/download/${latestVersion}`
+    : 'https://github.com/fredericcarre/appcontrol/releases/latest/download';
 
   const getBinarySuffix = () => {
     if (selectedOs === 'windows') {
