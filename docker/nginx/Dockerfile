@@ -3,8 +3,10 @@
 
 FROM nginx:1.27-alpine
 
-# Install stream module for TCP passthrough
-RUN apk add --no-cache nginx-mod-stream
+# Upgrade base packages to fix known vulnerabilities (CVE-2025-15467, etc.)
+# Then install stream module for TCP passthrough
+RUN apk upgrade --no-cache && \
+    apk add --no-cache nginx-mod-stream
 
 # Copy configuration
 COPY nginx.conf /etc/nginx/nginx.conf

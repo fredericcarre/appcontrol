@@ -1,13 +1,14 @@
 # AppControl certificate initialization container
 # Runs once at startup to initialize TLS certificates
 
-FROM alpine:3.20
+FROM alpine:3.21
 
-# Install required tools
-RUN apk add --no-cache \
-    curl \
-    openssl \
-    ca-certificates
+# Upgrade base packages to fix known vulnerabilities, then install required tools
+RUN apk upgrade --no-cache && \
+    apk add --no-cache \
+        curl \
+        openssl \
+        ca-certificates
 
 # Copy initialization script
 COPY init-certs.sh /init-certs.sh
