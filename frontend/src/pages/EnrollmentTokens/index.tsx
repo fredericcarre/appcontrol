@@ -159,7 +159,8 @@ function CreatedTokenDisplay({
   const latestVersion = useLatestReleaseVersion();
 
   // Get the current server URL for enrollment
-  const gatewayUrl = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
+  const serverHost = window.location.host;
+  const isSecure = window.location.protocol === 'https:';
 
   // Binary download URLs (from GitHub releases)
   const binaryName = token.scope === 'gateway' ? 'appcontrol-gateway' : 'appcontrol-agent';
@@ -184,15 +185,49 @@ function CreatedTokenDisplay({
 
   // Generate commands based on scope
   const generateCommands = () => {
+    // Gateway URL for agent enrollment (uses mTLS on port 8443)
+    const agentGatewayUrl = `wss://${serverHost}:8443`;
+    // Backend URL for gateway connection
+    const backendWsUrl = `${isSecure ? 'wss' : 'ws'}://${serverHost}/ws/gateway`;
+
     if (token.scope === 'gateway') {
-      // Gateway enrollment commands
+      // Gateway doesn't have enrollment CLI - it uses config file
       const downloadCmd = isWindows
         ? `Invoke-WebRequest -Uri "${binaryUrl}" -OutFile "appcontrol-gateway${ext}"`
         : `curl -fsSL -o appcontrol-gateway "${binaryUrl}" && chmod +x appcontrol-gateway`;
 
+      // Gateway config file creation (no enrollment CLI)
       const enrollCmd = isWindows
-        ? `.\\appcontrol-gateway${ext} --enroll --token "${token.token}" --backend-url "${gatewayUrl}/ws/gateway" --name "gateway-01" --zone "default"`
-        : `./appcontrol-gateway --enroll --token "${token.token}" --backend-url "${gatewayUrl}/ws/gateway" --name "gateway-01" --zone "default"`;
+        ? `# Create gateway config file
+@"
+gateway:
+  id: gateway-01
+  name: Gateway 01
+  zone: default
+  listen_addr: 0.0.0.0
+  listen_port: 4443
+backend:
+  url: ${backendWsUrl}
+  reconnect_interval_secs: 5
+"@ | Out-File -FilePath gateway.yaml -Encoding UTF8
+
+# Start with config
+.\\appcontrol-gateway${ext} --config gateway.yaml`
+        : `# Create gateway config file
+cat > gateway.yaml << 'EOF'
+gateway:
+  id: gateway-01
+  name: Gateway 01
+  zone: default
+  listen_addr: 0.0.0.0
+  listen_port: 4443
+backend:
+  url: ${backendWsUrl}
+  reconnect_interval_secs: 5
+EOF
+
+# Start with config
+./appcontrol-gateway --config gateway.yaml`;
 
       const serviceCmd = isWindows
         ? `# Install as Windows service (run as Administrator)
@@ -200,6 +235,8 @@ New-Service -Name "AppControlGateway" -BinaryPathName "$(Get-Location)\\appcontr
 Start-Service AppControlGateway`
         : `# Install as systemd service (Linux)
 sudo mv appcontrol-gateway /usr/local/bin/
+sudo mkdir -p /etc/appcontrol
+sudo mv gateway.yaml /etc/appcontrol/gateway.yaml
 sudo tee /etc/systemd/system/appcontrol-gateway.service > /dev/null << 'EOF'
 [Unit]
 Description=AppControl Gateway
@@ -221,9 +258,10 @@ sudo systemctl enable --now appcontrol-gateway`;
         ? `Invoke-WebRequest -Uri "${binaryUrl}" -OutFile "appcontrol-agent${ext}"`
         : `curl -fsSL -o appcontrol-agent "${binaryUrl}" && chmod +x appcontrol-agent`;
 
+      // Agent uses --enroll <url> --token <token> syntax
       const enrollCmd = isWindows
-        ? `.\\appcontrol-agent${ext} --enroll --token "${token.token}" --gateway-url "${gatewayUrl.replace('ws', 'wss')}:8443"`
-        : `./appcontrol-agent --enroll --token "${token.token}" --gateway-url "${gatewayUrl.replace('ws', 'wss')}:8443"`;
+        ? `.\\appcontrol-agent${ext} --enroll "${agentGatewayUrl}" --token "${token.token}"`
+        : `./appcontrol-agent --enroll "${agentGatewayUrl}" --token "${token.token}"`;
 
       const serviceCmd = isWindows
         ? `# Install as Windows service (run as Administrator)
