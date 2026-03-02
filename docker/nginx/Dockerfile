@@ -24,7 +24,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 # 8443: mTLS passthrough to gateway
 EXPOSE 80 443 8443
 
-# Run as nginx user (OpenShift compatible with arbitrary UIDs)
-USER nginx
+# Note: Run as root to bind to privileged ports (80, 443, 8443)
+# For OpenShift, use non-privileged ports (8080, 8443) with a Route
 
 CMD ["nginx", "-g", "daemon off;"]

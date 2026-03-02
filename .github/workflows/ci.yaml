@@ -151,16 +151,20 @@ jobs:
           docker compose -f docker/docker-compose.yaml ps -a
           echo "--- waiting for init-certs to complete ---"
           for i in $(seq 1 60); do
-            INIT_STATUS=$(docker compose -f docker/docker-compose.yaml ps init-certs --format '{{.State}}' 2>/dev/null || echo "unknown")
-            if [ "$INIT_STATUS" = "exited" ]; then
-              INIT_EXIT=$(docker compose -f docker/docker-compose.yaml ps init-certs --format '{{.ExitCode}}' 2>/dev/null || echo "1")
-              if [ "$INIT_EXIT" = "0" ]; then
-                echo "init-certs completed successfully after $((i * 2))s"
-                break
-              else
-                echo "init-certs failed with exit code $INIT_EXIT"
-                docker compose -f docker/docker-compose.yaml logs init-certs
-                exit 1
+            # Use docker inspect for reliable exit code check
+            INIT_CONTAINER=$(docker compose -f docker/docker-compose.yaml ps -q init-certs 2>/dev/null || echo "")
+            if [ -n "$INIT_CONTAINER" ]; then
+              RUNNING=$(docker inspect -f '{{.State.Running}}' "$INIT_CONTAINER" 2>/dev/null || echo "true")
+              if [ "$RUNNING" = "false" ]; then
+                EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' "$INIT_CONTAINER" 2>/dev/null || echo "1")
+                if [ "$EXIT_CODE" = "0" ]; then
+                  echo "init-certs completed successfully after $((i * 2))s"
+                  break
+                else
+                  echo "init-certs failed with exit code $EXIT_CODE"
+                  docker compose -f docker/docker-compose.yaml logs init-certs
+                  exit 1
+                fi
               fi
             fi
             if [ "$i" = "60" ]; then
@@ -177,11 +181,14 @@ jobs:
               break
             fi
             # Check if backend container is still running
-            BACKEND_STATUS=$(docker compose -f docker/docker-compose.yaml ps backend --format '{{.State}}' 2>/dev/null || echo "unknown")
-            if [ "$BACKEND_STATUS" = "exited" ]; then
-              echo "Backend container exited — dumping logs:"
-              docker compose -f docker/docker-compose.yaml logs backend
-              exit 1
+            BACKEND_CONTAINER=$(docker compose -f docker/docker-compose.yaml ps -q backend 2>/dev/null || echo "")
+            if [ -n "$BACKEND_CONTAINER" ]; then
+              RUNNING=$(docker inspect -f '{{.State.Running}}' "$BACKEND_CONTAINER" 2>/dev/null || echo "true")
+              if [ "$RUNNING" = "false" ]; then
+                echo "Backend container exited — dumping logs:"
+                docker compose -f docker/docker-compose.yaml logs backend
+                exit 1
+              fi
             fi
             if [ "$i" = "90" ]; then
               echo "Backend failed to start within 180s"
@@ -197,11 +204,14 @@ jobs:
               echo "Nginx healthy after $((i * 2))s"
               break
             fi
-            NGINX_STATUS=$(docker compose -f docker/docker-compose.yaml ps nginx --format '{{.State}}' 2>/dev/null || echo "unknown")
-            if [ "$NGINX_STATUS" = "exited" ]; then
-              echo "Nginx container exited — dumping logs:"
-              docker compose -f docker/docker-compose.yaml logs nginx
-              exit 1
+            NGINX_CONTAINER=$(docker compose -f docker/docker-compose.yaml ps -q nginx 2>/dev/null || echo "")
+            if [ -n "$NGINX_CONTAINER" ]; then
+              RUNNING=$(docker inspect -f '{{.State.Running}}' "$NGINX_CONTAINER" 2>/dev/null || echo "true")
+              if [ "$RUNNING" = "false" ]; then
+                echo "Nginx container exited — dumping logs:"
+                docker compose -f docker/docker-compose.yaml logs nginx
+                exit 1
+              fi
             fi
             if [ "$i" = "30" ]; then
               echo "Nginx failed to start within 60s"
