@@ -176,12 +176,13 @@ jobs:
           done
           echo "--- waiting for backend health ---"
           for i in $(seq 1 90); do
-            if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
+            # Use docker compose exec to check health inside the network
+            if docker compose -f docker/docker-compose.yaml exec -T backend curl -sf http://localhost:3000/health > /dev/null 2>&1; then
               echo "Backend healthy after $((i * 2))s"
               break
             fi
             # Check if backend container is still running
-            BACKEND_CONTAINER=$(docker compose -f docker/docker-compose.yaml ps -q backend 2>/dev/null || echo "")
+            BACKEND_CONTAINER=$(docker compose -f docker/docker-compose.yaml ps -a -q backend 2>/dev/null || echo "")
             if [ -n "$BACKEND_CONTAINER" ]; then
               RUNNING=$(docker inspect -f '{{.State.Running}}' "$BACKEND_CONTAINER" 2>/dev/null || echo "true")
               if [ "$RUNNING" = "false" ]; then
@@ -204,7 +205,8 @@ jobs:
               echo "Nginx healthy after $((i * 2))s"
               break
             fi
-            NGINX_CONTAINER=$(docker compose -f docker/docker-compose.yaml ps -q nginx 2>/dev/null || echo "")
+            # Use -a flag to find exited containers
+            NGINX_CONTAINER=$(docker compose -f docker/docker-compose.yaml ps -a -q nginx 2>/dev/null || echo "")
             if [ -n "$NGINX_CONTAINER" ]; then
               RUNNING=$(docker inspect -f '{{.State.Running}}' "$NGINX_CONTAINER" 2>/dev/null || echo "true")
               if [ "$RUNNING" = "false" ]; then
@@ -223,8 +225,9 @@ jobs:
 
       - name: Verify health endpoint (direct backend)
         run: |
-          BODY=$(curl -sf http://localhost:3000/health)
-          echo "GET http://localhost:3000/health → $BODY"
+          # Backend is not exposed to host, use docker exec
+          BODY=$(docker compose -f docker/docker-compose.yaml exec -T backend curl -sf http://localhost:3000/health)
+          echo "GET http://backend:3000/health → $BODY"
           echo "$BODY" | grep -q '"status":"ok"'
 
       - name: Verify HTTPS health endpoint (via nginx)
