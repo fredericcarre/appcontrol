@@ -151,8 +151,8 @@ jobs:
           docker compose -f docker/docker-compose.yaml ps -a
           echo "--- waiting for init-certs to complete ---"
           for i in $(seq 1 60); do
-            # Use docker inspect for reliable exit code check
-            INIT_CONTAINER=$(docker compose -f docker/docker-compose.yaml ps -q init-certs 2>/dev/null || echo "")
+            # Use docker inspect for reliable exit code check (-a for exited containers)
+            INIT_CONTAINER=$(docker compose -f docker/docker-compose.yaml ps -a -q init-certs 2>/dev/null || echo "")
             if [ -n "$INIT_CONTAINER" ]; then
               RUNNING=$(docker inspect -f '{{.State.Running}}' "$INIT_CONTAINER" 2>/dev/null || echo "true")
               if [ "$RUNNING" = "false" ]; then
