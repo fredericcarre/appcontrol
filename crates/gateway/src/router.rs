@@ -179,6 +179,34 @@ impl MessageRouter {
         let buf = self.buffer.lock().unwrap();
         (buf.len(), buf.total_bytes())
     }
+
+    /// Broadcast a message to all connected agents.
+    /// Returns the number of agents that received the message.
+    pub fn broadcast_to_agents(&self, message: &str) -> usize {
+        let mut delivered = 0;
+        for entry in self.agent_senders.iter() {
+            let agent_id = *entry.key();
+            let sender = entry.value();
+            match sender.try_send(message.to_string()) {
+                Ok(()) => {
+                    delivered += 1;
+                }
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        "Agent channel full during broadcast — message dropped"
+                    );
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        "Agent channel closed during broadcast"
+                    );
+                }
+            }
+        }
+        delivered
+    }
 }
 
 #[cfg(test)]

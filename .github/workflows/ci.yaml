@@ -149,6 +149,27 @@ jobs:
           docker compose -f docker/docker-compose.yaml up -d 2>&1 || true
           echo "--- container status after up ---"
           docker compose -f docker/docker-compose.yaml ps -a
+          echo "--- waiting for init-certs to complete ---"
+          for i in $(seq 1 60); do
+            INIT_STATUS=$(docker compose -f docker/docker-compose.yaml ps init-certs --format '{{.State}}' 2>/dev/null || echo "unknown")
+            if [ "$INIT_STATUS" = "exited" ]; then
+              INIT_EXIT=$(docker compose -f docker/docker-compose.yaml ps init-certs --format '{{.ExitCode}}' 2>/dev/null || echo "1")
+              if [ "$INIT_EXIT" = "0" ]; then
+                echo "init-certs completed successfully after $((i * 2))s"
+                break
+              else
+                echo "init-certs failed with exit code $INIT_EXIT"
+                docker compose -f docker/docker-compose.yaml logs init-certs
+                exit 1
+              fi
+            fi
+            if [ "$i" = "60" ]; then
+              echo "init-certs did not complete within 120s"
+              docker compose -f docker/docker-compose.yaml logs init-certs
+              exit 1
+            fi
+            sleep 2
+          done
           echo "--- waiting for backend health ---"
           for i in $(seq 1 90); do
             if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
@@ -170,25 +191,51 @@ jobs:
             fi
             sleep 2
           done
-          echo "--- waiting for frontend ---"
+          echo "--- waiting for nginx ---"
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:8080/ > /dev/null 2>&1; then
-              echo "Frontend healthy after $((i * 2))s"
+            if curl -sf -k https://localhost/health > /dev/null 2>&1; then
+              echo "Nginx healthy after $((i * 2))s"
               break
             fi
+            NGINX_STATUS=$(docker compose -f docker/docker-compose.yaml ps nginx --format '{{.State}}' 2>/dev/null || echo "unknown")
+            if [ "$NGINX_STATUS" = "exited" ]; then
+              echo "Nginx container exited — dumping logs:"
+              docker compose -f docker/docker-compose.yaml logs nginx
+              exit 1
+            fi
             if [ "$i" = "30" ]; then
-              echo "Frontend failed to start within 60s"
-              docker compose -f docker/docker-compose.yaml logs frontend
+              echo "Nginx failed to start within 60s"
+              docker compose -f docker/docker-compose.yaml logs nginx
               exit 1
             fi
             sleep 2
           done
 
-      - name: Verify health endpoint
+      - name: Verify health endpoint (direct backend)
         run: |
           BODY=$(curl -sf http://localhost:3000/health)
-          echo "GET /health → $BODY"
+          echo "GET http://localhost:3000/health → $BODY"
           echo "$BODY" | grep -q '"status":"ok"'
+
+      - name: Verify HTTPS health endpoint (via nginx)
+        run: |
+          BODY=$(curl -sf -k https://localhost/health)
+          echo "GET https://localhost/health → $BODY"
+          echo "$BODY" | grep -q '"status":"ok"'
+
+      - name: Verify HTTP to HTTPS redirect
+        run: |
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/)
+          echo "GET http://localhost/ → $STATUS (expecting 301)"
+          [ "$STATUS" = "301" ]
+
+      - name: Verify TLS certificate
+        run: |
+          # Extract certificate subject
+          CERT_SUBJECT=$(echo | openssl s_client -connect localhost:443 2>/dev/null | openssl x509 -noout -subject 2>/dev/null || true)
+          echo "TLS certificate subject: $CERT_SUBJECT"
+          # Verify certificate is valid (not expired)
+          echo | openssl s_client -connect localhost:443 2>/dev/null | openssl x509 -noout -checkend 0 && echo "Certificate is valid"
 
       - name: Verify ready endpoint
         run: |
@@ -196,11 +243,11 @@ jobs:
           echo "GET /ready → $STATUS"
           [ "$STATUS" = "200" ]
 
-      - name: Verify frontend is serving
+      - name: Verify HTTPS API endpoint (via nginx)
         run: |
-          STATUS=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:8080/)
-          echo "GET frontend/ → $STATUS"
-          [ "$STATUS" = "200" ]
+          STATUS=$(curl -s -k -o /dev/null -w '%{http_code}' https://localhost/api/v1/apps)
+          echo "GET https://localhost/api/v1/apps (no auth) → $STATUS"
+          [ "$STATUS" = "401" ]
 
       - name: Verify API requires auth
         run: |

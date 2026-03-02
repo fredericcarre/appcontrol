@@ -174,6 +174,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         // Agent/Gateway enrollment (no auth — token-based)
         .route("/api/v1/enroll", post(api::enrollment::enroll))
+        // Public CA certificate (no auth — for init containers and trust establishment)
+        .route("/api/v1/pki/ca-public", get(api::pki_export::get_ca_public))
         // Share link info (no auth — allows preview before login)
         .route(
             "/api/v1/share/:token",

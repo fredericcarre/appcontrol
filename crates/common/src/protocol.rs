@@ -167,6 +167,19 @@ pub enum BackendMessage {
         agent_id: Uuid,
         reason: String,
     },
+    /// Request agent/gateway to rotate their certificate to a new CA.
+    /// During rotation, the entity should:
+    /// 1. Trust both old and new CA certificates
+    /// 2. Request a new certificate signed by the new CA
+    /// 3. Reconnect with the new certificate
+    CertificateRotation {
+        /// New CA certificate to trust (PEM encoded)
+        new_ca_cert: String,
+        /// Grace period in seconds before old CA becomes invalid
+        grace_period_secs: u64,
+        /// Rotation ID for tracking progress
+        rotation_id: Uuid,
+    },
 }
 
 impl BackendMessage {
@@ -182,6 +195,7 @@ impl BackendMessage {
             BackendMessage::UpdateBinaryChunk { .. } => MessagePriority::Normal,
             BackendMessage::RequestDiscovery { .. } => MessagePriority::Normal,
             BackendMessage::DisconnectAgent { .. } => MessagePriority::Critical,
+            BackendMessage::CertificateRotation { .. } => MessagePriority::Critical,
         }
     }
 }
@@ -713,5 +727,39 @@ mod tests {
             exec_mode: "sync".to_string(),
         };
         assert!(ack.priority() < exec.priority());
+    }
+
+    #[test]
+    fn test_certificate_rotation_message_roundtrip() {
+        let rotation_id = Uuid::new_v4();
+        let msg = BackendMessage::CertificateRotation {
+            new_ca_cert: "-----BEGIN CERTIFICATE-----\nMIIC...".to_string(),
+            grace_period_secs: 3600,
+            rotation_id,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: BackendMessage = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            BackendMessage::CertificateRotation {
+                new_ca_cert,
+                grace_period_secs,
+                rotation_id: rid,
+            } => {
+                assert!(new_ca_cert.contains("BEGIN CERTIFICATE"));
+                assert_eq!(grace_period_secs, 3600);
+                assert_eq!(rid, rotation_id);
+            }
+            _ => panic!("Expected CertificateRotation"),
+        }
+    }
+
+    #[test]
+    fn test_certificate_rotation_priority_is_critical() {
+        let msg = BackendMessage::CertificateRotation {
+            new_ca_cert: "test".to_string(),
+            grace_period_secs: 3600,
+            rotation_id: Uuid::new_v4(),
+        };
+        assert_eq!(msg.priority(), MessagePriority::Critical);
     }
 }

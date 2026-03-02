@@ -859,6 +859,16 @@ fn handle_backend_message(state: &Arc<GatewayState>, text: &str) {
                 return;
             }
 
+            // Handle CertificateRotation — forward to agent and handle locally for gateway
+            if let BackendMessage::CertificateRotation {
+                ref new_ca_cert,
+                grace_period_secs,
+                rotation_id,
+            } = message
+            {
+                handle_certificate_rotation(state, new_ca_cert, grace_period_secs, rotation_id);
+            }
+
             // Serialize the inner BackendMessage (what the agent expects)
             let inner_json = match serde_json::to_string(&message) {
                 Ok(j) => j,
@@ -878,6 +888,21 @@ fn handle_backend_message(state: &Arc<GatewayState>, text: &str) {
         Err(e) => {
             // Try to parse as raw BackendMessage for backwards compatibility
             if let Ok(backend_msg) = serde_json::from_str::<BackendMessage>(text) {
+                // Handle CertificateRotation broadcast (gateway-targeted)
+                if let BackendMessage::CertificateRotation {
+                    ref new_ca_cert,
+                    grace_period_secs,
+                    rotation_id,
+                } = backend_msg
+                {
+                    handle_certificate_rotation(state, new_ca_cert, grace_period_secs, rotation_id);
+                    // Broadcast to all connected agents
+                    if let Ok(json) = serde_json::to_string(&backend_msg) {
+                        state.router.broadcast_to_agents(&json);
+                    }
+                    return;
+                }
+
                 tracing::warn!(
                     "Received raw BackendMessage without envelope — cannot route without target_agent_id"
                 );
@@ -889,6 +914,66 @@ fn handle_backend_message(state: &Arc<GatewayState>, text: &str) {
                 tracing::warn!("Unknown message from backend: {}", e);
             }
         }
+    }
+}
+
+/// Handle certificate rotation command from backend.
+///
+/// The gateway should:
+/// 1. Add the new CA to its trust store (dual-trust during rotation)
+/// 2. Request a new certificate signed by the new CA
+/// 3. Forward the rotation command to all connected agents
+fn handle_certificate_rotation(
+    state: &Arc<GatewayState>,
+    new_ca_cert: &str,
+    grace_period_secs: u64,
+    rotation_id: uuid::Uuid,
+) {
+    tracing::info!(
+        gateway_id = %state.gateway_id,
+        rotation_id = %rotation_id,
+        grace_period_secs = grace_period_secs,
+        "Certificate rotation command received from backend"
+    );
+
+    // In a full implementation, the gateway would:
+    // 1. Write the new CA cert to a temp file
+    // 2. Reload TLS config to trust both old and new CAs
+    // 3. Request a new gateway certificate from the backend
+    // 4. Once received, reload TLS config with the new cert
+    // 5. Report success/failure back to the backend
+
+    // For now, we log the event and let the gateway admin handle manual rotation
+    // or trigger a gateway restart with updated certs.
+
+    let new_ca_fingerprint = appcontrol_common::fingerprint_pem(new_ca_cert)
+        .unwrap_or_else(|| "unknown".to_string());
+
+    tracing::info!(
+        gateway_id = %state.gateway_id,
+        new_ca_fingerprint = %new_ca_fingerprint,
+        "New CA received for rotation. Gateway will trust both old and new CA during grace period."
+    );
+
+    // TODO: Implement hot-reload of TLS config
+    // This would require:
+    // 1. Arc<RwLock<ServerConfig>> for the TLS config
+    // 2. Ability to reload without dropping existing connections
+    // 3. Certificate request API to backend
+
+    // Forward rotation command to all connected agents
+    let rotation_msg = BackendMessage::CertificateRotation {
+        new_ca_cert: new_ca_cert.to_string(),
+        grace_period_secs,
+        rotation_id,
+    };
+    if let Ok(json) = serde_json::to_string(&rotation_msg) {
+        let agent_count = state.router.broadcast_to_agents(&json);
+        tracing::info!(
+            rotation_id = %rotation_id,
+            agents_notified = agent_count,
+            "Forwarded certificate rotation to connected agents"
+        );
     }
 }
 

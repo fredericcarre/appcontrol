@@ -1,0 +1,50 @@
+{{- if and .Values.nginx.enabled .Values.nginx.tls.certManager.enabled }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-tls
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "appcontrol.fullname" . }}-tls
+  issuerRef:
+    name: {{ .Values.nginx.tls.certManager.issuer }}
+    kind: {{ .Values.nginx.tls.certManager.issuerKind | default "ClusterIssuer" }}
+  commonName: {{ .Values.nginx.tls.commonName | quote }}
+  dnsNames:
+    - {{ .Values.nginx.tls.commonName | quote }}
+    {{- range .Values.nginx.tls.dnsNames }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- if .Values.nginx.tls.ipAddresses }}
+  ipAddresses:
+    {{- range .Values.nginx.tls.ipAddresses }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+
+{{- if and .Values.nginx.enabled .Values.nginx.tls.selfSigned (not .Values.nginx.tls.existingSecret) (not .Values.nginx.tls.certManager.enabled) }}
+---
+# Self-signed certificate Secret (placeholder - should be created by init-certs job)
+# In production, use cert-manager or provide an existing secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-tls
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+type: kubernetes.io/tls
+data:
+  # Placeholder values - will be replaced by init-certs job or manually
+  # For local testing, you can generate certs with:
+  # openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  #   -keyout tls.key -out tls.crt -subj "/CN={{ .Values.nginx.tls.commonName }}"
+  tls.crt: ""
+  tls.key: ""
+  ca.crt: ""
+{{- end }}

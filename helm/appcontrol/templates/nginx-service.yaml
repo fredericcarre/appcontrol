@@ -1,0 +1,27 @@
+{{- if .Values.nginx.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-nginx
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nginx
+spec:
+  type: {{ .Values.nginx.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.nginx.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+    - name: https
+      port: {{ .Values.nginx.service.httpsPort }}
+      targetPort: https
+      protocol: TCP
+    - name: mtls
+      port: {{ .Values.nginx.service.mtlsPort }}
+      targetPort: mtls
+      protocol: TCP
+  selector:
+    {{- include "appcontrol.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nginx
+{{- end }}

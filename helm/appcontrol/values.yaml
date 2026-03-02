@@ -146,6 +146,62 @@ podDisruptionBudget:
   frontend:
     minAvailable: 1
 
+# ---------------------------------------------------------------
+# Nginx reverse proxy with TLS termination.
+# When enabled, nginx handles HTTPS and proxies to backend/frontend.
+# ---------------------------------------------------------------
+nginx:
+  enabled: false
+  replicaCount: 2
+  image:
+    repository: appcontrol/nginx
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    httpPort: 80
+    httpsPort: 443
+    mtlsPort: 8443
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # TLS certificate configuration
+  tls:
+    # Use existing secret for TLS certs
+    existingSecret: ""
+    # Or use cert-manager
+    certManager:
+      enabled: false
+      issuer: ""
+      issuerKind: ClusterIssuer
+    # Or generate self-signed (for dev/test)
+    selfSigned: true
+    # Server certificate common name
+    commonName: "appcontrol.local"
+    # Additional DNS SANs
+    dnsNames: []
+    # Additional IP SANs
+    ipAddresses: []
+
+# ---------------------------------------------------------------
+# Certificate initialization Job.
+# Runs once to generate/fetch TLS certificates.
+# ---------------------------------------------------------------
+initCerts:
+  enabled: false
+  image:
+    repository: appcontrol/init-certs
+    tag: ""
+    pullPolicy: IfNotPresent
+  # Additional DNS SANs for the server certificate
+  extraSans: ""
+  # Certificate validity in days
+  validityDays: 365
+
 ingress:
   enabled: false
   className: ""

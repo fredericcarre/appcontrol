@@ -1,4 +1,5 @@
 pub mod branch;
+pub mod certificate_rotation;
 pub mod dag;
 pub mod diagnostic;
 pub mod fsm;

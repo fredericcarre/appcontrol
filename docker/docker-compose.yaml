@@ -19,13 +19,15 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.backend
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     environment:
       DATABASE_URL: postgres://appcontrol:appcontrol_dev@postgres:5432/appcontrol
       PORT: "3000"
       JWT_SECRET: dev-secret-change-in-production
       RUST_LOG: info,appcontrol_backend=debug
+      # Certificate export path for nginx TLS
+      CERT_EXPORT_PATH: /certs
       # ── Seed configuration ──
       # On first start (empty DB), creates this org + admin user.
       SEED_ENABLED: "true"
@@ -33,6 +35,8 @@ services:
       SEED_ADMIN_DISPLAY_NAME: Admin
       SEED_ORG_NAME: Default Organization
       SEED_ORG_SLUG: default
+    volumes:
+      - certs:/certs
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,8 +51,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     depends_on:
       - backend
 
@@ -56,8 +60,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.gateway
-    ports:
-      - "4443:4443"
+    expose:
+      - "4443"
     environment:
       # Gateway identity
       GATEWAY_NAME: "gateway-default"
@@ -73,5 +77,61 @@ services:
     depends_on:
       - backend
 
+  # Certificate initialization container
+  # Runs once at startup to generate/fetch TLS certificates
+  init-certs:
+    build:
+      context: ./init-certs
+    environment:
+      CERT_DIR: /certs
+      BACKEND_URL: http://backend:3000
+      SERVER_CN: localhost
+      # Extra SANs (comma-separated DNS names or IPs)
+      EXTRA_SANS: appcontrol,nginx
+    volumes:
+      - certs:/certs
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Nginx reverse proxy with TLS termination
+  nginx:
+    build:
+      context: ./nginx
+    ports:
+      - "80:80"     # HTTP (redirects to HTTPS)
+      - "443:443"   # HTTPS (TLS termination)
+      - "8443:8443" # mTLS passthrough to gateway
+    volumes:
+      - certs:/certs:ro
+      # Mount frontend static files
+      - frontend-static:/usr/share/nginx/html:ro
+    depends_on:
+      init-certs:
+        condition: service_completed_successfully
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Copy frontend build to shared volume for nginx
+  frontend-static:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    command: ["sh", "-c", "cp -r /usr/share/nginx/html/* /static/"]
+    volumes:
+      - frontend-static:/static
+    depends_on:
+      - frontend
+
 volumes:
   pgdata:
+  certs:
+  frontend-static:

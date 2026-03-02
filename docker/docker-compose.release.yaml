@@ -3,7 +3,7 @@
 #
 # Usage:
 #   docker compose -f docker/docker-compose.release.yaml up -d
-#   open http://localhost:8080
+#   open https://localhost
 #   Login: admin@localhost / admin (change SEED_ADMIN_PASSWORD for production!)
 #
 #   # Pin a specific version:
@@ -36,13 +36,14 @@ services:
 
   backend:
     image: ghcr.io/fredericcarre/appcontrol-backend:${APPCONTROL_VERSION:-latest}
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     environment:
       DATABASE_URL: postgres://appcontrol:appcontrol_dev@postgres:5432/appcontrol
       PORT: "3000"
       JWT_SECRET: dev-secret-change-in-production
       RUST_LOG: info,appcontrol_backend=debug
+      CERT_EXPORT_PATH: /certs
       # ── Initial admin user (created on first start) ──
       SEED_ENABLED: "true"
       SEED_ADMIN_EMAIL: admin@localhost
@@ -55,22 +56,32 @@ services:
       # OIDC_CLIENT_ID: appcontrol
       # OIDC_CLIENT_SECRET: your-secret
       # SAML_IDP_SSO_URL: https://idp.example.com/sso
+    volumes:
+      - certs:/certs
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
   frontend:
     image: ghcr.io/fredericcarre/appcontrol-frontend:${APPCONTROL_VERSION:-latest}
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     depends_on:
       - backend
 
   gateway:
     image: ghcr.io/fredericcarre/appcontrol-gateway:${APPCONTROL_VERSION:-latest}
-    ports:
-      - "4443:4443"
+    expose:
+      - "4443"
     environment:
+      GATEWAY_NAME: gateway-default
+      GATEWAY_ZONE: default
       LISTEN_ADDR: "0.0.0.0"
       LISTEN_PORT: "4443"
       BACKEND_URL: ws://backend:3000/ws/gateway
@@ -78,5 +89,42 @@ services:
     depends_on:
       - backend
 
+  # Certificate initialization container
+  init-certs:
+    image: ghcr.io/fredericcarre/appcontrol-init-certs:${APPCONTROL_VERSION:-latest}
+    environment:
+      CERT_DIR: /certs
+      BACKEND_URL: http://backend:3000
+      SERVER_CN: localhost
+      EXTRA_SANS: appcontrol,nginx
+    volumes:
+      - certs:/certs
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Nginx reverse proxy with TLS termination
+  nginx:
+    image: ghcr.io/fredericcarre/appcontrol-nginx:${APPCONTROL_VERSION:-latest}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8443:8443"
+    volumes:
+      - certs:/certs:ro
+    depends_on:
+      init-certs:
+        condition: service_completed_successfully
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
 volumes:
   pgdata:
+  certs:

@@ -600,6 +600,62 @@ impl ConnectionManager {
                 );
                 // The connection will close when we stop processing messages
             }
+            BackendMessage::CertificateRotation {
+                new_ca_cert,
+                grace_period_secs,
+                rotation_id,
+            } => {
+                tracing::info!(
+                    rotation_id = %rotation_id,
+                    grace_period_secs = grace_period_secs,
+                    "Certificate rotation command received"
+                );
+
+                // Handle certificate rotation:
+                // 1. Validate the new CA certificate
+                // 2. Request a new certificate signed by the new CA
+                // 3. Write new certificate to disk
+                // 4. Reconnect with the new certificate
+
+                let new_ca_fingerprint = appcontrol_common::fingerprint_pem(&new_ca_cert)
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                tracing::info!(
+                    rotation_id = %rotation_id,
+                    new_ca_fingerprint = %new_ca_fingerprint,
+                    "New CA certificate received for rotation"
+                );
+
+                // Send a certificate renewal request to get a new cert signed by the new CA
+                let agent_id = self.agent_id;
+                let msg_tx = self.msg_tx.clone();
+                let old_fingerprint = self.cert_fingerprint.clone().unwrap_or_default();
+
+                tokio::spawn(async move {
+                    // Generate a CSR for the new certificate
+                    // For now, we send a placeholder CSR - in production this would use
+                    // rcgen or openssl to generate a proper PKCS#10 CSR
+                    let csr_placeholder = format!(
+                        "-----BEGIN CERTIFICATE REQUEST-----\n\
+                         rotation_id={}\n\
+                         old_fingerprint={}\n\
+                         -----END CERTIFICATE REQUEST-----",
+                        rotation_id, old_fingerprint
+                    );
+
+                    if let Err(e) = msg_tx.send(AgentMessage::CertificateRenewal {
+                        agent_id,
+                        csr_pem: csr_placeholder,
+                    }) {
+                        tracing::error!("Failed to send certificate renewal request: {}", e);
+                    } else {
+                        tracing::info!(
+                            rotation_id = %rotation_id,
+                            "Sent certificate renewal request to backend"
+                        );
+                    }
+                });
+            }
         }
     }
 }

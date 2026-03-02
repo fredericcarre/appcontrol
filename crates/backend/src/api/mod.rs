@@ -19,6 +19,7 @@ pub mod links;
 pub mod orchestration;
 pub mod organizations;
 pub mod permissions;
+pub mod pki_export;
 pub mod reports;
 pub mod sites;
 pub mod switchover;
@@ -373,6 +374,15 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/pki/init", post(enrollment::init_pki))
         .route("/pki/import", post(enrollment::import_pki))
         .route("/pki/ca", get(enrollment::get_ca_cert))
+        .route("/pki/ca-bundle", get(pki_export::get_ca_bundle))
+        .route("/pki/status", get(pki_export::get_pki_status))
+        .route("/pki/server-cert", post(pki_export::issue_server_cert))
+        .route("/pki/export-to-volume", post(pki_export::export_to_volume))
+        // Certificate rotation
+        .route("/pki/rotation/start", post(pki_export::start_rotation))
+        .route("/pki/rotation/progress", get(pki_export::get_rotation_progress))
+        .route("/pki/rotation/finalize", post(pki_export::finalize_rotation))
+        .route("/pki/rotation/cancel", post(pki_export::cancel_rotation))
         // SAML group mapping admin API (requires auth)
         .merge(crate::auth::saml::saml_admin_routes())
         // PDF report export

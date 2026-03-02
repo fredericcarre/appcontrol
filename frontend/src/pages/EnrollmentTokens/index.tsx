@@ -7,10 +7,15 @@ import {
   usePkiStatus,
   useInitPki,
   useImportPki,
+  useRotationProgress,
+  useStartRotation,
+  useFinalizeRotation,
+  useCancelRotation,
   getTokenStatus,
   type EnrollmentToken,
   type CreateEnrollmentTokenPayload,
   type CreateEnrollmentTokenResponse,
+  type RotationProgress,
 } from '@/api/enrollment';
 import { useGatewayZones } from '@/api/gateways';
 import { Card, CardContent } from '@/components/ui/card';
@@ -51,7 +56,10 @@ import {
   AlertTriangle,
   CheckCircle,
   Upload,
+  RefreshCw,
+  RotateCcw,
 } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 
 // ── Status badge helper ───────────────────────────────────────
@@ -687,6 +695,246 @@ function PkiInitCard() {
   );
 }
 
+// ── Certificate Rotation Card ───────────────────────────────────
+
+function CertificateRotationCard() {
+  const { data: pkiStatus } = usePkiStatus();
+  const { data: progress, isLoading: progressLoading } = useRotationProgress();
+  const startRotation = useStartRotation();
+  const finalizeRotation = useFinalizeRotation();
+  const cancelRotation = useCancelRotation();
+
+  const [showStartDialog, setShowStartDialog] = useState(false);
+  const [newCaCertPem, setNewCaCertPem] = useState('');
+  const [newCaKeyPem, setNewCaKeyPem] = useState('');
+  const [gracePeriodHours, setGracePeriodHours] = useState('1');
+  const [startError, setStartError] = useState('');
+
+  // Don't show if PKI not initialized
+  if (!pkiStatus?.initialized) {
+    return null;
+  }
+
+  const handleStartRotation = async () => {
+    setStartError('');
+    if (!newCaCertPem.trim() || !newCaKeyPem.trim()) {
+      setStartError('Both certificate and private key are required');
+      return;
+    }
+    try {
+      const gracePeriodSecs = (parseInt(gracePeriodHours, 10) || 1) * 3600;
+      await startRotation.mutateAsync({
+        new_ca_cert_pem: newCaCertPem.trim(),
+        new_ca_key_pem: newCaKeyPem.trim(),
+        grace_period_secs: gracePeriodSecs,
+      });
+      setShowStartDialog(false);
+      setNewCaCertPem('');
+      setNewCaKeyPem('');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { message?: string } } };
+      setStartError(axiosErr.response?.data?.message || 'Failed to start rotation');
+    }
+  };
+
+  const closeStartDialog = () => {
+    setShowStartDialog(false);
+    setNewCaCertPem('');
+    setNewCaKeyPem('');
+    setStartError('');
+  };
+
+  // Calculate progress percentage
+  const totalEntities = (progress?.total_agents ?? 0) + (progress?.total_gateways ?? 0);
+  const migratedEntities = (progress?.migrated_agents ?? 0) + (progress?.migrated_gateways ?? 0);
+  const progressPercent = totalEntities > 0 ? Math.round((migratedEntities / totalEntities) * 100) : 0;
+
+  // Show active rotation progress
+  if (progress && (progress.status === 'in_progress' || progress.status === 'ready')) {
+    return (
+      <Card className="border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950">
+        <CardContent className="pt-4">
+          <div className="flex items-start gap-3">
+            <RefreshCw className="h-5 w-5 text-blue-600 mt-0.5 shrink-0 animate-spin" />
+            <div className="flex-1 space-y-4">
+              <div>
+                <p className="font-medium text-blue-800 dark:text-blue-200">
+                  Certificate Rotation {progress.status === 'ready' ? 'Ready to Finalize' : 'In Progress'}
+                </p>
+                <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
+                  Migrating from <code className="text-xs">{progress.old_ca_fingerprint?.slice(0, 16)}...</code>
+                  {' → '}
+                  <code className="text-xs">{progress.new_ca_fingerprint?.slice(0, 16)}...</code>
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Progress</span>
+                  <span>{migratedEntities} / {totalEntities} entities migrated</span>
+                </div>
+                <Progress value={progressPercent} className="h-2" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-muted-foreground">Agents:</span>{' '}
+                  {progress.migrated_agents} / {progress.total_agents}
+                  {progress.failed_agents > 0 && (
+                    <span className="text-destructive ml-1">({progress.failed_agents} failed)</span>
+                  )}
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Gateways:</span>{' '}
+                  {progress.migrated_gateways} / {progress.total_gateways}
+                  {progress.failed_gateways > 0 && (
+                    <span className="text-destructive ml-1">({progress.failed_gateways} failed)</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                {progress.status === 'ready' && (
+                  <Button
+                    size="sm"
+                    onClick={() => finalizeRotation.mutate()}
+                    disabled={finalizeRotation.isPending}
+                  >
+                    {finalizeRotation.isPending ? 'Finalizing...' : 'Finalize Rotation'}
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => cancelRotation.mutate()}
+                  disabled={cancelRotation.isPending}
+                >
+                  <XCircle className="h-4 w-4 mr-1" />
+                  {cancelRotation.isPending ? 'Cancelling...' : 'Cancel'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Show completed rotation status briefly
+  if (progress?.status === 'completed') {
+    return (
+      <Card className="border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950">
+        <CardContent className="flex items-start gap-3 pt-4">
+          <CheckCircle className="h-5 w-5 text-green-600 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium text-green-800 dark:text-green-200">
+              Certificate Rotation Completed
+            </p>
+            <p className="text-sm text-green-700 dark:text-green-300">
+              All entities have been migrated to the new CA.
+              {progress.finalized_at && (
+                <> Finalized {new Date(progress.finalized_at).toLocaleString()}</>
+              )}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Show option to start rotation
+  return (
+    <>
+      <Card>
+        <CardContent className="flex items-start gap-3 pt-4">
+          <RotateCcw className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Certificate Rotation</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Rotate to a new CA certificate with zero downtime.
+                  {pkiStatus.enrolled_agents !== undefined && (
+                    <> {pkiStatus.enrolled_agents} agents and {pkiStatus.enrolled_gateways} gateways enrolled.</>
+                  )}
+                </p>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setShowStartDialog(true)}>
+                <RefreshCw className="h-4 w-4 mr-1" />
+                Start Rotation
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Start Rotation Dialog */}
+      <Dialog open={showStartDialog} onOpenChange={(open) => !open && closeStartDialog()}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Start Certificate Rotation</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Import the new CA certificate that will replace the current one.
+              During rotation, both old and new CAs are trusted, allowing gradual migration.
+            </p>
+            {startError && (
+              <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                {startError}
+              </div>
+            )}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">New CA Certificate (PEM)</label>
+              <Textarea
+                value={newCaCertPem}
+                onChange={(e) => setNewCaCertPem(e.target.value)}
+                placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+                className="font-mono text-xs h-32"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">New CA Private Key (PEM)</label>
+              <Textarea
+                value={newCaKeyPem}
+                onChange={(e) => setNewCaKeyPem(e.target.value)}
+                placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+                className="font-mono text-xs h-32"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Grace Period (hours)</label>
+              <Input
+                type="number"
+                min="1"
+                value={gracePeriodHours}
+                onChange={(e) => setGracePeriodHours(e.target.value)}
+                placeholder="1"
+                className="w-32"
+              />
+              <p className="text-xs text-muted-foreground">
+                How long to wait before considering the old CA invalid
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeStartDialog}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleStartRotation}
+              disabled={!newCaCertPem.trim() || !newCaKeyPem.trim() || startRotation.isPending}
+            >
+              {startRotation.isPending ? 'Starting...' : 'Start Rotation'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────
 
 export function EnrollmentTokensPage() {
@@ -717,6 +965,8 @@ export function EnrollmentTokensPage() {
       </div>
 
       <PkiInitCard />
+
+      <CertificateRotationCard />
 
       <Tabs defaultValue="tokens">
         <TabsList>
