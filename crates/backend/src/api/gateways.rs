@@ -22,6 +22,8 @@ pub struct UpdateGatewayRequest {
     pub name: Option<String>,
     pub site_id: Option<Uuid>,
     pub is_active: Option<bool>,
+    pub is_primary: Option<bool>,
+    pub priority: Option<i32>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -35,6 +37,8 @@ pub struct GatewayRow {
     pub site_id: Option<Uuid>,
     pub certificate_fingerprint: Option<String>,
     pub is_active: bool,
+    pub is_primary: bool,
+    pub priority: i32,
     pub last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -45,9 +49,23 @@ pub struct GatewayListItem {
     pub id: Uuid,
     pub name: String,
     pub zone: String,
-    pub status: String,
+    pub status: String,         // "active", "suspended"
+    pub role: String,           // "primary", "standby", "failover_active"
+    pub is_primary: bool,
+    pub priority: i32,
     pub agent_count: i64,
     pub connected: bool,
+    pub last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Zone summary for grouping gateways
+#[derive(Debug, Serialize)]
+pub struct ZoneSummary {
+    pub zone: String,
+    pub gateway_count: i64,
+    pub active_gateway_id: Option<Uuid>,
+    pub failover_active: bool,
+    pub gateways: Vec<GatewayListItem>,
 }
 
 pub async fn list_gateways(
@@ -62,6 +80,8 @@ pub async fn list_gateways(
             String,
             String,
             bool,
+            bool,
+            i32,
             Option<chrono::DateTime<chrono::Utc>>,
             i64,
         ),
@@ -71,11 +91,13 @@ pub async fn list_gateways(
                g.name,
                g.zone,
                g.is_active,
+               COALESCE(g.is_primary, false) as is_primary,
+               COALESCE(g.priority, 0) as priority,
                g.last_heartbeat_at,
                COALESCE((SELECT COUNT(*) FROM agents a WHERE a.gateway_id = g.id), 0) as agent_count
            FROM gateways g
            WHERE g.organization_id = $1
-           ORDER BY g.name"#,
+           ORDER BY g.zone, g.priority, g.name"#,
     )
     .bind(user.organization_id)
     .fetch_all(&state.db)
@@ -83,30 +105,86 @@ pub async fn list_gateways(
 
     // Determine connected status: active + heartbeat within last 60 seconds
     let now = chrono::Utc::now();
-    let gateway_list: Vec<GatewayListItem> = gateways
+
+    // Group by zone and compute failover status
+    let mut zones_map: std::collections::HashMap<String, Vec<GatewayListItem>> =
+        std::collections::HashMap::new();
+
+    for (id, name, zone, is_active, is_primary, priority, last_heartbeat, agent_count) in gateways {
+        let connected = is_active
+            && last_heartbeat
+                .map(|hb| (now - hb).num_seconds() < 60)
+                .unwrap_or(false);
+
+        let status = if !is_active {
+            "suspended".to_string()
+        } else {
+            "active".to_string()
+        };
+
+        // Role is computed based on primary flag and connection status
+        let role = if is_primary && connected {
+            "primary".to_string()
+        } else if is_primary && !connected {
+            "primary_offline".to_string()
+        } else if connected {
+            "standby".to_string()
+        } else {
+            "standby_offline".to_string()
+        };
+
+        let item = GatewayListItem {
+            id,
+            name,
+            zone: zone.clone(),
+            status,
+            role,
+            is_primary,
+            priority,
+            agent_count,
+            connected,
+            last_heartbeat_at: last_heartbeat,
+        };
+
+        zones_map.entry(zone).or_default().push(item);
+    }
+
+    // Build zone summaries
+    let mut zones: Vec<ZoneSummary> = zones_map
         .into_iter()
-        .map(|(id, name, zone, is_active, last_heartbeat, agent_count)| {
-            let status = if !is_active {
-                "suspended".to_string()
-            } else {
-                "active".to_string()
-            };
-            let connected = is_active
-                && last_heartbeat
-                    .map(|hb| (now - hb).num_seconds() < 60)
-                    .unwrap_or(false);
-            GatewayListItem {
-                id,
-                name,
+        .map(|(zone, mut gateways)| {
+            // Sort by priority within zone
+            gateways.sort_by_key(|g| g.priority);
+
+            // Check if primary is offline → failover active
+            let primary = gateways.iter().find(|g| g.is_primary);
+            let primary_offline = primary.map(|p| !p.connected).unwrap_or(true);
+
+            // Find active gateway (first connected in priority order)
+            let active_gateway = gateways.iter().find(|g| g.connected);
+            let failover_active = primary_offline && active_gateway.is_some();
+
+            // Update role for the gateway handling traffic
+            let active_id = active_gateway.map(|g| g.id);
+            for gw in &mut gateways {
+                if failover_active && Some(gw.id) == active_id && !gw.is_primary {
+                    gw.role = "failover_active".to_string();
+                }
+            }
+
+            ZoneSummary {
                 zone,
-                status,
-                agent_count,
-                connected,
+                gateway_count: gateways.len() as i64,
+                active_gateway_id: active_id,
+                failover_active,
+                gateways,
             }
         })
         .collect();
 
-    Ok(Json(json!({ "gateways": gateway_list })))
+    zones.sort_by(|a, b| a.zone.cmp(&b.zone));
+
+    Ok(Json(json!({ "zones": zones })))
 }
 
 pub async fn get_gateway(
@@ -120,7 +198,10 @@ pub async fn get_gateway(
 
     let gw = sqlx::query_as::<_, GatewayRow>(
         r#"SELECT id, organization_id, name, zone, hostname, port, site_id,
-                  certificate_fingerprint, is_active, last_heartbeat_at, created_at
+                  certificate_fingerprint, is_active,
+                  COALESCE(is_primary, false) as is_primary,
+                  COALESCE(priority, 0) as priority,
+                  last_heartbeat_at, created_at
            FROM gateways
            WHERE id = $1 AND organization_id = $2"#,
     )
@@ -160,13 +241,39 @@ pub async fn update_gateway(
         }
     }
 
+    // If setting as primary, first unset any existing primary in the same zone
+    if req.is_primary == Some(true) {
+        let zone: Option<String> =
+            sqlx::query_scalar("SELECT zone FROM gateways WHERE id = $1 AND organization_id = $2")
+                .bind(id)
+                .bind(user.organization_id)
+                .fetch_optional(&state.db)
+                .await?;
+
+        if let Some(zone) = zone {
+            sqlx::query(
+                "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND id != $3",
+            )
+            .bind(user.organization_id)
+            .bind(&zone)
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+        }
+    }
+
     crate::middleware::audit::log_action(
         &state.db,
         user.user_id,
         "update_gateway",
         "gateway",
         id,
-        json!({ "site_id": req.site_id, "is_active": req.is_active }),
+        json!({
+            "site_id": req.site_id,
+            "is_active": req.is_active,
+            "is_primary": req.is_primary,
+            "priority": req.priority
+        }),
     )
     .await
     .ok();
@@ -175,21 +282,100 @@ pub async fn update_gateway(
         r#"UPDATE gateways SET
                name = COALESCE($3, name),
                site_id = COALESCE($4, site_id),
-               is_active = COALESCE($5, is_active)
+               is_active = COALESCE($5, is_active),
+               is_primary = COALESCE($6, is_primary),
+               priority = COALESCE($7, priority)
            WHERE id = $1 AND organization_id = $2
            RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active, last_heartbeat_at, created_at"#,
+                     certificate_fingerprint, is_active,
+                     COALESCE(is_primary, false) as is_primary,
+                     COALESCE(priority, 0) as priority,
+                     last_heartbeat_at, created_at"#,
     )
     .bind(id)
     .bind(user.organization_id)
     .bind(&req.name)
     .bind(req.site_id)
     .bind(req.is_active)
+    .bind(req.is_primary)
+    .bind(req.priority)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
 
     Ok(Json(json!(gw)))
+}
+
+/// POST /api/v1/gateways/:id/set-primary — Set this gateway as primary for its zone
+pub async fn set_gateway_primary(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(gateway_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Get the gateway's zone
+    let gw: Option<(String,)> = sqlx::query_as(
+        "SELECT zone FROM gateways WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(gateway_id)
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let zone = match gw {
+        Some((z,)) => z,
+        None => return Err(ApiError::NotFound),
+    };
+
+    crate::middleware::audit::log_action(
+        &state.db,
+        user.user_id,
+        "set_gateway_primary",
+        "gateway",
+        gateway_id,
+        json!({ "zone": &zone }),
+    )
+    .await
+    .ok();
+
+    let mut tx = state.db.begin().await?;
+
+    // Unset existing primary in the zone
+    sqlx::query(
+        "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2",
+    )
+    .bind(user.organization_id)
+    .bind(&zone)
+    .execute(&mut *tx)
+    .await?;
+
+    // Set this gateway as primary
+    sqlx::query("UPDATE gateways SET is_primary = true WHERE id = $1")
+        .bind(gateway_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Log status event
+    sqlx::query(
+        r#"INSERT INTO gateway_status_events (organization_id, gateway_id, event_type, triggered_by)
+           VALUES ($1, $2, 'promoted_to_primary', 'manual')"#,
+    )
+    .bind(user.organization_id)
+    .bind(gateway_id)
+    .execute(&mut *tx)
+    .await
+    .ok(); // Don't fail if table doesn't exist yet
+
+    tx.commit().await?;
+
+    Ok(Json(json!({
+        "status": "ok",
+        "gateway_id": gateway_id,
+        "zone": zone,
+    })))
 }
 
 /// GET /api/v1/gateways/:id/agents — List agents connected to a gateway

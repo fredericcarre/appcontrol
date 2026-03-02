@@ -28,6 +28,7 @@ export interface CreateEnrollmentTokenPayload {
   scope: 'agent' | 'gateway';
   max_uses?: number | null;
   valid_hours?: number;
+  zone?: string | null;
 }
 
 export interface CreateEnrollmentTokenResponse {

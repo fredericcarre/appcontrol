@@ -5,9 +5,21 @@ export interface Gateway {
   id: string;
   name: string;
   zone: string;
-  status: 'active' | 'suspended' | 'deleted';
+  status: 'active' | 'suspended';
+  role: 'primary' | 'standby' | 'failover_active' | 'primary_offline' | 'standby_offline';
+  is_primary: boolean;
+  priority: number;
   agent_count: number;
   connected: boolean;
+  last_heartbeat_at: string | null;
+}
+
+export interface ZoneSummary {
+  zone: string;
+  gateway_count: number;
+  active_gateway_id: string | null;
+  failover_active: boolean;
+  gateways: Gateway[];
 }
 
 export interface GatewayAgent {
@@ -17,15 +29,23 @@ export interface GatewayAgent {
   last_heartbeat_at: string | null;
 }
 
-export function useGateways() {
+export function useGatewayZones() {
   return useQuery({
-    queryKey: ['gateways'],
+    queryKey: ['gateways', 'zones'],
     queryFn: async () => {
-      const { data } = await client.get<{ gateways: Gateway[] }>('/gateways');
-      return data.gateways;
+      const { data } = await client.get<{ zones: ZoneSummary[] }>('/gateways');
+      return data.zones;
     },
     refetchInterval: 10000, // Refresh every 10s to track connection status
   });
+}
+
+// Legacy hook for backwards compatibility
+export function useGateways() {
+  const { data: zones, ...rest } = useGatewayZones();
+  // Flatten zones into a list of gateways
+  const gateways = zones?.flatMap((z) => z.gateways) ?? [];
+  return { data: gateways, ...rest };
 }
 
 export function useGateway(gatewayId: string) {
@@ -67,6 +87,17 @@ export function useActivateGateway() {
   return useMutation({
     mutationFn: async (gatewayId: string) => {
       const { data } = await client.post(`/gateways/${gatewayId}/activate`);
+      return data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['gateways'] }),
+  });
+}
+
+export function useSetGatewayPrimary() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (gatewayId: string) => {
+      const { data } = await client.post(`/gateways/${gatewayId}/set-primary`);
       return data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['gateways'] }),

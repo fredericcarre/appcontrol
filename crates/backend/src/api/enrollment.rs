@@ -366,6 +366,9 @@ pub struct EnrollRequest {
     pub token: String,
     /// Hostname of the agent/gateway being enrolled
     pub hostname: String,
+    /// Zone of the gateway handling this enrollment request (for zone-scoped tokens)
+    #[serde(default)]
+    pub gateway_zone: Option<String>,
     /// Additional DNS SANs for gateway certs (optional)
     #[serde(default)]
     pub san_dns: Vec<String>,
@@ -423,9 +426,10 @@ pub async fn enroll(
             Option<i32>,
             i32,
             chrono::DateTime<chrono::Utc>,
+            Option<String>,
         ),
     >(
-        r#"SELECT id, organization_id, scope, max_uses, current_uses, expires_at
+        r#"SELECT id, organization_id, scope, max_uses, current_uses, expires_at, zone
            FROM enrollment_tokens
            WHERE token_hash = $1
            AND revoked_at IS NULL"#,
@@ -434,7 +438,8 @@ pub async fn enroll(
     .fetch_optional(&state.db)
     .await?;
 
-    let (token_id, org_id, scope, max_uses, current_uses, expires_at) = match token_row {
+    let (token_id, org_id, scope, max_uses, current_uses, expires_at, token_zone) = match token_row
+    {
         Some(row) => row,
         None => {
             log_enrollment_event(
@@ -449,6 +454,47 @@ pub async fn enroll(
             return Err(ApiError::Unauthorized);
         }
     };
+
+    // Zone-scoped token validation: if token has a zone, the gateway must be in that zone
+    if let Some(ref required_zone) = token_zone {
+        match &req.gateway_zone {
+            Some(gw_zone) if gw_zone == required_zone => {
+                // OK - gateway zone matches token zone
+            }
+            Some(gw_zone) => {
+                log_enrollment_event(
+                    &state.db,
+                    org_id,
+                    Some(token_id),
+                    "zone_mismatch",
+                    &req.hostname,
+                    &client_ip,
+                )
+                .await;
+                tracing::warn!(
+                    token_zone = %required_zone,
+                    gateway_zone = %gw_zone,
+                    hostname = %req.hostname,
+                    "Enrollment rejected: token zone does not match gateway zone"
+                );
+                return Err(ApiError::Forbidden);
+            }
+            None => {
+                log_enrollment_event(
+                    &state.db,
+                    org_id,
+                    Some(token_id),
+                    "zone_required",
+                    &req.hostname,
+                    &client_ip,
+                )
+                .await;
+                return Err(ApiError::Validation(
+                    "This token requires enrollment via a specific zone. Gateway must provide its zone.".to_string(),
+                ));
+            }
+        }
+    }
 
     // Check expiry
     if chrono::Utc::now() > expires_at {

@@ -12,6 +12,7 @@ import {
   type CreateEnrollmentTokenPayload,
   type CreateEnrollmentTokenResponse,
 } from '@/api/enrollment';
+import { useGatewayZones } from '@/api/gateways';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -155,10 +156,15 @@ function CreateTokenDialog({
   onCreated: (token: CreateEnrollmentTokenResponse) => void;
 }) {
   const createToken = useCreateEnrollmentToken();
+  const { data: zones } = useGatewayZones();
   const [name, setName] = useState('');
   const [scope, setScope] = useState<'agent' | 'gateway'>('agent');
+  const [zone, setZone] = useState<string>('');
   const [maxUses, setMaxUses] = useState('');
   const [validHours, setValidHours] = useState('24');
+
+  // Get unique zones from gateway data
+  const availableZones = zones?.map((z) => z.zone) ?? [];
 
   const handleCreate = async () => {
     if (!name.trim()) return;
@@ -171,6 +177,9 @@ function CreateTokenDialog({
     if (maxUses) {
       payload.max_uses = parseInt(maxUses, 10);
     }
+    if (zone) {
+      payload.zone = zone;
+    }
 
     const result = await createToken.mutateAsync(payload);
     onCreated(result);
@@ -181,6 +190,7 @@ function CreateTokenDialog({
   const resetForm = () => {
     setName('');
     setScope('agent');
+    setZone('');
     setMaxUses('');
     setValidHours('24');
   };
@@ -211,6 +221,30 @@ function CreateTokenDialog({
                 <SelectItem value="gateway">Gateway</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">
+              Zone{' '}
+              <span className="text-muted-foreground font-normal">
+                (optional, restricts enrollment to this zone)
+              </span>
+            </label>
+            <Select value={zone} onValueChange={setZone}>
+              <SelectTrigger>
+                <SelectValue placeholder="Any zone (unrestricted)" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">Any zone (unrestricted)</SelectItem>
+                {availableZones.map((z) => (
+                  <SelectItem key={z} value={z}>
+                    {z}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              If set, agents can only enroll via gateways in this zone
+            </p>
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium">
