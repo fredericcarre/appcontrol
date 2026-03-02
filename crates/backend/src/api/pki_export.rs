@@ -5,11 +5,7 @@
 //! 2. Certificate export to shared volumes (for nginx TLS termination)
 //! 3. Server certificate issuance (for nginx/gateway TLS)
 
-use axum::{
-    extract::State,
-    response::Json,
-    Extension,
-};
+use axum::{extract::State, response::Json, Extension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -472,11 +468,9 @@ pub async fn start_rotation(
     .await?;
 
     // Get progress for response
-    let progress = crate::core::certificate_rotation::get_rotation_progress(
-        &state.db,
-        user.organization_id,
-    )
-    .await?;
+    let progress =
+        crate::core::certificate_rotation::get_rotation_progress(&state.db, user.organization_id)
+            .await?;
 
     Ok(Json(json!({
         "status": "started",
@@ -492,11 +486,9 @@ pub async fn get_rotation_progress(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let progress = crate::core::certificate_rotation::get_rotation_progress(
-        &state.db,
-        user.organization_id,
-    )
-    .await?;
+    let progress =
+        crate::core::certificate_rotation::get_rotation_progress(&state.db, user.organization_id)
+            .await?;
 
     Ok(Json(json!({ "progress": progress })))
 }

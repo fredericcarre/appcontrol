@@ -946,8 +946,8 @@ fn handle_certificate_rotation(
     // For now, we log the event and let the gateway admin handle manual rotation
     // or trigger a gateway restart with updated certs.
 
-    let new_ca_fingerprint = appcontrol_common::fingerprint_pem(new_ca_cert)
-        .unwrap_or_else(|| "unknown".to_string());
+    let new_ca_fingerprint =
+        appcontrol_common::fingerprint_pem(new_ca_cert).unwrap_or_else(|| "unknown".to_string());
 
     tracing::info!(
         gateway_id = %state.gateway_id,

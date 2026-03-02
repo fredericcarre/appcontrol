@@ -543,12 +543,11 @@ pub async fn cancel_rotation(pool: &PgPool, org_id: Uuid) -> Result<(), ApiError
 /// During rotation, returns both old and new CAs concatenated.
 /// Otherwise, returns just the current CA.
 pub async fn get_ca_bundle(pool: &PgPool, org_id: Uuid) -> Result<String, ApiError> {
-    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT ca_cert_pem, pending_ca_cert_pem FROM organizations WHERE id = $1",
-    )
-    .bind(org_id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT ca_cert_pem, pending_ca_cert_pem FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(pool)
+            .await?;
 
     match row {
         Some((Some(current), pending)) => {

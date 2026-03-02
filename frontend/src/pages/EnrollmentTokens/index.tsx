@@ -15,7 +15,6 @@ import {
   type EnrollmentToken,
   type CreateEnrollmentTokenPayload,
   type CreateEnrollmentTokenResponse,
-  type RotationProgress,
 } from '@/api/enrollment';
 import { useGatewayZones } from '@/api/gateways';
 import { Card, CardContent } from '@/components/ui/card';
@@ -699,7 +698,7 @@ function PkiInitCard() {
 
 function CertificateRotationCard() {
   const { data: pkiStatus } = usePkiStatus();
-  const { data: progress, isLoading: progressLoading } = useRotationProgress();
+  const { data: progress } = useRotationProgress();
   const startRotation = useStartRotation();
   const finalizeRotation = useFinalizeRotation();
   const cancelRotation = useCancelRotation();
