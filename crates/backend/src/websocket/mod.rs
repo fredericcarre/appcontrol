@@ -242,7 +242,26 @@ async fn process_gateway_message(
             // Register in the hub with the sender channel
             state
                 .ws_hub
-                .register_gateway(gateway_id, zone, gw_tx.clone());
+                .register_gateway(gateway_id, zone.clone(), gw_tx.clone());
+
+            // Auto-register/update gateway in database (upsert)
+            // This ensures the gateway appears in the UI even if not pre-created
+            if let Err(e) = sqlx::query(
+                r#"INSERT INTO gateways (id, organization_id, name, zone, is_active, last_heartbeat_at)
+                   VALUES ($1, (SELECT id FROM organizations LIMIT 1), $2, $3, true, now())
+                   ON CONFLICT (id) DO UPDATE SET
+                       zone = EXCLUDED.zone,
+                       is_active = true,
+                       last_heartbeat_at = now()"#,
+            )
+            .bind(gateway_id)
+            .bind(format!("Gateway-{}", &gateway_id.to_string()[..8]))
+            .bind(&zone)
+            .execute(&state.db)
+            .await
+            {
+                tracing::warn!(gateway_id = %gateway_id, "Failed to upsert gateway record: {}", e);
+            }
         }
         appcontrol_common::GatewayMessage::AgentMessage(agent_msg) => {
             process_agent_message(state, agent_msg).await;

@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth';
+import { useWebSocket } from '@/hooks/use-websocket';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -23,6 +24,9 @@ import { cn } from '@/lib/utils';
 
 function AuthLayout({ children }: { children: React.ReactNode }) {
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
+
+  // Initialize WebSocket connection for real-time updates
+  useWebSocket();
 
   return (
     <div className="flex h-screen overflow-hidden">
