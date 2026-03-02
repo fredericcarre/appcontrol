@@ -135,7 +135,6 @@ function CreatedTokenDisplay({
   const [selectedArch, setSelectedArch] = useState<'amd64' | 'arm64'>('amd64');
 
   // Get the current server URL for enrollment
-  const serverUrl = window.location.origin;
   const gatewayUrl = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
 
   // Binary download URLs (from GitHub releases)
