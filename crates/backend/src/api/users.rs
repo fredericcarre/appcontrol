@@ -288,12 +288,11 @@ pub async fn change_my_password(
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<Json<Value>, ApiError> {
     // Fetch current user's auth info
-    let user_info: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT auth_provider, password_hash FROM users WHERE id = $1",
-    )
-    .bind(user.user_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let user_info: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT auth_provider, password_hash FROM users WHERE id = $1")
+            .bind(user.user_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     let (auth_provider, password_hash) = user_info.ok_or_not_found()?;
 
@@ -305,15 +304,16 @@ pub async fn change_my_password(
     }
 
     // Verify current password
-    let current_hash = password_hash.ok_or_else(|| {
-        ApiError::Validation("No password set for this account".to_string())
-    })?;
+    let current_hash = password_hash
+        .ok_or_else(|| ApiError::Validation("No password set for this account".to_string()))?;
 
     let password_valid = bcrypt::verify(&req.current_password, &current_hash)
         .map_err(|_| ApiError::Internal("Password verification failed".to_string()))?;
 
     if !password_valid {
-        return Err(ApiError::Validation("Current password is incorrect".to_string()));
+        return Err(ApiError::Validation(
+            "Current password is incorrect".to_string(),
+        ));
     }
 
     // Validate new password
@@ -346,7 +346,9 @@ pub async fn change_my_password(
         .execute(&state.db)
         .await?;
 
-    Ok(Json(serde_json::json!({ "status": "ok", "message": "Password changed successfully" })))
+    Ok(Json(
+        serde_json::json!({ "status": "ok", "message": "Password changed successfully" }),
+    ))
 }
 
 #[cfg(test)]

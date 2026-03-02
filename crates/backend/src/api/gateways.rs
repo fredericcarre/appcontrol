@@ -55,7 +55,17 @@ pub async fn list_gateways(
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
     // Allow all authenticated users to view gateways (read-only)
-    let gateways = sqlx::query_as::<_, (Uuid, String, String, bool, Option<chrono::DateTime<chrono::Utc>>, i64)>(
+    let gateways = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            bool,
+            Option<chrono::DateTime<chrono::Utc>>,
+            i64,
+        ),
+    >(
         r#"SELECT
                g.id,
                g.name,
