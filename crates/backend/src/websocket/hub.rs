@@ -261,6 +261,16 @@ impl Hub {
         !self.gateways.is_empty()
     }
 
+    /// Check if a specific gateway is connected.
+    pub fn is_gateway_connected(&self, gateway_id: Uuid) -> bool {
+        self.gateways.contains_key(&gateway_id)
+    }
+
+    /// Get the set of connected gateway IDs.
+    pub fn connected_gateway_ids(&self) -> Vec<Uuid> {
+        self.gateways.iter().map(|entry| *entry.key()).collect()
+    }
+
     pub fn gateway_count(&self) -> usize {
         self.gateways.len()
     }

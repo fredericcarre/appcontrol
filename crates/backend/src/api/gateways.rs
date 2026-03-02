@@ -103,18 +103,17 @@ pub async fn list_gateways(
     .fetch_all(&state.db)
     .await?;
 
-    // Determine connected status: active + heartbeat within last 60 seconds
-    let now = chrono::Utc::now();
+    // Get the set of gateways actually connected via WebSocket
+    let connected_ids: std::collections::HashSet<Uuid> =
+        state.ws_hub.connected_gateway_ids().into_iter().collect();
 
     // Group by zone and compute failover status
     let mut zones_map: std::collections::HashMap<String, Vec<GatewayListItem>> =
         std::collections::HashMap::new();
 
     for (id, name, zone, is_active, is_primary, priority, last_heartbeat, agent_count) in gateways {
-        let connected = is_active
-            && last_heartbeat
-                .map(|hb| (now - hb).num_seconds() < 60)
-                .unwrap_or(false);
+        // Connection status is determined by actual WebSocket connection in the hub
+        let connected = is_active && connected_ids.contains(&id);
 
         let status = if !is_active {
             "suspended".to_string()
