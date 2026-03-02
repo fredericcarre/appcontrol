@@ -252,3 +252,21 @@ export function useRevokeEnrollmentToken() {
     },
   });
 }
+
+// ── Enrollment config (public URLs) ─────────────────────────────
+
+export interface EnrollmentConfig {
+  public_gateway_url: string | null;
+  public_backend_url: string | null;
+}
+
+export function useEnrollmentConfig() {
+  return useQuery({
+    queryKey: ['enrollment', 'config'],
+    queryFn: async () => {
+      const { data } = await client.get<EnrollmentConfig>('/enrollment/config');
+      return data;
+    },
+    staleTime: 1000 * 60 * 60, // 1 hour - config rarely changes
+  });
+}

@@ -370,6 +370,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/enrollment/events",
             get(enrollment::list_enrollment_events),
         )
+        .route("/enrollment/config", get(enrollment::get_enrollment_config))
         // PKI management
         .route("/pki/init", post(enrollment::init_pki))
         .route("/pki/import", post(enrollment::import_pki))

@@ -82,6 +82,12 @@ pub struct AppConfig {
     pub retention_action_log_days: u32,
     /// Data retention: days to keep check_events partitions (0 = unlimited)
     pub retention_check_events_days: u32,
+    /// Public gateway URL for agent enrollment (e.g., wss://gateway.company.com:8443).
+    /// If not set, frontend will use window.location.host with port 8443.
+    pub public_gateway_url: Option<String>,
+    /// Public backend URL for gateway connection (e.g., wss://backend.company.com/ws/gateway).
+    /// If not set, frontend will use window.location with /ws/gateway path.
+    pub public_backend_url: Option<String>,
 }
 
 impl AppConfig {
@@ -208,6 +214,8 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
+            public_gateway_url: std::env::var("PUBLIC_GATEWAY_URL").ok(),
+            public_backend_url: std::env::var("PUBLIC_BACKEND_URL").ok(),
         }
     }
 }

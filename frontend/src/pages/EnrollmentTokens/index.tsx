@@ -11,6 +11,7 @@ import {
   useStartRotation,
   useFinalizeRotation,
   useCancelRotation,
+  useEnrollmentConfig,
   getTokenStatus,
   type EnrollmentToken,
   type CreateEnrollmentTokenPayload,
@@ -158,7 +159,10 @@ function CreatedTokenDisplay({
   // Fetch latest release version
   const latestVersion = useLatestReleaseVersion();
 
-  // Get the current server URL for enrollment
+  // Fetch enrollment config (public URLs)
+  const { data: enrollmentConfig } = useEnrollmentConfig();
+
+  // Get the current server URL for enrollment (fallback if config not set)
   const serverHost = window.location.host;
   const isSecure = window.location.protocol === 'https:';
 
@@ -186,9 +190,10 @@ function CreatedTokenDisplay({
   // Generate commands based on scope
   const generateCommands = () => {
     // Gateway URL for agent enrollment (uses mTLS on port 8443)
-    const agentGatewayUrl = `wss://${serverHost}:8443`;
+    // Use config if available, otherwise fallback to current host
+    const agentGatewayUrl = enrollmentConfig?.public_gateway_url || `wss://${serverHost}:8443`;
     // Backend URL for gateway connection
-    const backendWsUrl = `${isSecure ? 'wss' : 'ws'}://${serverHost}/ws/gateway`;
+    const backendWsUrl = enrollmentConfig?.public_backend_url || `${isSecure ? 'wss' : 'ws'}://${serverHost}/ws/gateway`;
 
     if (token.scope === 'gateway') {
       // Gateway doesn't have enrollment CLI - it uses config file

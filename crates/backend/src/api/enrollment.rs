@@ -751,3 +751,19 @@ pub async fn list_enrollment_events(
 
     Ok(Json(json!({ "events": events_json })))
 }
+
+// ---------------------------------------------------------------------------
+// Enrollment configuration (public URLs for command generation)
+// ---------------------------------------------------------------------------
+
+/// Returns public URLs for enrollment command generation.
+/// This endpoint is authenticated but read-only.
+pub async fn get_enrollment_config(
+    State(state): State<Arc<AppState>>,
+    Extension(_user): Extension<AuthUser>,
+) -> Json<Value> {
+    Json(json!({
+        "public_gateway_url": state.config.public_gateway_url,
+        "public_backend_url": state.config.public_backend_url,
+    }))
+}
