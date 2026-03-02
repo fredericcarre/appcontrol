@@ -46,28 +46,11 @@ fi
 # Give the backend a moment to complete PKI initialization
 sleep 2
 
-# Try to fetch CA from backend
-echo "Fetching CA certificate from backend..."
-CA_RESPONSE=$(curl -sf "$BACKEND_URL/api/v1/pki/ca-public" 2>/dev/null || echo "")
-
-if [ -n "$CA_RESPONSE" ] && echo "$CA_RESPONSE" | grep -q "ca_cert_pem"; then
-    echo "CA certificate available from backend"
-
-    # Extract CA cert from JSON response
-    echo "$CA_RESPONSE" | sed -n 's/.*"ca_cert_pem":"\([^"]*\)".*/\1/p' | \
-        sed 's/\\n/\n/g' > "$CERT_DIR/ca.crt"
-
-    if [ -s "$CERT_DIR/ca.crt" ]; then
-        echo "CA certificate saved to $CERT_DIR/ca.crt"
-    else
-        echo "WARNING: Could not extract CA certificate, generating self-signed"
-        GENERATE_SELF_SIGNED=true
-    fi
-else
-    echo "No CA certificate available from backend (PKI not initialized)"
-    echo "Will generate self-signed certificates"
-    GENERATE_SELF_SIGNED=true
-fi
+# Note: For nginx TLS termination, we generate a self-signed CA locally.
+# The backend's mTLS CA is separate and used for agent/gateway authentication.
+# This keeps the nginx TLS setup simple and independent.
+echo "Generating self-signed CA for nginx TLS..."
+GENERATE_SELF_SIGNED=true
 
 # Check if server cert already exists and is valid
 if [ -f "$CERT_DIR/server.crt" ] && [ -f "$CERT_DIR/server.key" ]; then
@@ -91,8 +74,8 @@ if [ -f "$CERT_DIR/server.crt" ] && [ -f "$CERT_DIR/server.key" ]; then
     fi
 fi
 
-# Generate self-signed certificates if needed
-if [ "$GENERATE_SELF_SIGNED" = "true" ] || [ ! -f "$CERT_DIR/ca.crt" ]; then
+# Generate self-signed CA for nginx TLS
+if [ ! -f "$CERT_DIR/ca.crt" ] || [ ! -f "$CERT_DIR/ca.key" ]; then
     echo "Generating self-signed CA..."
 
     # Generate CA key
@@ -181,8 +164,9 @@ openssl x509 -req \
 chmod 644 "$CERT_DIR/ca.crt" "$CERT_DIR/server.crt"
 chmod 600 "$CERT_DIR/server.key"
 
-# Cleanup temporary files
-rm -f /tmp/server.cnf /tmp/server.csr "$CERT_DIR/ca.key" "$CERT_DIR/ca.srl" 2>/dev/null || true
+# Cleanup temporary files (keep ca.key for future renewals)
+chmod 600 "$CERT_DIR/ca.key"
+rm -f /tmp/server.cnf /tmp/server.csr "$CERT_DIR/ca.srl" 2>/dev/null || true
 
 # Verify certificates
 echo ""
