@@ -16,9 +16,9 @@ RUN mkdir -p /var/cache/nginx /var/log/nginx /tmp && \
     chown -R nginx:nginx /var/cache/nginx /var/log/nginx /tmp && \
     chmod -R 755 /var/cache/nginx /var/log/nginx
 
-# Health check
+# Health check (use 127.0.0.1 instead of localhost for BusyBox wget compatibility)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD wget -q --spider http://localhost/health || exit 1
+    CMD wget -q --spider http://127.0.0.1/health || exit 1
 
 # Expose ports
 # 80: HTTP (redirect to HTTPS)
