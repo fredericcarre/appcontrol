@@ -12,8 +12,6 @@
 #   # Tear down:
 #   docker compose -f docker/docker-compose.release.yaml down -v
 
-version: "3.8"
-
 # Override the version with: APPCONTROL_VERSION=x.y.z docker compose ... up -d
 # Defaults to "latest" if not set.
 
