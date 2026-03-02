@@ -380,8 +380,14 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/pki/export-to-volume", post(pki_export::export_to_volume))
         // Certificate rotation
         .route("/pki/rotation/start", post(pki_export::start_rotation))
-        .route("/pki/rotation/progress", get(pki_export::get_rotation_progress))
-        .route("/pki/rotation/finalize", post(pki_export::finalize_rotation))
+        .route(
+            "/pki/rotation/progress",
+            get(pki_export::get_rotation_progress),
+        )
+        .route(
+            "/pki/rotation/finalize",
+            post(pki_export::finalize_rotation),
+        )
         .route("/pki/rotation/cancel", post(pki_export::cancel_rotation))
         // SAML group mapping admin API (requires auth)
         .merge(crate::auth::saml::saml_admin_routes())
