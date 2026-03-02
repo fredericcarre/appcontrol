@@ -66,6 +66,14 @@ spec:
             - name: CORS_ORIGINS
               value: {{ .Values.backend.env.CORS_ORIGINS | quote }}
             {{- end }}
+            {{- if .Values.backend.env.PUBLIC_GATEWAY_URL }}
+            - name: PUBLIC_GATEWAY_URL
+              value: {{ .Values.backend.env.PUBLIC_GATEWAY_URL | quote }}
+            {{- end }}
+            {{- if .Values.backend.env.PUBLIC_BACKEND_URL }}
+            - name: PUBLIC_BACKEND_URL
+              value: {{ .Values.backend.env.PUBLIC_BACKEND_URL | quote }}
+            {{- end }}
             - name: JWT_SECRET
               {{- if .Values.backend.jwt.existingSecret }}
               valueFrom:

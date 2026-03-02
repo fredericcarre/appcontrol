@@ -56,6 +56,9 @@ services:
       # OIDC_CLIENT_ID: appcontrol
       # OIDC_CLIENT_SECRET: your-secret
       # SAML_IDP_SSO_URL: https://idp.example.com/sso
+      # ── Public URLs for enrollment commands (optional) ──
+      # PUBLIC_GATEWAY_URL: wss://gateway.company.com:8443
+      # PUBLIC_BACKEND_URL: wss://backend.company.com/ws/gateway
     volumes:
       - certs:/certs
     depends_on:

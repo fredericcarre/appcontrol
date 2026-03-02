@@ -23,6 +23,10 @@ backend:
   env:
     RUST_LOG: "info"
     CORS_ORIGINS: ""
+    # Public URLs for enrollment command generation (optional)
+    # Set these if agents/gateways connect via different URLs than the UI
+    PUBLIC_GATEWAY_URL: ""
+    PUBLIC_BACKEND_URL: ""
   database:
     # For production: use an external managed database (RDS, CloudSQL, Azure Database).
     # Set url to the connection string or use existingSecret.

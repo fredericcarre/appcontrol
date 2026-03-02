@@ -61,6 +61,9 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       # Logging
       RUST_LOG: ${RUST_LOG:-info}
+      # Public URLs for enrollment commands (optional)
+      PUBLIC_GATEWAY_URL: ${PUBLIC_GATEWAY_URL:-}
+      PUBLIC_BACKEND_URL: ${PUBLIC_BACKEND_URL:-}
     volumes:
       - certs:/certs
     depends_on:

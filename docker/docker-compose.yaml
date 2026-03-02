@@ -35,6 +35,10 @@ services:
       SEED_ADMIN_DISPLAY_NAME: Admin
       SEED_ORG_NAME: Default Organization
       SEED_ORG_SLUG: default
+      # ── Public URLs for enrollment commands ──
+      # If not set, UI uses window.location (which works for local dev)
+      # PUBLIC_GATEWAY_URL: wss://gateway.company.com:8443
+      # PUBLIC_BACKEND_URL: wss://backend.company.com/ws/gateway
     volumes:
       - certs:/certs
     depends_on:
