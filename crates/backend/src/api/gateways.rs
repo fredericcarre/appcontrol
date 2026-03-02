@@ -49,8 +49,8 @@ pub struct GatewayListItem {
     pub id: Uuid,
     pub name: String,
     pub zone: String,
-    pub status: String,         // "active", "suspended"
-    pub role: String,           // "primary", "standby", "failover_active"
+    pub status: String, // "active", "suspended"
+    pub role: String,   // "primary", "standby", "failover_active"
     pub is_primary: bool,
     pub priority: i32,
     pub agent_count: i64,
@@ -317,13 +317,12 @@ pub async fn set_gateway_primary(
     }
 
     // Get the gateway's zone
-    let gw: Option<(String,)> = sqlx::query_as(
-        "SELECT zone FROM gateways WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(gateway_id)
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let gw: Option<(String,)> =
+        sqlx::query_as("SELECT zone FROM gateways WHERE id = $1 AND organization_id = $2")
+            .bind(gateway_id)
+            .bind(user.organization_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     let zone = match gw {
         Some((z,)) => z,
@@ -344,13 +343,11 @@ pub async fn set_gateway_primary(
     let mut tx = state.db.begin().await?;
 
     // Unset existing primary in the zone
-    sqlx::query(
-        "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2",
-    )
-    .bind(user.organization_id)
-    .bind(&zone)
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2")
+        .bind(user.organization_id)
+        .bind(&zone)
+        .execute(&mut *tx)
+        .await?;
 
     // Set this gateway as primary
     sqlx::query("UPDATE gateways SET is_primary = true WHERE id = $1")
