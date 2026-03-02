@@ -322,6 +322,7 @@ pub struct PkiStatus {
 /// Get PKI status for the organization.
 ///
 /// GET /api/v1/pki/status
+#[allow(clippy::type_complexity)]
 pub async fn get_pki_status(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,

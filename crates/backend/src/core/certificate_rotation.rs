@@ -171,6 +171,7 @@ pub async fn start_rotation(
 }
 
 /// Record that an entity has successfully rotated to the new CA.
+#[allow(clippy::too_many_arguments)]
 pub async fn record_migration(
     pool: &PgPool,
     org_id: Uuid,
@@ -228,6 +229,7 @@ pub async fn record_migration(
 }
 
 /// Record that an entity failed to rotate.
+#[allow(clippy::too_many_arguments)]
 pub async fn record_migration_failure(
     pool: &PgPool,
     org_id: Uuid,
@@ -322,6 +324,7 @@ async fn check_rotation_completion(
 }
 
 /// Get the current rotation progress.
+#[allow(clippy::type_complexity)]
 pub async fn get_rotation_progress(
     pool: &PgPool,
     org_id: Uuid,
