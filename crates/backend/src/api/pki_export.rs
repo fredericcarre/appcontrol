@@ -402,7 +402,7 @@ pub async fn export_certs_to_volume_if_configured(
     .fetch_optional(pool)
     .await?;
 
-    let (org_id, ca_cert_pem, ca_key_pem) = match ca_row {
+    let (_org_id, ca_cert_pem, ca_key_pem) = match ca_row {
         Some((id, Some(cert), Some(key))) => (id, cert, key),
         _ => return Ok(()), // No CA yet, skip
     };
