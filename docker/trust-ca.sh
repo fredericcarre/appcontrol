@@ -10,14 +10,25 @@ CA_FILE="$SCRIPT_DIR/appcontrol-ca.crt"
 echo "=== AppControl CA Trust Helper ==="
 echo ""
 
-# Extract CA from Docker volume
+# Extract CA from Docker volume (try both compose files)
 echo "Extracting CA certificate from Docker..."
-if docker compose -f "$SCRIPT_DIR/docker-compose.yaml" ps nginx > /dev/null 2>&1; then
-    docker compose -f "$SCRIPT_DIR/docker-compose.yaml" cp nginx:/certs/ca.crt "$CA_FILE" 2>/dev/null || \
-    docker cp docker-nginx-1:/certs/ca.crt "$CA_FILE" 2>/dev/null || \
-    docker cp appcontrol-nginx-1:/certs/ca.crt "$CA_FILE" 2>/dev/null
-else
-    echo "ERROR: Docker containers not running. Start with: docker compose up -d"
+EXTRACTED=false
+
+for COMPOSE_FILE in docker-compose.release.yaml docker-compose.yaml docker-compose.prod.yaml; do
+    if [ -f "$SCRIPT_DIR/$COMPOSE_FILE" ] && docker compose -f "$SCRIPT_DIR/$COMPOSE_FILE" ps nginx 2>/dev/null | grep -q "running"; then
+        docker compose -f "$SCRIPT_DIR/$COMPOSE_FILE" cp nginx:/certs/ca.crt "$CA_FILE" 2>/dev/null && EXTRACTED=true && break
+    fi
+done
+
+# Fallback: try common container names directly
+if [ "$EXTRACTED" = false ]; then
+    docker cp docker-nginx-1:/certs/ca.crt "$CA_FILE" 2>/dev/null && EXTRACTED=true || \
+    docker cp appcontrol-nginx-1:/certs/ca.crt "$CA_FILE" 2>/dev/null && EXTRACTED=true
+fi
+
+if [ "$EXTRACTED" = false ]; then
+    echo "ERROR: Could not extract CA. Make sure containers are running:"
+    echo "  docker compose -f docker/docker-compose.release.yaml up -d"
     exit 1
 fi
 

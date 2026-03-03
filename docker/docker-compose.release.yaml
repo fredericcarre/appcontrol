@@ -3,6 +3,11 @@
 #
 # Usage:
 #   docker compose -f docker/docker-compose.release.yaml up -d
+#
+#   # Trust the self-signed CA (required for browser login):
+#   ./docker/trust-ca.sh
+#   # Then restart your browser
+#
 #   open https://localhost
 #   Login: admin@localhost / admin (change SEED_ADMIN_PASSWORD for production!)
 #
@@ -11,6 +16,9 @@
 #
 #   # Tear down:
 #   docker compose -f docker/docker-compose.release.yaml down -v
+#
+# Note: The self-signed CA must be trusted by your browser for HTTPS to work.
+# Without it, the login page loads but API calls fail with certificate errors.
 
 # Override the version with: APPCONTROL_VERSION=x.y.z docker compose ... up -d
 # Defaults to "latest" if not set.
