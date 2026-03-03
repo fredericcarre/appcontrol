@@ -193,6 +193,16 @@ impl Hub {
         }
     }
 
+    /// Check if an agent is currently connected (has an active gateway route).
+    pub fn is_agent_connected(&self, agent_id: Uuid) -> bool {
+        self.agent_to_gateway.contains_key(&agent_id)
+    }
+
+    /// Get the set of all currently connected agent IDs.
+    pub fn connected_agent_ids(&self) -> Vec<Uuid> {
+        self.agent_to_gateway.iter().map(|e| *e.key()).collect()
+    }
+
     /// Send a command to a specific agent via its gateway.
     /// The message is wrapped in a GatewayEnvelope with the target_agent_id.
     /// If the message is an ExecuteCommand, the request_id → agent_id mapping

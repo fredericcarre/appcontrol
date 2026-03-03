@@ -41,7 +41,32 @@ pub async fn list_agents(
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(json!({ "agents": agents })))
+    // Get live connection status from the WebSocket hub
+    let connected_agents = state.ws_hub.connected_agent_ids();
+    let connected_set: std::collections::HashSet<Uuid> = connected_agents.into_iter().collect();
+
+    // Enrich agents with connection status
+    let agents_with_status: Vec<Value> = agents
+        .into_iter()
+        .map(|a| {
+            let connected = connected_set.contains(&a.id);
+            json!({
+                "id": a.id,
+                "hostname": a.hostname,
+                "organization_id": a.organization_id,
+                "gateway_id": a.gateway_id,
+                "labels": a.labels,
+                "ip_addresses": a.ip_addresses,
+                "version": a.version,
+                "last_heartbeat_at": a.last_heartbeat_at,
+                "is_active": a.is_active,
+                "created_at": a.created_at,
+                "connected": connected,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "agents": agents_with_status })))
 }
 
 pub async fn get_agent(

@@ -352,25 +352,25 @@ async fn process_gateway_message(
                 // Push component config to the agent so its scheduler starts health checks.
                 send_config_to_agent(state, agent_id).await;
 
-                // Store certificate fingerprint for identity verification
-                if cert_fingerprint.is_some() || cert_cn.is_some() {
-                    if let Err(e) = sqlx::query(
-                        "UPDATE agents SET certificate_fingerprint = COALESCE($2, certificate_fingerprint), \
-                         certificate_cn = COALESCE($3, certificate_cn), \
-                         identity_verified = ($2 IS NOT NULL) \
-                         WHERE id = $1",
-                    )
-                    .bind(agent_id)
-                    .bind(&cert_fingerprint)
-                    .bind(&cert_cn)
-                    .execute(&state.db)
-                    .await
-                    {
-                        tracing::warn!(
-                            agent_id = %agent_id,
-                            "Failed to store cert fingerprint: {}", e
-                        );
-                    }
+                // Update agent record: gateway_id, certificate fingerprint
+                if let Err(e) = sqlx::query(
+                    "UPDATE agents SET gateway_id = $2, \
+                     certificate_fingerprint = COALESCE($3, certificate_fingerprint), \
+                     certificate_cn = COALESCE($4, certificate_cn), \
+                     identity_verified = ($3 IS NOT NULL) \
+                     WHERE id = $1",
+                )
+                .bind(agent_id)
+                .bind(gw_id)
+                .bind(&cert_fingerprint)
+                .bind(&cert_cn)
+                .execute(&state.db)
+                .await
+                {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        "Failed to update agent record: {}", e
+                    );
                 }
             } else {
                 tracing::warn!(
@@ -386,6 +386,15 @@ async fn process_gateway_message(
                 "Agent disconnected from gateway"
             );
             state.ws_hub.unregister_agent_route(agent_id);
+
+            // Clear gateway_id when agent disconnects
+            if let Err(e) = sqlx::query("UPDATE agents SET gateway_id = NULL WHERE id = $1")
+                .bind(agent_id)
+                .execute(&state.db)
+                .await
+            {
+                tracing::warn!(agent_id = %agent_id, "Failed to clear gateway_id: {}", e);
+            }
         }
     }
 }
