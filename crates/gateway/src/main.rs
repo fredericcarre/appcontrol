@@ -342,11 +342,13 @@ async fn main() -> anyhow::Result<()> {
                     }
 
                     // Add the fingerprint as a layer so handlers can access it
-                    let app_with_fingerprint = app.layer(Extension(ClientCertFingerprint(fingerprint)));
+                    let app_with_fingerprint =
+                        app.layer(Extension(ClientCertFingerprint(fingerprint)));
 
                     // Serve the connection using hyper + axum with the TLS stream
                     let io = hyper_util::rt::TokioIo::new(tls_stream);
-                    let service = hyper_util::service::TowerToHyperService::new(app_with_fingerprint);
+                    let service =
+                        hyper_util::service::TowerToHyperService::new(app_with_fingerprint);
                     if let Err(e) = hyper_util::server::conn::auto::Builder::new(
                         hyper_util::rt::TokioExecutor::new(),
                     )
@@ -870,7 +872,7 @@ fn build_server_tls_config(tls: &TlsSection) -> anyhow::Result<Arc<rustls::Serve
 /// Generate a self-signed certificate for development/testing.
 /// This ensures TLS is always used, even without configured certificates.
 fn generate_dev_tls_config() -> anyhow::Result<Arc<rustls::ServerConfig>> {
-    use rcgen::{CertifiedKey, generate_simple_self_signed};
+    use rcgen::{generate_simple_self_signed, CertifiedKey};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
     tracing::warn!(
