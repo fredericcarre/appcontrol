@@ -25,9 +25,9 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 #[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::mpsc;
 #[cfg(unix)]
 use tokio::sync::Mutex;
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 #[cfg(unix)]
@@ -105,8 +105,8 @@ impl TerminalManager {
             ws_ypixel: 0,
         };
 
-        let pty_result = openpty(Some(&winsize), None)
-            .map_err(|e| format!("Failed to open PTY: {}", e))?;
+        let pty_result =
+            openpty(Some(&winsize), None).map_err(|e| format!("Failed to open PTY: {}", e))?;
 
         let master_fd = pty_result.master.as_raw_fd();
         let slave_fd = pty_result.slave.as_raw_fd();
@@ -140,13 +140,15 @@ impl TerminalManager {
                 let master_fd_copy = master_fd;
 
                 tokio::spawn(async move {
-                    Self::read_output_loop(request_id, master_fd_copy, msg_tx, sessions_clone).await;
+                    Self::read_output_loop(request_id, master_fd_copy, msg_tx, sessions_clone)
+                        .await;
                 });
 
                 // Spawn input writer task
                 let sessions_clone2 = self.sessions.clone();
                 tokio::spawn(async move {
-                    Self::write_input_loop(request_id, master_fd_copy, input_rx, sessions_clone2).await;
+                    Self::write_input_loop(request_id, master_fd_copy, input_rx, sessions_clone2)
+                        .await;
                 });
 
                 // Don't drop master_fd - it's now managed by the session
@@ -201,9 +203,7 @@ impl TerminalManager {
                 // If exec fails, exit
                 std::process::exit(127);
             }
-            Err(e) => {
-                Err(format!("Fork failed: {}", e))
-            }
+            Err(e) => Err(format!("Fork failed: {}", e)),
         }
     }
 
@@ -212,7 +212,10 @@ impl TerminalManager {
         let mut sessions = self.sessions.lock().await;
         if let Some(session) = sessions.get_mut(&request_id) {
             session.last_activity = std::time::Instant::now();
-            session.input_tx.send(data).map_err(|e| format!("Send failed: {}", e))
+            session
+                .input_tx
+                .send(data)
+                .map_err(|e| format!("Send failed: {}", e))
         } else {
             Err("Session not found".to_string())
         }
@@ -231,9 +234,7 @@ impl TerminalManager {
                 ws_ypixel: 0,
             };
 
-            let result = unsafe {
-                libc::ioctl(session.master_fd, libc::TIOCSWINSZ, &winsize)
-            };
+            let result = unsafe { libc::ioctl(session.master_fd, libc::TIOCSWINSZ, &winsize) };
 
             if result == 0 {
                 tracing::debug!(
@@ -340,10 +341,10 @@ impl TerminalManager {
                 }
                 Ok(n) => {
                     let data = buffer[..n].to_vec();
-                    if msg_tx.send(AgentMessage::TerminalOutput {
-                        request_id,
-                        data,
-                    }).is_err() {
+                    if msg_tx
+                        .send(AgentMessage::TerminalOutput { request_id, data })
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -488,7 +489,9 @@ mod tests {
         assert_eq!(manager.session_count().await, 1);
 
         // Send a simple command
-        let result = manager.send_input(request_id, b"echo hello\n".to_vec()).await;
+        let result = manager
+            .send_input(request_id, b"echo hello\n".to_vec())
+            .await;
         assert!(result.is_ok(), "Failed to send input: {:?}", result);
 
         // Wait for output
@@ -520,7 +523,13 @@ mod tests {
 
         // Start session
         manager
-            .start_session(request_id, Some("/bin/sh".to_string()), 80, 24, HashMap::new())
+            .start_session(
+                request_id,
+                Some("/bin/sh".to_string()),
+                80,
+                24,
+                HashMap::new(),
+            )
             .await
             .unwrap();
 

@@ -125,7 +125,10 @@ impl CheckScheduler {
             // Find the root filesystem (or largest disk as fallback)
             disks
                 .iter()
-                .find(|d| d.mount_point().to_str() == Some("/") || d.mount_point().to_str() == Some("C:\\"))
+                .find(|d| {
+                    d.mount_point().to_str() == Some("/")
+                        || d.mount_point().to_str() == Some("C:\\")
+                })
                 .or_else(|| disks.iter().max_by_key(|d| d.total_space()))
                 .map(|d| {
                     let total = d.total_space() as f64;

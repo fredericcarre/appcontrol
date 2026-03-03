@@ -355,9 +355,7 @@ pub enum GatewayEnvelope {
     },
     /// Order the gateway to disconnect and close its connection.
     /// Used when the gateway is blocked or suspended.
-    DisconnectGateway {
-        reason: String,
-    },
+    DisconnectGateway { reason: String },
 }
 
 /// Messages sent from Gateway to Backend.
@@ -398,8 +396,12 @@ pub enum GatewayMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum WsClientMessage {
-    Subscribe { app_id: Uuid },
-    Unsubscribe { app_id: Uuid },
+    Subscribe {
+        app_id: Uuid,
+    },
+    Unsubscribe {
+        app_id: Uuid,
+    },
     /// Start a new terminal session on an agent (admin only).
     TerminalStart {
         agent_id: Uuid,
@@ -443,7 +445,9 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: AgentMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
-            AgentMessage::Heartbeat { cpu, memory, disk, .. } => {
+            AgentMessage::Heartbeat {
+                cpu, memory, disk, ..
+            } => {
                 assert!((cpu - 45.2).abs() < f32::EPSILON);
                 assert!((memory - 72.1).abs() < f32::EPSILON);
                 assert_eq!(disk, Some(55.5));
@@ -817,7 +821,9 @@ mod tests {
         let deserialized: super::GatewayMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
             super::GatewayMessage::AgentMessage(agent_msg) => match agent_msg {
-                AgentMessage::Heartbeat { cpu, memory, disk, .. } => {
+                AgentMessage::Heartbeat {
+                    cpu, memory, disk, ..
+                } => {
                     assert!((cpu - 50.0).abs() < f32::EPSILON);
                     assert!((memory - 60.0).abs() < f32::EPSILON);
                     assert_eq!(disk, Some(70.0));

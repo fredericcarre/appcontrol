@@ -155,7 +155,8 @@ async fn handle_client_socket(
                                 // Send error back to client
                                 let error_event = appcontrol_common::WsEvent::TerminalError {
                                     session_id: uuid::Uuid::nil(),
-                                    error: "Terminal access requires administrator privileges".to_string(),
+                                    error: "Terminal access requires administrator privileges"
+                                        .to_string(),
                                 };
                                 if let Ok(json) = serde_json::to_string(&error_event) {
                                     state_clone.ws_hub.send_to_connection(conn_id, json);
@@ -181,11 +182,9 @@ async fn handle_client_socket(
                             }
 
                             // Create session
-                            let (session_id, request_id) = state_clone.terminal_sessions.create_session(
-                                agent_id,
-                                conn_id,
-                                user_id,
-                            );
+                            let (session_id, request_id) = state_clone
+                                .terminal_sessions
+                                .create_session(agent_id, conn_id, user_id);
 
                             // Log the action
                             let _ = crate::middleware::audit::log_action(
@@ -251,7 +250,9 @@ async fn handle_client_socket(
                             };
 
                             // Look up session
-                            if let Some(session) = state_clone.terminal_sessions.get_session(session_id) {
+                            if let Some(session) =
+                                state_clone.terminal_sessions.get_session(session_id)
+                            {
                                 // Verify this connection owns the session
                                 if session.conn_id != conn_id {
                                     tracing::warn!(
@@ -268,27 +269,40 @@ async fn handle_client_socket(
                                     request_id: session.request_id,
                                     data: bytes,
                                 };
-                                state_clone.ws_hub.send_to_agent(session.agent_id, input_msg);
+                                state_clone
+                                    .ws_hub
+                                    .send_to_agent(session.agent_id, input_msg);
                             }
                         }
-                        appcontrol_common::WsClientMessage::TerminalResize { session_id, cols, rows } => {
-                            if let Some(session) = state_clone.terminal_sessions.get_session(session_id) {
+                        appcontrol_common::WsClientMessage::TerminalResize {
+                            session_id,
+                            cols,
+                            rows,
+                        } => {
+                            if let Some(session) =
+                                state_clone.terminal_sessions.get_session(session_id)
+                            {
                                 if session.conn_id != conn_id {
                                     continue;
                                 }
 
                                 state_clone.terminal_sessions.touch_session(session_id);
 
-                                let resize_msg = appcontrol_common::BackendMessage::TerminalResize {
-                                    request_id: session.request_id,
-                                    cols,
-                                    rows,
-                                };
-                                state_clone.ws_hub.send_to_agent(session.agent_id, resize_msg);
+                                let resize_msg =
+                                    appcontrol_common::BackendMessage::TerminalResize {
+                                        request_id: session.request_id,
+                                        cols,
+                                        rows,
+                                    };
+                                state_clone
+                                    .ws_hub
+                                    .send_to_agent(session.agent_id, resize_msg);
                             }
                         }
                         appcontrol_common::WsClientMessage::TerminalClose { session_id } => {
-                            if let Some(session) = state_clone.terminal_sessions.remove_session(session_id) {
+                            if let Some(session) =
+                                state_clone.terminal_sessions.remove_session(session_id)
+                            {
                                 if session.conn_id != conn_id {
                                     // Put it back - wrong connection
                                     continue;
@@ -311,7 +325,9 @@ async fn handle_client_socket(
                                 let close_msg = appcontrol_common::BackendMessage::TerminalClose {
                                     request_id: session.request_id,
                                 };
-                                state_clone.ws_hub.send_to_agent(session.agent_id, close_msg);
+                                state_clone
+                                    .ws_hub
+                                    .send_to_agent(session.agent_id, close_msg);
 
                                 tracing::info!(
                                     session_id = %session_id,
@@ -414,15 +430,14 @@ async fn process_gateway_message(
         } => {
             // ── Gateway active check ──
             // If the gateway is blocked (is_active = false), reject the connection.
-            let is_active: bool = sqlx::query_scalar(
-                "SELECT COALESCE(is_active, true) FROM gateways WHERE id = $1",
-            )
-            .bind(gateway_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(true); // Default to active if gateway doesn't exist (first-time registration)
+            let is_active: bool =
+                sqlx::query_scalar("SELECT COALESCE(is_active, true) FROM gateways WHERE id = $1")
+                    .bind(gateway_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or(true); // Default to active if gateway doesn't exist (first-time registration)
 
             if !is_active {
                 tracing::warn!(
@@ -783,7 +798,13 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                 }
             }
         }
-        appcontrol_common::AgentMessage::Heartbeat { agent_id, cpu, memory, disk, .. } => {
+        appcontrol_common::AgentMessage::Heartbeat {
+            agent_id,
+            cpu,
+            memory,
+            disk,
+            ..
+        } => {
             tracing::trace!(agent_id = %agent_id, cpu = %cpu, memory = %memory, disk = ?disk, "Agent heartbeat");
             // Batch heartbeat update — flushed every 5s instead of 1 SQL per heartbeat.
             // At 2500 agents this reduces PostgreSQL writes from 2500/min to ~12/min.
@@ -961,7 +982,10 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
         }
         appcontrol_common::AgentMessage::TerminalOutput { request_id, data } => {
             // Look up session by request_id and forward to frontend connection
-            if let Some(session_id) = state.terminal_sessions.get_session_id_by_request(request_id) {
+            if let Some(session_id) = state
+                .terminal_sessions
+                .get_session_id_by_request(request_id)
+            {
                 if let Some(session) = state.terminal_sessions.get_session(session_id) {
                     state.terminal_sessions.touch_session(session_id);
 
@@ -986,9 +1010,15 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                 );
             }
         }
-        appcontrol_common::AgentMessage::TerminalExit { request_id, exit_code } => {
+        appcontrol_common::AgentMessage::TerminalExit {
+            request_id,
+            exit_code,
+        } => {
             // Look up and remove session
-            if let Some(session_id) = state.terminal_sessions.get_session_id_by_request(request_id) {
+            if let Some(session_id) = state
+                .terminal_sessions
+                .get_session_id_by_request(request_id)
+            {
                 if let Some(session) = state.terminal_sessions.remove_session(session_id) {
                     tracing::info!(
                         session_id = %session_id,

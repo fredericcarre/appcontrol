@@ -48,12 +48,7 @@ impl TerminalSessionManager {
     /// Create a new terminal session.
     ///
     /// Returns the session_id and request_id (for sending to agent).
-    pub fn create_session(
-        &self,
-        agent_id: Uuid,
-        conn_id: Uuid,
-        user_id: Uuid,
-    ) -> (Uuid, Uuid) {
+    pub fn create_session(&self, agent_id: Uuid, conn_id: Uuid, user_id: Uuid) -> (Uuid, Uuid) {
         let session_id = Uuid::new_v4();
         let request_id = Uuid::new_v4();
         let now = Instant::now();
@@ -89,7 +84,10 @@ impl TerminalSessionManager {
     }
 
     /// Get session by session_id.
-    pub fn get_session(&self, session_id: Uuid) -> Option<dashmap::mapref::one::Ref<'_, Uuid, TerminalSession>> {
+    pub fn get_session(
+        &self,
+        session_id: Uuid,
+    ) -> Option<dashmap::mapref::one::Ref<'_, Uuid, TerminalSession>> {
         self.sessions.get(&session_id)
     }
 
@@ -261,7 +259,10 @@ mod tests {
         let (session_id, request_id) = manager.create_session(agent_id, conn_id, user_id);
 
         assert!(manager.get_session(session_id).is_some());
-        assert_eq!(manager.get_session_id_by_request(request_id), Some(session_id));
+        assert_eq!(
+            manager.get_session_id_by_request(request_id),
+            Some(session_id)
+        );
         assert_eq!(manager.session_count(), 1);
     }
 
