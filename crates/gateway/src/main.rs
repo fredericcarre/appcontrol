@@ -189,8 +189,10 @@ impl GatewayConfig {
                 key_file: String::new(),
                 ca_file: String::new(),
             });
+            // If cert files are provided, enable TLS by default
+            let should_enable = tls_enabled.unwrap_or(tls_cert.is_some() || existing.enabled);
             config.tls = Some(TlsSection {
-                enabled: tls_enabled.unwrap_or(existing.enabled),
+                enabled: should_enable,
                 cert_file: tls_cert.unwrap_or(existing.cert_file),
                 key_file: tls_key.unwrap_or(existing.key_file),
                 ca_file: tls_ca.unwrap_or(existing.ca_file),

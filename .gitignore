@@ -26,3 +26,4 @@ Thumbs.db
 
 # sled databases
 *.sled/
+docker/appcontrol-ca.crt

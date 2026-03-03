@@ -184,34 +184,63 @@ echo ""
 echo "Server Certificate SANs:"
 openssl x509 -in "$CERT_DIR/server.crt" -noout -text 2>/dev/null | grep -A1 "Subject Alternative Name"
 
-# Wait for backend to export PKI certificates for gateway mTLS
+# Fetch PKI CA and generate gateway certificate via API
 echo ""
-echo "=== Waiting for PKI certificates (gateway mTLS) ==="
-PKI_RETRIES=30
-pki_count=0
-while [ $pki_count -lt $PKI_RETRIES ]; do
-    if [ -f "$CERT_DIR/pki-ca.crt" ] && [ -f "$CERT_DIR/gateway.crt" ] && [ -f "$CERT_DIR/gateway.key" ]; then
-        echo "PKI certificates found"
-        break
-    fi
-    pki_count=$((pki_count + 1))
-    echo "Waiting for backend to export PKI certificates... ($pki_count/$PKI_RETRIES)"
-    sleep 2
-done
+echo "=== Fetching PKI certificates for gateway mTLS ==="
 
-if [ -f "$CERT_DIR/pki-ca.crt" ]; then
-    echo ""
-    echo "=== PKI Certificate Summary ==="
-    echo "PKI CA Certificate:"
-    openssl x509 -in "$CERT_DIR/pki-ca.crt" -noout -subject -issuer -dates 2>/dev/null
+# Get the PKI CA public certificate (unauthenticated endpoint)
+PKI_CA_RESPONSE=$(curl -sf "$BACKEND_URL/api/v1/pki/ca-public" 2>/dev/null || echo "")
 
-    if [ -f "$CERT_DIR/gateway.crt" ]; then
-        echo ""
-        echo "Gateway Certificate:"
-        openssl x509 -in "$CERT_DIR/gateway.crt" -noout -subject -issuer -dates 2>/dev/null
+if [ -n "$PKI_CA_RESPONSE" ] && echo "$PKI_CA_RESPONSE" | grep -q "ca_cert_pem"; then
+    echo "PKI CA retrieved from backend"
+
+    # Extract CA cert and save it
+    echo "$PKI_CA_RESPONSE" | sed -n 's/.*"ca_cert_pem":"\([^"]*\)".*/\1/p' | sed 's/\\n/\n/g' > "$CERT_DIR/pki-ca.crt"
+
+    # Authenticate to get a token for server cert issuance
+    ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-admin@localhost}"
+    ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-admin}"
+
+    echo "Authenticating to generate gateway certificate..."
+    AUTH_RESPONSE=$(curl -sf -X POST "$BACKEND_URL/api/v1/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" 2>/dev/null || echo "")
+
+    if echo "$AUTH_RESPONSE" | grep -q "token"; then
+        TOKEN=$(echo "$AUTH_RESPONSE" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+
+        # Request a server certificate for the gateway
+        GATEWAY_CN="${GATEWAY_CN:-gateway}"
+        CERT_RESPONSE=$(curl -sf -X POST "$BACKEND_URL/api/v1/pki/server-cert" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $TOKEN" \
+            -d "{\"common_name\":\"$GATEWAY_CN\",\"san_dns\":[\"gateway\",\"localhost\",\"appcontrol-gateway\"],\"san_ips\":[\"127.0.0.1\"],\"validity_days\":365}" 2>/dev/null || echo "")
+
+        if echo "$CERT_RESPONSE" | grep -q "cert_pem"; then
+            echo "Gateway certificate generated"
+
+            # Extract and save certificate and key
+            echo "$CERT_RESPONSE" | sed -n 's/.*"cert_pem":"\([^"]*\)".*/\1/p' | sed 's/\\n/\n/g' > "$CERT_DIR/gateway.crt"
+            echo "$CERT_RESPONSE" | sed -n 's/.*"key_pem":"\([^"]*\)".*/\1/p' | sed 's/\\n/\n/g' > "$CERT_DIR/gateway.key"
+            # Make readable by gateway container (runs as non-root user)
+            chmod 644 "$CERT_DIR/gateway.crt" "$CERT_DIR/gateway.key"
+
+            echo ""
+            echo "=== PKI Certificate Summary ==="
+            echo "PKI CA Certificate:"
+            openssl x509 -in "$CERT_DIR/pki-ca.crt" -noout -subject -issuer -dates 2>/dev/null
+            echo ""
+            echo "Gateway Certificate:"
+            openssl x509 -in "$CERT_DIR/gateway.crt" -noout -subject -issuer -dates 2>/dev/null
+        else
+            echo "WARNING: Failed to generate gateway certificate: $CERT_RESPONSE"
+        fi
+    else
+        echo "WARNING: Failed to authenticate for gateway cert generation"
     fi
 else
-    echo "WARNING: PKI certificates not found. Gateway mTLS may not work."
+    echo "WARNING: PKI not initialized. Gateway mTLS will not work."
+    echo "Initialize PKI via the web UI or API first."
 fi
 
 echo ""
