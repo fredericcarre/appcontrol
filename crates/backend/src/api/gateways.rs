@@ -404,14 +404,20 @@ pub async fn list_gateway_agents(
     .fetch_all(&state.db)
     .await?;
 
+    // Get live connection status from the WebSocket hub
+    let connected_agents = state.ws_hub.connected_agent_ids();
+    let connected_set: std::collections::HashSet<Uuid> = connected_agents.into_iter().collect();
+
     let agents_json: Vec<Value> = agents
         .into_iter()
         .map(|(id, hostname, is_active, last_heartbeat_at)| {
+            let connected = connected_set.contains(&id);
             json!({
                 "id": id,
                 "hostname": hostname,
                 "is_active": is_active,
                 "last_heartbeat_at": last_heartbeat_at,
+                "connected": connected,
             })
         })
         .collect();
@@ -444,7 +450,10 @@ pub async fn suspend_gateway(
         r#"UPDATE gateways SET is_active = false
            WHERE id = $1 AND organization_id = $2
            RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active, last_heartbeat_at, created_at"#,
+                     certificate_fingerprint, is_active,
+                     COALESCE(is_primary, false) as is_primary,
+                     COALESCE(priority, 0) as priority,
+                     last_heartbeat_at, created_at"#,
     )
     .bind(gateway_id)
     .bind(user.organization_id)
@@ -480,7 +489,10 @@ pub async fn activate_gateway(
         r#"UPDATE gateways SET is_active = true
            WHERE id = $1 AND organization_id = $2
            RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active, last_heartbeat_at, created_at"#,
+                     certificate_fingerprint, is_active,
+                     COALESCE(is_primary, false) as is_primary,
+                     COALESCE(priority, 0) as priority,
+                     last_heartbeat_at, created_at"#,
     )
     .bind(gateway_id)
     .bind(user.organization_id)
@@ -529,6 +541,98 @@ pub async fn delete_gateway(
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/v1/gateways/:id/block — Block a gateway (security action)
+///
+/// This suspends the gateway, disconnects all agents, and prevents reconnection.
+/// Use for compromised gateways that need to be isolated immediately.
+pub async fn block_gateway(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(gateway_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Get the gateway to verify it exists and get agent count
+    let gw: Option<(String, String)> =
+        sqlx::query_as("SELECT name, zone FROM gateways WHERE id = $1 AND organization_id = $2")
+            .bind(gateway_id)
+            .bind(user.organization_id)
+            .fetch_optional(&state.db)
+            .await?;
+
+    let (name, zone) = match gw {
+        Some(g) => g,
+        None => return Err(ApiError::NotFound),
+    };
+
+    // Log before execute
+    crate::middleware::audit::log_action(
+        &state.db,
+        user.user_id,
+        "block_gateway",
+        "gateway",
+        gateway_id,
+        json!({ "name": &name, "zone": &zone }),
+    )
+    .await
+    .ok();
+
+    let mut tx = state.db.begin().await?;
+
+    // 1. Suspend the gateway
+    sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
+        .bind(gateway_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 2. Get all agents connected to this gateway
+    let agent_ids: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM agents WHERE gateway_id = $1 AND organization_id = $2")
+            .bind(gateway_id)
+            .bind(user.organization_id)
+            .fetch_all(&mut *tx)
+            .await?;
+
+    let agent_count = agent_ids.len();
+
+    // 3. Disconnect all agents (set gateway_id = NULL)
+    sqlx::query("UPDATE agents SET gateway_id = NULL WHERE gateway_id = $1")
+        .bind(gateway_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 4. Log gateway status event
+    sqlx::query(
+        r#"INSERT INTO gateway_status_events (organization_id, gateway_id, event_type, triggered_by)
+           VALUES ($1, $2, 'blocked', 'manual')"#,
+    )
+    .bind(user.organization_id)
+    .bind(gateway_id)
+    .execute(&mut *tx)
+    .await
+    .ok(); // Don't fail if table doesn't exist yet
+
+    tx.commit().await?;
+
+    // 5. Send disconnect command to all agents via WebSocket hub
+    for agent_id in &agent_ids {
+        state.ws_hub.disconnect_agent(*agent_id);
+    }
+
+    // 6. Disconnect the gateway itself
+    state.ws_hub.disconnect_gateway(gateway_id);
+
+    Ok(Json(json!({
+        "status": "blocked",
+        "gateway_id": gateway_id,
+        "gateway_name": name,
+        "zone": zone,
+        "agents_disconnected": agent_count,
+    })))
 }
 
 // ---------------------------------------------------------------------------

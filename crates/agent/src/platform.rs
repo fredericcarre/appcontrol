@@ -62,3 +62,47 @@ pub fn get_ip_addresses() -> Vec<String> {
     addresses.dedup();
     addresses
 }
+
+/// System information collected once at startup.
+#[derive(Debug, Clone)]
+pub struct SystemInfo {
+    pub os_name: String,
+    pub os_version: String,
+    pub cpu_arch: String,
+    pub cpu_cores: u32,
+    pub total_memory_mb: u64,
+    pub disk_total_gb: u64,
+}
+
+/// Collect static system information (OS, CPU, memory, disk).
+pub fn get_system_info() -> SystemInfo {
+    use sysinfo::{Disks, System};
+
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    // OS info
+    let os_name = System::name().unwrap_or_else(|| "Unknown".to_string());
+    let os_version = System::os_version().unwrap_or_else(|| "Unknown".to_string());
+
+    // CPU info
+    let cpu_arch = std::env::consts::ARCH.to_string();
+    let cpu_cores = sys.cpus().len() as u32;
+
+    // Memory info (convert from bytes to MB)
+    let total_memory_mb = sys.total_memory() / (1024 * 1024);
+
+    // Disk info - sum all disks or take the largest one
+    let disks = Disks::new_with_refreshed_list();
+    let disk_total_gb =
+        disks.iter().map(|d| d.total_space()).max().unwrap_or(0) / (1024 * 1024 * 1024);
+
+    SystemInfo {
+        os_name,
+        os_version,
+        cpu_arch,
+        cpu_cores,
+        total_memory_mb,
+        disk_total_gb,
+    }
+}

@@ -180,6 +180,14 @@ impl MessageRouter {
         (buf.len(), buf.total_bytes())
     }
 
+    /// Clear all connections (used when gateway is blocked)
+    pub fn clear_all(&self) {
+        self.agent_senders.clear();
+        self.clear_backend_sender();
+        self.buffer.lock().unwrap().messages.clear();
+        tracing::info!("All router connections cleared");
+    }
+
     /// Broadcast a message to all connected agents.
     /// Returns the number of agents that received the message.
     pub fn broadcast_to_agents(&self, message: &str) -> usize {

@@ -7,6 +7,9 @@ export interface WsMessage {
 }
 
 interface WebSocketState {
+  /** Actual connection state (raw) */
+  rawConnected: boolean;
+  /** Debounced connection state shown to users (delays offline by 3s) */
   connected: boolean;
   setConnected: (c: boolean) => void;
   messages: WsMessage[];
@@ -15,11 +18,38 @@ interface WebSocketState {
   subscribedApps: Set<string>;
   addSubscription: (appId: string) => void;
   removeSubscription: (appId: string) => void;
+  /** Internal timer for debouncing offline state */
+  _offlineTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export const useWebSocketStore = create<WebSocketState>()((set, get) => ({
+  rawConnected: false,
   connected: false,
-  setConnected: (c) => set({ connected: c }),
+  setConnected: (c) => {
+    // Clear any pending offline timer
+    const timer = get()._offlineTimer;
+    if (timer) {
+      clearTimeout(timer);
+      set({ _offlineTimer: null });
+    }
+
+    if (c) {
+      // Connected: update immediately
+      set({ rawConnected: true, connected: true });
+    } else {
+      // Disconnected: update raw immediately, but delay UI update by 3 seconds
+      // This prevents brief network blips from showing "Offline"
+      set({ rawConnected: false });
+      const offlineTimer = setTimeout(() => {
+        // Only set offline if still disconnected
+        if (!get().rawConnected) {
+          set({ connected: false });
+        }
+        set({ _offlineTimer: null });
+      }, 3000);
+      set({ _offlineTimer: offlineTimer });
+    }
+  },
   messages: [],
   addMessage: (msg) =>
     set((s) => ({
@@ -37,4 +67,5 @@ export const useWebSocketStore = create<WebSocketState>()((set, get) => ({
     next.delete(appId);
     set({ subscribedApps: next });
   },
+  _offlineTimer: null,
 }));

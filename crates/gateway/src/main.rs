@@ -226,6 +226,8 @@ pub struct GatewayState {
     pub rate_limiter: AgentRateLimiter,
     pub config: GatewayConfig,
     pub gateway_id: uuid::Uuid,
+    /// Flag to signal gateway should disconnect (set when blocked by backend)
+    pub shutdown_flag: std::sync::atomic::AtomicBool,
 }
 
 #[tokio::main]
@@ -260,6 +262,7 @@ async fn main() -> anyhow::Result<()> {
         rate_limiter,
         config: config.clone(),
         gateway_id,
+        shutdown_flag: std::sync::atomic::AtomicBool::new(false),
     });
 
     // Connect to backend in background with auto-reconnect
@@ -557,10 +560,11 @@ async fn handle_agent_connection(
                         appcontrol_common::AgentMessage::Register {
                             agent_id,
                             hostname,
+                            version,
                             cert_fingerprint,
                             ..
                         } => {
-                            tracing::info!(agent_id = %agent_id, hostname = %hostname, "Agent registering");
+                            tracing::info!(agent_id = %agent_id, hostname = %hostname, version = %version, "Agent registering");
                             // Use the proxy-provided cert fingerprint if available (trusted
                             // header from TLS-terminating proxy), otherwise fall back to
                             // the fingerprint the agent self-reports in the Register message.
@@ -576,11 +580,12 @@ async fn handle_agent_connection(
                                 cert_fingerprint.clone()
                             };
 
-                            // Register in our local registry (with cert fingerprint for re-announce)
+                            // Register in our local registry (with cert fingerprint and version for re-announce)
                             state_clone.registry.register(
                                 conn_id,
                                 *agent_id,
                                 hostname.clone(),
+                                Some(version.clone()),
                                 effective_fingerprint.clone(),
                             );
 
@@ -590,12 +595,13 @@ async fn handle_agent_connection(
                             // Remember the agent_id for cleanup
                             *agent_id_clone.lock().unwrap() = Some(*agent_id);
 
-                            // Forward agent's cert fingerprint to backend.
+                            // Forward agent's cert fingerprint and version to backend.
                             // The effective fingerprint may come from either the proxy header
                             // (mTLS termination) or the agent's self-reported value.
                             let notification = GatewayMessage::AgentConnected {
                                 agent_id: *agent_id,
                                 hostname: hostname.clone(),
+                                version: Some(version.clone()),
                                 cert_fingerprint: effective_fingerprint,
                                 cert_cn: Some(hostname.clone()),
                             };
@@ -695,6 +701,7 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
         let notification = GatewayMessage::AgentConnected {
             agent_id: agent_info.agent_id,
             hostname: agent_info.hostname.clone(),
+            version: agent_info.version.clone(),
             cert_fingerprint: agent_info.cert_fingerprint.clone(),
             cert_cn: Some(agent_info.hostname.clone()),
         };
@@ -710,6 +717,19 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
     state.router.set_backend_sender(backend_tx);
 
     loop {
+        // Check if we've been ordered to disconnect (e.g., gateway blocked by admin)
+        if state
+            .shutdown_flag
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            tracing::info!("Shutdown flag set — closing backend connection");
+            // Reset the flag so we can reconnect after backoff
+            state
+                .shutdown_flag
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            return Err(anyhow::anyhow!("Gateway was blocked by administrator"));
+        }
+
         tokio::select! {
             // Messages from agents to forward to backend
             Some(msg) = backend_rx.recv() => {
@@ -720,6 +740,12 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
                 match ws_msg {
                     Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
                         handle_backend_message(state, &text);
+                        // Check shutdown flag after handling message (DisconnectGateway sets it)
+                        if state.shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                            tracing::info!("Shutdown flag set after message — closing backend connection");
+                            state.shutdown_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+                            return Err(anyhow::anyhow!("Gateway was blocked by administrator"));
+                        }
                     }
                     Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => return Ok(()),
                     Err(e) => return Err(e.into()),
@@ -937,11 +963,24 @@ fn generate_dev_tls_config() -> anyhow::Result<Arc<rustls::ServerConfig>> {
 /// Parse and route a message from the backend.
 fn handle_backend_message(state: &Arc<GatewayState>, text: &str) {
     match serde_json::from_str::<GatewayEnvelope>(text) {
+        Ok(GatewayEnvelope::DisconnectGateway { reason }) => {
+            tracing::warn!(
+                reason = %reason,
+                "Backend ordered gateway disconnect — shutting down connections"
+            );
+            // Clear all agent connections
+            state.router.clear_all();
+            state.registry.clear_all();
+            // Signal shutdown (the backend connection loop will handle reconnection)
+            state
+                .shutdown_flag
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         Ok(GatewayEnvelope::ForwardToAgent {
             target_agent_id,
             message,
         }) => {
-            // Handle DisconnectAgent specially — drop the agent connection
+            // Handle DisconnectAgent specially — forward to agent, then drop the connection
             if let BackendMessage::DisconnectAgent {
                 agent_id,
                 ref reason,
@@ -950,8 +989,19 @@ fn handle_backend_message(state: &Arc<GatewayState>, text: &str) {
                 tracing::warn!(
                     agent_id = %agent_id,
                     reason = %reason,
-                    "Backend ordered agent disconnect — dropping connection"
+                    "Backend ordered agent disconnect — forwarding to agent then dropping connection"
                 );
+                // First, forward the DisconnectAgent message to the agent
+                // so it knows to close its connection gracefully
+                if let Ok(inner_json) = serde_json::to_string(&message) {
+                    if !state.router.forward_to_agent(agent_id, &inner_json) {
+                        tracing::warn!(
+                            agent_id = %agent_id,
+                            "Agent not connected — cannot forward disconnect message"
+                        );
+                    }
+                }
+                // Now remove the agent from router (closes the channel) and registry
                 state.router.remove_agent(agent_id);
                 state.registry.remove_by_agent_id(agent_id);
                 return;

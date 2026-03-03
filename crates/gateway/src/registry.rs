@@ -5,6 +5,7 @@ use uuid::Uuid;
 pub struct AgentInfo {
     pub agent_id: Uuid,
     pub hostname: String,
+    pub version: Option<String>,
     pub last_heartbeat: chrono::DateTime<chrono::Utc>,
     pub connected_at: chrono::DateTime<chrono::Utc>,
     pub cert_fingerprint: Option<String>,
@@ -33,6 +34,7 @@ impl AgentRegistry {
         conn_id: Uuid,
         agent_id: Uuid,
         hostname: String,
+        version: Option<String>,
         cert_fingerprint: Option<String>,
     ) -> Option<AgentInfo> {
         let now = chrono::Utc::now();
@@ -56,6 +58,7 @@ impl AgentRegistry {
         let info = AgentInfo {
             agent_id,
             hostname: hostname.clone(),
+            version,
             last_heartbeat: now,
             connected_at: now,
             cert_fingerprint,
@@ -125,6 +128,14 @@ impl AgentRegistry {
             None
         }
     }
+
+    /// Clear all agents (used when gateway is blocked)
+    pub fn clear_all(&self) {
+        let count = self.agents.len();
+        self.agents.clear();
+        self.agent_to_conn.clear();
+        tracing::info!(count, "All agents cleared from registry");
+    }
 }
 
 #[cfg(test)]
@@ -137,7 +148,13 @@ mod tests {
         let conn_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
 
-        reg.register(conn_id, agent_id, "host1".to_string(), None);
+        reg.register(
+            conn_id,
+            agent_id,
+            "host1".to_string(),
+            Some("1.0.0".to_string()),
+            None,
+        );
 
         assert_eq!(reg.connected_count(), 1);
         assert_eq!(reg.get_agent_id(conn_id), Some(agent_id));
@@ -150,11 +167,18 @@ mod tests {
         let conn_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
 
-        reg.register(conn_id, agent_id, "host1".to_string(), None);
+        reg.register(
+            conn_id,
+            agent_id,
+            "host1".to_string(),
+            Some("1.0.0".to_string()),
+            None,
+        );
 
         let info = reg.unregister(conn_id).expect("should return AgentInfo");
         assert_eq!(info.agent_id, agent_id);
         assert_eq!(info.hostname, "host1");
+        assert_eq!(info.version, Some("1.0.0".to_string()));
         assert_eq!(reg.connected_count(), 0);
         assert!(reg.get_conn_id(agent_id).is_none());
     }
@@ -172,8 +196,20 @@ mod tests {
         let conn1 = Uuid::new_v4();
         let conn2 = Uuid::new_v4();
 
-        reg.register(conn1, agent_id, "host1".to_string(), None);
-        let prev = reg.register(conn2, agent_id, "host1".to_string(), None);
+        reg.register(
+            conn1,
+            agent_id,
+            "host1".to_string(),
+            Some("1.0.0".to_string()),
+            None,
+        );
+        let prev = reg.register(
+            conn2,
+            agent_id,
+            "host1".to_string(),
+            Some("1.0.1".to_string()),
+            None,
+        );
 
         assert!(prev.is_some());
         assert_eq!(reg.connected_count(), 1);

@@ -86,6 +86,7 @@ mod tests {
             agent_id: Uuid::new_v4(),
             cpu: 50.0,
             memory: 60.0,
+            disk: None,
             at: chrono::Utc::now(),
         };
 
@@ -107,6 +108,7 @@ mod tests {
                 agent_id: Uuid::new_v4(),
                 cpu: i as f32,
                 memory: 0.0,
+                disk: None,
                 at: chrono::Utc::now(),
             };
             buffer.push(&msg).unwrap();

@@ -27,6 +27,7 @@ export interface GatewayAgent {
   hostname: string;
   is_active: boolean;
   last_heartbeat_at: string | null;
+  connected: boolean;
 }
 
 export function useGatewayZones() {
@@ -111,5 +112,27 @@ export function useDeleteGateway() {
       await client.delete(`/gateways/${gatewayId}`);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['gateways'] }),
+  });
+}
+
+export interface BlockGatewayResponse {
+  status: 'blocked';
+  gateway_id: string;
+  gateway_name: string;
+  zone: string;
+  agents_disconnected: number;
+}
+
+export function useBlockGateway() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (gatewayId: string) => {
+      const { data } = await client.post<BlockGatewayResponse>(`/gateways/${gatewayId}/block`);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['gateways'] });
+      qc.invalidateQueries({ queryKey: ['agents'] });
+    },
   });
 }

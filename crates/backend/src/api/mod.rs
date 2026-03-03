@@ -264,6 +264,9 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Agents
         .route("/agents", get(agents::list_agents))
         .route("/agents/:id", get(agents::get_agent))
+        .route("/agents/:id/block", post(agents::block_agent))
+        .route("/agents/:id/unblock", post(agents::unblock_agent))
+        .route("/agents/:id/metrics", get(agents::get_agent_metrics))
         .route("/agents/:id/revoke-cert", post(gateways::revoke_agent_cert))
         // Gateways
         .route("/gateways", get(gateways::list_gateways))
@@ -276,6 +279,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/gateways/:id/agents", get(gateways::list_gateway_agents))
         .route("/gateways/:id/suspend", post(gateways::suspend_gateway))
         .route("/gateways/:id/activate", post(gateways::activate_gateway))
+        .route("/gateways/:id/block", post(gateways::block_gateway))
         .route(
             "/gateways/:id/set-primary",
             post(gateways::set_gateway_primary),

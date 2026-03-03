@@ -1,18 +1,21 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   useGatewayZones,
   useGatewayAgents,
-  useSuspendGateway,
   useActivateGateway,
   useSetGatewayPrimary,
   useDeleteGateway,
+  useBlockGateway,
   type Gateway,
   type ZoneSummary,
+  type GatewayAgent,
 } from '@/api/gateways';
+import { useBlockAgent } from '@/api/agents';
 import { useAuthStore } from '@/stores/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,6 +32,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Network,
   Server,
   Wifi,
@@ -36,7 +46,6 @@ import {
   ChevronRight,
   ChevronDown,
   MoreHorizontal,
-  Pause,
   Play,
   Trash2,
   ShieldAlert,
@@ -46,6 +55,7 @@ import {
   Plus,
   Copy,
   CheckCircle2,
+  Search,
 } from 'lucide-react';
 
 function formatTimeAgo(dateStr: string | null): string {
@@ -123,27 +133,81 @@ function getConnectionBadge(gateway: Gateway) {
   );
 }
 
+interface AgentItemProps {
+  agent: GatewayAgent;
+  isAdmin: boolean;
+  onBlock: (agent: GatewayAgent) => void;
+}
+
+function AgentItem({ agent, isAdmin, onBlock }: AgentItemProps) {
+  return (
+    <div className="flex items-center gap-3 text-sm py-1.5">
+      <Server className="h-3 w-3 text-muted-foreground" />
+      <span className="font-mono text-xs">{agent.id.slice(0, 8)}</span>
+      <span className="flex-1">{agent.hostname}</span>
+      {agent.connected ? (
+        <Badge variant="default" className="text-xs gap-1 bg-green-600">
+          <Wifi className="h-2.5 w-2.5" /> Connected
+        </Badge>
+      ) : (
+        <Badge variant="outline" className="text-xs gap-1 text-muted-foreground">
+          <WifiOff className="h-2.5 w-2.5" /> Disconnected
+        </Badge>
+      )}
+      {agent.last_heartbeat_at && (
+        <span className="text-xs text-muted-foreground">{formatTimeAgo(agent.last_heartbeat_at)}</span>
+      )}
+      {isAdmin && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-6 w-6">
+              <MoreHorizontal className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onClick={() => onBlock(agent)}
+              className="text-destructive focus:text-destructive"
+            >
+              <ShieldAlert className="h-4 w-4 mr-2" />
+              Block Agent
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
+  );
+}
+
 interface GatewayItemProps {
   gateway: Gateway;
   isAdmin: boolean;
   isSingleGateway: boolean;
-  onSuspend: (gateway: Gateway) => void;
+  isMutating: boolean;
   onActivate: (gateway: Gateway) => void;
   onSetPrimary: (gateway: Gateway) => void;
   onDelete: (gateway: Gateway) => void;
+  onBlock: (gateway: Gateway) => void;
+  onBlockAgent: (agent: GatewayAgent) => void;
 }
 
 function GatewayItem({
   gateway,
   isAdmin,
   isSingleGateway,
-  onSuspend,
+  isMutating,
   onActivate,
   onSetPrimary,
   onDelete,
+  onBlock,
+  onBlockAgent,
 }: GatewayItemProps) {
   const [expanded, setExpanded] = useState(false);
   const { data: agents, isLoading } = useGatewayAgents(expanded ? gateway.id : '');
+
+  // Count connected agents
+  const connectedAgents = agents?.filter((a) => a.connected).length ?? 0;
+  const totalAgents = agents?.length ?? gateway.agent_count;
 
   return (
     <div className="border-l-2 border-muted ml-4">
@@ -164,7 +228,8 @@ function GatewayItem({
             {formatTimeAgo(gateway.last_heartbeat_at)}
           </span>
           <span className="text-sm text-muted-foreground">
-            {gateway.agent_count} agent{gateway.agent_count !== 1 ? 's' : ''}
+            {expanded ? `${connectedAgents}/${totalAgents}` : gateway.agent_count} agent
+            {(expanded ? totalAgents : gateway.agent_count) !== 1 ? 's' : ''}
           </span>
           {isAdmin && (
             <DropdownMenu>
@@ -175,24 +240,32 @@ function GatewayItem({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {!gateway.is_primary && (
-                  <DropdownMenuItem onClick={() => onSetPrimary(gateway)}>
+                  <DropdownMenuItem onClick={() => onSetPrimary(gateway)} disabled={isMutating}>
                     <Star className="h-4 w-4 mr-2" />
                     Set as Primary
                   </DropdownMenuItem>
                 )}
                 {gateway.status === 'suspended' ? (
-                  <DropdownMenuItem onClick={() => onActivate(gateway)}>
+                  <DropdownMenuItem onClick={() => onActivate(gateway)} disabled={isMutating}>
                     <Play className="h-4 w-4 mr-2" />
                     Activate
                   </DropdownMenuItem>
                 ) : (
-                  <DropdownMenuItem onClick={() => onSuspend(gateway)}>
-                    <Pause className="h-4 w-4 mr-2" />
-                    Suspend
+                  <DropdownMenuItem
+                    onClick={() => onBlock(gateway)}
+                    disabled={isMutating}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <ShieldAlert className="h-4 w-4 mr-2" />
+                    Block Gateway
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => onDelete(gateway)} className="text-destructive">
+                <DropdownMenuItem
+                  onClick={() => onDelete(gateway)}
+                  disabled={isMutating}
+                  className="text-destructive focus:text-destructive"
+                >
                   <Trash2 className="h-4 w-4 mr-2" />
                   Delete
                 </DropdownMenuItem>
@@ -204,34 +277,16 @@ function GatewayItem({
       {expanded && (
         <div className="ml-10 mr-4 mb-2 p-3 bg-muted/30 rounded-md">
           <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-            <Server className="h-4 w-4" /> Connected Agents
+            <Server className="h-4 w-4" /> Agents ({connectedAgents}/{totalAgents} connected)
           </h4>
           {isLoading ? (
             <div className="text-sm text-muted-foreground">Loading agents...</div>
           ) : !agents?.length ? (
-            <div className="text-sm text-muted-foreground">No agents connected</div>
+            <div className="text-sm text-muted-foreground">No agents assigned to this gateway</div>
           ) : (
             <div className="space-y-1">
               {agents.map((agent) => (
-                <div key={agent.id} className="flex items-center gap-3 text-sm py-1">
-                  <Server className="h-3 w-3 text-muted-foreground" />
-                  <span className="font-mono text-xs">{agent.id.slice(0, 8)}</span>
-                  <span>{agent.hostname}</span>
-                  {agent.is_active ? (
-                    <Badge variant="default" className="text-xs bg-green-600">
-                      Active
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="text-xs">
-                      Inactive
-                    </Badge>
-                  )}
-                  {agent.last_heartbeat_at && (
-                    <span className="text-xs text-muted-foreground">
-                      Last: {formatTimeAgo(agent.last_heartbeat_at)}
-                    </span>
-                  )}
-                </div>
+                <AgentItem key={agent.id} agent={agent} isAdmin={isAdmin} onBlock={onBlockAgent} />
               ))}
             </div>
           )}
@@ -244,16 +299,37 @@ function GatewayItem({
 interface ZoneCardProps {
   zone: ZoneSummary;
   isAdmin: boolean;
-  onSuspend: (gateway: Gateway) => void;
+  search: string;
+  isMutating: boolean;
   onActivate: (gateway: Gateway) => void;
   onSetPrimary: (gateway: Gateway) => void;
   onDelete: (gateway: Gateway) => void;
+  onBlock: (gateway: Gateway) => void;
+  onBlockAgent: (agent: GatewayAgent) => void;
 }
 
-function ZoneCard({ zone, isAdmin, onSuspend, onActivate, onSetPrimary, onDelete }: ZoneCardProps) {
+function ZoneCard({
+  zone,
+  isAdmin,
+  search,
+  isMutating,
+  onActivate,
+  onSetPrimary,
+  onDelete,
+  onBlock,
+  onBlockAgent,
+}: ZoneCardProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddFailover, setShowAddFailover] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Filter gateways by search
+  const filteredGateways = useMemo(() => {
+    if (!search) return zone.gateways;
+    const searchLower = search.toLowerCase();
+    return zone.gateways.filter((g) => g.name.toLowerCase().includes(searchLower));
+  }, [zone.gateways, search]);
+
   const connectedCount = zone.gateways.filter((g) => g.connected).length;
   // Only show failover alert when there are 2+ gateways (actual HA setup)
   const showFailoverAlert = zone.failover_active && zone.gateway_count >= 2;
@@ -271,6 +347,9 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Don't render if no gateways match search
+  if (search && filteredGateways.length === 0) return null;
 
   return (
     <>
@@ -308,19 +387,21 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
         </CardHeader>
         {!collapsed && (
           <CardContent className="pt-0">
-            {zone.gateways.map((gateway) => (
+            {filteredGateways.map((gateway) => (
               <GatewayItem
                 key={gateway.id}
                 gateway={gateway}
                 isAdmin={isAdmin}
                 isSingleGateway={singleGateway}
-                onSuspend={onSuspend}
+                isMutating={isMutating}
                 onActivate={onActivate}
                 onSetPrimary={onSetPrimary}
                 onDelete={onDelete}
+                onBlock={onBlock}
+                onBlockAgent={onBlockAgent}
               />
             ))}
-            {singleGateway && (
+            {singleGateway && !search && (
               <div className="mt-4 ml-4 p-3 border border-dashed rounded-md flex items-center justify-between">
                 <div className="text-sm text-muted-foreground">
                   Add a standby gateway for automatic failover
@@ -351,20 +432,23 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
               Add Failover Gateway to "{zone.zone}"
             </DialogTitle>
             <DialogDescription>
-              Deploy a standby gateway on a separate server for automatic failover when the primary goes offline.
+              Deploy a standby gateway on a separate server for automatic failover when the primary goes
+              offline.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <h4 className="font-medium mb-2">1. Download the gateway binary</h4>
               <p className="text-sm text-muted-foreground">
-                Download the same <code className="bg-muted px-1 rounded">appcontrol-gateway</code> binary used for the primary gateway.
+                Download the same <code className="bg-muted px-1 rounded">appcontrol-gateway</code> binary
+                used for the primary gateway.
               </p>
             </div>
             <div>
               <h4 className="font-medium mb-2">2. Copy certificates</h4>
               <p className="text-sm text-muted-foreground">
-                Copy the TLS certificates from the primary gateway or generate new ones signed by the same PKI CA.
+                Copy the TLS certificates from the primary gateway or generate new ones signed by the same
+                PKI CA.
               </p>
             </div>
             <div>
@@ -376,12 +460,7 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
                 <pre className="bg-muted p-3 rounded-md text-sm font-mono overflow-x-auto">
                   {failoverCommand}
                 </pre>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="absolute top-2 right-2 gap-1"
-                  onClick={copyCommand}
-                >
+                <Button variant="ghost" size="sm" className="absolute top-2 right-2 gap-1" onClick={copyCommand}>
                   {copied ? (
                     <>
                       <CheckCircle2 className="h-4 w-4 text-green-500" /> Copied
@@ -397,7 +476,8 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
             <div>
               <h4 className="font-medium mb-2">4. Verify registration</h4>
               <p className="text-sm text-muted-foreground">
-                The new gateway will appear here as "Standby". If the primary goes offline, it will automatically become "Failover Active".
+                The new gateway will appear here as "Standby". If the primary goes offline, it will
+                automatically become "Failover Active".
               </p>
             </div>
           </div>
@@ -415,30 +495,96 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
 export function GatewaysPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = user?.role === 'admin';
-  const { data: zones, isLoading } = useGatewayZones();
-  const suspendGateway = useSuspendGateway();
+  const { data: zones, isLoading, refetch } = useGatewayZones();
   const activateGateway = useActivateGateway();
   const setGatewayPrimary = useSetGatewayPrimary();
   const deleteGateway = useDeleteGateway();
+  const blockGateway = useBlockGateway();
+  const blockAgent = useBlockAgent();
 
+  // Track if any mutation is in progress
+  const isMutating =
+    activateGateway.isPending ||
+    setGatewayPrimary.isPending ||
+    deleteGateway.isPending ||
+    blockGateway.isPending ||
+    blockAgent.isPending;
+
+  // Search and filters
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
+  const [zoneFilter, setZoneFilter] = useState<string>('all');
+
+  // Confirmation dialogs
   const [deleteConfirm, setDeleteConfirm] = useState<Gateway | null>(null);
+  const [blockGatewayConfirm, setBlockGatewayConfirm] = useState<Gateway | null>(null);
+  const [blockAgentConfirm, setBlockAgentConfirm] = useState<GatewayAgent | null>(null);
 
-  const handleSuspend = async (gateway: Gateway) => {
-    await suspendGateway.mutateAsync(gateway.id);
-  };
+  // Get unique zones for filter dropdown
+  const zoneOptions = useMemo(() => {
+    if (!zones) return [];
+    return zones.map((z) => z.zone);
+  }, [zones]);
+
+  // Filter zones
+  const filteredZones = useMemo(() => {
+    if (!zones) return [];
+    return zones
+      .filter((zone) => {
+        // Zone filter
+        if (zoneFilter !== 'all' && zone.zone !== zoneFilter) return false;
+        // Status filter applies to gateways within zones
+        if (statusFilter !== 'all') {
+          const hasMatchingGateway = zone.gateways.some((g) =>
+            statusFilter === 'online' ? g.connected : !g.connected
+          );
+          if (!hasMatchingGateway) return false;
+        }
+        return true;
+      })
+      .map((zone) => {
+        // Apply status filter to gateways
+        if (statusFilter === 'all') return zone;
+        return {
+          ...zone,
+          gateways: zone.gateways.filter((g) =>
+            statusFilter === 'online' ? g.connected : !g.connected
+          ),
+        };
+      });
+  }, [zones, statusFilter, zoneFilter]);
 
   const handleActivate = async (gateway: Gateway) => {
+    if (isMutating) return;
     await activateGateway.mutateAsync(gateway.id);
+    refetch();
   };
 
   const handleSetPrimary = async (gateway: Gateway) => {
+    if (isMutating) return;
     await setGatewayPrimary.mutateAsync(gateway.id);
+    refetch();
   };
 
   const handleDelete = async () => {
-    if (!deleteConfirm) return;
+    if (!deleteConfirm || isMutating) return;
     await deleteGateway.mutateAsync(deleteConfirm.id);
     setDeleteConfirm(null);
+    refetch();
+  };
+
+  const handleBlockGateway = async () => {
+    if (!blockGatewayConfirm || isMutating) return;
+    await blockGateway.mutateAsync(blockGatewayConfirm.id);
+    setBlockGatewayConfirm(null);
+    refetch();
+  };
+
+  const handleBlockAgent = async () => {
+    if (!blockAgentConfirm || isMutating) return;
+    await blockAgent.mutateAsync(blockAgentConfirm.id);
+    setBlockAgentConfirm(null);
+    refetch();
   };
 
   if (isLoading) {
@@ -475,28 +621,75 @@ export function GatewaysPage() {
         </div>
       </div>
 
+      {/* Search and Filters */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by gateway name..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
+          <SelectTrigger className="w-[130px]">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Status</SelectItem>
+            <SelectItem value="online">Online</SelectItem>
+            <SelectItem value="offline">Offline</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={zoneFilter} onValueChange={setZoneFilter}>
+          <SelectTrigger className="w-[150px]">
+            <SelectValue placeholder="Zone" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Zones</SelectItem>
+            {zoneOptions.map((zone) => (
+              <SelectItem key={zone} value={zone}>
+                {zone}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
       {!zoneList.length ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <Network className="h-12 w-12 text-muted-foreground mb-4" />
             <h3 className="font-medium text-lg mb-2">No Gateways Registered</h3>
             <p className="text-muted-foreground max-w-md">
-              Start a gateway to see it here. Gateways relay agent connections to the backend and
-              handle mTLS authentication.
+              Start a gateway to see it here. Gateways relay agent connections to the backend and handle
+              mTLS authentication.
             </p>
+          </CardContent>
+        </Card>
+      ) : filteredZones.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <Search className="h-12 w-12 text-muted-foreground mb-4" />
+            <h3 className="font-medium text-lg mb-2">No Matches</h3>
+            <p className="text-muted-foreground">No gateways match your search or filters.</p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-4">
-          {zoneList.map((zone) => (
+          {filteredZones.map((zone) => (
             <ZoneCard
               key={zone.zone}
               zone={zone}
               isAdmin={isAdmin}
-              onSuspend={handleSuspend}
+              search={search}
+              isMutating={isMutating}
               onActivate={handleActivate}
               onSetPrimary={handleSetPrimary}
               onDelete={setDeleteConfirm}
+              onBlock={setBlockGatewayConfirm}
+              onBlockAgent={setBlockAgentConfirm}
             />
           ))}
         </div>
@@ -512,9 +705,9 @@ export function GatewaysPage() {
             <strong>primary</strong> gateway and zero or more <strong>standby</strong> gateways.
           </p>
           <p>
-            When the primary gateway goes offline, the standby with the lowest priority number takes
-            over automatically (<strong>failover</strong>). Agents can enroll via any gateway in
-            their authorized zone.
+            When the primary gateway goes offline, the standby with the lowest priority number takes over
+            automatically (<strong>failover</strong>). Agents can enroll via any gateway in their
+            authorized zone.
           </p>
         </CardContent>
       </Card>
@@ -524,26 +717,74 @@ export function GatewaysPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ShieldAlert className="h-5 w-5 text-destructive" />
+              <Trash2 className="h-5 w-5 text-destructive" />
               Delete Gateway
             </DialogTitle>
             <DialogDescription>
               Are you sure you want to delete the gateway{' '}
               <span className="font-medium">{deleteConfirm?.name}</span> in zone{' '}
-              <span className="font-medium">{deleteConfirm?.zone}</span>? This will disconnect all
-              agents connected through this gateway.
+              <span className="font-medium">{deleteConfirm?.zone}</span>? This will disconnect all agents
+              connected through this gateway.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteConfirm(null)}>
               Cancel
             </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={deleteGateway.isPending}
-            >
+            <Button variant="destructive" onClick={handleDelete} disabled={deleteGateway.isPending}>
               {deleteGateway.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Block Gateway Confirmation Dialog */}
+      <Dialog open={!!blockGatewayConfirm} onOpenChange={(open) => !open && setBlockGatewayConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-destructive" />
+              Block Gateway
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to block the gateway{' '}
+              <span className="font-medium">{blockGatewayConfirm?.name}</span>? This will immediately
+              disconnect all {blockGatewayConfirm?.agent_count} agent
+              {blockGatewayConfirm?.agent_count !== 1 ? 's' : ''} and prevent the gateway from
+              reconnecting.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBlockGatewayConfirm(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleBlockGateway} disabled={blockGateway.isPending}>
+              {blockGateway.isPending ? 'Blocking...' : 'Block Gateway'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Block Agent Confirmation Dialog */}
+      <Dialog open={!!blockAgentConfirm} onOpenChange={(open) => !open && setBlockAgentConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-destructive" />
+              Block Agent
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to block the agent{' '}
+              <span className="font-medium">{blockAgentConfirm?.hostname}</span>? It will be immediately
+              disconnected and unable to reconnect until unblocked.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBlockAgentConfirm(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleBlockAgent} disabled={blockAgent.isPending}>
+              {blockAgent.isPending ? 'Blocking...' : 'Block Agent'}
             </Button>
           </DialogFooter>
         </DialogContent>
