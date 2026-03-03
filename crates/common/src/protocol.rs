@@ -30,6 +30,8 @@ pub enum AgentMessage {
         agent_id: Uuid,
         cpu: f32,
         memory: f32,
+        #[serde(default)]
+        disk: Option<f32>,
         at: DateTime<Utc>,
     },
     CheckResult(CheckResult),
@@ -50,6 +52,24 @@ pub enum AgentMessage {
         ip_addresses: Vec<String>,
         labels: serde_json::Value,
         version: String,
+        /// Operating system name (e.g., "macOS", "Linux", "Windows")
+        #[serde(default)]
+        os_name: Option<String>,
+        /// Operating system version (e.g., "14.0", "Ubuntu 22.04")
+        #[serde(default)]
+        os_version: Option<String>,
+        /// CPU architecture (e.g., "x86_64", "aarch64")
+        #[serde(default)]
+        cpu_arch: Option<String>,
+        /// Number of CPU cores
+        #[serde(default)]
+        cpu_cores: Option<u32>,
+        /// Total system memory in MB
+        #[serde(default)]
+        total_memory_mb: Option<u64>,
+        /// Total disk space in GB (primary partition)
+        #[serde(default)]
+        disk_total_gb: Option<u64>,
         /// SHA-256 fingerprint of the agent's TLS client certificate.
         /// Populated by the gateway after extracting from the TLS handshake.
         #[serde(default)]
@@ -89,6 +109,17 @@ pub enum AgentMessage {
         #[serde(default)]
         error: Option<String>,
     },
+    /// Terminal output data from an interactive shell session.
+    TerminalOutput {
+        request_id: Uuid,
+        /// Raw terminal output bytes (may contain ANSI escape sequences).
+        data: Vec<u8>,
+    },
+    /// Terminal session ended.
+    TerminalExit {
+        request_id: Uuid,
+        exit_code: i32,
+    },
 }
 
 impl AgentMessage {
@@ -103,6 +134,8 @@ impl AgentMessage {
             AgentMessage::CertificateRenewal { .. } => MessagePriority::High,
             AgentMessage::DiscoveryReport { .. } => MessagePriority::Normal,
             AgentMessage::UpdateProgress { .. } => MessagePriority::High,
+            AgentMessage::TerminalOutput { .. } => MessagePriority::High,
+            AgentMessage::TerminalExit { .. } => MessagePriority::High,
         }
     }
 }
@@ -180,6 +213,37 @@ pub enum BackendMessage {
         /// Rotation ID for tracking progress
         rotation_id: Uuid,
     },
+    /// Start an interactive terminal session (PTY).
+    /// Unix only - Windows agents will return an error.
+    StartTerminal {
+        request_id: Uuid,
+        /// Shell to use (default: $SHELL or /bin/bash)
+        #[serde(default)]
+        shell: Option<String>,
+        /// Terminal width in columns
+        cols: u16,
+        /// Terminal height in rows
+        rows: u16,
+        /// Additional environment variables
+        #[serde(default)]
+        env: std::collections::HashMap<String, String>,
+    },
+    /// Send user input to an active terminal session.
+    TerminalInput {
+        request_id: Uuid,
+        /// Raw input bytes from the user
+        data: Vec<u8>,
+    },
+    /// Resize the terminal window.
+    TerminalResize {
+        request_id: Uuid,
+        cols: u16,
+        rows: u16,
+    },
+    /// Close the terminal session.
+    TerminalClose {
+        request_id: Uuid,
+    },
 }
 
 impl BackendMessage {
@@ -196,6 +260,10 @@ impl BackendMessage {
             BackendMessage::RequestDiscovery { .. } => MessagePriority::Normal,
             BackendMessage::DisconnectAgent { .. } => MessagePriority::Critical,
             BackendMessage::CertificateRotation { .. } => MessagePriority::Critical,
+            BackendMessage::StartTerminal { .. } => MessagePriority::High,
+            BackendMessage::TerminalInput { .. } => MessagePriority::High,
+            BackendMessage::TerminalResize { .. } => MessagePriority::Normal,
+            BackendMessage::TerminalClose { .. } => MessagePriority::High,
         }
     }
 }
@@ -251,6 +319,27 @@ pub enum WsEvent {
         user_id: Uuid,
         new_level: String,
     },
+    /// Terminal session started successfully.
+    TerminalStarted {
+        session_id: Uuid,
+        agent_id: Uuid,
+    },
+    /// Terminal output data from the agent.
+    TerminalOutput {
+        session_id: Uuid,
+        /// Base64-encoded terminal output bytes.
+        data: String,
+    },
+    /// Terminal session ended.
+    TerminalExit {
+        session_id: Uuid,
+        exit_code: i32,
+    },
+    /// Terminal error (e.g., session not found, permission denied).
+    TerminalError {
+        session_id: Uuid,
+        error: String,
+    },
 }
 
 /// Envelope for Backend → Gateway communication.
@@ -263,6 +352,11 @@ pub enum GatewayEnvelope {
     ForwardToAgent {
         target_agent_id: Uuid,
         message: BackendMessage,
+    },
+    /// Order the gateway to disconnect and close its connection.
+    /// Used when the gateway is blocked or suspended.
+    DisconnectGateway {
+        reason: String,
     },
 }
 
@@ -286,6 +380,9 @@ pub enum GatewayMessage {
     AgentConnected {
         agent_id: Uuid,
         hostname: String,
+        /// Agent software version (e.g., "1.1.5").
+        #[serde(default)]
+        version: Option<String>,
         /// TLS certificate fingerprint extracted by gateway during handshake.
         #[serde(default)]
         cert_fingerprint: Option<String>,
@@ -303,6 +400,30 @@ pub enum GatewayMessage {
 pub enum WsClientMessage {
     Subscribe { app_id: Uuid },
     Unsubscribe { app_id: Uuid },
+    /// Start a new terminal session on an agent (admin only).
+    TerminalStart {
+        agent_id: Uuid,
+        #[serde(default)]
+        shell: Option<String>,
+        cols: u16,
+        rows: u16,
+    },
+    /// Send input data to an active terminal session.
+    TerminalInput {
+        session_id: Uuid,
+        /// Base64-encoded input bytes.
+        data: String,
+    },
+    /// Resize the terminal window.
+    TerminalResize {
+        session_id: Uuid,
+        cols: u16,
+        rows: u16,
+    },
+    /// Close a terminal session.
+    TerminalClose {
+        session_id: Uuid,
+    },
 }
 
 #[cfg(test)]
@@ -316,14 +437,16 @@ mod tests {
             agent_id: Uuid::new_v4(),
             cpu: 45.2,
             memory: 72.1,
+            disk: Some(55.5),
             at: Utc::now(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: AgentMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
-            AgentMessage::Heartbeat { cpu, memory, .. } => {
+            AgentMessage::Heartbeat { cpu, memory, disk, .. } => {
                 assert!((cpu - 45.2).abs() < f32::EPSILON);
                 assert!((memory - 72.1).abs() < f32::EPSILON);
+                assert_eq!(disk, Some(55.5));
             }
             _ => panic!("Expected Heartbeat"),
         }
@@ -399,21 +522,34 @@ mod tests {
             ip_addresses: vec!["10.0.1.42".to_string(), "172.16.0.5".to_string()],
             labels: serde_json::json!({"role": "database", "env": "prod"}),
             version: "0.1.0".to_string(),
+            os_name: Some("Linux".to_string()),
+            os_version: Some("Ubuntu 22.04".to_string()),
+            cpu_arch: Some("x86_64".to_string()),
+            cpu_cores: Some(8),
+            total_memory_mb: Some(16384),
+            disk_total_gb: Some(512),
             cert_fingerprint: Some("sha256:abc123".to_string()),
         };
         let json = serde_json::to_string(&msg).unwrap();
+        // Verify system info is in the JSON
+        assert!(json.contains("os_name"));
+        assert!(json.contains("Linux"));
         let deserialized: AgentMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
             AgentMessage::Register {
                 hostname,
                 ip_addresses,
                 version,
+                os_name,
+                cpu_cores,
                 cert_fingerprint,
                 ..
             } => {
                 assert_eq!(hostname, "server01.prod.company.com");
                 assert_eq!(ip_addresses, vec!["10.0.1.42", "172.16.0.5"]);
                 assert_eq!(version, "0.1.0");
+                assert_eq!(os_name, Some("Linux".to_string()));
+                assert_eq!(cpu_cores, Some(8));
                 assert_eq!(cert_fingerprint, Some("sha256:abc123".to_string()));
             }
             _ => panic!("Expected Register"),
@@ -569,6 +705,7 @@ mod tests {
                     _ => panic!("Expected ExecuteCommand"),
                 }
             }
+            _ => panic!("Expected ForwardToAgent"),
         }
     }
 
@@ -604,6 +741,7 @@ mod tests {
         let msg = super::GatewayMessage::AgentConnected {
             agent_id: aid,
             hostname: "server01".to_string(),
+            version: Some("1.2.3".to_string()),
             cert_fingerprint: Some("sha256:deadbeef".to_string()),
             cert_cn: Some("agent-server01".to_string()),
         };
@@ -613,11 +751,13 @@ mod tests {
             super::GatewayMessage::AgentConnected {
                 agent_id,
                 hostname,
+                version,
                 cert_fingerprint,
                 cert_cn,
             } => {
                 assert_eq!(agent_id, aid);
                 assert_eq!(hostname, "server01");
+                assert_eq!(version, Some("1.2.3".to_string()));
                 assert_eq!(cert_fingerprint, Some("sha256:deadbeef".to_string()));
                 assert_eq!(cert_cn, Some("agent-server01".to_string()));
             }
@@ -627,15 +767,17 @@ mod tests {
 
     #[test]
     fn test_gateway_message_agent_connected_backward_compat() {
-        // Old gateways may not send cert_fingerprint/cert_cn
+        // Old gateways may not send cert_fingerprint/cert_cn/version
         let json = r#"{"type":"AgentConnected","payload":{"agent_id":"550e8400-e29b-41d4-a716-446655440000","hostname":"server01"}}"#;
         let msg: super::GatewayMessage = serde_json::from_str(json).unwrap();
         match msg {
             super::GatewayMessage::AgentConnected {
+                version,
                 cert_fingerprint,
                 cert_cn,
                 ..
             } => {
+                assert_eq!(version, None);
                 assert_eq!(cert_fingerprint, None);
                 assert_eq!(cert_cn, None);
             }
@@ -667,6 +809,7 @@ mod tests {
             agent_id: Uuid::new_v4(),
             cpu: 50.0,
             memory: 60.0,
+            disk: Some(70.0),
             at: Utc::now(),
         };
         let msg = super::GatewayMessage::AgentMessage(inner);
@@ -674,9 +817,10 @@ mod tests {
         let deserialized: super::GatewayMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
             super::GatewayMessage::AgentMessage(agent_msg) => match agent_msg {
-                AgentMessage::Heartbeat { cpu, memory, .. } => {
+                AgentMessage::Heartbeat { cpu, memory, disk, .. } => {
                     assert!((cpu - 50.0).abs() < f32::EPSILON);
                     assert!((memory - 60.0).abs() < f32::EPSILON);
+                    assert_eq!(disk, Some(70.0));
                 }
                 _ => panic!("Expected Heartbeat"),
             },
@@ -690,6 +834,7 @@ mod tests {
             agent_id: Uuid::new_v4(),
             cpu: 0.0,
             memory: 0.0,
+            disk: None,
             at: Utc::now(),
         };
         let register = AgentMessage::Register {
@@ -698,6 +843,12 @@ mod tests {
             ip_addresses: vec![],
             labels: serde_json::json!({}),
             version: "0.1.0".to_string(),
+            os_name: None,
+            os_version: None,
+            cpu_arch: None,
+            cpu_cores: None,
+            total_memory_mb: None,
+            disk_total_gb: None,
             cert_fingerprint: None,
         };
         let cmd_result = AgentMessage::CommandResult {

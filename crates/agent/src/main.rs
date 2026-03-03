@@ -10,6 +10,7 @@ mod scheduler;
 mod self_update;
 #[cfg(windows)]
 mod service;
+mod terminal;
 mod tls;
 
 use clap::{Parser, Subcommand};

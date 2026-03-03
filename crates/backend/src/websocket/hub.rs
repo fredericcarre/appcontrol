@@ -133,6 +133,16 @@ impl Hub {
         self.connections.len()
     }
 
+    /// Send a message directly to a specific frontend connection.
+    /// Used for terminal output which goes to one specific client.
+    pub fn send_to_connection(&self, conn_id: Uuid, message: String) -> bool {
+        if let Some(conn) = self.connections.get(&conn_id) {
+            conn.sender.send(message).is_ok()
+        } else {
+            false
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Gateway management (multi-gateway)
     // -----------------------------------------------------------------------
@@ -288,6 +298,83 @@ impl Hub {
     pub fn routed_agent_count(&self) -> usize {
         self.agent_to_gateway.len()
     }
+
+    // -----------------------------------------------------------------------
+    // Security disconnect methods
+    // -----------------------------------------------------------------------
+
+    /// Forcibly disconnect an agent for security reasons (e.g., blocked).
+    /// Sends a DisconnectAgent message to the gateway and removes the routing.
+    pub fn disconnect_agent(&self, agent_id: Uuid) {
+        // Look up which gateway this agent is connected to
+        let gateway_id = match self.agent_to_gateway.get(&agent_id) {
+            Some(entry) => *entry.value(),
+            None => {
+                tracing::debug!(
+                    agent_id = %agent_id,
+                    "Agent not connected — nothing to disconnect"
+                );
+                return;
+            }
+        };
+
+        // Send DisconnectAgent command to the gateway
+        let disconnect_msg = BackendMessage::DisconnectAgent {
+            agent_id,
+            reason: "Agent blocked by administrator".to_string(),
+        };
+
+        let envelope = GatewayEnvelope::ForwardToAgent {
+            target_agent_id: agent_id,
+            message: disconnect_msg,
+        };
+
+        if let Ok(json) = serde_json::to_string(&envelope) {
+            if let Some(gw) = self.gateways.get(&gateway_id) {
+                let _ = gw.sender.send(json);
+            }
+        }
+
+        // Remove the routing entry
+        self.agent_to_gateway.remove(&agent_id);
+        tracing::info!(agent_id = %agent_id, "Agent forcibly disconnected");
+    }
+
+    /// Forcibly disconnect a gateway for security reasons (e.g., blocked).
+    /// Sends a DisconnectGateway message to the gateway and removes it.
+    pub fn disconnect_gateway(&self, gateway_id: Uuid) {
+        // Send DisconnectGateway message to the gateway before removing it
+        if let Some(gw) = self.gateways.get(&gateway_id) {
+            let disconnect_msg = GatewayEnvelope::DisconnectGateway {
+                reason: "Gateway blocked by administrator".to_string(),
+            };
+            if let Ok(json) = serde_json::to_string(&disconnect_msg) {
+                let _ = gw.sender.send(json);
+            }
+        }
+
+        // Find all agents routed through this gateway
+        let agents: Vec<Uuid> = self
+            .agent_to_gateway
+            .iter()
+            .filter(|entry| *entry.value() == gateway_id)
+            .map(|entry| *entry.key())
+            .collect();
+
+        // Remove agent routes
+        for agent_id in &agents {
+            self.agent_to_gateway.remove(agent_id);
+        }
+
+        // Remove the gateway
+        self.gateways.remove(&gateway_id);
+
+        tracing::info!(
+            gateway_id = %gateway_id,
+            disconnected_agents = agents.len(),
+            "Gateway forcibly disconnected"
+        );
+    }
 }
 
 impl Default for Hub {
@@ -396,6 +483,9 @@ mod tests {
             } => {
                 assert_eq!(target_agent_id, agent_id);
                 assert!(matches!(message, BackendMessage::ExecuteCommand { .. }));
+            }
+            GatewayEnvelope::DisconnectGateway { .. } => {
+                panic!("Expected ForwardToAgent, got DisconnectGateway");
             }
         }
     }

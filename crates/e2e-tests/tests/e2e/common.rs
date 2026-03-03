@@ -151,6 +151,14 @@ impl TestContext {
             oidc: None,
             saml: None,
             app_env: "development".to_string(),
+            seed: appcontrol_backend::config::SeedConfig {
+                enabled: false,
+                admin_email: "admin@test.local".to_string(),
+                admin_password: "test".to_string(),
+                admin_display_name: "Test Admin".to_string(),
+                org_name: "Test Org".to_string(),
+                org_slug: "test-org".to_string(),
+            },
             rate_limit_auth: 100,
             rate_limit_operations: 100,
             rate_limit_reads: 1000,
@@ -163,6 +171,8 @@ impl TestContext {
             shutdown_timeout_secs: 30,
             retention_action_log_days: 0,
             retention_check_events_days: 0,
+            public_gateway_url: None,
+            public_backend_url: None,
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
@@ -172,6 +182,7 @@ impl TestContext {
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
             operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
+            terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
         });
 
         let app = appcontrol_backend::create_router(state);
@@ -311,6 +322,14 @@ impl TestContext {
                 want_assertions_signed: false,
             }),
             app_env: "development".to_string(),
+            seed: appcontrol_backend::config::SeedConfig {
+                enabled: false,
+                admin_email: "admin@test.local".to_string(),
+                admin_password: "test".to_string(),
+                admin_display_name: "Test Admin".to_string(),
+                org_name: "Test Org".to_string(),
+                org_slug: "test-org".to_string(),
+            },
             rate_limit_auth: 100,
             rate_limit_operations: 100,
             rate_limit_reads: 1000,
@@ -323,6 +342,8 @@ impl TestContext {
             shutdown_timeout_secs: 30,
             retention_action_log_days: 0,
             retention_check_events_days: 0,
+            public_gateway_url: None,
+            public_backend_url: None,
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
@@ -332,6 +353,7 @@ impl TestContext {
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
             operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
+            terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
         });
 
         let app = appcontrol_backend::create_router(state);

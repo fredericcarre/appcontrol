@@ -87,6 +87,7 @@ const SYSTEM_PROCESS_NAMES: &[&str] = &[
 ];
 
 /// Environment variable prefixes/suffixes worth capturing for topology inference.
+#[allow(dead_code)]
 const INTERESTING_ENV_PREFIXES: &[&str] = &[
     "DB_",
     "DATABASE_",
@@ -118,6 +119,7 @@ const INTERESTING_ENV_PREFIXES: &[&str] = &[
     "CATALINA_",
 ];
 
+#[allow(dead_code)]
 const INTERESTING_ENV_SUFFIXES: &[&str] = &[
     "_HOST",
     "_PORT",
@@ -240,6 +242,7 @@ fn is_system_process(name: &str) -> bool {
 }
 
 /// Check if an environment variable key is interesting for topology inference.
+#[allow(dead_code)]
 pub(crate) fn is_interesting_env(key: &str) -> bool {
     let upper = key.to_uppercase();
     INTERESTING_ENV_PREFIXES

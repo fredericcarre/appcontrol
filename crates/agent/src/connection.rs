@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::buffer::OfflineBuffer;
 use crate::config::TlsSection;
 use crate::scheduler::CheckScheduler;
+use crate::terminal::TerminalManager;
 use appcontrol_common::{AgentMessage, BackendMessage};
 
 /// Manages the WebSocket connection to the gateway/backend.
@@ -31,6 +32,8 @@ pub struct ConnectionManager {
     /// In advisory mode, the agent runs health checks but refuses
     /// start/stop/rebuild commands from the backend.
     advisory_mode: bool,
+    /// Terminal session manager for interactive shell access.
+    terminal_manager: Arc<TerminalManager>,
 }
 
 impl ConnectionManager {
@@ -74,6 +77,8 @@ impl ConnectionManager {
             }
         };
 
+        let terminal_manager = Arc::new(TerminalManager::new(agent_id, msg_tx.clone()));
+
         Self {
             gateway_urls,
             failover_strategy,
@@ -87,6 +92,7 @@ impl ConnectionManager {
             tls_connector,
             cert_fingerprint,
             advisory_mode,
+            terminal_manager,
         }
     }
 
@@ -280,13 +286,22 @@ impl ConnectionManager {
     {
         use futures_util::{SinkExt, StreamExt};
 
-        // Send registration message with hostname, detected IPs, and cert fingerprint
+        // Collect system info once at startup
+        let sys_info = crate::platform::get_system_info();
+
+        // Send registration message with hostname, detected IPs, system info, and cert fingerprint
         let register = AgentMessage::Register {
             agent_id: self.agent_id,
             hostname: crate::platform::gethostname(),
             ip_addresses: crate::platform::get_ip_addresses(),
             labels: serde_json::json!(self.labels),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            os_name: Some(sys_info.os_name),
+            os_version: Some(sys_info.os_version),
+            cpu_arch: Some(sys_info.cpu_arch),
+            cpu_cores: Some(sys_info.cpu_cores),
+            total_memory_mb: Some(sys_info.total_memory_mb),
+            disk_total_gb: Some(sys_info.disk_total_gb),
             cert_fingerprint: self.cert_fingerprint.clone(),
         };
 
@@ -322,7 +337,11 @@ impl ConnectionManager {
                     match ws_msg {
                         Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
                             if let Ok(backend_msg) = serde_json::from_str::<BackendMessage>(&text) {
-                                self.handle_backend_message(backend_msg);
+                                // handle_backend_message returns false for DisconnectAgent
+                                if !self.handle_backend_message(backend_msg) {
+                                    tracing::info!("Disconnect signal received, closing connection");
+                                    return Ok(());
+                                }
                             }
                         }
                         Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
@@ -341,7 +360,9 @@ impl ConnectionManager {
 
     /// Handle a message from the backend. Commands are spawned in separate tasks
     /// to avoid blocking the WebSocket loop.
-    fn handle_backend_message(&self, msg: BackendMessage) {
+    ///
+    /// Returns `true` to continue processing, `false` to close the connection.
+    fn handle_backend_message(&self, msg: BackendMessage) -> bool {
         match msg {
             BackendMessage::ExecuteCommand {
                 request_id,
@@ -371,7 +392,7 @@ impl ConnectionManager {
                         duration_ms: 0,
                         sequence_id: Some(seq),
                     });
-                    return;
+                    return true; // continue processing other messages
                 }
 
                 tracing::info!(
@@ -596,9 +617,12 @@ impl ConnectionManager {
                 tracing::warn!(
                     agent_id = %agent_id,
                     reason = %reason,
-                    "Backend ordered disconnect — shutting down connection"
+                    "Backend ordered disconnect — closing connection"
                 );
-                // The connection will close when we stop processing messages
+                // Return false to signal the message loop to close the connection.
+                // The agent will then attempt to reconnect after the backoff delay.
+                // If the agent is blocked, reconnection will fail with an auth error.
+                return false;
             }
             BackendMessage::CertificateRotation {
                 new_ca_cert,
@@ -656,6 +680,101 @@ impl ConnectionManager {
                     }
                 });
             }
+            BackendMessage::StartTerminal {
+                request_id,
+                shell,
+                cols,
+                rows,
+                env,
+            } => {
+                tracing::info!(
+                    request_id = %request_id,
+                    shell = ?shell,
+                    cols = cols,
+                    rows = rows,
+                    "Terminal session requested"
+                );
+
+                let terminal_manager = self.terminal_manager.clone();
+                let msg_tx = self.msg_tx.clone();
+
+                tokio::spawn(async move {
+                    match terminal_manager
+                        .start_session(request_id, shell, cols, rows, env)
+                        .await
+                    {
+                        Ok(()) => {
+                            tracing::info!(request_id = %request_id, "Terminal session started");
+                            // The terminal manager will send TerminalOutput messages directly
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                request_id = %request_id,
+                                error = %e,
+                                "Failed to start terminal session"
+                            );
+                            // Send an exit message with error code to indicate failure
+                            let _ = msg_tx.send(AgentMessage::TerminalExit {
+                                request_id,
+                                exit_code: -1,
+                            });
+                        }
+                    }
+                });
+            }
+            BackendMessage::TerminalInput { request_id, data } => {
+                let terminal_manager = self.terminal_manager.clone();
+
+                tokio::spawn(async move {
+                    if let Err(e) = terminal_manager.send_input(request_id, data).await {
+                        tracing::debug!(
+                            request_id = %request_id,
+                            error = %e,
+                            "Failed to send terminal input"
+                        );
+                    }
+                });
+            }
+            BackendMessage::TerminalResize {
+                request_id,
+                cols,
+                rows,
+            } => {
+                let terminal_manager = self.terminal_manager.clone();
+
+                tokio::spawn(async move {
+                    if let Err(e) = terminal_manager.resize(request_id, cols, rows).await {
+                        tracing::debug!(
+                            request_id = %request_id,
+                            error = %e,
+                            "Failed to resize terminal"
+                        );
+                    }
+                });
+            }
+            BackendMessage::TerminalClose { request_id } => {
+                tracing::info!(request_id = %request_id, "Terminal close requested");
+
+                let terminal_manager = self.terminal_manager.clone();
+                let msg_tx = self.msg_tx.clone();
+
+                tokio::spawn(async move {
+                    if let Err(e) = terminal_manager.close_session(request_id).await {
+                        tracing::debug!(
+                            request_id = %request_id,
+                            error = %e,
+                            "Failed to close terminal session"
+                        );
+                    }
+                    // Send exit message
+                    let _ = msg_tx.send(AgentMessage::TerminalExit {
+                        request_id,
+                        exit_code: 0,
+                    });
+                });
+            }
         }
+        // Continue processing messages
+        true
     }
 }

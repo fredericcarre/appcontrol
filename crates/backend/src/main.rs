@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use appcontrol_backend::{config, create_router, db, middleware, websocket, AppState};
+use appcontrol_backend::{config, create_router, db, middleware, terminal, websocket, AppState};
 
 #[derive(Parser)]
 #[command(
@@ -123,6 +123,8 @@ async fn main() -> anyhow::Result<()> {
     let operation_lock =
         appcontrol_backend::core::operation_lock::OperationLock::with_pool(pool.clone());
 
+    let terminal_sessions = terminal::TerminalSessionManager::new();
+
     let state = Arc::new(AppState {
         db: pool,
         ws_hub,
@@ -130,6 +132,7 @@ async fn main() -> anyhow::Result<()> {
         rate_limiter: middleware::rate_limit::RateLimitState::new(),
         heartbeat_batcher,
         operation_lock,
+        terminal_sessions,
     });
 
     // Store prometheus handle in a leaked box for the metrics handler

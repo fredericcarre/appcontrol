@@ -119,10 +119,30 @@ impl CheckScheduler {
             0.0
         };
 
+        // Calculate disk usage percentage for root filesystem
+        let disk = {
+            let disks = sysinfo::Disks::new_with_refreshed_list();
+            // Find the root filesystem (or largest disk as fallback)
+            disks
+                .iter()
+                .find(|d| d.mount_point().to_str() == Some("/") || d.mount_point().to_str() == Some("C:\\"))
+                .or_else(|| disks.iter().max_by_key(|d| d.total_space()))
+                .map(|d| {
+                    let total = d.total_space() as f64;
+                    let available = d.available_space() as f64;
+                    if total > 0.0 {
+                        ((total - available) / total * 100.0) as f32
+                    } else {
+                        0.0
+                    }
+                })
+        };
+
         let _ = self.msg_tx.send(AgentMessage::Heartbeat {
             agent_id: self.agent_id,
             cpu,
             memory,
+            disk,
             at: chrono::Utc::now(),
         });
     }

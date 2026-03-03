@@ -5,6 +5,7 @@ pub mod core;
 pub mod db;
 pub mod error;
 pub mod middleware;
+pub mod terminal;
 pub mod websocket;
 
 // MCP module is internal-only
@@ -26,6 +27,7 @@ pub struct AppState {
     pub rate_limiter: middleware::rate_limit::RateLimitState,
     pub heartbeat_batcher: core::heartbeat_batcher::HeartbeatBatcher,
     pub operation_lock: core::operation_lock::OperationLock,
+    pub terminal_sessions: terminal::TerminalSessionManager,
 }
 
 /// Build a CORS layer based on configuration.

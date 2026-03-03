@@ -139,6 +139,186 @@ async fn handle_client_socket(
                         appcontrol_common::WsClientMessage::Unsubscribe { app_id } => {
                             state_clone.ws_hub.unsubscribe(conn_id, app_id);
                         }
+                        appcontrol_common::WsClientMessage::TerminalStart {
+                            agent_id,
+                            shell,
+                            cols,
+                            rows,
+                        } => {
+                            // Terminal access is admin-only
+                            if !is_admin {
+                                tracing::warn!(
+                                    user_id = %user_id,
+                                    agent_id = %agent_id,
+                                    "Terminal access DENIED — admin only"
+                                );
+                                // Send error back to client
+                                let error_event = appcontrol_common::WsEvent::TerminalError {
+                                    session_id: uuid::Uuid::nil(),
+                                    error: "Terminal access requires administrator privileges".to_string(),
+                                };
+                                if let Ok(json) = serde_json::to_string(&error_event) {
+                                    state_clone.ws_hub.send_to_connection(conn_id, json);
+                                }
+                                continue;
+                            }
+
+                            // Check if agent is connected
+                            if !state_clone.ws_hub.is_agent_connected(agent_id) {
+                                tracing::warn!(
+                                    user_id = %user_id,
+                                    agent_id = %agent_id,
+                                    "Terminal start failed — agent not connected"
+                                );
+                                let error_event = appcontrol_common::WsEvent::TerminalError {
+                                    session_id: uuid::Uuid::nil(),
+                                    error: "Agent is not connected".to_string(),
+                                };
+                                if let Ok(json) = serde_json::to_string(&error_event) {
+                                    state_clone.ws_hub.send_to_connection(conn_id, json);
+                                }
+                                continue;
+                            }
+
+                            // Create session
+                            let (session_id, request_id) = state_clone.terminal_sessions.create_session(
+                                agent_id,
+                                conn_id,
+                                user_id,
+                            );
+
+                            // Log the action
+                            let _ = crate::middleware::audit::log_action(
+                                &state_clone.db,
+                                user_id,
+                                "terminal_start",
+                                "agent",
+                                agent_id,
+                                serde_json::json!({
+                                    "session_id": session_id,
+                                    "shell": shell,
+                                }),
+                            )
+                            .await;
+
+                            // Send StartTerminal to agent
+                            let start_msg = appcontrol_common::BackendMessage::StartTerminal {
+                                request_id,
+                                shell,
+                                cols,
+                                rows,
+                                env: std::collections::HashMap::new(),
+                            };
+
+                            if state_clone.ws_hub.send_to_agent(agent_id, start_msg) {
+                                // Send TerminalStarted to frontend
+                                let started_event = appcontrol_common::WsEvent::TerminalStarted {
+                                    session_id,
+                                    agent_id,
+                                };
+                                if let Ok(json) = serde_json::to_string(&started_event) {
+                                    state_clone.ws_hub.send_to_connection(conn_id, json);
+                                }
+                                tracing::info!(
+                                    session_id = %session_id,
+                                    agent_id = %agent_id,
+                                    user_id = %user_id,
+                                    "Terminal session started"
+                                );
+                            } else {
+                                // Failed to send to agent
+                                state_clone.terminal_sessions.remove_session(session_id);
+                                let error_event = appcontrol_common::WsEvent::TerminalError {
+                                    session_id,
+                                    error: "Failed to send command to agent".to_string(),
+                                };
+                                if let Ok(json) = serde_json::to_string(&error_event) {
+                                    state_clone.ws_hub.send_to_connection(conn_id, json);
+                                }
+                            }
+                        }
+                        appcontrol_common::WsClientMessage::TerminalInput { session_id, data } => {
+                            // Decode base64 input
+                            let bytes = match base64::Engine::decode(
+                                &base64::engine::general_purpose::STANDARD,
+                                &data,
+                            ) {
+                                Ok(b) => b,
+                                Err(_) => {
+                                    tracing::debug!(session_id = %session_id, "Invalid base64 terminal input");
+                                    continue;
+                                }
+                            };
+
+                            // Look up session
+                            if let Some(session) = state_clone.terminal_sessions.get_session(session_id) {
+                                // Verify this connection owns the session
+                                if session.conn_id != conn_id {
+                                    tracing::warn!(
+                                        session_id = %session_id,
+                                        "Terminal input from wrong connection"
+                                    );
+                                    continue;
+                                }
+
+                                state_clone.terminal_sessions.touch_session(session_id);
+
+                                // Forward to agent
+                                let input_msg = appcontrol_common::BackendMessage::TerminalInput {
+                                    request_id: session.request_id,
+                                    data: bytes,
+                                };
+                                state_clone.ws_hub.send_to_agent(session.agent_id, input_msg);
+                            }
+                        }
+                        appcontrol_common::WsClientMessage::TerminalResize { session_id, cols, rows } => {
+                            if let Some(session) = state_clone.terminal_sessions.get_session(session_id) {
+                                if session.conn_id != conn_id {
+                                    continue;
+                                }
+
+                                state_clone.terminal_sessions.touch_session(session_id);
+
+                                let resize_msg = appcontrol_common::BackendMessage::TerminalResize {
+                                    request_id: session.request_id,
+                                    cols,
+                                    rows,
+                                };
+                                state_clone.ws_hub.send_to_agent(session.agent_id, resize_msg);
+                            }
+                        }
+                        appcontrol_common::WsClientMessage::TerminalClose { session_id } => {
+                            if let Some(session) = state_clone.terminal_sessions.remove_session(session_id) {
+                                if session.conn_id != conn_id {
+                                    // Put it back - wrong connection
+                                    continue;
+                                }
+
+                                // Log the action
+                                let _ = crate::middleware::audit::log_action(
+                                    &state_clone.db,
+                                    user_id,
+                                    "terminal_close",
+                                    "agent",
+                                    session.agent_id,
+                                    serde_json::json!({
+                                        "session_id": session_id,
+                                    }),
+                                )
+                                .await;
+
+                                // Send close to agent
+                                let close_msg = appcontrol_common::BackendMessage::TerminalClose {
+                                    request_id: session.request_id,
+                                };
+                                state_clone.ws_hub.send_to_agent(session.agent_id, close_msg);
+
+                                tracing::info!(
+                                    session_id = %session_id,
+                                    "Terminal session closed by user"
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -232,6 +412,33 @@ async fn process_gateway_message(
             zone,
             version,
         } => {
+            // ── Gateway active check ──
+            // If the gateway is blocked (is_active = false), reject the connection.
+            let is_active: bool = sqlx::query_scalar(
+                "SELECT COALESCE(is_active, true) FROM gateways WHERE id = $1",
+            )
+            .bind(gateway_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(true); // Default to active if gateway doesn't exist (first-time registration)
+
+            if !is_active {
+                tracing::warn!(
+                    gateway_id = %gateway_id,
+                    "REJECTED: gateway is blocked (is_active = false)"
+                );
+                // Send disconnect message to the gateway
+                let disconnect = appcontrol_common::GatewayEnvelope::DisconnectGateway {
+                    reason: "Gateway has been blocked by administrator".to_string(),
+                };
+                if let Ok(json) = serde_json::to_string(&disconnect) {
+                    let _ = gw_tx.send(json);
+                }
+                return;
+            }
+
             tracing::info!(
                 gateway_id = %gateway_id,
                 name = ?name,
@@ -252,13 +459,13 @@ async fn process_gateway_message(
 
             // Auto-register/update gateway in database (upsert)
             // This ensures the gateway appears in the UI even if not pre-created
+            // Note: We only update last_heartbeat_at, NOT is_active (admin controls that)
             if let Err(e) = sqlx::query(
                 r#"INSERT INTO gateways (id, organization_id, name, zone, is_active, last_heartbeat_at)
                    VALUES ($1, (SELECT id FROM organizations LIMIT 1), $2, $3, true, now())
                    ON CONFLICT (id) DO UPDATE SET
                        name = EXCLUDED.name,
                        zone = EXCLUDED.zone,
-                       is_active = true,
                        last_heartbeat_at = now()"#,
             )
             .bind(gateway_id)
@@ -276,12 +483,41 @@ async fn process_gateway_message(
         appcontrol_common::GatewayMessage::AgentConnected {
             agent_id,
             hostname,
+            version,
             cert_fingerprint,
             cert_cn,
         } => {
             // Copy the value out and drop the MutexGuard before any .await
             let gw_id = { *gateway_id_cell.lock().unwrap() };
             if let Some(gw_id) = gw_id {
+                // ── Agent active check ──
+                // If the agent is blocked (is_active = false), reject the connection.
+                let is_active: bool = sqlx::query_scalar(
+                    "SELECT COALESCE(is_active, true) FROM agents WHERE id = $1",
+                )
+                .bind(agent_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(true); // Default to active if agent doesn't exist (first-time registration)
+
+                if !is_active {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        "REJECTED: agent is blocked (is_active = false)"
+                    );
+                    // Register route temporarily so we can send the disconnect message
+                    state.ws_hub.register_agent_route(agent_id, gw_id);
+                    let disconnect = appcontrol_common::BackendMessage::DisconnectAgent {
+                        agent_id,
+                        reason: "Agent has been blocked by administrator".to_string(),
+                    };
+                    state.ws_hub.send_to_agent(agent_id, disconnect);
+                    state.ws_hub.unregister_agent_route(agent_id);
+                    return;
+                }
+
                 // ── Certificate revocation check ──
                 // If the agent presents a cert fingerprint, check if it's been revoked.
                 if let Some(ref fp) = cert_fingerprint {
@@ -299,12 +535,14 @@ async fn process_gateway_message(
                             fingerprint = %fp,
                             "REJECTED: agent presented a revoked certificate"
                         );
-                        // Order the gateway to disconnect this agent
+                        // Register route temporarily so we can send the disconnect message
+                        state.ws_hub.register_agent_route(agent_id, gw_id);
                         let disconnect = appcontrol_common::BackendMessage::DisconnectAgent {
                             agent_id,
                             reason: "Certificate has been revoked".to_string(),
                         };
                         state.ws_hub.send_to_agent(agent_id, disconnect);
+                        state.ws_hub.unregister_agent_route(agent_id);
                         return;
                     }
                 }
@@ -329,12 +567,15 @@ async fn process_gateway_message(
                                 presented = %fp,
                                 "REJECTED: agent cert fingerprint mismatch (possible impersonation)"
                             );
+                            // Register route temporarily so we can send the disconnect message
+                            state.ws_hub.register_agent_route(agent_id, gw_id);
                             let disconnect = appcontrol_common::BackendMessage::DisconnectAgent {
                                 agent_id,
                                 reason: "Certificate fingerprint does not match enrolled identity"
                                     .to_string(),
                             };
                             state.ws_hub.send_to_agent(agent_id, disconnect);
+                            state.ws_hub.unregister_agent_route(agent_id);
                             return;
                         }
                     }
@@ -352,11 +593,12 @@ async fn process_gateway_message(
                 // Push component config to the agent so its scheduler starts health checks.
                 send_config_to_agent(state, agent_id).await;
 
-                // Update agent record: gateway_id, certificate fingerprint
+                // Update agent record: gateway_id, certificate fingerprint, version
                 if let Err(e) = sqlx::query(
                     "UPDATE agents SET gateway_id = $2, \
                      certificate_fingerprint = COALESCE($3, certificate_fingerprint), \
                      certificate_cn = COALESCE($4, certificate_cn), \
+                     version = COALESCE($5, version), \
                      identity_verified = ($3 IS NOT NULL) \
                      WHERE id = $1",
                 )
@@ -364,6 +606,7 @@ async fn process_gateway_message(
                 .bind(gw_id)
                 .bind(&cert_fingerprint)
                 .bind(&cert_cn)
+                .bind(&version)
                 .execute(&state.db)
                 .await
                 {
@@ -387,14 +630,12 @@ async fn process_gateway_message(
             );
             state.ws_hub.unregister_agent_route(agent_id);
 
-            // Clear gateway_id when agent disconnects
-            if let Err(e) = sqlx::query("UPDATE agents SET gateway_id = NULL WHERE id = $1")
-                .bind(agent_id)
-                .execute(&state.db)
-                .await
-            {
-                tracing::warn!(agent_id = %agent_id, "Failed to clear gateway_id: {}", e);
-            }
+            // NOTE: We intentionally do NOT clear gateway_id here.
+            // The agent keeps its gateway association even when temporarily disconnected.
+            // gateway_id is only cleared when:
+            // - Agent is explicitly blocked (POST /agents/:id/block)
+            // - Gateway is deleted (DELETE /gateways/:id)
+            // The "connected" status is determined by the hub's routing table.
         }
     }
 }
@@ -542,16 +783,38 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                 }
             }
         }
-        appcontrol_common::AgentMessage::Heartbeat { agent_id, .. } => {
-            tracing::trace!(agent_id = %agent_id, "Agent heartbeat");
+        appcontrol_common::AgentMessage::Heartbeat { agent_id, cpu, memory, disk, .. } => {
+            tracing::trace!(agent_id = %agent_id, cpu = %cpu, memory = %memory, disk = ?disk, "Agent heartbeat");
             // Batch heartbeat update — flushed every 5s instead of 1 SQL per heartbeat.
             // At 2500 agents this reduces PostgreSQL writes from 2500/min to ~12/min.
             state.heartbeat_batcher.record(agent_id).await;
+
+            // Store metrics for time-series graphing (sample every heartbeat)
+            if let Err(e) = sqlx::query(
+                "INSERT INTO agent_metrics (agent_id, cpu_pct, memory_pct, disk_used_pct) VALUES ($1, $2, $3, $4)"
+            )
+            .bind(agent_id)
+            .bind(cpu)
+            .bind(memory)
+            .bind(disk)
+            .execute(&state.db)
+            .await
+            {
+                // Don't fail on metrics insert - just log warning
+                tracing::warn!(agent_id = %agent_id, "Failed to insert agent metrics: {}", e);
+            }
         }
         appcontrol_common::AgentMessage::Register {
             agent_id,
             hostname,
             ip_addresses,
+            version,
+            os_name,
+            os_version,
+            cpu_arch,
+            cpu_cores,
+            total_memory_mb,
+            disk_total_gb,
             cert_fingerprint,
             ..
         } => {
@@ -560,19 +823,34 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                 hostname = %hostname,
                 ip_count = ip_addresses.len(),
                 has_cert = cert_fingerprint.is_some(),
+                os = ?os_name,
                 "Agent registered via gateway"
             );
-            // Update agent record with hostname, IPs, version, and heartbeat
+            // Update agent record with hostname, IPs, version, system info, and heartbeat
             if let Err(e) = sqlx::query(
                 "UPDATE agents SET hostname = $2, ip_addresses = $3, last_heartbeat_at = now(), \
                  is_active = true, \
-                 certificate_fingerprint = COALESCE($4, certificate_fingerprint), \
-                 identity_verified = ($4 IS NOT NULL) \
+                 version = COALESCE($4, version), \
+                 os_name = COALESCE($5, os_name), \
+                 os_version = COALESCE($6, os_version), \
+                 cpu_arch = COALESCE($7, cpu_arch), \
+                 cpu_cores = COALESCE($8, cpu_cores), \
+                 total_memory_mb = COALESCE($9, total_memory_mb), \
+                 disk_total_gb = COALESCE($10, disk_total_gb), \
+                 certificate_fingerprint = COALESCE($11, certificate_fingerprint), \
+                 identity_verified = ($11 IS NOT NULL) \
                  WHERE id = $1",
             )
             .bind(agent_id)
             .bind(&hostname)
             .bind(serde_json::json!(&ip_addresses))
+            .bind(&version)
+            .bind(&os_name)
+            .bind(&os_version)
+            .bind(&cpu_arch)
+            .bind(cpu_cores.map(|c| c as i32))
+            .bind(total_memory_mb.map(|m| m as i64))
+            .bind(disk_total_gb.map(|d| d as i64))
             .bind(&cert_fingerprint)
             .execute(&state.db)
             .await
@@ -680,6 +958,54 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             .bind(error.as_deref())
             .execute(&state.db)
             .await;
+        }
+        appcontrol_common::AgentMessage::TerminalOutput { request_id, data } => {
+            // Look up session by request_id and forward to frontend connection
+            if let Some(session_id) = state.terminal_sessions.get_session_id_by_request(request_id) {
+                if let Some(session) = state.terminal_sessions.get_session(session_id) {
+                    state.terminal_sessions.touch_session(session_id);
+
+                    // Base64 encode the binary data for JSON transmission
+                    use base64::Engine;
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+
+                    let output_event = appcontrol_common::WsEvent::TerminalOutput {
+                        session_id,
+                        data: encoded,
+                    };
+
+                    if let Ok(json) = serde_json::to_string(&output_event) {
+                        state.ws_hub.send_to_connection(session.conn_id, json);
+                    }
+                }
+            } else {
+                // Session not found - might have been closed
+                tracing::debug!(
+                    request_id = %request_id,
+                    "Terminal output received for unknown session"
+                );
+            }
+        }
+        appcontrol_common::AgentMessage::TerminalExit { request_id, exit_code } => {
+            // Look up and remove session
+            if let Some(session_id) = state.terminal_sessions.get_session_id_by_request(request_id) {
+                if let Some(session) = state.terminal_sessions.remove_session(session_id) {
+                    tracing::info!(
+                        session_id = %session_id,
+                        exit_code = exit_code,
+                        "Terminal session ended"
+                    );
+
+                    let exit_event = appcontrol_common::WsEvent::TerminalExit {
+                        session_id,
+                        exit_code,
+                    };
+
+                    if let Ok(json) = serde_json::to_string(&exit_event) {
+                        state.ws_hub.send_to_connection(session.conn_id, json);
+                    }
+                }
+            }
         }
     }
 }
