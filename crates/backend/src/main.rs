@@ -93,7 +93,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Export PKI CA and gateway certificates to shared volume (for mTLS).
     // This runs if CERT_EXPORT_PATH is set (e.g., /certs in docker-compose).
-    if let Err(e) = appcontrol_backend::api::pki_export::export_certs_to_volume_if_configured(&pool).await {
+    if let Err(e) =
+        appcontrol_backend::api::pki_export::export_certs_to_volume_if_configured(&pool).await
+    {
         tracing::warn!("Failed to export certificates to volume: {}", e);
     }
 
