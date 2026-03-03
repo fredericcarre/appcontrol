@@ -360,8 +360,12 @@ async fn main() -> anyhow::Result<()> {
                     .serve_connection_with_upgrades(io, service)
                     .await;
                     match result {
-                        Ok(()) => tracing::debug!(peer = %peer_addr, "Connection completed normally"),
-                        Err(e) => tracing::debug!(peer = %peer_addr, error = %e, "Connection ended with error"),
+                        Ok(()) => {
+                            tracing::debug!(peer = %peer_addr, "Connection completed normally")
+                        }
+                        Err(e) => {
+                            tracing::debug!(peer = %peer_addr, error = %e, "Connection ended with error")
+                        }
                     }
                 }
                 Err(e) => {
@@ -459,7 +463,10 @@ async fn agent_ws_handler(
 ) -> impl IntoResponse {
     use axum::http::StatusCode;
 
-    tracing::debug!("agent_ws_handler called, client_cert_opt = {:?}", client_cert_opt.as_ref().map(|e| &e.0));
+    tracing::debug!(
+        "agent_ws_handler called, client_cert_opt = {:?}",
+        client_cert_opt.as_ref().map(|e| &e.0)
+    );
 
     let client_cert = client_cert_opt
         .map(|e| e.0)

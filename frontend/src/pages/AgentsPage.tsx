@@ -1,4 +1,4 @@
-import { useAgents, type Agent } from '@/api/reports';
+import { useAgents, type Agent } from '@/api/agents';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -51,7 +51,7 @@ export function AgentsPage() {
                     </TableCell>
                     <TableCell>{agent.hostname || '-'}</TableCell>
                     <TableCell>
-                      {agent.status === 'connected' ? (
+                      {agent.connected ? (
                         <Badge variant="running" className="gap-1">
                           <Wifi className="h-3 w-3" /> Connected
                         </Badge>
@@ -63,7 +63,7 @@ export function AgentsPage() {
                     </TableCell>
                     <TableCell className="text-muted-foreground">{agent.version || '-'}</TableCell>
                     <TableCell className="text-muted-foreground text-sm">
-                      {agent.last_heartbeat ? new Date(agent.last_heartbeat).toLocaleString() : '-'}
+                      {agent.last_heartbeat_at ? new Date(agent.last_heartbeat_at).toLocaleString() : '-'}
                     </TableCell>
                   </TableRow>
                 ))
