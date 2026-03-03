@@ -102,7 +102,50 @@ export function AgentTerminal({
       resizeObserver.disconnect();
       term.dispose();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
+
+  // Handle incoming WebSocket messages
+  const handleWsMessage = useCallback(
+    (msg: { type: string; payload: Record<string, unknown> }) => {
+      switch (msg.type) {
+        case 'TerminalStarted':
+          setStatus('connected');
+          if (xtermRef.current) {
+            xtermRef.current.clear();
+            xtermRef.current.focus();
+          }
+          onSessionStart();
+          break;
+
+        case 'TerminalOutput':
+          if (xtermRef.current && msg.payload.data) {
+            // Decode base64 data
+            const decoded = atob(msg.payload.data as string);
+            xtermRef.current.write(decoded);
+          }
+          break;
+
+        case 'TerminalExit':
+          setStatus('disconnected');
+          if (xtermRef.current) {
+            const exitCode = msg.payload.exit_code as number;
+            xtermRef.current.writeln(`\r\n\x1b[33mSession ended (exit code: ${exitCode})\x1b[0m`);
+          }
+          onSessionEnd();
+          break;
+
+        case 'TerminalError':
+          setStatus('disconnected');
+          if (xtermRef.current) {
+            xtermRef.current.writeln(`\r\n\x1b[31mError: ${msg.payload.error}\x1b[0m`);
+          }
+          onSessionEnd();
+          break;
+      }
+    },
+    [onSessionStart, onSessionEnd]
+  );
 
   // WebSocket connection
   useEffect(() => {
@@ -159,49 +202,7 @@ export function AgentTerminal({
     return () => {
       ws.close();
     };
-  }, [token, agentId, shell]);
-
-  // Handle incoming WebSocket messages
-  const handleWsMessage = useCallback(
-    (msg: { type: string; payload: Record<string, unknown> }) => {
-      switch (msg.type) {
-        case 'TerminalStarted':
-          setStatus('connected');
-          if (xtermRef.current) {
-            xtermRef.current.clear();
-            xtermRef.current.focus();
-          }
-          onSessionStart();
-          break;
-
-        case 'TerminalOutput':
-          if (xtermRef.current && msg.payload.data) {
-            // Decode base64 data
-            const decoded = atob(msg.payload.data as string);
-            xtermRef.current.write(decoded);
-          }
-          break;
-
-        case 'TerminalExit':
-          setStatus('disconnected');
-          if (xtermRef.current) {
-            const exitCode = msg.payload.exit_code as number;
-            xtermRef.current.writeln(`\r\n\x1b[33mSession ended (exit code: ${exitCode})\x1b[0m`);
-          }
-          onSessionEnd();
-          break;
-
-        case 'TerminalError':
-          setStatus('disconnected');
-          if (xtermRef.current) {
-            xtermRef.current.writeln(`\r\n\x1b[31mError: ${msg.payload.error}\x1b[0m`);
-          }
-          onSessionEnd();
-          break;
-      }
-    },
-    [onSessionStart, onSessionEnd]
-  );
+  }, [token, agentId, shell, handleWsMessage, onSessionEnd]);
 
   // Handle user input
   useEffect(() => {

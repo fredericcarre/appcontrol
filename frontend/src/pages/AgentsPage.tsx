@@ -50,7 +50,6 @@ import {
   MemoryStick,
   ChevronDown,
   ChevronRight,
-  Activity,
   Terminal,
 } from 'lucide-react';
 import { TerminalModal } from '@/components/terminal/TerminalModal';
