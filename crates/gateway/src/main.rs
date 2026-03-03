@@ -7,7 +7,7 @@ mod win_service;
 use axum::{
     extract::{ws, Extension, State},
     http::HeaderMap,
-    response::{IntoResponse, Json, Response},
+    response::{IntoResponse, Json},
     routing::{get, post},
     Router,
 };
@@ -450,7 +450,7 @@ async fn agent_ws_handler(
     Extension(client_cert): Extension<ClientCertFingerprint>,
     ws: ws::WebSocketUpgrade,
     State(state): State<Arc<GatewayState>>,
-) -> axum::response::Response {
+) -> impl IntoResponse {
     use axum::http::StatusCode;
 
     // Priority for client cert fingerprint:
