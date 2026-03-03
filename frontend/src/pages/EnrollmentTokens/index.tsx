@@ -215,10 +215,7 @@ gateway:
 backend:
   url: ${backendWsUrl}
   reconnect_interval_secs: 5
-"@ | Out-File -FilePath gateway.yaml -Encoding UTF8
-
-# Start with config
-.\\appcontrol-gateway${ext} --config gateway.yaml`
+"@ | Out-File -FilePath gateway.yaml -Encoding UTF8`
         : `# Create gateway config file
 cat > gateway.yaml << 'EOF'
 gateway:
@@ -230,10 +227,13 @@ gateway:
 backend:
   url: ${backendWsUrl}
   reconnect_interval_secs: 5
-EOF
+EOF`;
 
-# Start with config
-./appcontrol-gateway --config gateway.yaml`;
+      // For gateway, the enrollCmd already includes start instructions
+      // but we separate them for clarity
+      const startCmd = isWindows
+        ? `.\\appcontrol-gateway${ext} --config gateway.yaml`
+        : `./appcontrol-gateway --config gateway.yaml`;
 
       const serviceCmd = isWindows
         ? `# Install as Windows service (run as Administrator)
@@ -257,7 +257,7 @@ WantedBy=multi-user.target
 EOF
 sudo systemctl enable --now appcontrol-gateway`;
 
-      return { downloadCmd, enrollCmd, serviceCmd };
+      return { downloadCmd, enrollCmd, startCmd, serviceCmd };
     } else {
       // Agent enrollment commands
       const downloadCmd = isWindows
@@ -271,12 +271,19 @@ sudo systemctl enable --now appcontrol-gateway`;
         ? `.\\appcontrol-agent${ext} --enroll "${agentGatewayUrl}" --token "${token.token}" --enroll-dir .`
         : `./appcontrol-agent --enroll "${agentGatewayUrl}" --token "${token.token}" --enroll-dir .`;
 
+      // Start command (run after enrollment to test)
+      const startCmd = isWindows
+        ? `.\\appcontrol-agent${ext} --config agent.yaml`
+        : `./appcontrol-agent --config agent.yaml`;
+
       const serviceCmd = isWindows
         ? `# Install as Windows service (run as Administrator)
 New-Service -Name "AppControlAgent" -BinaryPathName "$(Get-Location)\\appcontrol-agent${ext} --config agent.yaml" -StartupType Automatic
 Start-Service AppControlAgent`
         : `# Install as systemd service (Linux)
 sudo mv appcontrol-agent /usr/local/bin/
+sudo mkdir -p /etc/appcontrol
+sudo mv agent.yaml /etc/appcontrol/agent.yaml
 sudo tee /etc/systemd/system/appcontrol-agent.service > /dev/null << 'EOF'
 [Unit]
 Description=AppControl Agent
@@ -291,11 +298,11 @@ WantedBy=multi-user.target
 EOF
 sudo systemctl enable --now appcontrol-agent`;
 
-      return { downloadCmd, enrollCmd, serviceCmd };
+      return { downloadCmd, enrollCmd, startCmd, serviceCmd };
     }
   };
 
-  const { downloadCmd, enrollCmd, serviceCmd } = generateCommands();
+  const { downloadCmd, enrollCmd, startCmd, serviceCmd } = generateCommands();
 
   const handleCopyToken = async () => {
     await navigator.clipboard.writeText(token.token);
@@ -392,11 +399,15 @@ sudo systemctl enable --now appcontrol-agent`;
               command={downloadCmd}
             />
             <CopyCommandButton
-              label="2. Enroll"
+              label={token.scope === 'gateway' ? '2. Create config' : '2. Enroll'}
               command={enrollCmd}
             />
             <CopyCommandButton
-              label="3. Install as service (optional)"
+              label="3. Start"
+              command={startCmd}
+            />
+            <CopyCommandButton
+              label="4. Install as service (optional)"
               command={serviceCmd}
             />
           </div>
