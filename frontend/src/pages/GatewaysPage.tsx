@@ -43,6 +43,9 @@ import {
   Star,
   AlertTriangle,
   Clock,
+  Plus,
+  Copy,
+  CheckCircle2,
 } from 'lucide-react';
 
 function formatTimeAgo(dateStr: string | null): string {
@@ -55,7 +58,17 @@ function formatTimeAgo(dateStr: string | null): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
-function getRoleBadge(gateway: Gateway) {
+function getRoleBadge(gateway: Gateway, isSingleGateway: boolean = false) {
+  // When there's only 1 gateway, don't show "Failover Active" - it's misleading
+  // Instead show "Active" since it's the only gateway
+  if (isSingleGateway && gateway.role === 'failover_active') {
+    return (
+      <Badge variant="default" className="gap-1 bg-green-600 hover:bg-green-700">
+        Active
+      </Badge>
+    );
+  }
+
   switch (gateway.role) {
     case 'primary':
       return (
@@ -113,6 +126,7 @@ function getConnectionBadge(gateway: Gateway) {
 interface GatewayItemProps {
   gateway: Gateway;
   isAdmin: boolean;
+  isSingleGateway: boolean;
   onSuspend: (gateway: Gateway) => void;
   onActivate: (gateway: Gateway) => void;
   onSetPrimary: (gateway: Gateway) => void;
@@ -122,6 +136,7 @@ interface GatewayItemProps {
 function GatewayItem({
   gateway,
   isAdmin,
+  isSingleGateway,
   onSuspend,
   onActivate,
   onSetPrimary,
@@ -142,7 +157,7 @@ function GatewayItem({
         <Network className="h-4 w-4 text-muted-foreground shrink-0" />
         <span className="font-medium">{gateway.name}</span>
         <div className="flex items-center gap-2 ml-auto">
-          {getRoleBadge(gateway)}
+          {getRoleBadge(gateway, isSingleGateway)}
           {getConnectionBadge(gateway)}
           <span className="text-xs text-muted-foreground flex items-center gap-1">
             <Clock className="h-3 w-3" />
@@ -237,52 +252,163 @@ interface ZoneCardProps {
 
 function ZoneCard({ zone, isAdmin, onSuspend, onActivate, onSetPrimary, onDelete }: ZoneCardProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [showAddFailover, setShowAddFailover] = useState(false);
+  const [copied, setCopied] = useState(false);
   const connectedCount = zone.gateways.filter((g) => g.connected).length;
+  // Only show failover alert when there are 2+ gateways (actual HA setup)
+  const showFailoverAlert = zone.failover_active && zone.gateway_count >= 2;
+  // Single gateway - suggest adding redundancy
+  const singleGateway = zone.gateway_count === 1;
+
+  const failoverCommand = `GATEWAY_NAME=gateway-${zone.zone}-standby \\
+GATEWAY_ZONE=${zone.zone} \\
+LISTEN_PORT=4443 \\
+BACKEND_URL=wss://your-backend:443/ws/gateway \\
+./appcontrol-gateway`;
+
+  const copyCommand = () => {
+    navigator.clipboard.writeText(failoverCommand.replace(/\\\n/g, ' '));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
-    <Card className={zone.failover_active ? 'border-orange-300 dark:border-orange-800' : ''}>
-      <CardHeader
-        className="cursor-pointer hover:bg-muted/50 transition-colors"
-        onClick={() => setCollapsed(!collapsed)}
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" className="h-6 w-6">
-              {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </Button>
-            <CardTitle className="text-lg">{zone.zone}</CardTitle>
-            <Badge variant="secondary">
-              {zone.gateway_count} gateway{zone.gateway_count !== 1 ? 's' : ''}
-            </Badge>
-          </div>
-          <div className="flex items-center gap-2">
-            {zone.failover_active && (
-              <Badge variant="destructive" className="gap-1">
-                <AlertTriangle className="h-3 w-3" /> Failover Active
+    <>
+      <Card className={showFailoverAlert ? 'border-orange-300 dark:border-orange-800' : ''}>
+        <CardHeader
+          className="cursor-pointer hover:bg-muted/50 transition-colors"
+          onClick={() => setCollapsed(!collapsed)}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" size="icon" className="h-6 w-6">
+                {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </Button>
+              <CardTitle className="text-lg">{zone.zone}</CardTitle>
+              <Badge variant="secondary">
+                {zone.gateway_count} gateway{zone.gateway_count !== 1 ? 's' : ''}
               </Badge>
-            )}
-            <span className="text-sm text-muted-foreground">
-              {connectedCount}/{zone.gateway_count} online
-            </span>
+              {singleGateway && (
+                <Badge variant="outline" className="gap-1 text-muted-foreground">
+                  No redundancy
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {showFailoverAlert && (
+                <Badge variant="destructive" className="gap-1">
+                  <AlertTriangle className="h-3 w-3" /> Failover Active
+                </Badge>
+              )}
+              <span className="text-sm text-muted-foreground">
+                {connectedCount}/{zone.gateway_count} online
+              </span>
+            </div>
           </div>
-        </div>
-      </CardHeader>
-      {!collapsed && (
-        <CardContent className="pt-0">
-          {zone.gateways.map((gateway) => (
-            <GatewayItem
-              key={gateway.id}
-              gateway={gateway}
-              isAdmin={isAdmin}
-              onSuspend={onSuspend}
-              onActivate={onActivate}
-              onSetPrimary={onSetPrimary}
-              onDelete={onDelete}
-            />
-          ))}
-        </CardContent>
-      )}
-    </Card>
+        </CardHeader>
+        {!collapsed && (
+          <CardContent className="pt-0">
+            {zone.gateways.map((gateway) => (
+              <GatewayItem
+                key={gateway.id}
+                gateway={gateway}
+                isAdmin={isAdmin}
+                isSingleGateway={singleGateway}
+                onSuspend={onSuspend}
+                onActivate={onActivate}
+                onSetPrimary={onSetPrimary}
+                onDelete={onDelete}
+              />
+            ))}
+            {singleGateway && (
+              <div className="mt-4 ml-4 p-3 border border-dashed rounded-md flex items-center justify-between">
+                <div className="text-sm text-muted-foreground">
+                  Add a standby gateway for automatic failover
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowAddFailover(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4" /> Add Failover Gateway
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        )}
+      </Card>
+
+      {/* Add Failover Gateway Dialog */}
+      <Dialog open={showAddFailover} onOpenChange={setShowAddFailover}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="h-5 w-5" />
+              Add Failover Gateway to "{zone.zone}"
+            </DialogTitle>
+            <DialogDescription>
+              Deploy a standby gateway on a separate server for automatic failover when the primary goes offline.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <h4 className="font-medium mb-2">1. Download the gateway binary</h4>
+              <p className="text-sm text-muted-foreground">
+                Download the same <code className="bg-muted px-1 rounded">appcontrol-gateway</code> binary used for the primary gateway.
+              </p>
+            </div>
+            <div>
+              <h4 className="font-medium mb-2">2. Copy certificates</h4>
+              <p className="text-sm text-muted-foreground">
+                Copy the TLS certificates from the primary gateway or generate new ones signed by the same PKI CA.
+              </p>
+            </div>
+            <div>
+              <h4 className="font-medium mb-2">3. Start with standby configuration</h4>
+              <p className="text-sm text-muted-foreground mb-2">
+                Use the same zone name but a different gateway name:
+              </p>
+              <div className="relative">
+                <pre className="bg-muted p-3 rounded-md text-sm font-mono overflow-x-auto">
+                  {failoverCommand}
+                </pre>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute top-2 right-2 gap-1"
+                  onClick={copyCommand}
+                >
+                  {copied ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 text-green-500" /> Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4" /> Copy
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-medium mb-2">4. Verify registration</h4>
+              <p className="text-sm text-muted-foreground">
+                The new gateway will appear here as "Standby". If the primary goes offline, it will automatically become "Failover Active".
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddFailover(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -329,7 +455,8 @@ export function GatewaysPage() {
     (sum, z) => sum + z.gateways.filter((g) => g.connected).length,
     0
   );
-  const failoverZones = zoneList.filter((z) => z.failover_active);
+  // Only count failover zones that have 2+ gateways (actual HA setups)
+  const failoverZones = zoneList.filter((z) => z.failover_active && z.gateway_count >= 2);
 
   return (
     <div className="space-y-6">
