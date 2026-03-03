@@ -348,16 +348,20 @@ async fn main() -> anyhow::Result<()> {
                         app.layer(Extension(ClientCertFingerprint(fingerprint)));
 
                     // Serve the connection using hyper + axum with the TLS stream
+                    // NOTE: serve_connection_with_upgrades is REQUIRED for WebSocket connections.
+                    // Without it, hyper closes the connection after the 101 response.
+                    tracing::debug!(peer = %peer_addr, "Serving HTTP connection");
                     let io = hyper_util::rt::TokioIo::new(tls_stream);
                     let service =
                         hyper_util::service::TowerToHyperService::new(app_with_fingerprint);
-                    if let Err(e) = hyper_util::server::conn::auto::Builder::new(
+                    let result = hyper_util::server::conn::auto::Builder::new(
                         hyper_util::rt::TokioExecutor::new(),
                     )
-                    .serve_connection(io, service)
-                    .await
-                    {
-                        tracing::debug!("Connection from {} ended: {}", peer_addr, e);
+                    .serve_connection_with_upgrades(io, service)
+                    .await;
+                    match result {
+                        Ok(()) => tracing::debug!(peer = %peer_addr, "Connection completed normally"),
+                        Err(e) => tracing::debug!(peer = %peer_addr, error = %e, "Connection ended with error"),
                     }
                 }
                 Err(e) => {
@@ -449,11 +453,17 @@ async fn enroll_handler(
 
 async fn agent_ws_handler(
     headers: HeaderMap,
-    Extension(client_cert): Extension<ClientCertFingerprint>,
+    client_cert_opt: Option<Extension<ClientCertFingerprint>>,
     ws: ws::WebSocketUpgrade,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
     use axum::http::StatusCode;
+
+    tracing::debug!("agent_ws_handler called, client_cert_opt = {:?}", client_cert_opt.as_ref().map(|e| &e.0));
+
+    let client_cert = client_cert_opt
+        .map(|e| e.0)
+        .unwrap_or(ClientCertFingerprint(None));
 
     // Priority for client cert fingerprint:
     // 1. From TLS layer (direct mTLS connection)
@@ -535,6 +545,7 @@ async fn handle_agent_connection(
                         }
                     }
 
+                    tracing::debug!(msg = ?agent_msg, "Received message from agent");
                     match &agent_msg {
                         appcontrol_common::AgentMessage::Register {
                             agent_id,
@@ -542,6 +553,7 @@ async fn handle_agent_connection(
                             cert_fingerprint,
                             ..
                         } => {
+                            tracing::info!(agent_id = %agent_id, hostname = %hostname, "Agent registering");
                             // Use the proxy-provided cert fingerprint if available (trusted
                             // header from TLS-terminating proxy), otherwise fall back to
                             // the fingerprint the agent self-reports in the Register message.
@@ -598,11 +610,16 @@ async fn handle_agent_connection(
                 }
             }
         }
+        tracing::debug!(conn_id = %conn_id, "Agent recv_task loop ended");
     });
 
     tokio::select! {
-        _ = send_task => {},
-        _ = recv_task => {},
+        res = send_task => {
+            tracing::debug!(conn_id = %conn_id, result = ?res, "send_task completed first");
+        },
+        res = recv_task => {
+            tracing::debug!(conn_id = %conn_id, result = ?res, "recv_task completed first");
+        },
     }
 
     // Cleanup: unregister agent from registry and router, notify backend
