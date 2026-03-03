@@ -1026,10 +1026,34 @@ fn handle_backend_message(state: &Arc<GatewayState>, text: &str) {
                 }
             };
 
+            // Log message type for debugging
+            let msg_type = match &message {
+                BackendMessage::StartTerminal { .. } => "StartTerminal",
+                BackendMessage::TerminalInput { .. } => "TerminalInput",
+                BackendMessage::TerminalResize { .. } => "TerminalResize",
+                BackendMessage::TerminalClose { .. } => "TerminalClose",
+                BackendMessage::ExecuteCommand { .. } => "ExecuteCommand",
+                BackendMessage::UpdateConfig { .. } => "UpdateConfig",
+                _ => "Other",
+            };
+
+            tracing::debug!(
+                agent_id = %target_agent_id,
+                msg_type = msg_type,
+                "Forwarding message from backend to agent"
+            );
+
             if !state.router.forward_to_agent(target_agent_id, &inner_json) {
                 tracing::warn!(
                     agent_id = %target_agent_id,
+                    msg_type = msg_type,
                     "Failed to route command to agent — not connected to this gateway"
+                );
+            } else {
+                tracing::debug!(
+                    agent_id = %target_agent_id,
+                    msg_type = msg_type,
+                    "Successfully forwarded message to agent"
                 );
             }
         }
