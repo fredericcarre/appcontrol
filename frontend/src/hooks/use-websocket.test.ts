@@ -61,9 +61,11 @@ describe('useWebSocket', () => {
 
     useAuthStore.setState({ token: 'test-token', user: { id: '1', email: 'test@test.com', name: 'Test', org_id: 'org-1', role: 'admin' } });
     useWebSocketStore.setState({
+      rawConnected: false,
       connected: false,
       messages: [],
       subscribedApps: new Set<string>(),
+      _offlineTimer: null,
     });
   });
 
@@ -117,6 +119,13 @@ describe('useWebSocket', () => {
 
     act(() => {
       MockWebSocket.instances[0].simulateClose();
+    });
+
+    // rawConnected updates immediately, connected is debounced by 3 seconds
+    expect(useWebSocketStore.getState().rawConnected).toBe(false);
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
     });
 
     expect(useWebSocketStore.getState().connected).toBe(false);

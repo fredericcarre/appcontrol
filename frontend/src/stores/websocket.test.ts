@@ -1,13 +1,20 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useWebSocketStore } from './websocket';
 
 describe('useWebSocketStore', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     useWebSocketStore.setState({
+      rawConnected: false,
       connected: false,
       messages: [],
       subscribedApps: new Set<string>(),
+      _offlineTimer: null,
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('connection state', () => {
@@ -23,6 +30,9 @@ describe('useWebSocketStore', () => {
     it('should set connected to false', () => {
       useWebSocketStore.getState().setConnected(true);
       useWebSocketStore.getState().setConnected(false);
+      // rawConnected updates immediately, connected is debounced by 3 seconds
+      expect(useWebSocketStore.getState().rawConnected).toBe(false);
+      vi.advanceTimersByTime(3000);
       expect(useWebSocketStore.getState().connected).toBe(false);
     });
   });
