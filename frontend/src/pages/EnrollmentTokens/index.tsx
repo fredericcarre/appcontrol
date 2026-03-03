@@ -264,10 +264,12 @@ sudo systemctl enable --now appcontrol-gateway`;
         ? `Invoke-WebRequest -Uri "${binaryUrl}" -OutFile "appcontrol-agent${ext}"`
         : `curl -fsSL -o appcontrol-agent "${binaryUrl}" && chmod +x appcontrol-agent`;
 
-      // Agent uses --enroll <url> --token <token> syntax
+      // Agent uses --enroll <url> --token <token> --enroll-dir <dir> syntax
+      // Using --enroll-dir . tells the agent to write config/certs to current directory,
+      // avoiding the need for root permissions to write to /var/lib/appcontrol
       const enrollCmd = isWindows
-        ? `.\\appcontrol-agent${ext} --enroll "${agentGatewayUrl}" --token "${token.token}"`
-        : `./appcontrol-agent --enroll "${agentGatewayUrl}" --token "${token.token}"`;
+        ? `.\\appcontrol-agent${ext} --enroll "${agentGatewayUrl}" --token "${token.token}" --enroll-dir .`
+        : `./appcontrol-agent --enroll "${agentGatewayUrl}" --token "${token.token}" --enroll-dir .`;
 
       const serviceCmd = isWindows
         ? `# Install as Windows service (run as Administrator)

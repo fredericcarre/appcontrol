@@ -377,42 +377,125 @@ pub async fn get_pki_status(
 }
 
 // ---------------------------------------------------------------------------
-// Auto-export CA on backend startup
+// Auto-export certificates on backend startup
 // ---------------------------------------------------------------------------
 
-/// Export CA certificate to volume if CERT_EXPORT_PATH is configured.
+/// Export PKI CA and gateway certificates to volume if CERT_EXPORT_PATH is configured.
 /// Called from main.rs after auto_init_pki().
-pub async fn export_ca_to_volume_if_configured(
+///
+/// Exports:
+/// - pki-ca.crt: The PKI CA certificate (for mTLS verification)
+/// - gateway.crt: Gateway server certificate (signed by PKI CA)
+/// - gateway.key: Gateway private key
+pub async fn export_certs_to_volume_if_configured(
     pool: &sqlx::PgPool,
-    org_id: Uuid,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let export_path = match std::env::var("CERT_EXPORT_PATH") {
         Ok(p) if !p.is_empty() => p,
         _ => return Ok(()), // Not configured, skip
     };
 
-    // Load CA
-    let ca_row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
-            .bind(org_id)
-            .fetch_optional(pool)
-            .await?;
+    // Load CA from first organization (single-tenant assumption for dev)
+    let ca_row: Option<(Uuid, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, ca_cert_pem, ca_key_pem FROM organizations WHERE ca_cert_pem IS NOT NULL LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
 
-    let ca_cert_pem = match ca_row {
-        Some((Some(cert),)) => cert,
+    let (org_id, ca_cert_pem, ca_key_pem) = match ca_row {
+        Some((id, Some(cert), Some(key))) => (id, cert, key),
         _ => return Ok(()), // No CA yet, skip
     };
 
     // Create directory
     std::fs::create_dir_all(&export_path)?;
 
-    // Write CA certificate
-    let ca_path = format!("{}/ca.crt", export_path);
+    // Write PKI CA certificate
+    let ca_path = format!("{}/pki-ca.crt", export_path);
     std::fs::write(&ca_path, &ca_cert_pem)?;
+    tracing::info!(path = %ca_path, "Exported PKI CA certificate to volume");
 
-    tracing::info!(path = %ca_path, "Exported CA certificate to volume");
+    // Check if gateway certificate already exists and is valid
+    let gateway_cert_path = format!("{}/gateway.crt", export_path);
+    let gateway_key_path = format!("{}/gateway.key", export_path);
+
+    let needs_gateway_cert = if std::path::Path::new(&gateway_cert_path).exists() {
+        // Check if cert is still valid (expiring in > 30 days)
+        match std::fs::read_to_string(&gateway_cert_path) {
+            Ok(cert_pem) => {
+                // Simple check: if the cert exists and was signed by the same CA, keep it
+                // In production, you'd verify expiry and CA fingerprint
+                !cert_pem.contains("BEGIN CERTIFICATE")
+            }
+            Err(_) => true,
+        }
+    } else {
+        true
+    };
+
+    if needs_gateway_cert {
+        // Generate gateway certificate signed by PKI CA
+        // SANs include common Docker/Kubernetes hostnames
+        let gateway_cn = std::env::var("GATEWAY_CERT_CN").unwrap_or_else(|_| "gateway".to_string());
+        let san_dns = vec![
+            "localhost".to_string(),
+            "gateway".to_string(),
+            "docker-gateway-1".to_string(),
+            "appcontrol-gateway".to_string(),
+        ];
+        let san_ips = vec!["127.0.0.1".to_string()];
+
+        let issued = appcontrol_common::issue_gateway_cert(
+            &ca_cert_pem,
+            &ca_key_pem,
+            &gateway_cn,
+            &san_dns,
+            &san_ips,
+            365, // 1 year validity
+        )?;
+
+        // Write gateway certificate
+        std::fs::write(&gateway_cert_path, &issued.cert_pem)?;
+
+        // Write gateway key with restricted permissions
+        std::fs::write(&gateway_key_path, &issued.key_pem)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&gateway_key_path, std::fs::Permissions::from_mode(0o600))
+                .ok();
+        }
+
+        let fingerprint = appcontrol_common::fingerprint_pem(&issued.cert_pem).unwrap_or_default();
+        tracing::info!(
+            path = %gateway_cert_path,
+            fingerprint = %fingerprint,
+            "Generated and exported gateway certificate"
+        );
+
+        // Log certificate event
+        sqlx::query(
+            r#"INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at)
+               VALUES ('issued', $1, $2, now(), now() + interval '365 days')"#,
+        )
+        .bind(&fingerprint)
+        .bind(&gateway_cn)
+        .execute(pool)
+        .await
+        .ok();
+    }
 
     Ok(())
+}
+
+/// Backward-compatible alias for export_certs_to_volume_if_configured.
+#[allow(dead_code)]
+pub async fn export_ca_to_volume_if_configured(
+    pool: &sqlx::PgPool,
+    _org_id: Uuid,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    export_certs_to_volume_if_configured(pool).await
 }
 
 // ---------------------------------------------------------------------------

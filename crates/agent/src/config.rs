@@ -17,6 +17,11 @@ pub struct AgentConfig {
     /// Useful for observation-only deployments during migration.
     #[serde(default = "default_mode")]
     pub mode: String,
+    /// Directory for agent data (buffer DB, state files).
+    /// Defaults to platform default (/var/lib/appcontrol on Unix, C:\ProgramData\AppControl on Windows).
+    /// Can also be set via DATA_DIR environment variable.
+    #[serde(default)]
+    pub data_dir: Option<String>,
 }
 
 fn default_mode() -> String {
@@ -94,6 +99,7 @@ impl AgentConfig {
                 labels: std::collections::HashMap::new(),
                 log_level: default_log_level(),
                 mode: default_mode(),
+                data_dir: None,
             }
         };
 
@@ -116,6 +122,9 @@ impl AgentConfig {
             if v == "advisory" || v == "active" {
                 config.mode = v;
             }
+        }
+        if let Ok(v) = std::env::var("DATA_DIR") {
+            config.data_dir = Some(v);
         }
         // TLS env var overrides
         let tls_enabled = std::env::var("TLS_ENABLED")
@@ -179,7 +188,7 @@ impl AgentConfig {
     }
 
     pub fn buffer_path(&self) -> String {
-        let base = default_data_dir();
+        let base = self.data_dir.clone().unwrap_or_else(default_data_dir);
         format!("{}/buffer-{}", base, self.agent_id())
     }
 

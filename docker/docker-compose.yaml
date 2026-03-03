@@ -78,8 +78,16 @@ services:
       # BACKEND_TLS_CA_FILE pointing to your internal CA certificate.
       BACKEND_URL: ws://backend:3000/ws/gateway
       RUST_LOG: info,appcontrol_gateway=debug
+      # TLS certificates from PKI (mounted from shared volume)
+      TLS_ENABLED: "true"
+      TLS_CERT_FILE: /certs/gateway.crt
+      TLS_KEY_FILE: /certs/gateway.key
+      TLS_CA_FILE: /certs/pki-ca.crt
+    volumes:
+      - certs:/certs:ro
     depends_on:
-      - backend
+      init-certs:
+        condition: service_completed_successfully
 
   # Certificate initialization container
   # Runs once at startup to generate/fetch TLS certificates

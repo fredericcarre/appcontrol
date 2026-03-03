@@ -133,10 +133,12 @@ pub async fn list_enrollment_tokens(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
+    // Hide revoked tokens after 24 hours - they serve no purpose and clutter the UI
     let tokens = sqlx::query_as::<_, EnrollmentTokenRow>(
         r#"SELECT id, token_prefix, name, max_uses, current_uses, expires_at, scope, created_at, revoked_at
            FROM enrollment_tokens
            WHERE organization_id = $1
+             AND (revoked_at IS NULL OR revoked_at > now() - interval '24 hours')
            ORDER BY created_at DESC"#,
     )
     .bind(user.organization_id)

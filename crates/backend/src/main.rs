@@ -91,6 +91,12 @@ async fn main() -> anyhow::Result<()> {
     // This eliminates the manual `POST /api/v1/pki/init` step.
     auto_init_pki(&pool).await;
 
+    // Export PKI CA and gateway certificates to shared volume (for mTLS).
+    // This runs if CERT_EXPORT_PATH is set (e.g., /certs in docker-compose).
+    if let Err(e) = api::pki_export::export_certs_to_volume_if_configured(&pool).await {
+        tracing::warn!("Failed to export certificates to volume: {}", e);
+    }
+
     // Install Prometheus metrics recorder
     let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
         .install_recorder()

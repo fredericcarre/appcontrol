@@ -44,9 +44,12 @@ function AuthLayout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  const token = useAuthStore((s) => s.token);
+  // Check user (persisted to localStorage) rather than token (kept in memory).
+  // Browser auth uses HttpOnly cookies — the token is sent automatically.
+  // The in-memory token is only for API key / CLI flows.
+  const user = useAuthStore((s) => s.user);
 
-  if (!token) {
+  if (!user) {
     return (
       <Routes>
         <Route path="/login" element={<LoginPage />} />

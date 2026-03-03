@@ -1,11 +1,13 @@
 #!/bin/sh
-# Initialize TLS certificates for nginx
+# Initialize TLS certificates for nginx and gateway
 #
 # This script:
 # 1. Waits for the backend to be healthy
-# 2. Fetches the CA certificate from the backend
-# 3. Generates a self-signed server certificate if one doesn't exist
-# 4. Writes certificates to the shared /certs volume
+# 2. Generates a self-signed CA for nginx TLS (browser HTTPS)
+# 3. Generates a nginx server certificate
+# 4. Fetches the PKI CA from the backend (for mTLS)
+# 5. Generates a gateway certificate signed by the PKI CA
+# 6. Writes all certificates to the shared /certs volume
 
 set -e
 
@@ -168,9 +170,9 @@ chmod 600 "$CERT_DIR/server.key"
 chmod 600 "$CERT_DIR/ca.key"
 rm -f /tmp/server.cnf /tmp/server.csr "$CERT_DIR/ca.srl" 2>/dev/null || true
 
-# Verify certificates
+# Verify nginx certificates
 echo ""
-echo "=== Certificate Summary ==="
+echo "=== Nginx Certificate Summary ==="
 echo "CA Certificate:"
 openssl x509 -in "$CERT_DIR/ca.crt" -noout -subject -issuer -dates 2>/dev/null
 
@@ -181,6 +183,36 @@ openssl x509 -in "$CERT_DIR/server.crt" -noout -subject -issuer -dates 2>/dev/nu
 echo ""
 echo "Server Certificate SANs:"
 openssl x509 -in "$CERT_DIR/server.crt" -noout -text 2>/dev/null | grep -A1 "Subject Alternative Name"
+
+# Wait for backend to export PKI certificates for gateway mTLS
+echo ""
+echo "=== Waiting for PKI certificates (gateway mTLS) ==="
+PKI_RETRIES=30
+pki_count=0
+while [ $pki_count -lt $PKI_RETRIES ]; do
+    if [ -f "$CERT_DIR/pki-ca.crt" ] && [ -f "$CERT_DIR/gateway.crt" ] && [ -f "$CERT_DIR/gateway.key" ]; then
+        echo "PKI certificates found"
+        break
+    fi
+    pki_count=$((pki_count + 1))
+    echo "Waiting for backend to export PKI certificates... ($pki_count/$PKI_RETRIES)"
+    sleep 2
+done
+
+if [ -f "$CERT_DIR/pki-ca.crt" ]; then
+    echo ""
+    echo "=== PKI Certificate Summary ==="
+    echo "PKI CA Certificate:"
+    openssl x509 -in "$CERT_DIR/pki-ca.crt" -noout -subject -issuer -dates 2>/dev/null
+
+    if [ -f "$CERT_DIR/gateway.crt" ]; then
+        echo ""
+        echo "Gateway Certificate:"
+        openssl x509 -in "$CERT_DIR/gateway.crt" -noout -subject -issuer -dates 2>/dev/null
+    fi
+else
+    echo "WARNING: PKI certificates not found. Gateway mTLS may not work."
+fi
 
 echo ""
 echo "=== Certificate initialization complete ==="
