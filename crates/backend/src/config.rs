@@ -82,8 +82,8 @@ pub struct AppConfig {
     pub retention_action_log_days: u32,
     /// Data retention: days to keep check_events partitions (0 = unlimited)
     pub retention_check_events_days: u32,
-    /// Public gateway URL for agent enrollment (e.g., wss://gateway.company.com:8443).
-    /// If not set, frontend will use window.location.host with port 8443.
+    /// Public gateway URL for agent enrollment (e.g., wss://gateway.company.com:4443).
+    /// If not set, frontend will use window.location.host with port 4443.
     pub public_gateway_url: Option<String>,
     /// Public backend URL for gateway connection (e.g., wss://backend.company.com/ws/gateway).
     /// If not set, frontend will use window.location with /ws/gateway path.

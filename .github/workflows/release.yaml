@@ -197,17 +197,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build and push nginx
-        uses: docker/build-push-action@v6
-        with:
-          context: docker/nginx
-          file: docker/nginx/Dockerfile
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/appcontrol-nginx:${{ steps.version.outputs.VERSION }}
-            ${{ env.REGISTRY }}/appcontrol-nginx:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # NOTE: nginx is now using the standard nginx:1.27-alpine image
+      # No custom build needed - config is mounted at runtime
 
       - name: Build and push init-certs
         uses: docker/build-push-action@v6
@@ -325,7 +316,7 @@ jobs:
           docker pull ghcr.io/fredericcarre/appcontrol-frontend:${{ steps.version.outputs.VERSION }}
           docker pull ghcr.io/fredericcarre/appcontrol-gateway:${{ steps.version.outputs.VERSION }}
           docker pull ghcr.io/fredericcarre/appcontrol-agent:${{ steps.version.outputs.VERSION }}
-          docker pull ghcr.io/fredericcarre/appcontrol-nginx:${{ steps.version.outputs.VERSION }}
+          # nginx uses standard nginx:1.27-alpine image (no custom build)
           docker pull ghcr.io/fredericcarre/appcontrol-init-certs:${{ steps.version.outputs.VERSION }}
           ```
 

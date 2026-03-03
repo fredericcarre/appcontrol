@@ -406,28 +406,28 @@ AppControl uses nginx as a TLS-terminating reverse proxy for all external traffi
 ```
                            EXTERNAL NETWORK
 ┌─────────────────────────────────────────────────────────────────┐
-│  Browsers/CLI  ─────────► :443  (HTTPS)                        │
-│  Agents        ─────────► :8443 (WSS mTLS passthrough)         │
+│  Browsers/CLI  ─────────► :443  (HTTPS via nginx)              │
+│  Agents        ─────────► :4443 (WSS mTLS direct to gateway)   │
 └─────────────────────────────────────────────────────────────────┘
                                 │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        NGINX REVERSE PROXY                      │
-│  :443/api/*  ──► http://backend:3000/api/                      │
-│  :443/ws     ──► ws://backend:3000/ws (WebSocket)              │
-│  :443/       ──► http://frontend:8080/ (SPA)                   │
-│  :8443       ──► stream passthrough to gateway:4443            │
-│                                                                 │
-│  Certs: /certs/tls.crt, tls.key, ca.crt                        │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
+              ┌─────────────────┴─────────────────┐
+              ▼                                   ▼
+┌─────────────────────────────────┐   ┌─────────────────────────┐
+│      NGINX (web UI only)        │   │   GATEWAY (per zone)    │
+│  :443/api/*  ──► backend:3000   │   │   :4443 (direct)        │
+│  :443/ws     ──► backend:3000   │   │                         │
+│  :443/       ──► frontend:8080  │   │   mTLS for agents       │
+│                                 │   │   Enrollment: /enroll   │
+│  Certs: /certs/tls.crt, tls.key │   │   WebSocket: /ws        │
+└─────────────────────────────────┘   └─────────────────────────┘
+              │                                   │
+              ▼                                   ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      INTERNAL NETWORK                           │
-│  ┌─────────┐   ┌──────────┐   ┌─────────┐   ┌──────────┐      │
-│  │ Backend │   │ Frontend │   │ Gateway │   │ Postgres │      │
-│  │ :3000   │   │ :8080    │   │ :4443   │   │ :5432    │      │
-│  └─────────┘   └──────────┘   └─────────┘   └──────────┘      │
+│  ┌─────────┐   ┌──────────┐   ┌──────────┐                    │
+│  │ Backend │   │ Frontend │   │ Postgres │                    │
+│  │ :3000   │   │ :8080    │   │ :5432    │                    │
+│  └─────────┘   └──────────┘   └──────────┘                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -437,7 +437,9 @@ AppControl uses nginx as a TLS-terminating reverse proxy for all external traffi
 |---------------|----------|--------|---------|
 | 80 | HTTP | nginx | Redirect to HTTPS |
 | 443 | HTTPS | nginx → backend/frontend | Web UI, REST API, WebSocket |
-| 8443 | TLS (stream) | nginx → gateway | Agent mTLS passthrough |
+| 4443 | WSS (mTLS) | gateway (direct) | Agent connections |
+
+**Important:** Agents connect **directly** to gateways, not through nginx. Each zone (PRD, DR, DMZ) has its own gateway exposed on its own IP/DNS.
 
 **Security features:**
 
@@ -445,7 +447,7 @@ AppControl uses nginx as a TLS-terminating reverse proxy for all external traffi
 - Modern cipher suites (ECDHE, AES-GCM, ChaCha20)
 - HTTP security headers (HSTS, X-Frame-Options, X-Content-Type-Options)
 - HTTP to HTTPS redirect
-- mTLS passthrough preserves end-to-end encryption for agent connections
+- Gateway mTLS: agents present certificates signed by the PKI CA
 
 **Certificate options:**
 

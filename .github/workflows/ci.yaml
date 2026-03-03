@@ -335,9 +335,7 @@ jobs:
           - image: init-certs
             file: docker/init-certs/Dockerfile
             context: docker/init-certs
-          - image: nginx
-            file: docker/nginx/Dockerfile
-            context: docker/nginx
+          # NOTE: nginx uses standard nginx:1.27-alpine image (no custom build)
     steps:
       - uses: actions/checkout@v4
 
@@ -394,9 +392,7 @@ jobs:
           - image: init-certs
             file: docker/init-certs/Dockerfile
             context: docker/init-certs
-          - image: nginx
-            file: docker/nginx/Dockerfile
-            context: docker/nginx
+          # NOTE: nginx uses standard nginx:1.27-alpine image (no custom build)
     steps:
       - uses: actions/checkout@v4
 

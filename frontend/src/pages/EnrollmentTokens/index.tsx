@@ -29,10 +29,11 @@ function useLatestReleaseVersion() {
         if (releases && releases.length > 0) {
           setVersion(releases[0].tag_name);
         }
+        // If no releases or empty array, leave as null to use fallback URL
       })
       .catch(() => {
-        // Fallback to a default version
-        setVersion('latest');
+        // On error, leave as null to use fallback URL (/releases/latest/download/)
+        // Do NOT set to 'latest' string - that would create invalid URL /releases/download/latest/
       });
   }, []);
 
@@ -189,9 +190,9 @@ function CreatedTokenDisplay({
 
   // Generate commands based on scope
   const generateCommands = () => {
-    // Gateway URL for agent enrollment (uses mTLS on port 8443)
+    // Gateway URL for agent enrollment (direct connection on port 4443)
     // Use config if available, otherwise fallback to current host
-    const agentGatewayUrl = enrollmentConfig?.public_gateway_url || `wss://${serverHost}:8443`;
+    const agentGatewayUrl = enrollmentConfig?.public_gateway_url || `wss://${serverHost}:4443`;
     // Backend URL for gateway connection
     const backendWsUrl = enrollmentConfig?.public_backend_url || `${isSecure ? 'wss' : 'ws'}://${serverHost}/ws/gateway`;
 

@@ -5,9 +5,9 @@ mod router;
 mod win_service;
 
 use axum::{
-    extract::{ws, State},
+    extract::{ws, Extension, State},
     http::HeaderMap,
-    response::{IntoResponse, Json},
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
@@ -19,6 +19,11 @@ use appcontrol_common::{BackendMessage, GatewayEnvelope, GatewayMessage};
 use rate_limit::AgentRateLimiter;
 use registry::AgentRegistry;
 use router::{MessageRouter, AGENT_CHANNEL_CAPACITY, CHANNEL_CAPACITY};
+
+/// Client certificate fingerprint extracted from mTLS connection.
+/// Injected into request extensions by the TLS layer.
+#[derive(Clone, Debug, Default)]
+pub struct ClientCertFingerprint(pub Option<String>);
 
 /// Platform-aware default config path.
 fn default_config_path() -> String {
@@ -282,87 +287,86 @@ async fn main() -> anyhow::Result<()> {
         config.gateway.listen_addr, config.gateway.listen_port
     );
 
-    // Serve with mTLS if TLS is configured, otherwise plaintext
-    if let Some(ref tls) = config.tls {
+    // Always use TLS — either configured certificates or self-signed for dev
+    let rustls_config = if let Some(ref tls) = config.tls {
         if tls.enabled {
             tracing::info!(
-                "Gateway {} ({}) listening with mTLS on {} [id={}]",
+                "Gateway {} ({}) listening with TLS on {} [id={}]",
                 config.gateway.id,
                 config.gateway.zone,
                 addr,
                 gateway_id
             );
-
-            let rustls_config = build_server_tls_config(tls)?;
-            let tls_acceptor = tokio_rustls::TlsAcceptor::from(rustls_config);
-            let tcp_listener = tokio::net::TcpListener::bind(&addr).await?;
-
-            // Accept TLS connections with client cert verification, then serve with axum
-            loop {
-                let (tcp_stream, peer_addr) = tcp_listener.accept().await?;
-                let acceptor = tls_acceptor.clone();
-                let app = app.clone();
-
-                tokio::spawn(async move {
-                    match acceptor.accept(tcp_stream).await {
-                        Ok(tls_stream) => {
-                            // Extract client cert fingerprint from the verified TLS session
-                            let fingerprint = extract_client_cert_fingerprint(&tls_stream);
-                            if let Some(ref fp) = fingerprint {
-                                tracing::debug!(
-                                    peer = %peer_addr,
-                                    fingerprint = %fp,
-                                    "mTLS: client certificate verified"
-                                );
-                            }
-
-                            // Serve the connection using hyper + axum with the TLS stream
-                            let io = hyper_util::rt::TokioIo::new(tls_stream);
-                            let service = hyper_util::service::TowerToHyperService::new(app);
-                            if let Err(e) = hyper_util::server::conn::auto::Builder::new(
-                                hyper_util::rt::TokioExecutor::new(),
-                            )
-                            .serve_connection(io, service)
-                            .await
-                            {
-                                tracing::debug!("Connection from {} ended: {}", peer_addr, e);
-                            }
-                        }
-                        Err(e) => {
-                            // TLS handshake failed — agent did not present a valid cert
-                            tracing::warn!(
-                                peer = %peer_addr,
-                                "mTLS handshake rejected: {} — agent must present a valid certificate",
-                                e
-                            );
-                        }
-                    }
-                });
-            }
+            build_server_tls_config(tls)?
         } else {
-            tracing::warn!(
-                "Gateway {} ({}) listening in PLAINTEXT on {} [id={}] (TLS disabled in config)",
+            tracing::info!(
+                "Gateway {} ({}) listening with self-signed TLS on {} [id={}] (TLS disabled in config, using dev cert)",
                 config.gateway.id,
                 config.gateway.zone,
                 addr,
                 gateway_id
             );
-            let listener = tokio::net::TcpListener::bind(&addr).await?;
-            axum::serve(listener, app).await?;
+            generate_dev_tls_config()?
         }
     } else {
-        tracing::warn!(
-            "Gateway {} ({}) listening in PLAINTEXT on {} [id={}] (no TLS config)",
+        tracing::info!(
+            "Gateway {} ({}) listening with self-signed TLS on {} [id={}] (no TLS config, using dev cert)",
             config.gateway.id,
             config.gateway.zone,
             addr,
             gateway_id
         );
-        let listener = tokio::net::TcpListener::bind(&addr).await?;
-        axum::serve(listener, app).await?;
-    }
+        generate_dev_tls_config()?
+    };
 
-    Ok(())
+    let tls_acceptor = tokio_rustls::TlsAcceptor::from(rustls_config);
+    let tcp_listener = tokio::net::TcpListener::bind(&addr).await?;
+
+    // Accept TLS connections, extract client cert if present, then serve with axum
+    loop {
+        let (tcp_stream, peer_addr) = tcp_listener.accept().await?;
+        let acceptor = tls_acceptor.clone();
+        let app = app.clone();
+
+        tokio::spawn(async move {
+            match acceptor.accept(tcp_stream).await {
+                Ok(tls_stream) => {
+                    // Extract client cert fingerprint from the TLS session (may be None for /enroll)
+                    let fingerprint = extract_client_cert_fingerprint(&tls_stream);
+                    if let Some(ref fp) = fingerprint {
+                        tracing::debug!(
+                            peer = %peer_addr,
+                            fingerprint = %fp,
+                            "TLS: client certificate verified"
+                        );
+                    }
+
+                    // Add the fingerprint as a layer so handlers can access it
+                    let app_with_fingerprint = app.layer(Extension(ClientCertFingerprint(fingerprint)));
+
+                    // Serve the connection using hyper + axum with the TLS stream
+                    let io = hyper_util::rt::TokioIo::new(tls_stream);
+                    let service = hyper_util::service::TowerToHyperService::new(app_with_fingerprint);
+                    if let Err(e) = hyper_util::server::conn::auto::Builder::new(
+                        hyper_util::rt::TokioExecutor::new(),
+                    )
+                    .serve_connection(io, service)
+                    .await
+                    {
+                        tracing::debug!("Connection from {} ended: {}", peer_addr, e);
+                    }
+                }
+                Err(e) => {
+                    // TLS handshake failed
+                    tracing::warn!(
+                        peer = %peer_addr,
+                        "TLS handshake failed: {}",
+                        e
+                    );
+                }
+            }
+        });
+    }
 }
 
 async fn health_handler(State(state): State<Arc<GatewayState>>) -> String {
@@ -441,21 +445,42 @@ async fn enroll_handler(
 
 async fn agent_ws_handler(
     headers: HeaderMap,
+    Extension(client_cert): Extension<ClientCertFingerprint>,
     ws: ws::WebSocketUpgrade,
     State(state): State<Arc<GatewayState>>,
-) -> impl axum::response::IntoResponse {
-    // Extract mTLS fingerprint from proxy header (set by nginx/envoy TLS termination).
-    // When a TLS-terminating proxy (nginx, envoy, HAProxy) handles mTLS, it can
-    // pass the client certificate fingerprint via a trusted header. This allows the
-    // gateway to verify agent identity even when TLS is terminated upstream.
-    // If the header is not present, we fall back to the fingerprint the agent sends
-    // in its Register message.
-    let cert_fingerprint = headers
-        .get("x-client-cert-fingerprint")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+
+    // Priority for client cert fingerprint:
+    // 1. From TLS layer (direct mTLS connection)
+    // 2. From proxy header X-Client-Cert-Fingerprint (nginx/envoy TLS termination)
+    let cert_fingerprint = client_cert.0.or_else(|| {
+        headers
+            .get("x-client-cert-fingerprint")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+    });
+
+    // Reject WebSocket connections without client certificate.
+    // Agents MUST present a valid certificate to connect via /ws.
+    // Use /enroll first to obtain a certificate.
+    if cert_fingerprint.is_none() {
+        tracing::warn!(
+            "WebSocket connection rejected: no client certificate presented. \
+             Agents must enroll first via /enroll to obtain a certificate."
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "client_cert_required",
+                "message": "Client certificate required. Use /enroll to obtain a certificate first."
+            })),
+        )
+            .into_response();
+    }
 
     ws.on_upgrade(move |socket| handle_agent_connection(socket, state, cert_fingerprint))
+        .into_response()
 }
 
 async fn handle_agent_connection(
@@ -775,7 +800,11 @@ fn build_backend_tls_connector(
     )))
 }
 
-/// Build a rustls ServerConfig with mTLS: server cert + mandatory client cert verification.
+/// Build a rustls ServerConfig with TLS and OPTIONAL client cert verification.
+///
+/// Client certificates are optional at the TLS layer. This allows:
+/// - `/enroll` and `/health` to work without client certs (for agent enrollment)
+/// - `/ws` to require client certs (verified in the handler)
 fn build_server_tls_config(tls: &TlsSection) -> anyhow::Result<Arc<rustls::ServerConfig>> {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
     use std::io::BufReader;
@@ -816,9 +845,11 @@ fn build_server_tls_config(tls: &TlsSection) -> anyhow::Result<Arc<rustls::Serve
             .map_err(|e| anyhow::anyhow!("Failed to add CA cert: {}", e))?;
     }
 
-    // Build server config with MANDATORY client cert verification
-    // Agents MUST present a valid certificate signed by the configured CA.
+    // Build server config with OPTIONAL client cert verification.
+    // This allows /enroll to work without client certs while /ws requires them.
+    // The /ws handler checks for client cert presence and rejects unauthenticated connections.
     let client_verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
+        .allow_unauthenticated()
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build client cert verifier: {}", e))?;
 
@@ -828,9 +859,48 @@ fn build_server_tls_config(tls: &TlsSection) -> anyhow::Result<Arc<rustls::Serve
         .map_err(|e| anyhow::anyhow!("Failed to build server TLS config: {}", e))?;
 
     tracing::info!(
-        "mTLS server config built: cert={}, ca={} — client certificates REQUIRED",
+        "TLS server config built: cert={}, ca={} — client certificates OPTIONAL (verified per-endpoint)",
         tls.cert_file,
         tls.ca_file
+    );
+
+    Ok(Arc::new(config))
+}
+
+/// Generate a self-signed certificate for development/testing.
+/// This ensures TLS is always used, even without configured certificates.
+fn generate_dev_tls_config() -> anyhow::Result<Arc<rustls::ServerConfig>> {
+    use rcgen::{CertifiedKey, generate_simple_self_signed};
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+    tracing::warn!(
+        "No TLS certificates configured — generating self-signed certificate for development. \
+         This is NOT suitable for production. Configure TLS_CERT_FILE, TLS_KEY_FILE, and TLS_CA_FILE."
+    );
+
+    // Generate a self-signed certificate
+    let subject_alt_names = vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "gateway".to_string(),
+    ];
+
+    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(subject_alt_names)
+        .map_err(|e| anyhow::anyhow!("Failed to generate self-signed cert: {}", e))?;
+
+    let cert_der = CertificateDer::from(cert.der().to_vec());
+    let key_der = PrivateKeyDer::try_from(key_pair.serialize_der())
+        .map_err(|e| anyhow::anyhow!("Failed to serialize private key: {:?}", e))?;
+
+    // Build server config without client cert verification (dev mode)
+    let config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert_der], key_der)
+        .map_err(|e| anyhow::anyhow!("Failed to build dev TLS config: {}", e))?;
+
+    tracing::info!(
+        "Self-signed TLS certificate generated for development — \
+         enrollment and agent connections will be encrypted"
     );
 
     Ok(Arc::new(config))

@@ -43,9 +43,6 @@ spec:
             - name: https
               containerPort: 443
               protocol: TCP
-            - name: mtls
-              containerPort: 8443
-              protocol: TCP
           livenessProbe:
             httpGet:
               path: /health
@@ -61,6 +58,10 @@ spec:
           resources:
             {{- toYaml .Values.nginx.resources | nindent 12 }}
           volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
             - name: certs
               mountPath: /certs
               readOnly: true
@@ -71,6 +72,9 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: config
+          configMap:
+            name: {{ include "appcontrol.fullname" . }}-nginx-config
         - name: certs
           secret:
             {{- if .Values.nginx.tls.existingSecret }}

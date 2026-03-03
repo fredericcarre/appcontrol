@@ -20,8 +20,14 @@ pub async fn enroll(gateway_url: &str, token: &str, config_dir: &str) -> anyhow:
     let hostname = crate::platform::gethostname();
     tracing::info!("Enrolling agent '{}' via gateway {}", hostname, gateway_url);
 
+    // Convert WebSocket URL to HTTP URL for the enrollment HTTP POST request
+    // (users often copy the wss:// URL from the UI enrollment dialog)
+    let http_url = gateway_url
+        .replace("wss://", "https://")
+        .replace("ws://", "http://");
+
     // Build the enrollment URL (gateway /enroll endpoint)
-    let enroll_url = format!("{}/enroll", gateway_url.trim_end_matches('/'));
+    let enroll_url = format!("{}/enroll", http_url.trim_end_matches('/'));
 
     let body = serde_json::json!({
         "token": token,

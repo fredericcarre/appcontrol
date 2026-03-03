@@ -55,7 +55,7 @@ services:
       # OIDC_CLIENT_SECRET: your-secret
       # SAML_IDP_SSO_URL: https://idp.example.com/sso
       # ── Public URLs for enrollment commands (optional) ──
-      # PUBLIC_GATEWAY_URL: wss://gateway.company.com:8443
+      # PUBLIC_GATEWAY_URL: wss://gateway.company.com:4443
       # PUBLIC_BACKEND_URL: wss://backend.company.com/ws/gateway
     volumes:
       - certs:/certs
@@ -78,8 +78,8 @@ services:
 
   gateway:
     image: ghcr.io/fredericcarre/appcontrol-gateway:${APPCONTROL_VERSION:-latest}
-    expose:
-      - "4443"
+    ports:
+      - "4443:4443"  # Exposed directly for agent connections
     environment:
       GATEWAY_NAME: gateway-default
       GATEWAY_ZONE: default
@@ -104,14 +104,15 @@ services:
       backend:
         condition: service_healthy
 
-  # Nginx reverse proxy with TLS termination
+  # Nginx reverse proxy with TLS termination (web UI + API only)
+  # Note: Agents connect directly to gateway:4443, NOT through nginx
   nginx:
-    image: ghcr.io/fredericcarre/appcontrol-nginx:${APPCONTROL_VERSION:-latest}
+    image: nginx:1.27-alpine
     ports:
       - "80:80"
       - "443:443"
-      - "8443:8443"
     volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - certs:/certs:ro
     depends_on:
       init-certs:

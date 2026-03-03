@@ -17,10 +17,6 @@ spec:
       port: {{ .Values.nginx.service.httpsPort }}
       targetPort: https
       protocol: TCP
-    - name: mtls
-      port: {{ .Values.nginx.service.mtlsPort }}
-      targetPort: mtls
-      protocol: TCP
   selector:
     {{- include "appcontrol.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: nginx

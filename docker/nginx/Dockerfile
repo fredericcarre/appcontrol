@@ -1,12 +1,10 @@
 # AppControl nginx with TLS termination
-# Based on nginx:alpine with stream module for mTLS passthrough
+# Standard nginx image - agents connect directly to gateways, NOT through nginx
 
 FROM nginx:1.27-alpine
 
-# Upgrade base packages to fix known vulnerabilities (CVE-2025-15467, etc.)
-# Then install stream module for TCP passthrough
-RUN apk upgrade --no-cache && \
-    apk add --no-cache nginx-mod-stream
+# Upgrade base packages to fix known vulnerabilities
+RUN apk upgrade --no-cache
 
 # Copy configuration
 COPY nginx.conf /etc/nginx/nginx.conf
@@ -20,13 +18,13 @@ RUN mkdir -p /var/cache/nginx /var/log/nginx /tmp && \
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD wget -q --spider http://127.0.0.1/health || exit 1
 
-# Expose ports
+# Expose ports for web UI only
 # 80: HTTP (redirect to HTTPS)
-# 443: HTTPS (TLS termination)
-# 8443: mTLS passthrough to gateway
-EXPOSE 80 443 8443
+# 443: HTTPS (TLS termination for web UI)
+# Note: Agents connect directly to gateways on port 4443, NOT through nginx
+EXPOSE 80 443
 
-# Note: Run as root to bind to privileged ports (80, 443, 8443)
+# Note: Run as root to bind to privileged ports (80, 443)
 # For OpenShift, use non-privileged ports (8080, 8443) with a Route
 
 CMD ["nginx", "-g", "daemon off;"]

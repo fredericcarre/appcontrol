@@ -65,11 +65,11 @@ With nginx TLS termination (default):
 |---------|-----|---------|
 | Frontend (HTTPS) | https://localhost | Web UI via nginx (TLS) |
 | Backend API (HTTPS) | https://localhost/api/ | REST API via nginx (TLS) |
-| Gateway (mTLS) | localhost:8443 | Agent mTLS passthrough via nginx |
+| Gateway (direct) | localhost:4443 | Agent connections (mTLS in production) |
 | Backend (direct) | http://localhost:3000 | Direct backend access (internal) |
 | PostgreSQL | localhost:5432 | Database (appcontrol/appcontrol_dev) |
 
-The nginx reverse proxy handles TLS termination on port 443 and passes through mTLS connections on port 8443 to the gateway.
+**Note:** nginx handles TLS for the web UI only. Agents connect **directly** to gateways on port 4443 (not through nginx). Each gateway is exposed on its own IP/port.
 
 ### First Login
 
@@ -1295,12 +1295,13 @@ cargo build --release --bin appcontrol-mcp
 
 ## TLS Configuration
 
-AppControl uses nginx as a TLS-terminating reverse proxy for all external traffic. This provides:
+AppControl uses nginx as a TLS-terminating reverse proxy for the web UI and API. This provides:
 
 - **HTTPS on port 443** for the web UI and REST API
-- **mTLS passthrough on port 8443** for agent/gateway connections
 - **HTTP to HTTPS redirect** on port 80
 - **Modern TLS configuration** with TLS 1.2/1.3 and secure cipher suites
+
+**Note:** Agents connect directly to gateways on port 4443 (not through nginx). Gateways handle their own mTLS.
 
 ### Certificate Options
 

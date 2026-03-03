@@ -158,14 +158,13 @@ nginx:
   enabled: false
   replicaCount: 2
   image:
-    repository: appcontrol/nginx
-    tag: ""
+    repository: nginx
+    tag: "1.27-alpine"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     httpPort: 80
     httpsPort: 443
-    mtlsPort: 8443
   resources:
     requests:
       cpu: 100m

@@ -8,16 +8,16 @@
                         |    appctl CLI    |
                         +--------+---------+
                                  |
-                                 | HTTPS :8080 (nginx)
+                                 | HTTPS :443 (nginx)
                                  | or HTTP :3000 (direct API)
                                  v
                    +----------------------------+
-                   |        Frontend (nginx)    |
-                   |        :8080               |
+                   |     nginx (TLS termination)|
+                   |        :80/:443            |
                    |                            |
                    |  /api/*  --> backend:3000  |
                    |  /ws     --> backend:3000  |
-                   |  /*      --> SPA (React)   |
+                   |  /*      --> frontend:8080 |
                    +-------------+--------------+
                                  |
                     HTTP/WS (internal network)
@@ -34,56 +34,60 @@
 |  (JWT auth)      |
 +--------+---------+
          |
-         | WebSocket /ws
+         | WebSocket /ws/gateway
          | (internal, gateway connects here)
          |
-+--------+---------+
-|    Gateway       |
-|    :4443         |
-|                  |
-|  Accepts agent   |
-|  WebSocket (mTLS)|
-|  Routes messages |
-|  backend <-> agent|
-+---+-----------+--+
-    |           |
-    | WSS :4443 | WSS :4443
-    |  (mTLS)   |  (mTLS)
-    v           v
-+--------+ +--------+ +--------+
-| Agent  | | Agent  | | Agent  |
-| srv-01 | | srv-02 | | srv-N  |
-|        | |        | |        |
-| No     | | No     | | No     |
-| inbound| | inbound| | inbound|
-| port   | | port   | | port   |
-+--------+ +--------+ +--------+
++--------+---------+       +------------------+
+|    Gateway PRD   |       |    Gateway DR    |
+|    :4443         |       |    :4443         |
+|                  |       |                  |
+| Directly exposed |       | Directly exposed |
+| to agents (mTLS) |       | to agents (mTLS) |
++---+-----------+--+       +---+-----------+--+
+    |           |              |           |
+    | WSS :4443 | WSS :4443    | WSS :4443 | WSS :4443
+    |  (mTLS)   |  (mTLS)      |  (mTLS)   |  (mTLS)
+    v           v              v           v
++--------+ +--------+      +--------+ +--------+
+| Agent  | | Agent  |      | Agent  | | Agent  |
+| srv-01 | | srv-02 |      | dr-01  | | dr-02  |
++--------+ +--------+      +--------+ +--------+
+
+Note: Agents connect DIRECTLY to gateways, NOT through nginx.
+      Each gateway is exposed on its own IP/DNS.
 ```
 
 ## Component Roles
 
 | Component | Role | Inbound Port | Config Source |
 |-----------|------|-------------|---------------|
-| **Frontend** | SPA + nginx reverse proxy | `:8080` | `nginx.conf` |
-| **Backend** | REST API + WebSocket hub + FSM engine | `:3000` (env `PORT`) | Env vars only |
-| **Gateway** | Agent connection multiplexer | `:4443` (env `LISTEN_PORT`) | YAML + env var overrides |
+| **nginx** | TLS termination for web UI | `:80/:443` | `nginx.conf` |
+| **Frontend** | React SPA | `:8080` (internal) | Build-time env |
+| **Backend** | REST API + WebSocket hub + FSM engine | `:3000` (internal) | Env vars only |
+| **Gateway** | Agent connection multiplexer (one per zone) | `:4443` (exposed directly) | YAML + env var overrides |
 | **Agent** | Local process manager + health checker | None (client only) | YAML + env var overrides |
 | **CLI** | CLI client for automation/schedulers | None (client only) | Env vars + CLI args |
-| **PostgreSQL** | Persistent storage (including token revocation and rate limiting) | `:5432` | Standard |
+| **PostgreSQL** | Persistent storage | `:5432` | Standard |
+
+**Important:** Gateways are exposed directly on their own IP/port (e.g., `gateway-prd.company.com:4443`).
+They do NOT go through nginx. Each zone (PRD, DR, DMZ) has its own gateway.
 
 ## Communication Protocols
 
 ```
-Browser ---HTTPS---> nginx:8080 ---HTTP---> backend:3000
+Browser ---HTTPS---> nginx:443 ---HTTP---> backend:3000
                                      (proxy_pass /api/* and /ws)
+                               ---HTTP---> frontend:8080
+                                     (proxy_pass /* for SPA)
 
 appctl  ---HTTP(S)---> backend:3000
                        (direct API calls, no nginx needed)
 
-Gateway ---WebSocket---> backend:3000/ws
+Gateway ---WebSocket---> backend:3000/ws/gateway
           (internal, persistent connection, reconnect on failure)
 
 Agent ---WSS (mTLS)---> gateway:4443/ws
+         (DIRECT connection, not through nginx)
          (outbound only, reconnect with exponential backoff 1s..60s)
 ```
 

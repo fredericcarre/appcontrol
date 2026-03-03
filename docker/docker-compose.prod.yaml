@@ -87,8 +87,8 @@ services:
 
   gateway:
     image: ghcr.io/fredericcarre/appcontrol-gateway:${APPCONTROL_VERSION:-latest}
-    expose:
-      - "4443"
+    ports:
+      - "${GATEWAY_PORT:-4443}:4443"  # Exposed directly for agent connections
     environment:
       GATEWAY_NAME: ${GATEWAY_NAME:-gateway-prod}
       GATEWAY_ZONE: ${GATEWAY_ZONE:-default}
@@ -115,14 +115,15 @@ services:
       backend:
         condition: service_healthy
 
-  # Nginx reverse proxy with TLS termination
+  # Nginx reverse proxy with TLS termination (web UI + API only)
+  # Note: Agents connect directly to gateway on GATEWAY_PORT, NOT through nginx
   nginx:
-    image: ghcr.io/fredericcarre/appcontrol-nginx:${APPCONTROL_VERSION:-latest}
+    image: nginx:1.27-alpine
     ports:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
-      - "${MTLS_PORT:-8443}:8443"
     volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - certs:/certs:ro
     depends_on:
       init-certs:
