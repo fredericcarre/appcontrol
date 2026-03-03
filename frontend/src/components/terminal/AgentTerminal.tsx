@@ -9,7 +9,7 @@ import { Wifi, WifiOff, Loader2 } from 'lucide-react';
 interface AgentTerminalProps {
   agentId: string;
   sessionId: string | null;
-  onSessionStart: () => void;
+  onSessionStart: (sessionId: string) => void;
   onSessionEnd: () => void;
   shell?: string;
 }
@@ -115,7 +115,8 @@ export function AgentTerminal({
             xtermRef.current.clear();
             xtermRef.current.focus();
           }
-          onSessionStart();
+          // Pass the session_id from the server response
+          onSessionStart(msg.payload.session_id as string);
           break;
 
         case 'TerminalOutput':

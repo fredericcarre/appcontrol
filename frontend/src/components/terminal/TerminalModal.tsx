@@ -33,9 +33,9 @@ export function TerminalModal({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
-  const handleSessionStart = useCallback(() => {
-    // Generate a placeholder session ID - the real one comes from the server
-    setSessionId(crypto.randomUUID());
+  const handleSessionStart = useCallback((serverSessionId: string) => {
+    // Use the session ID from the server
+    setSessionId(serverSessionId);
     setIsConnected(true);
   }, []);
 
