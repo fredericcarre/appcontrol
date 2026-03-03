@@ -1,0 +1,18 @@
+# Release Dockerfile - uses pre-built binary (no build stage)
+# Used by CI release workflow for faster builds
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y ca-certificates libssl3 curl && rm -rf /var/lib/apt/lists/*
+RUN groupadd -r appcontrol && useradd -r -g appcontrol -s /sbin/nologin appcontrol
+
+# Binary is copied from CI artifacts
+ARG BINARY_PATH=appcontrol-backend-linux-amd64
+COPY ${BINARY_PATH} /usr/local/bin/appcontrol-backend
+RUN chmod +x /usr/local/bin/appcontrol-backend
+
+COPY migrations/ /app/migrations/
+
+USER appcontrol
+EXPOSE 3000
+ENV RUST_LOG=info
+CMD ["appcontrol-backend"]
