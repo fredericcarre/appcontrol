@@ -249,12 +249,15 @@ async fn handle_client_socket(
                                 }
                             };
 
-                            // Look up session
-                            if let Some(session) =
-                                state_clone.terminal_sessions.get_session(session_id)
-                            {
+                            // Look up session - extract fields and drop lock to avoid deadlock
+                            let session_info = state_clone
+                                .terminal_sessions
+                                .get_session(session_id)
+                                .map(|s| (s.conn_id, s.request_id, s.agent_id));
+
+                            if let Some((session_conn_id, request_id, agent_id)) = session_info {
                                 // Verify this connection owns the session
-                                if session.conn_id != conn_id {
+                                if session_conn_id != conn_id {
                                     tracing::warn!(
                                         session_id = %session_id,
                                         "Terminal input from wrong connection"
@@ -266,12 +269,10 @@ async fn handle_client_socket(
 
                                 // Forward to agent
                                 let input_msg = appcontrol_common::BackendMessage::TerminalInput {
-                                    request_id: session.request_id,
+                                    request_id,
                                     data: bytes,
                                 };
-                                state_clone
-                                    .ws_hub
-                                    .send_to_agent(session.agent_id, input_msg);
+                                state_clone.ws_hub.send_to_agent(agent_id, input_msg);
                             }
                         }
                         appcontrol_common::WsClientMessage::TerminalResize {
@@ -279,10 +280,14 @@ async fn handle_client_socket(
                             cols,
                             rows,
                         } => {
-                            if let Some(session) =
-                                state_clone.terminal_sessions.get_session(session_id)
-                            {
-                                if session.conn_id != conn_id {
+                            // Extract fields and drop lock to avoid deadlock
+                            let session_info = state_clone
+                                .terminal_sessions
+                                .get_session(session_id)
+                                .map(|s| (s.conn_id, s.request_id, s.agent_id));
+
+                            if let Some((session_conn_id, request_id, agent_id)) = session_info {
+                                if session_conn_id != conn_id {
                                     continue;
                                 }
 
@@ -290,13 +295,11 @@ async fn handle_client_socket(
 
                                 let resize_msg =
                                     appcontrol_common::BackendMessage::TerminalResize {
-                                        request_id: session.request_id,
+                                        request_id,
                                         cols,
                                         rows,
                                     };
-                                state_clone
-                                    .ws_hub
-                                    .send_to_agent(session.agent_id, resize_msg);
+                                state_clone.ws_hub.send_to_agent(agent_id, resize_msg);
                             }
                         }
                         appcontrol_common::WsClientMessage::TerminalClose { session_id } => {
@@ -377,23 +380,41 @@ async fn handle_gateway_socket(socket: ws::WebSocket, state: Arc<AppState>) {
     let gw_id_clone = gateway_id.clone();
     let gw_tx_clone = gw_tx;
     let recv_task = tokio::spawn(async move {
-        while let Some(Ok(msg)) = receiver.next().await {
-            if let ws::Message::Text(text) = msg {
-                match serde_json::from_str::<appcontrol_common::GatewayMessage>(&text) {
-                    Ok(gw_msg) => {
-                        process_gateway_message(&state_clone, &gw_id_clone, &gw_tx_clone, gw_msg)
-                            .await;
-                    }
-                    Err(_) => {
-                        // Backwards compatibility: try parsing as raw AgentMessage
-                        if let Ok(agent_msg) =
-                            serde_json::from_str::<appcontrol_common::AgentMessage>(&text)
-                        {
-                            process_agent_message(&state_clone, agent_msg).await;
-                        } else {
-                            tracing::warn!("Unknown message from gateway");
+        tracing::debug!("Gateway recv_task started");
+        loop {
+            tracing::debug!("Waiting for next gateway message...");
+            match receiver.next().await {
+                Some(Ok(msg)) => {
+                    if let ws::Message::Text(text) = msg {
+                        tracing::debug!(bytes = text.len(), "Received WebSocket message from gateway");
+                        match serde_json::from_str::<appcontrol_common::GatewayMessage>(&text) {
+                            Ok(gw_msg) => {
+                                process_gateway_message(&state_clone, &gw_id_clone, &gw_tx_clone, gw_msg)
+                                    .await;
+                                tracing::debug!("Finished processing gateway message");
+                            }
+                            Err(_) => {
+                                // Backwards compatibility: try parsing as raw AgentMessage
+                                if let Ok(agent_msg) =
+                                    serde_json::from_str::<appcontrol_common::AgentMessage>(&text)
+                                {
+                                    process_agent_message(&state_clone, agent_msg).await;
+                                } else {
+                                    tracing::warn!("Unknown message from gateway");
+                                }
+                            }
                         }
+                    } else {
+                        tracing::debug!(msg_type = ?msg, "Non-text message from gateway");
                     }
+                }
+                Some(Err(e)) => {
+                    tracing::error!(error = %e, "Error receiving from gateway");
+                    break;
+                }
+                None => {
+                    tracing::debug!("Gateway WebSocket stream ended");
+                    break;
                 }
             }
         }
@@ -981,12 +1002,30 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             .await;
         }
         appcontrol_common::AgentMessage::TerminalOutput { request_id, data } => {
+            tracing::debug!(
+                request_id = %request_id,
+                data_len = data.len(),
+                "Received TerminalOutput from agent"
+            );
             // Look up session by request_id and forward to frontend connection
             if let Some(session_id) = state
                 .terminal_sessions
                 .get_session_id_by_request(request_id)
             {
-                if let Some(session) = state.terminal_sessions.get_session(session_id) {
+                tracing::debug!(
+                    request_id = %request_id,
+                    session_id = %session_id,
+                    "Found session, forwarding to frontend"
+                );
+                // Get conn_id and drop the read lock before calling touch_session
+                // (to avoid deadlock: get_session holds read lock, touch_session needs write lock)
+                let conn_id = state
+                    .terminal_sessions
+                    .get_session(session_id)
+                    .map(|s| s.conn_id);
+
+                if let Some(conn_id) = conn_id {
+                    // Now we can safely touch the session (no read lock held)
                     state.terminal_sessions.touch_session(session_id);
 
                     // Base64 encode the binary data for JSON transmission
@@ -999,7 +1038,7 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                     };
 
                     if let Ok(json) = serde_json::to_string(&output_event) {
-                        state.ws_hub.send_to_connection(session.conn_id, json);
+                        state.ws_hub.send_to_connection(conn_id, json);
                     }
                 }
             } else {

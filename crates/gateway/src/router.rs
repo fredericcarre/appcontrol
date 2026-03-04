@@ -119,11 +119,14 @@ impl MessageRouter {
         let guard = self.backend_sender.read().unwrap();
         if let Some(sender) = guard.as_ref() {
             match sender.try_send(message.to_string()) {
-                Ok(()) => {}
+                Ok(()) => {
+                    tracing::debug!(bytes = message.len(), "Forwarded message to backend channel");
+                }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     tracing::warn!("Backend channel full — dropping message (backpressure)");
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
+                    tracing::warn!("Backend channel closed — buffering message");
                     drop(guard);
                     // Sender failed — backend just disconnected. Buffer.
                     self.clear_backend_sender();
@@ -131,6 +134,7 @@ impl MessageRouter {
                 }
             }
         } else {
+            tracing::debug!(bytes = message.len(), "No backend sender — buffering message");
             drop(guard);
             self.buffer.lock().unwrap().push(message.to_string());
         }

@@ -2,6 +2,13 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useAuthStore } from '@/stores/auth';
 import { useWebSocketStore } from '@/stores/websocket';
 
+// Global WebSocket instance for sharing across components
+let globalWs: WebSocket | null = null;
+
+export function getGlobalWebSocket(): WebSocket | null {
+  return globalWs;
+}
+
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const token = useAuthStore((s) => s.token);
@@ -49,6 +56,7 @@ export function useWebSocket() {
     };
 
     wsRef.current = ws;
+    globalWs = ws;
   }, [token, setConnected, addMessage]);
 
   useEffect(() => {

@@ -2,9 +2,9 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
-import { useAuthStore } from '@/stores/auth';
 import { Badge } from '@/components/ui/badge';
 import { Wifi, WifiOff, Loader2 } from 'lucide-react';
+import { getGlobalWebSocket } from '@/hooks/use-websocket';
 
 interface AgentTerminalProps {
   agentId: string;
@@ -28,7 +28,6 @@ export function AgentTerminal({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
-  const token = useAuthStore((s) => s.token);
 
   // Initialize terminal
   useEffect(() => {
@@ -148,62 +147,83 @@ export function AgentTerminal({
     [onSessionStart, onSessionEnd]
   );
 
-  // WebSocket connection
+  // Track if we've already started a session to prevent duplicates
+  const sessionStartedRef = useRef(false);
+  const currentSessionIdRef = useRef<string | null>(null);
+
+  // WebSocket connection - reuse global WebSocket
   useEffect(() => {
-    if (!token) return;
+    // Prevent starting multiple sessions
+    if (sessionStartedRef.current) {
+      console.log('[Terminal] Session already started, skipping');
+      return;
+    }
 
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws?token=${token}`;
+    const ws = getGlobalWebSocket();
+    console.log('[Terminal] Global WebSocket:', ws, 'readyState:', ws?.readyState);
 
-    const ws = new WebSocket(wsUrl);
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.log('[Terminal] WebSocket not ready, status: disconnected');
+      setStatus('disconnected');
+      if (xtermRef.current) {
+        xtermRef.current.writeln('\r\n\x1b[31mWebSocket not connected. Please refresh the page.\x1b[0m');
+      }
+      return;
+    }
+
     wsRef.current = ws;
     setStatus('connecting');
+    sessionStartedRef.current = true;
 
-    ws.onopen = () => {
-      // Start terminal session
-      const cols = xtermRef.current?.cols || 80;
-      const rows = xtermRef.current?.rows || 24;
-      ws.send(
-        JSON.stringify({
-          type: 'TerminalStart',
-          payload: {
-            agent_id: agentId,
-            shell: shell || null,
-            cols,
-            rows,
-          },
-        })
-      );
-    };
-
-    ws.onmessage = (event) => {
+    // Message handler for terminal messages
+    const messageHandler = (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data);
-        handleWsMessage(msg);
+        // Only handle terminal-related messages
+        if (msg.type?.startsWith('Terminal')) {
+          handleWsMessage(msg);
+          // Track the session ID when started
+          if (msg.type === 'TerminalStarted' && msg.payload?.session_id) {
+            currentSessionIdRef.current = msg.payload.session_id;
+          }
+        }
       } catch {
         // Ignore non-JSON messages
       }
     };
 
-    ws.onclose = () => {
-      setStatus('disconnected');
-      if (xtermRef.current) {
-        xtermRef.current.writeln('\r\n\x1b[31mConnection closed\x1b[0m');
-      }
-      onSessionEnd();
-    };
+    ws.addEventListener('message', messageHandler);
 
-    ws.onerror = () => {
-      setStatus('disconnected');
-      if (xtermRef.current) {
-        xtermRef.current.writeln('\r\n\x1b[31mConnection error\x1b[0m');
-      }
+    // Start terminal session
+    const cols = xtermRef.current?.cols || 80;
+    const rows = xtermRef.current?.rows || 24;
+    const startMsg = {
+      type: 'TerminalStart',
+      payload: {
+        agent_id: agentId,
+        shell: shell || null,
+        cols,
+        rows,
+      },
     };
+    console.log('[Terminal] Sending TerminalStart:', startMsg);
+    ws.send(JSON.stringify(startMsg));
 
     return () => {
-      ws.close();
+      ws.removeEventListener('message', messageHandler);
+      // Send close message if session was started
+      if (currentSessionIdRef.current && ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: 'TerminalClose',
+            payload: { session_id: currentSessionIdRef.current },
+          })
+        );
+      }
+      sessionStartedRef.current = false;
+      currentSessionIdRef.current = null;
     };
-  }, [token, agentId, shell, handleWsMessage, onSessionEnd]);
+  }, [agentId, shell, handleWsMessage]);
 
   // Handle user input
   useEffect(() => {

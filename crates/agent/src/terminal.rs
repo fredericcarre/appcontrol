@@ -318,6 +318,8 @@ impl TerminalManager {
         msg_tx: mpsc::UnboundedSender<AgentMessage>,
         sessions: Arc<Mutex<HashMap<Uuid, TerminalSession>>>,
     ) {
+        tracing::debug!(request_id = %request_id, master_fd = master_fd, "Starting PTY read loop");
+
         // Create an async file from the raw fd
         let file = unsafe { std::fs::File::from_raw_fd(master_fd) };
         let mut async_file = tokio::fs::File::from_std(file);
@@ -329,6 +331,7 @@ impl TerminalManager {
             {
                 let sessions_guard = sessions.lock().await;
                 if !sessions_guard.contains_key(&request_id) {
+                    tracing::debug!(request_id = %request_id, "Session no longer exists, exiting read loop");
                     break;
                 }
             }
@@ -340,11 +343,13 @@ impl TerminalManager {
                     break;
                 }
                 Ok(n) => {
+                    tracing::debug!(request_id = %request_id, bytes = n, "Read {} bytes from PTY", n);
                     let data = buffer[..n].to_vec();
                     if msg_tx
                         .send(AgentMessage::TerminalOutput { request_id, data })
                         .is_err()
                     {
+                        tracing::error!(request_id = %request_id, "Failed to send TerminalOutput");
                         break;
                     }
                 }

@@ -617,8 +617,14 @@ async fn handle_agent_connection(
 
                     // Wrap in GatewayMessage and forward to backend
                     let wrapped = GatewayMessage::AgentMessage(agent_msg);
-                    if let Ok(json) = serde_json::to_string(&wrapped) {
-                        state_clone.router.forward_to_backend(&json);
+                    match serde_json::to_string(&wrapped) {
+                        Ok(json) => {
+                            tracing::debug!(bytes = json.len(), "Serialized agent message, forwarding to backend");
+                            state_clone.router.forward_to_backend(&json);
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "Failed to serialize agent message");
+                        }
                     }
                 }
             }
@@ -733,7 +739,21 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
         tokio::select! {
             // Messages from agents to forward to backend
             Some(msg) = backend_rx.recv() => {
-                write.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await?;
+                tracing::debug!(bytes = msg.len(), "Sending message from channel to backend WebSocket");
+                match write.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await {
+                    Ok(()) => {
+                        // Flush to ensure message is sent immediately
+                        if let Err(e) = futures_util::SinkExt::flush(&mut write).await {
+                            tracing::error!(error = %e, "Failed to flush WebSocket");
+                            return Err(e.into());
+                        }
+                        tracing::debug!("Message sent and flushed to backend WebSocket");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to send message to backend WebSocket");
+                        return Err(e.into());
+                    }
+                }
             }
             // Messages from backend to route to agents
             Some(ws_msg) = read.next() => {

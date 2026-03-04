@@ -329,6 +329,14 @@ impl ConnectionManager {
             tokio::select! {
                 // Messages from scheduler to send
                 Some(agent_msg) = msg_rx.recv() => {
+                    // Log terminal messages for debugging
+                    if let AgentMessage::TerminalOutput { request_id, ref data } = agent_msg {
+                        tracing::debug!(
+                            request_id = %request_id,
+                            bytes = data.len(),
+                            "Sending TerminalOutput to gateway"
+                        );
+                    }
                     let json = serde_json::to_string(&agent_msg)?;
                     write.send(tokio_tungstenite::tungstenite::Message::Text(json)).await?;
                 }
