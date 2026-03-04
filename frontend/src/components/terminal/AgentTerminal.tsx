@@ -229,10 +229,16 @@ export function AgentTerminal({
   useEffect(() => {
     if (!xtermRef.current || !sessionId) return;
 
+    console.log('[Terminal] Setting up onData handler, sessionId:', sessionId);
+
     const disposable = xtermRef.current.onData((data) => {
+      console.log('[Terminal] onData fired, data length:', data.length, 'chars:', [...data].map(c => c.charCodeAt(0)));
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        // Encode to base64
-        const encoded = btoa(data);
+        // Encode to base64 - use TextEncoder for proper binary handling
+        const bytes = new TextEncoder().encode(data);
+        const binary = String.fromCharCode(...bytes);
+        const encoded = btoa(binary);
+        console.log('[Terminal] Sending input, encoded:', encoded);
         wsRef.current.send(
           JSON.stringify({
             type: 'TerminalInput',

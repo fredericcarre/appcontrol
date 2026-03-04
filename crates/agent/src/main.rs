@@ -74,12 +74,21 @@ enum ServiceAction {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Create log streaming channel for WebSocket transmission
+    let (log_sender, log_receiver) = appcontrol_common::LogSender::new();
+    let ws_log_layer = appcontrol_common::WebSocketLogLayer::new(
+        log_sender,
+        tracing::Level::DEBUG,
+    );
+    let log_layer_handle = ws_log_layer.handle();
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "appcontrol_agent=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
+        .with(ws_log_layer)
         .init();
 
     let args = Args::parse();
@@ -122,6 +131,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize connection manager with multi-gateway failover support
     let gateway_urls = config.gateway_urls();
     let advisory = config.is_advisory();
+    let log_msg_tx = msg_tx.clone(); // Clone before moving msg_tx into ConnectionManager
     let connection = connection::ConnectionManager::new(
         gateway_urls.clone(),
         config.gateway.failover_strategy.clone(),
@@ -149,6 +159,22 @@ async fn main() -> anyhow::Result<()> {
 
     // Clone scheduler reference before it's moved into run()
     let _scheduler_for_reload = check_scheduler.clone();
+
+    // Start log forwarding task (sends log batches to gateway)
+    let log_handle = tokio::spawn(async move {
+        let mut batcher = appcontrol_common::LogBatcher::new(log_receiver);
+        while let Some(entries) = batcher.next_batch().await {
+            // Send log entries to gateway/backend
+            let log_msg = appcontrol_common::AgentMessage::LogEntries {
+                agent_id,
+                entries,
+            };
+            if log_msg_tx.send(log_msg).is_err() {
+                // Channel closed, stop forwarding
+                break;
+            }
+        }
+    });
 
     // Start all subsystems
     let conn_handle = tokio::spawn(connection.run(msg_rx));
@@ -185,9 +211,13 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Allow unused variable for log layer handle (can be used to enable/disable log streaming)
+    let _ = log_layer_handle;
+
     tokio::select! {
         r = conn_handle => { tracing::error!("Connection manager exited: {:?}", r); }
         r = sched_handle => { tracing::error!("Scheduler exited: {:?}", r); }
+        r = log_handle => { tracing::debug!("Log forwarder exited: {:?}", r); }
     }
 
     Ok(())

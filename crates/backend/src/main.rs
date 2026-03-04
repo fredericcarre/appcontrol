@@ -124,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
         appcontrol_backend::core::operation_lock::OperationLock::with_pool(pool.clone());
 
     let terminal_sessions = terminal::TerminalSessionManager::new();
+    let log_subscriptions = websocket::LogSubscriptionManager::new();
 
     let state = Arc::new(AppState {
         db: pool,
@@ -133,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
         heartbeat_batcher,
         operation_lock,
         terminal_sessions,
+        log_subscriptions,
     });
 
     // Store prometheus handle in a leaked box for the metrics handler

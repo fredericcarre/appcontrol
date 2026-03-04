@@ -1,5 +1,8 @@
 pub mod hub;
+pub mod log_subscriptions;
+
 pub use hub::Hub;
+pub use log_subscriptions::LogSubscriptionManager;
 
 use axum::{
     extract::{ws, Query, State},
@@ -338,6 +341,68 @@ async fn handle_client_socket(
                                 );
                             }
                         }
+                        appcontrol_common::WsClientMessage::LogSubscribe {
+                            agent_id,
+                            gateway_id,
+                            min_level,
+                        } => {
+                            // Log viewing is admin-only
+                            if !is_admin {
+                                tracing::warn!(
+                                    user_id = %user_id,
+                                    "Log subscription DENIED — admin only"
+                                );
+                                continue;
+                            }
+
+                            if let Some(aid) = agent_id {
+                                state_clone
+                                    .log_subscriptions
+                                    .subscribe_agent(conn_id, aid, min_level.clone());
+                                tracing::debug!(
+                                    user_id = %user_id,
+                                    agent_id = %aid,
+                                    min_level = %min_level,
+                                    "Log subscription added for agent"
+                                );
+                            }
+                            if let Some(gid) = gateway_id {
+                                state_clone
+                                    .log_subscriptions
+                                    .subscribe_gateway(conn_id, gid, min_level.clone());
+                                tracing::debug!(
+                                    user_id = %user_id,
+                                    gateway_id = %gid,
+                                    min_level = %min_level,
+                                    "Log subscription added for gateway"
+                                );
+                            }
+                        }
+                        appcontrol_common::WsClientMessage::LogUnsubscribe {
+                            agent_id,
+                            gateway_id,
+                        } => {
+                            if let Some(aid) = agent_id {
+                                state_clone
+                                    .log_subscriptions
+                                    .unsubscribe_agent(conn_id, aid);
+                                tracing::debug!(
+                                    user_id = %user_id,
+                                    agent_id = %aid,
+                                    "Log subscription removed for agent"
+                                );
+                            }
+                            if let Some(gid) = gateway_id {
+                                state_clone
+                                    .log_subscriptions
+                                    .unsubscribe_gateway(conn_id, gid);
+                                tracing::debug!(
+                                    user_id = %user_id,
+                                    gateway_id = %gid,
+                                    "Log subscription removed for gateway"
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -350,6 +415,7 @@ async fn handle_client_socket(
     }
 
     state.ws_hub.remove_connection(conn_id);
+    state.log_subscriptions.remove_connection(conn_id);
 }
 
 /// Handle a gateway WebSocket connection.
@@ -672,6 +738,51 @@ async fn process_gateway_message(
             // - Agent is explicitly blocked (POST /agents/:id/block)
             // - Gateway is deleted (DELETE /gateways/:id)
             // The "connected" status is determined by the hub's routing table.
+        }
+        appcontrol_common::GatewayMessage::LogEntries {
+            gateway_id,
+            entries,
+        } => {
+            // Route gateway log entries to subscribed frontend connections
+            let subscribers = state.log_subscriptions.get_gateway_subscribers(gateway_id);
+            if subscribers.is_empty() {
+                return; // No subscribers, skip processing
+            }
+
+            // Look up gateway name for display
+            let gateway_name: String =
+                sqlx::query_scalar("SELECT name FROM gateways WHERE id = $1")
+                    .bind(gateway_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| gateway_id.to_string());
+
+            for entry in entries {
+                // Create WsEvent for each log entry
+                let log_event = appcontrol_common::WsEvent::LogEntry {
+                    source_type: "gateway".to_string(),
+                    source_id: gateway_id,
+                    source_name: gateway_name.clone(),
+                    level: entry.level.clone(),
+                    target: entry.target,
+                    message: entry.message,
+                    timestamp: entry.timestamp.to_rfc3339(),
+                };
+
+                if let Ok(json) = serde_json::to_string(&log_event) {
+                    for conn_id in &subscribers {
+                        // Check level filter for this connection
+                        if state
+                            .log_subscriptions
+                            .level_passes_filter(*conn_id, &entry.level)
+                        {
+                            state.ws_hub.send_to_connection(*conn_id, json.clone());
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1072,6 +1183,53 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
 
                     if let Ok(json) = serde_json::to_string(&exit_event) {
                         state.ws_hub.send_to_connection(session.conn_id, json);
+                    }
+                }
+            }
+        }
+        appcontrol_common::AgentMessage::LogEntries { agent_id, entries } => {
+            // Route log entries to subscribed frontend connections
+            let subscribers = state.log_subscriptions.get_agent_subscribers(agent_id);
+            tracing::debug!(
+                agent_id = %agent_id,
+                entry_count = entries.len(),
+                subscriber_count = subscribers.len(),
+                "Processing agent log entries"
+            );
+            if subscribers.is_empty() {
+                return; // No subscribers, skip processing
+            }
+
+            // Look up agent hostname for display
+            let agent_name: String = sqlx::query_scalar("SELECT hostname FROM agents WHERE id = $1")
+                .bind(agent_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| agent_id.to_string());
+
+            for entry in entries {
+                // Create WsEvent for each log entry
+                let log_event = appcontrol_common::WsEvent::LogEntry {
+                    source_type: "agent".to_string(),
+                    source_id: agent_id,
+                    source_name: agent_name.clone(),
+                    level: entry.level.clone(),
+                    target: entry.target,
+                    message: entry.message,
+                    timestamp: entry.timestamp.to_rfc3339(),
+                };
+
+                if let Ok(json) = serde_json::to_string(&log_event) {
+                    for conn_id in &subscribers {
+                        // Check level filter for this connection
+                        if state
+                            .log_subscriptions
+                            .level_passes_filter(*conn_id, &entry.level)
+                        {
+                            state.ws_hub.send_to_connection(*conn_id, json.clone());
+                        }
                     }
                 }
             }

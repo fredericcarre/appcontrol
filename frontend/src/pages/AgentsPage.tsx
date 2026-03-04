@@ -51,8 +51,10 @@ import {
   ChevronDown,
   ChevronRight,
   Terminal,
+  FileText,
 } from 'lucide-react';
 import { TerminalModal } from '@/components/terminal/TerminalModal';
+import { LogViewerModal } from '@/components/logs/LogViewerModal';
 import { AgentMetricsChart } from '@/components/agents/AgentMetricsChart';
 import {
   Tooltip,
@@ -83,6 +85,9 @@ export function AgentsPage() {
 
   // Terminal modal state
   const [terminalAgent, setTerminalAgent] = useState<Agent | null>(null);
+
+  // Log viewer modal state
+  const [logsAgent, setLogsAgent] = useState<Agent | null>(null);
 
   // Get unique gateways for the filter dropdown
   const gatewayOptions = useMemo(() => {
@@ -316,12 +321,20 @@ export function AgentsPage() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem disabled>View Details</DropdownMenuItem>
                             {agent.connected && (
-                              <DropdownMenuItem
-                                onClick={(e) => { e.stopPropagation(); setTerminalAgent(agent); }}
-                              >
-                                <Terminal className="h-4 w-4 mr-2" />
-                                Open Terminal
-                              </DropdownMenuItem>
+                              <>
+                                <DropdownMenuItem
+                                  onClick={(e) => { e.stopPropagation(); setTerminalAgent(agent); }}
+                                >
+                                  <Terminal className="h-4 w-4 mr-2" />
+                                  Open Terminal
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={(e) => { e.stopPropagation(); setLogsAgent(agent); }}
+                                >
+                                  <FileText className="h-4 w-4 mr-2" />
+                                  View Logs
+                                </DropdownMenuItem>
+                              </>
                             )}
                             <DropdownMenuSeparator />
                             {agent.is_active ? (
@@ -419,6 +432,17 @@ export function AgentsPage() {
           agentOs={terminalAgent.os_name}
           open={!!terminalAgent}
           onClose={() => setTerminalAgent(null)}
+        />
+      )}
+
+      {/* Log Viewer Modal */}
+      {logsAgent && (
+        <LogViewerModal
+          agentId={logsAgent.id}
+          sourceName={logsAgent.hostname || 'Unknown'}
+          sourceType="agent"
+          open={!!logsAgent}
+          onClose={() => setLogsAgent(null)}
         />
       )}
     </div>

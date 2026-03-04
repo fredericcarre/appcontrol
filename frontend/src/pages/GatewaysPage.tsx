@@ -56,7 +56,9 @@ import {
   Copy,
   CheckCircle2,
   Search,
+  FileText,
 } from 'lucide-react';
+import { LogViewerModal } from '@/components/logs/LogViewerModal';
 
 function formatTimeAgo(dateStr: string | null): string {
   if (!dateStr) return 'Never';
@@ -189,6 +191,7 @@ interface GatewayItemProps {
   onDelete: (gateway: Gateway) => void;
   onBlock: (gateway: Gateway) => void;
   onBlockAgent: (agent: GatewayAgent) => void;
+  onViewLogs: (gateway: Gateway) => void;
 }
 
 function GatewayItem({
@@ -201,6 +204,7 @@ function GatewayItem({
   onDelete,
   onBlock,
   onBlockAgent,
+  onViewLogs,
 }: GatewayItemProps) {
   const [expanded, setExpanded] = useState(false);
   const { data: agents, isLoading } = useGatewayAgents(expanded ? gateway.id : '');
@@ -239,6 +243,12 @@ function GatewayItem({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {gateway.connected && (
+                  <DropdownMenuItem onClick={() => onViewLogs(gateway)}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    View Logs
+                  </DropdownMenuItem>
+                )}
                 {!gateway.is_primary && (
                   <DropdownMenuItem onClick={() => onSetPrimary(gateway)} disabled={isMutating}>
                     <Star className="h-4 w-4 mr-2" />
@@ -306,6 +316,7 @@ interface ZoneCardProps {
   onDelete: (gateway: Gateway) => void;
   onBlock: (gateway: Gateway) => void;
   onBlockAgent: (agent: GatewayAgent) => void;
+  onViewLogs: (gateway: Gateway) => void;
 }
 
 function ZoneCard({
@@ -318,6 +329,7 @@ function ZoneCard({
   onDelete,
   onBlock,
   onBlockAgent,
+  onViewLogs,
 }: ZoneCardProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddFailover, setShowAddFailover] = useState(false);
@@ -399,6 +411,7 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
                 onDelete={onDelete}
                 onBlock={onBlock}
                 onBlockAgent={onBlockAgent}
+                onViewLogs={onViewLogs}
               />
             ))}
             {singleGateway && !search && (
@@ -519,6 +532,9 @@ export function GatewaysPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<Gateway | null>(null);
   const [blockGatewayConfirm, setBlockGatewayConfirm] = useState<Gateway | null>(null);
   const [blockAgentConfirm, setBlockAgentConfirm] = useState<GatewayAgent | null>(null);
+
+  // Log viewer modal state
+  const [logsGateway, setLogsGateway] = useState<Gateway | null>(null);
 
   // Get unique zones for filter dropdown
   const zoneOptions = useMemo(() => {
@@ -690,6 +706,7 @@ export function GatewaysPage() {
               onDelete={setDeleteConfirm}
               onBlock={setBlockGatewayConfirm}
               onBlockAgent={setBlockAgentConfirm}
+              onViewLogs={setLogsGateway}
             />
           ))}
         </div>
@@ -789,6 +806,17 @@ export function GatewaysPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Log Viewer Modal */}
+      {logsGateway && (
+        <LogViewerModal
+          gatewayId={logsGateway.id}
+          sourceName={logsGateway.name}
+          sourceType="gateway"
+          open={!!logsGateway}
+          onClose={() => setLogsGateway(null)}
+        />
+      )}
     </div>
   );
 }

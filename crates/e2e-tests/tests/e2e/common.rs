@@ -183,6 +183,7 @@ impl TestContext {
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
             operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
             terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
+            log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),
         });
 
         let app = appcontrol_backend::create_router(state);
@@ -354,6 +355,7 @@ impl TestContext {
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
             operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(),
             terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
+            log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),
         });
 
         let app = appcontrol_backend::create_router(state);

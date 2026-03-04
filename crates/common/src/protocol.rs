@@ -120,6 +120,27 @@ pub enum AgentMessage {
         request_id: Uuid,
         exit_code: i32,
     },
+    /// Log entry batch from agent (real-time log streaming).
+    LogEntries {
+        agent_id: Uuid,
+        entries: Vec<LogEntry>,
+    },
+}
+
+/// A single log entry from an agent or gateway.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    /// Log level: "TRACE", "DEBUG", "INFO", "WARN", "ERROR"
+    pub level: String,
+    /// Target module (e.g., "appcontrol_agent::scheduler")
+    pub target: String,
+    /// Log message
+    pub message: String,
+    /// Timestamp when the log was generated
+    pub timestamp: DateTime<Utc>,
+    /// Optional structured fields from the span/event
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<serde_json::Value>,
 }
 
 impl AgentMessage {
@@ -136,6 +157,7 @@ impl AgentMessage {
             AgentMessage::UpdateProgress { .. } => MessagePriority::High,
             AgentMessage::TerminalOutput { .. } => MessagePriority::High,
             AgentMessage::TerminalExit { .. } => MessagePriority::High,
+            AgentMessage::LogEntries { .. } => MessagePriority::Low,
         }
     }
 }
@@ -340,6 +362,23 @@ pub enum WsEvent {
         session_id: Uuid,
         error: String,
     },
+    /// Real-time log entry from an agent or gateway.
+    LogEntry {
+        /// Source type: "agent" or "gateway"
+        source_type: String,
+        /// Source ID (agent_id or gateway_id)
+        source_id: Uuid,
+        /// Human-readable source name (hostname for agents, gateway name for gateways)
+        source_name: String,
+        /// Log level: "TRACE", "DEBUG", "INFO", "WARN", "ERROR"
+        level: String,
+        /// Target module
+        target: String,
+        /// Log message
+        message: String,
+        /// ISO 8601 timestamp
+        timestamp: String,
+    },
 }
 
 /// Envelope for Backend → Gateway communication.
@@ -390,6 +429,11 @@ pub enum GatewayMessage {
     },
     /// An agent disconnected from this gateway.
     AgentDisconnected { agent_id: Uuid, hostname: String },
+    /// Log entry batch from the gateway itself (real-time log streaming).
+    LogEntries {
+        gateway_id: Uuid,
+        entries: Vec<LogEntry>,
+    },
 }
 
 /// Client subscription message (frontend → backend WebSocket).
@@ -425,6 +469,24 @@ pub enum WsClientMessage {
     /// Close a terminal session.
     TerminalClose {
         session_id: Uuid,
+    },
+    /// Subscribe to real-time logs from an agent or gateway.
+    LogSubscribe {
+        /// Agent ID to subscribe to (mutually exclusive with gateway_id)
+        #[serde(default)]
+        agent_id: Option<Uuid>,
+        /// Gateway ID to subscribe to (mutually exclusive with agent_id)
+        #[serde(default)]
+        gateway_id: Option<Uuid>,
+        /// Minimum log level filter: "TRACE", "DEBUG", "INFO", "WARN", "ERROR"
+        min_level: String,
+    },
+    /// Unsubscribe from logs.
+    LogUnsubscribe {
+        #[serde(default)]
+        agent_id: Option<Uuid>,
+        #[serde(default)]
+        gateway_id: Option<Uuid>,
     },
 }
 

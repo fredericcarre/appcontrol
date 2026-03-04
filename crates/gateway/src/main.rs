@@ -232,12 +232,21 @@ pub struct GatewayState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Create log streaming channel for WebSocket transmission
+    let (log_sender, log_receiver) = appcontrol_common::LogSender::new();
+    let ws_log_layer = appcontrol_common::WebSocketLogLayer::new(
+        log_sender,
+        tracing::Level::DEBUG,
+    );
+    let _log_layer_handle = ws_log_layer.handle();
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "appcontrol_gateway=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
+        .with(ws_log_layer)
         .init();
 
     let args = Args::parse();
@@ -263,6 +272,22 @@ async fn main() -> anyhow::Result<()> {
         config: config.clone(),
         gateway_id,
         shutdown_flag: std::sync::atomic::AtomicBool::new(false),
+    });
+
+    // Spawn log forwarding task (sends gateway's own log batches to backend)
+    let state_for_logs = state.clone();
+    tokio::spawn(async move {
+        let mut batcher = appcontrol_common::LogBatcher::new(log_receiver);
+        while let Some(entries) = batcher.next_batch().await {
+            // Wrap log entries in GatewayMessage and forward to backend
+            let log_msg = appcontrol_common::GatewayMessage::LogEntries {
+                gateway_id: state_for_logs.gateway_id,
+                entries,
+            };
+            if let Ok(json) = serde_json::to_string(&log_msg) {
+                state_for_logs.router.forward_to_backend(&json);
+            }
+        }
     });
 
     // Connect to backend in background with auto-reconnect

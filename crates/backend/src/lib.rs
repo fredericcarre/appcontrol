@@ -28,6 +28,7 @@ pub struct AppState {
     pub heartbeat_batcher: core::heartbeat_batcher::HeartbeatBatcher,
     pub operation_lock: core::operation_lock::OperationLock,
     pub terminal_sessions: terminal::TerminalSessionManager,
+    pub log_subscriptions: websocket::LogSubscriptionManager,
 }
 
 /// Build a CORS layer based on configuration.

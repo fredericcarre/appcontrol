@@ -311,20 +311,35 @@ impl TerminalManager {
         }
     }
 
-    /// Read output from PTY and send to backend.
+    /// Read output from PTY and send to backend with rate limiting.
+    ///
+    /// Rate limiting prevents the terminal from overwhelming the WebSocket
+    /// and frontend when commands produce large amounts of output (e.g., `cat` of a big file).
+    /// Without rate limiting, the frontend freezes and Ctrl+C becomes unresponsive.
+    ///
+    /// Strategy:
+    /// - Read in small batches (up to 4KB at a time)
+    /// - Send at most OUTPUT_RATE_LIMIT_BYTES per OUTPUT_RATE_INTERVAL
+    /// - When rate limit is hit, pause briefly to allow input to be processed
     async fn read_output_loop(
         request_id: Uuid,
         master_fd: RawFd,
         msg_tx: mpsc::UnboundedSender<AgentMessage>,
         sessions: Arc<Mutex<HashMap<Uuid, TerminalSession>>>,
     ) {
-        tracing::debug!(request_id = %request_id, master_fd = master_fd, "Starting PTY read loop");
+        // Rate limiting constants
+        const OUTPUT_RATE_LIMIT_BYTES: usize = 32 * 1024; // 32KB per interval
+        const OUTPUT_RATE_INTERVAL_MS: u64 = 100; // 100ms interval = ~320KB/sec max
+
+        tracing::debug!(request_id = %request_id, master_fd = master_fd, "Starting PTY read loop with rate limiting");
 
         // Create an async file from the raw fd
         let file = unsafe { std::fs::File::from_raw_fd(master_fd) };
         let mut async_file = tokio::fs::File::from_std(file);
 
         let mut buffer = vec![0u8; 4096];
+        let mut bytes_this_interval: usize = 0;
+        let mut interval_start = std::time::Instant::now();
 
         loop {
             // Check if session still exists
@@ -336,15 +351,41 @@ impl TerminalManager {
                 }
             }
 
-            match async_file.read(&mut buffer).await {
-                Ok(0) => {
+            // Rate limiting: if we've sent too much data this interval, pause
+            let elapsed_ms = interval_start.elapsed().as_millis() as u64;
+            if bytes_this_interval >= OUTPUT_RATE_LIMIT_BYTES {
+                if elapsed_ms < OUTPUT_RATE_INTERVAL_MS {
+                    // Pause until the interval ends - this allows input to be processed
+                    let sleep_ms = OUTPUT_RATE_INTERVAL_MS - elapsed_ms;
+                    tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+                }
+                // Reset for next interval
+                bytes_this_interval = 0;
+                interval_start = std::time::Instant::now();
+            } else if elapsed_ms >= OUTPUT_RATE_INTERVAL_MS {
+                // Interval ended, reset counters
+                bytes_this_interval = 0;
+                interval_start = std::time::Instant::now();
+            }
+
+            // Use a short timeout so we can check session status periodically
+            let read_result = tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                async_file.read(&mut buffer),
+            )
+            .await;
+
+            match read_result {
+                Ok(Ok(0)) => {
                     // EOF - shell exited
                     tracing::info!(request_id = %request_id, "Terminal EOF");
                     break;
                 }
-                Ok(n) => {
+                Ok(Ok(n)) => {
                     tracing::debug!(request_id = %request_id, bytes = n, "Read {} bytes from PTY", n);
                     let data = buffer[..n].to_vec();
+                    bytes_this_interval += n;
+
                     if msg_tx
                         .send(AgentMessage::TerminalOutput { request_id, data })
                         .is_err()
@@ -353,9 +394,13 @@ impl TerminalManager {
                         break;
                     }
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     tracing::debug!(request_id = %request_id, error = %e, "Terminal read error");
                     break;
+                }
+                Err(_) => {
+                    // Timeout - no data available, continue loop to check session status
+                    continue;
                 }
             }
         }
@@ -708,16 +753,25 @@ impl TerminalManager {
     }
 
     /// Read output from ConPTY in a blocking manner (run in spawn_blocking).
+    ///
+    /// Rate limiting prevents the terminal from overwhelming the WebSocket
+    /// and frontend when commands produce large amounts of output.
     fn read_output_loop_blocking(
         request_id: Uuid,
         output_read: HANDLE,
         msg_tx: mpsc::UnboundedSender<AgentMessage>,
         sessions: Arc<Mutex<HashMap<Uuid, TerminalSession>>>,
     ) {
-        tracing::debug!(request_id = %request_id, "Starting ConPTY read loop");
+        // Rate limiting constants
+        const OUTPUT_RATE_LIMIT_BYTES: usize = 32 * 1024; // 32KB per interval
+        const OUTPUT_RATE_INTERVAL_MS: u64 = 100; // 100ms interval = ~320KB/sec max
+
+        tracing::debug!(request_id = %request_id, "Starting ConPTY read loop with rate limiting");
 
         let mut buffer = vec![0u8; 4096];
         let mut bytes_read: u32 = 0;
+        let mut bytes_this_interval: usize = 0;
+        let mut interval_start = std::time::Instant::now();
 
         loop {
             // Check if session still exists (blocking check)
@@ -734,6 +788,23 @@ impl TerminalManager {
                 break;
             }
 
+            // Rate limiting: if we've sent too much data this interval, pause
+            let elapsed_ms = interval_start.elapsed().as_millis() as u64;
+            if bytes_this_interval >= OUTPUT_RATE_LIMIT_BYTES {
+                if elapsed_ms < OUTPUT_RATE_INTERVAL_MS {
+                    // Pause until the interval ends - this allows input to be processed
+                    let sleep_ms = OUTPUT_RATE_INTERVAL_MS - elapsed_ms;
+                    std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                }
+                // Reset for next interval
+                bytes_this_interval = 0;
+                interval_start = std::time::Instant::now();
+            } else if elapsed_ms >= OUTPUT_RATE_INTERVAL_MS {
+                // Interval ended, reset counters
+                bytes_this_interval = 0;
+                interval_start = std::time::Instant::now();
+            }
+
             let result = unsafe {
                 ReadFile(
                     output_read,
@@ -746,6 +817,8 @@ impl TerminalManager {
             match result {
                 Ok(()) if bytes_read > 0 => {
                     let data = buffer[..bytes_read as usize].to_vec();
+                    bytes_this_interval += bytes_read as usize;
+
                     tracing::debug!(
                         request_id = %request_id,
                         bytes = bytes_read,
