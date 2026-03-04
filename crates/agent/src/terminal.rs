@@ -421,16 +421,535 @@ impl TerminalManager {
     }
 }
 
-// Placeholder for Windows - terminal not supported
-#[cfg(not(unix))]
-pub struct TerminalManager {
-    agent_id: Uuid,
+// Windows ConPTY implementation
+#[cfg(windows)]
+use std::collections::HashMap;
+#[cfg(windows)]
+use std::sync::Arc;
+#[cfg(windows)]
+use tokio::sync::Mutex;
+
+#[cfg(windows)]
+use appcontrol_common::AgentMessage;
+
+#[cfg(windows)]
+use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+#[cfg(windows)]
+use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
+#[cfg(windows)]
+use windows::Win32::System::Console::{
+    ClosePseudoConsole, CreatePseudoConsole, ResizePseudoConsole, COORD, HPCON,
+    PSEUDOCONSOLE_INHERIT_CURSOR,
+};
+#[cfg(windows)]
+use windows::Win32::System::Pipes::CreatePipe;
+#[cfg(windows)]
+use windows::Win32::System::Threading::{
+    CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
+    TerminateProcess, UpdateProcThreadAttribute, EXTENDED_STARTUPINFO_PRESENT,
+    LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+    STARTUPINFOEXW,
+};
+
+/// A single terminal session on Windows.
+#[cfg(windows)]
+struct TerminalSession {
+    /// ConPTY handle.
+    hpc: HPCON,
+    /// Process handle.
+    process_handle: HANDLE,
+    /// Input pipe write handle (we write to this).
+    input_write: HANDLE,
+    /// Channel to send input data to the PTY writer task.
+    input_tx: mpsc::UnboundedSender<Vec<u8>>,
+    /// Last activity timestamp for idle timeout.
+    last_activity: std::time::Instant,
 }
 
-#[cfg(not(unix))]
+/// Manages multiple terminal sessions on Windows using ConPTY.
+#[cfg(windows)]
+pub struct TerminalManager {
+    /// Active sessions keyed by request_id.
+    sessions: Arc<Mutex<HashMap<Uuid, TerminalSession>>>,
+    /// Channel to send outgoing messages to the connection manager.
+    msg_tx: mpsc::UnboundedSender<AgentMessage>,
+}
+
+#[cfg(windows)]
+impl TerminalManager {
+    /// Create a new terminal manager.
+    pub fn new(_agent_id: Uuid, msg_tx: mpsc::UnboundedSender<AgentMessage>) -> Self {
+        Self {
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            msg_tx,
+        }
+    }
+
+    /// Start a new terminal session using Windows ConPTY.
+    pub async fn start_session(
+        &self,
+        request_id: Uuid,
+        shell: Option<String>,
+        cols: u16,
+        rows: u16,
+        env: HashMap<String, String>,
+    ) -> Result<(), String> {
+        // Check if session already exists
+        {
+            let sessions = self.sessions.lock().await;
+            if sessions.contains_key(&request_id) {
+                return Err("Session already exists".to_string());
+            }
+        }
+
+        // Determine shell to use - default to cmd.exe on Windows
+        let shell_path = shell.unwrap_or_else(|| {
+            std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+        });
+
+        tracing::info!(
+            request_id = %request_id,
+            shell = %shell_path,
+            cols = cols,
+            rows = rows,
+            "Starting Windows ConPTY terminal session"
+        );
+
+        // Create pipes for PTY I/O
+        // ConPTY uses two pairs of pipes:
+        // - Input:  We write to input_write, ConPTY reads from input_read
+        // - Output: ConPTY writes to output_write, we read from output_read
+        let mut input_read = HANDLE::default();
+        let mut input_write = HANDLE::default();
+        let mut output_read = HANDLE::default();
+        let mut output_write = HANDLE::default();
+
+        unsafe {
+            // Create input pipe
+            CreatePipe(&mut input_read, &mut input_write, None, 0)
+                .map_err(|e| format!("Failed to create input pipe: {}", e))?;
+
+            // Create output pipe
+            if let Err(e) = CreatePipe(&mut output_read, &mut output_write, None, 0) {
+                let _ = CloseHandle(input_read);
+                let _ = CloseHandle(input_write);
+                return Err(format!("Failed to create output pipe: {}", e));
+            }
+        }
+
+        // Create ConPTY
+        let size = COORD {
+            X: cols as i16,
+            Y: rows as i16,
+        };
+
+        let hpc = unsafe {
+            match CreatePseudoConsole(size, input_read, output_write, PSEUDOCONSOLE_INHERIT_CURSOR)
+            {
+                Ok(hpc) => hpc,
+                Err(e) => {
+                    let _ = CloseHandle(input_read);
+                    let _ = CloseHandle(input_write);
+                    let _ = CloseHandle(output_read);
+                    let _ = CloseHandle(output_write);
+                    return Err(format!("Failed to create ConPTY: {}", e));
+                }
+            }
+        };
+
+        // Close the pipe ends that ConPTY now owns
+        unsafe {
+            let _ = CloseHandle(input_read);
+            let _ = CloseHandle(output_write);
+        }
+
+        // Create process with ConPTY attached
+        let process_handle =
+            match Self::create_process_with_conpty(&shell_path, hpc, &env) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    unsafe {
+                        ClosePseudoConsole(hpc);
+                        let _ = CloseHandle(input_write);
+                        let _ = CloseHandle(output_read);
+                    }
+                    return Err(e);
+                }
+            };
+
+        // Create input channel
+        let (input_tx, input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+
+        // Store session
+        let session = TerminalSession {
+            hpc,
+            process_handle,
+            input_write,
+            input_tx,
+            last_activity: std::time::Instant::now(),
+        };
+
+        {
+            let mut sessions = self.sessions.lock().await;
+            sessions.insert(request_id, session);
+        }
+
+        // Spawn output reader task
+        let sessions_clone = self.sessions.clone();
+        let msg_tx = self.msg_tx.clone();
+        let output_read_handle = output_read;
+
+        tokio::task::spawn_blocking(move || {
+            Self::read_output_loop_blocking(request_id, output_read_handle, msg_tx, sessions_clone);
+        });
+
+        // Spawn input writer task
+        let sessions_clone2 = self.sessions.clone();
+        let input_write_handle = input_write;
+
+        tokio::spawn(async move {
+            Self::write_input_loop(request_id, input_write_handle, input_rx, sessions_clone2).await;
+        });
+
+        Ok(())
+    }
+
+    /// Create a process attached to a ConPTY.
+    fn create_process_with_conpty(
+        shell_path: &str,
+        hpc: HPCON,
+        env: &HashMap<String, String>,
+    ) -> Result<HANDLE, String> {
+        use std::mem::size_of;
+        use std::ptr::null_mut;
+
+        // Build environment block if needed
+        let _env_block = if !env.is_empty() {
+            let mut block = String::new();
+            // First, copy existing environment
+            for (key, value) in std::env::vars() {
+                block.push_str(&format!("{}={}\0", key, value));
+            }
+            // Add custom environment variables
+            for (key, value) in env {
+                block.push_str(&format!("{}={}\0", key, value));
+            }
+            block.push('\0'); // Double null termination
+            Some(block)
+        } else {
+            None
+        };
+
+        unsafe {
+            // Initialize the PROC_THREAD_ATTRIBUTE_LIST
+            let mut attr_list_size: usize = 0;
+            let _ = InitializeProcThreadAttributeList(
+                LPPROC_THREAD_ATTRIBUTE_LIST(null_mut()),
+                1,
+                0,
+                &mut attr_list_size,
+            );
+
+            let attr_list_buffer = vec![0u8; attr_list_size];
+            let attr_list = LPPROC_THREAD_ATTRIBUTE_LIST(attr_list_buffer.as_ptr() as *mut _);
+
+            InitializeProcThreadAttributeList(attr_list, 1, 0, &mut attr_list_size)
+                .map_err(|e| format!("InitializeProcThreadAttributeList failed: {}", e))?;
+
+            // Set the pseudoconsole attribute
+            UpdateProcThreadAttribute(
+                attr_list,
+                0,
+                PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize,
+                Some(hpc.0 as *const std::ffi::c_void),
+                size_of::<HPCON>(),
+                None,
+                None,
+            )
+            .map_err(|e| format!("UpdateProcThreadAttribute failed: {}", e))?;
+
+            // Create startup info
+            let mut startup_info: STARTUPINFOEXW = std::mem::zeroed();
+            startup_info.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
+            startup_info.lpAttributeList = attr_list;
+
+            // Create process information struct
+            let mut process_info: PROCESS_INFORMATION = std::mem::zeroed();
+
+            // Convert shell path to wide string
+            let shell_wide: Vec<u16> = shell_path.encode_utf16().chain(std::iter::once(0)).collect();
+            let mut cmd_line: Vec<u16> = shell_wide.clone();
+
+            let result = CreateProcessW(
+                None,
+                windows::core::PWSTR(cmd_line.as_mut_ptr()),
+                None,
+                None,
+                false,
+                EXTENDED_STARTUPINFO_PRESENT,
+                None,
+                None,
+                &startup_info.StartupInfo,
+                &mut process_info,
+            );
+
+            // Clean up attribute list
+            DeleteProcThreadAttributeList(attr_list);
+
+            match result {
+                Ok(()) => {
+                    // Close thread handle, we only need the process handle
+                    let _ = CloseHandle(process_info.hThread);
+                    Ok(process_info.hProcess)
+                }
+                Err(e) => Err(format!("CreateProcessW failed: {}", e)),
+            }
+        }
+    }
+
+    /// Read output from ConPTY in a blocking manner (run in spawn_blocking).
+    fn read_output_loop_blocking(
+        request_id: Uuid,
+        output_read: HANDLE,
+        msg_tx: mpsc::UnboundedSender<AgentMessage>,
+        sessions: Arc<Mutex<HashMap<Uuid, TerminalSession>>>,
+    ) {
+        tracing::debug!(request_id = %request_id, "Starting ConPTY read loop");
+
+        let mut buffer = vec![0u8; 4096];
+        let mut bytes_read: u32 = 0;
+
+        loop {
+            // Check if session still exists (blocking check)
+            let session_exists = {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    let sessions_guard = sessions.lock().await;
+                    sessions_guard.contains_key(&request_id)
+                })
+            };
+
+            if !session_exists {
+                tracing::debug!(request_id = %request_id, "Session no longer exists, exiting read loop");
+                break;
+            }
+
+            let result = unsafe {
+                ReadFile(
+                    output_read,
+                    Some(&mut buffer),
+                    Some(&mut bytes_read),
+                    None,
+                )
+            };
+
+            match result {
+                Ok(()) if bytes_read > 0 => {
+                    let data = buffer[..bytes_read as usize].to_vec();
+                    tracing::debug!(
+                        request_id = %request_id,
+                        bytes = bytes_read,
+                        "Read {} bytes from ConPTY",
+                        bytes_read
+                    );
+
+                    if msg_tx
+                        .send(AgentMessage::TerminalOutput { request_id, data })
+                        .is_err()
+                    {
+                        tracing::error!(request_id = %request_id, "Failed to send TerminalOutput");
+                        break;
+                    }
+                }
+                Ok(()) => {
+                    // Zero bytes read - EOF
+                    tracing::info!(request_id = %request_id, "ConPTY EOF");
+                    break;
+                }
+                Err(e) => {
+                    tracing::debug!(request_id = %request_id, error = %e, "ConPTY read error");
+                    break;
+                }
+            }
+        }
+
+        // Clean up output read handle
+        unsafe {
+            let _ = CloseHandle(output_read);
+        }
+
+        // Remove session and notify
+        let rt = tokio::runtime::Handle::current();
+        let was_removed = rt.block_on(async {
+            let mut sessions_guard = sessions.lock().await;
+            sessions_guard.remove(&request_id).is_some()
+        });
+
+        if was_removed {
+            let _ = msg_tx.send(AgentMessage::TerminalExit {
+                request_id,
+                exit_code: 0,
+            });
+        }
+    }
+
+    /// Write input to ConPTY.
+    async fn write_input_loop(
+        request_id: Uuid,
+        input_write: HANDLE,
+        mut input_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+        sessions: Arc<Mutex<HashMap<Uuid, TerminalSession>>>,
+    ) {
+        while let Some(data) = input_rx.recv().await {
+            // Check if session still exists
+            {
+                let sessions_guard = sessions.lock().await;
+                if !sessions_guard.contains_key(&request_id) {
+                    break;
+                }
+            }
+
+            // Write to ConPTY input - use spawn_blocking for the blocking call
+            let data_clone = data.clone();
+            let input_write_copy = input_write;
+
+            let write_result = tokio::task::spawn_blocking(move || {
+                let mut bytes_written: u32 = 0;
+                unsafe {
+                    WriteFile(
+                        input_write_copy,
+                        Some(&data_clone),
+                        Some(&mut bytes_written),
+                        None,
+                    )
+                }
+            })
+            .await;
+
+            if let Err(e) = write_result {
+                tracing::debug!(request_id = %request_id, error = %e, "ConPTY write task failed");
+                break;
+            }
+
+            if let Ok(Err(e)) = write_result {
+                tracing::debug!(request_id = %request_id, error = %e, "ConPTY write error");
+                break;
+            }
+        }
+    }
+
+    /// Send input data to a terminal session.
+    pub async fn send_input(&self, request_id: Uuid, data: Vec<u8>) -> Result<(), String> {
+        let mut sessions = self.sessions.lock().await;
+        if let Some(session) = sessions.get_mut(&request_id) {
+            session.last_activity = std::time::Instant::now();
+            session
+                .input_tx
+                .send(data)
+                .map_err(|e| format!("Send failed: {}", e))
+        } else {
+            Err("Session not found".to_string())
+        }
+    }
+
+    /// Resize a terminal session.
+    pub async fn resize(&self, request_id: Uuid, cols: u16, rows: u16) -> Result<(), String> {
+        let mut sessions = self.sessions.lock().await;
+        if let Some(session) = sessions.get_mut(&request_id) {
+            session.last_activity = std::time::Instant::now();
+
+            let size = COORD {
+                X: cols as i16,
+                Y: rows as i16,
+            };
+
+            unsafe {
+                ResizePseudoConsole(session.hpc, size)
+                    .map_err(|e| format!("ResizePseudoConsole failed: {}", e))?;
+            }
+
+            tracing::debug!(
+                request_id = %request_id,
+                cols = cols,
+                rows = rows,
+                "ConPTY resized"
+            );
+            Ok(())
+        } else {
+            Err("Session not found".to_string())
+        }
+    }
+
+    /// Close a terminal session.
+    pub async fn close_session(&self, request_id: Uuid) -> Result<(), String> {
+        let session = {
+            let mut sessions = self.sessions.lock().await;
+            sessions.remove(&request_id)
+        };
+
+        if let Some(session) = session {
+            tracing::info!(request_id = %request_id, "Closing ConPTY terminal session");
+
+            unsafe {
+                // Terminate the process
+                let _ = TerminateProcess(session.process_handle, 0);
+
+                // Close handles
+                ClosePseudoConsole(session.hpc);
+                let _ = CloseHandle(session.process_handle);
+                let _ = CloseHandle(session.input_write);
+            }
+
+            Ok(())
+        } else {
+            Err("Session not found".to_string())
+        }
+    }
+
+    /// Check for idle sessions and close them.
+    #[allow(dead_code)]
+    pub async fn cleanup_idle_sessions(&self, timeout: std::time::Duration) {
+        let now = std::time::Instant::now();
+        let mut to_close = Vec::new();
+
+        {
+            let sessions = self.sessions.lock().await;
+            for (request_id, session) in sessions.iter() {
+                if now.duration_since(session.last_activity) > timeout {
+                    to_close.push(*request_id);
+                }
+            }
+        }
+
+        for request_id in to_close {
+            tracing::info!(request_id = %request_id, "Closing idle ConPTY terminal session");
+            let _ = self.close_session(request_id).await;
+
+            // Notify backend of session closure
+            let _ = self.msg_tx.send(AgentMessage::TerminalExit {
+                request_id,
+                exit_code: -1, // Timeout
+            });
+        }
+    }
+
+    /// Get the number of active sessions.
+    #[allow(dead_code)]
+    pub async fn session_count(&self) -> usize {
+        self.sessions.lock().await.len()
+    }
+}
+
+// Non-Unix, non-Windows fallback (should not happen in practice)
+#[cfg(all(not(unix), not(windows)))]
+pub struct TerminalManager {
+    _agent_id: Uuid,
+}
+
+#[cfg(all(not(unix), not(windows)))]
 impl TerminalManager {
     pub fn new(agent_id: Uuid, _msg_tx: mpsc::UnboundedSender<AgentMessage>) -> Self {
-        Self { agent_id }
+        Self { _agent_id: agent_id }
     }
 
     pub async fn start_session(
@@ -441,19 +960,19 @@ impl TerminalManager {
         _rows: u16,
         _env: std::collections::HashMap<String, String>,
     ) -> Result<(), String> {
-        Err("Terminal access is not supported on Windows".to_string())
+        Err("Terminal access is not supported on this platform".to_string())
     }
 
     pub async fn send_input(&self, _request_id: Uuid, _data: Vec<u8>) -> Result<(), String> {
-        Err("Terminal access is not supported on Windows".to_string())
+        Err("Terminal access is not supported on this platform".to_string())
     }
 
     pub async fn resize(&self, _request_id: Uuid, _cols: u16, _rows: u16) -> Result<(), String> {
-        Err("Terminal access is not supported on Windows".to_string())
+        Err("Terminal access is not supported on this platform".to_string())
     }
 
     pub async fn close_session(&self, _request_id: Uuid) -> Result<(), String> {
-        Err("Terminal access is not supported on Windows".to_string())
+        Err("Terminal access is not supported on this platform".to_string())
     }
 
     pub async fn cleanup_idle_sessions(&self, _timeout: std::time::Duration) {}

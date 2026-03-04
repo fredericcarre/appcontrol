@@ -19,17 +19,50 @@ import { Terminal, X } from 'lucide-react';
 interface TerminalModalProps {
   agentId: string;
   agentHostname: string;
+  agentOs?: string | null;
   open: boolean;
   onClose: () => void;
+}
+
+// Detect if agent is running Windows
+function isWindowsAgent(os?: string | null): boolean {
+  if (!os) return false;
+  const osLower = os.toLowerCase();
+  return osLower.includes('windows');
+}
+
+// Get default shell based on OS
+function getDefaultShell(os?: string | null): string {
+  if (isWindowsAgent(os)) {
+    return 'cmd.exe';
+  }
+  return '/bin/bash';
+}
+
+// Get shell options based on OS
+function getShellOptions(os?: string | null): { value: string; label: string }[] {
+  if (isWindowsAgent(os)) {
+    return [
+      { value: 'cmd.exe', label: 'cmd' },
+      { value: 'powershell.exe', label: 'PowerShell' },
+      { value: 'pwsh.exe', label: 'PowerShell 7' },
+    ];
+  }
+  return [
+    { value: '/bin/bash', label: 'bash' },
+    { value: '/bin/sh', label: 'sh' },
+    { value: '/bin/zsh', label: 'zsh' },
+  ];
 }
 
 export function TerminalModal({
   agentId,
   agentHostname,
+  agentOs,
   open,
   onClose,
 }: TerminalModalProps) {
-  const [shell, setShell] = useState<string>('/bin/bash');
+  const [shell, setShell] = useState<string>(() => getDefaultShell(agentOs));
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
@@ -70,9 +103,11 @@ export function TerminalModal({
                   <SelectValue placeholder="Shell" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="/bin/bash">bash</SelectItem>
-                  <SelectItem value="/bin/sh">sh</SelectItem>
-                  <SelectItem value="/bin/zsh">zsh</SelectItem>
+                  {getShellOptions(agentOs).map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             )}

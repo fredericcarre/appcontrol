@@ -416,6 +416,7 @@ export function AgentsPage() {
         <TerminalModal
           agentId={terminalAgent.id}
           agentHostname={terminalAgent.hostname || 'Unknown'}
+          agentOs={terminalAgent.os_name}
           open={!!terminalAgent}
           onClose={() => setTerminalAgent(null)}
         />
