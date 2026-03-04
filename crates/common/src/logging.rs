@@ -149,8 +149,10 @@ impl Visit for FieldVisitor {
         if field.name() == "message" {
             self.message = format!("{:?}", value);
         } else {
-            self.fields
-                .insert(field.name().to_string(), serde_json::json!(format!("{:?}", value)));
+            self.fields.insert(
+                field.name().to_string(),
+                serde_json::json!(format!("{:?}", value)),
+            );
         }
     }
 

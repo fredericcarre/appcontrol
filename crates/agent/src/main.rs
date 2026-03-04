@@ -76,10 +76,7 @@ enum ServiceAction {
 async fn main() -> anyhow::Result<()> {
     // Create log streaming channel for WebSocket transmission
     let (log_sender, log_receiver) = appcontrol_common::LogSender::new();
-    let ws_log_layer = appcontrol_common::WebSocketLogLayer::new(
-        log_sender,
-        tracing::Level::DEBUG,
-    );
+    let ws_log_layer = appcontrol_common::WebSocketLogLayer::new(log_sender, tracing::Level::DEBUG);
     let log_layer_handle = ws_log_layer.handle();
 
     tracing_subscriber::registry()
@@ -165,10 +162,7 @@ async fn main() -> anyhow::Result<()> {
         let mut batcher = appcontrol_common::LogBatcher::new(log_receiver);
         while let Some(entries) = batcher.next_batch().await {
             // Send log entries to gateway/backend
-            let log_msg = appcontrol_common::AgentMessage::LogEntries {
-                agent_id,
-                entries,
-            };
+            let log_msg = appcontrol_common::AgentMessage::LogEntries { agent_id, entries };
             if log_msg_tx.send(log_msg).is_err() {
                 // Channel closed, stop forwarding
                 break;

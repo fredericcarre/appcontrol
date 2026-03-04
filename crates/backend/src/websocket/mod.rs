@@ -356,9 +356,11 @@ async fn handle_client_socket(
                             }
 
                             if let Some(aid) = agent_id {
-                                state_clone
-                                    .log_subscriptions
-                                    .subscribe_agent(conn_id, aid, min_level.clone());
+                                state_clone.log_subscriptions.subscribe_agent(
+                                    conn_id,
+                                    aid,
+                                    min_level.clone(),
+                                );
                                 tracing::debug!(
                                     user_id = %user_id,
                                     agent_id = %aid,
@@ -367,9 +369,11 @@ async fn handle_client_socket(
                                 );
                             }
                             if let Some(gid) = gateway_id {
-                                state_clone
-                                    .log_subscriptions
-                                    .subscribe_gateway(conn_id, gid, min_level.clone());
+                                state_clone.log_subscriptions.subscribe_gateway(
+                                    conn_id,
+                                    gid,
+                                    min_level.clone(),
+                                );
                                 tracing::debug!(
                                     user_id = %user_id,
                                     gateway_id = %gid,
@@ -452,11 +456,19 @@ async fn handle_gateway_socket(socket: ws::WebSocket, state: Arc<AppState>) {
             match receiver.next().await {
                 Some(Ok(msg)) => {
                     if let ws::Message::Text(text) = msg {
-                        tracing::debug!(bytes = text.len(), "Received WebSocket message from gateway");
+                        tracing::debug!(
+                            bytes = text.len(),
+                            "Received WebSocket message from gateway"
+                        );
                         match serde_json::from_str::<appcontrol_common::GatewayMessage>(&text) {
                             Ok(gw_msg) => {
-                                process_gateway_message(&state_clone, &gw_id_clone, &gw_tx_clone, gw_msg)
-                                    .await;
+                                process_gateway_message(
+                                    &state_clone,
+                                    &gw_id_clone,
+                                    &gw_tx_clone,
+                                    gw_msg,
+                                )
+                                .await;
                                 tracing::debug!("Finished processing gateway message");
                             }
                             Err(_) => {
@@ -1201,13 +1213,14 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             }
 
             // Look up agent hostname for display
-            let agent_name: String = sqlx::query_scalar("SELECT hostname FROM agents WHERE id = $1")
-                .bind(agent_id)
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| agent_id.to_string());
+            let agent_name: String =
+                sqlx::query_scalar("SELECT hostname FROM agents WHERE id = $1")
+                    .bind(agent_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| agent_id.to_string());
 
             for entry in entries {
                 // Create WsEvent for each log entry

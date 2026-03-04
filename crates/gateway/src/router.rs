@@ -120,7 +120,10 @@ impl MessageRouter {
         if let Some(sender) = guard.as_ref() {
             match sender.try_send(message.to_string()) {
                 Ok(()) => {
-                    tracing::debug!(bytes = message.len(), "Forwarded message to backend channel");
+                    tracing::debug!(
+                        bytes = message.len(),
+                        "Forwarded message to backend channel"
+                    );
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     tracing::warn!("Backend channel full — dropping message (backpressure)");
@@ -134,7 +137,10 @@ impl MessageRouter {
                 }
             }
         } else {
-            tracing::debug!(bytes = message.len(), "No backend sender — buffering message");
+            tracing::debug!(
+                bytes = message.len(),
+                "No backend sender — buffering message"
+            );
             drop(guard);
             self.buffer.lock().unwrap().push(message.to_string());
         }

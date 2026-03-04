@@ -234,10 +234,7 @@ pub struct GatewayState {
 async fn main() -> anyhow::Result<()> {
     // Create log streaming channel for WebSocket transmission
     let (log_sender, log_receiver) = appcontrol_common::LogSender::new();
-    let ws_log_layer = appcontrol_common::WebSocketLogLayer::new(
-        log_sender,
-        tracing::Level::DEBUG,
-    );
+    let ws_log_layer = appcontrol_common::WebSocketLogLayer::new(log_sender, tracing::Level::DEBUG);
     let _log_layer_handle = ws_log_layer.handle();
 
     tracing_subscriber::registry()
@@ -644,7 +641,10 @@ async fn handle_agent_connection(
                     let wrapped = GatewayMessage::AgentMessage(agent_msg);
                     match serde_json::to_string(&wrapped) {
                         Ok(json) => {
-                            tracing::debug!(bytes = json.len(), "Serialized agent message, forwarding to backend");
+                            tracing::debug!(
+                                bytes = json.len(),
+                                "Serialized agent message, forwarding to backend"
+                            );
                             state_clone.router.forward_to_backend(&json);
                         }
                         Err(e) => {

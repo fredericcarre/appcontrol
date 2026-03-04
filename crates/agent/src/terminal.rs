@@ -548,9 +548,8 @@ impl TerminalManager {
         }
 
         // Determine shell to use - default to cmd.exe on Windows
-        let shell_path = shell.unwrap_or_else(|| {
-            std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
-        });
+        let shell_path = shell
+            .unwrap_or_else(|| std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()));
 
         tracing::info!(
             request_id = %request_id,
@@ -609,18 +608,17 @@ impl TerminalManager {
         }
 
         // Create process with ConPTY attached
-        let process_handle =
-            match Self::create_process_with_conpty(&shell_path, hpc, &env) {
-                Ok(handle) => handle,
-                Err(e) => {
-                    unsafe {
-                        ClosePseudoConsole(hpc);
-                        let _ = CloseHandle(input_write);
-                        let _ = CloseHandle(output_read);
-                    }
-                    return Err(e);
+        let process_handle = match Self::create_process_with_conpty(&shell_path, hpc, &env) {
+            Ok(handle) => handle,
+            Err(e) => {
+                unsafe {
+                    ClosePseudoConsole(hpc);
+                    let _ = CloseHandle(input_write);
+                    let _ = CloseHandle(output_read);
                 }
-            };
+                return Err(e);
+            }
+        };
 
         // Create input channel
         let (input_tx, input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -722,7 +720,10 @@ impl TerminalManager {
             let mut process_info: PROCESS_INFORMATION = std::mem::zeroed();
 
             // Convert shell path to wide string
-            let shell_wide: Vec<u16> = shell_path.encode_utf16().chain(std::iter::once(0)).collect();
+            let shell_wide: Vec<u16> = shell_path
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
             let mut cmd_line: Vec<u16> = shell_wide.clone();
 
             let result = CreateProcessW(
@@ -805,14 +806,8 @@ impl TerminalManager {
                 interval_start = std::time::Instant::now();
             }
 
-            let result = unsafe {
-                ReadFile(
-                    output_read,
-                    Some(&mut buffer),
-                    Some(&mut bytes_read),
-                    None,
-                )
-            };
+            let result =
+                unsafe { ReadFile(output_read, Some(&mut buffer), Some(&mut bytes_read), None) };
 
             match result {
                 Ok(()) if bytes_read > 0 => {
@@ -1022,7 +1017,9 @@ pub struct TerminalManager {
 #[cfg(all(not(unix), not(windows)))]
 impl TerminalManager {
     pub fn new(agent_id: Uuid, _msg_tx: mpsc::UnboundedSender<AgentMessage>) -> Self {
-        Self { _agent_id: agent_id }
+        Self {
+            _agent_id: agent_id,
+        }
     }
 
     pub async fn start_session(
