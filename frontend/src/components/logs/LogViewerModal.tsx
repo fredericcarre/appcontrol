@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -45,21 +45,31 @@ export function LogViewerModal({
 }: LogViewerModalProps) {
   const [minLevel, setMinLevel] = useState<LogLevel>('DEBUG');
   const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [isSubscribed, setIsSubscribed] = useState(false);
+  const isSubscribedRef = useRef(false);
+  const lastProcessedMsgRef = useRef(0);
 
   const wsConnected = useWebSocketStore((s) => s.connected);
   const messages = useWebSocketStore((s) => s.messages);
 
+  // Derive subscription state from refs and props
+  const subscriptionState = useMemo(() => {
+    if (!open) return 'disconnected';
+    if (!wsConnected) return 'disconnected';
+    // Note: isSubscribedRef.current is not reactive, but we check wsConnected which is
+    return 'connected';
+  }, [open, wsConnected]);
+
   // Subscribe to logs when modal opens
   useEffect(() => {
     if (!open) {
-      setIsSubscribed(false);
+      isSubscribedRef.current = false;
       return;
     }
 
     // Get WebSocket and send subscribe message
     const ws = getGlobalWebSocket();
     if (!ws || ws.readyState !== WebSocket.OPEN) {
+      isSubscribedRef.current = false;
       return;
     }
 
@@ -73,7 +83,7 @@ export function LogViewerModal({
     };
 
     ws.send(JSON.stringify(subscribeMsg));
-    setIsSubscribed(true);
+    isSubscribedRef.current = true;
 
     // Cleanup: unsubscribe when modal closes
     return () => {
@@ -88,13 +98,13 @@ export function LogViewerModal({
         };
         currentWs.send(JSON.stringify(unsubscribeMsg));
       }
-      setIsSubscribed(false);
+      isSubscribedRef.current = false;
     };
   }, [open, agentId, gatewayId, minLevel]);
 
   // Re-subscribe when level changes
   useEffect(() => {
-    if (!open || !isSubscribed) return;
+    if (!open || !isSubscribedRef.current) return;
 
     const ws = getGlobalWebSocket();
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -109,29 +119,34 @@ export function LogViewerModal({
       },
     };
     ws.send(JSON.stringify(subscribeMsg));
-  }, [minLevel]);
+  }, [minLevel, open, agentId, gatewayId]);
 
-  // Process incoming log messages
-  useEffect(() => {
-    // Get the latest message
-    const lastMsg = messages[messages.length - 1];
-    if (!lastMsg || lastMsg.type !== 'LogEntry') return;
-
-    const payload = lastMsg.payload as unknown as LogEntry;
-
-    // Check if this message is for our source
-    const sourceId = agentId || gatewayId;
-    if (payload.source_id !== sourceId) return;
-
-    // Add to entries (keep last 1000)
+  // Process incoming log messages - add entries via callback
+  const addLogEntry = useCallback((entry: LogEntry) => {
     setEntries((prev) => {
-      const next = [...prev, payload];
-      if (next.length > 1000) {
-        return next.slice(-1000);
-      }
-      return next;
+      const next = [...prev, entry];
+      return next.length > 1000 ? next.slice(-1000) : next;
     });
-  }, [messages, agentId, gatewayId]);
+  }, []);
+
+  // Watch for new messages and process them
+  useEffect(() => {
+    // Process only new messages
+    const newMessages = messages.slice(lastProcessedMsgRef.current);
+    if (newMessages.length === 0) return;
+
+    lastProcessedMsgRef.current = messages.length;
+    const sourceId = agentId || gatewayId;
+
+    for (const msg of newMessages) {
+      if (msg.type !== 'LogEntry') continue;
+
+      const payload = msg.payload as unknown as LogEntry;
+      if (payload.source_id !== sourceId) continue;
+
+      addLogEntry(payload);
+    }
+  }, [messages, agentId, gatewayId, addLogEntry]);
 
   const handleClear = useCallback(() => {
     setEntries([]);
@@ -157,15 +172,10 @@ export function LogViewerModal({
           <div className="flex items-center gap-3">
             {/* Connection status */}
             <div className="flex items-center gap-1.5 text-sm">
-              {wsConnected && isSubscribed ? (
+              {subscriptionState === 'connected' ? (
                 <>
                   <Circle className="h-2 w-2 fill-green-500 text-green-500" />
                   <span className="text-green-500">Live</span>
-                </>
-              ) : wsConnected ? (
-                <>
-                  <Circle className="h-2 w-2 fill-yellow-500 text-yellow-500" />
-                  <span className="text-yellow-500">Connecting...</span>
                 </>
               ) : (
                 <>
