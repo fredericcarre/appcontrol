@@ -1,7 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import React from 'react';
 import { useAuthStore } from '@/stores/auth';
 import { useWebSocketStore } from '@/stores/websocket';
+
+// Create a wrapper with QueryClientProvider for hooks that need it
+const createWrapper = () => {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+  return function Wrapper({ children }: { children: React.ReactNode }) {
+    return React.createElement(QueryClientProvider, { client: queryClient }, children);
+  };
+};
 
 // Mock WebSocket
 class MockWebSocket {
@@ -78,7 +92,7 @@ describe('useWebSocket', () => {
   it('should connect when token is available', async () => {
     const { useWebSocket } = await import('./use-websocket');
 
-    renderHook(() => useWebSocket());
+    renderHook(() => useWebSocket(), { wrapper: createWrapper() });
 
     expect(MockWebSocket.instances).toHaveLength(1);
     expect(MockWebSocket.instances[0].url).toContain('token=test-token');
@@ -89,7 +103,7 @@ describe('useWebSocket', () => {
 
     const { useWebSocket } = await import('./use-websocket');
 
-    renderHook(() => useWebSocket());
+    renderHook(() => useWebSocket(), { wrapper: createWrapper() });
 
     expect(MockWebSocket.instances).toHaveLength(0);
   });
@@ -97,7 +111,7 @@ describe('useWebSocket', () => {
   it('should set connected=true on open', async () => {
     const { useWebSocket } = await import('./use-websocket');
 
-    renderHook(() => useWebSocket());
+    renderHook(() => useWebSocket(), { wrapper: createWrapper() });
 
     act(() => {
       MockWebSocket.instances[0].simulateOpen();
@@ -109,7 +123,7 @@ describe('useWebSocket', () => {
   it('should set connected=false on close', async () => {
     const { useWebSocket } = await import('./use-websocket');
 
-    renderHook(() => useWebSocket());
+    renderHook(() => useWebSocket(), { wrapper: createWrapper() });
 
     act(() => {
       MockWebSocket.instances[0].simulateOpen();
@@ -134,7 +148,7 @@ describe('useWebSocket', () => {
   it('should add messages from WebSocket', async () => {
     const { useWebSocket } = await import('./use-websocket');
 
-    renderHook(() => useWebSocket());
+    renderHook(() => useWebSocket(), { wrapper: createWrapper() });
 
     act(() => {
       MockWebSocket.instances[0].simulateOpen();
@@ -159,7 +173,7 @@ describe('useWebSocket', () => {
 
     const { useWebSocket } = await import('./use-websocket');
 
-    renderHook(() => useWebSocket());
+    renderHook(() => useWebSocket(), { wrapper: createWrapper() });
 
     act(() => {
       MockWebSocket.instances[0].simulateOpen();
@@ -177,7 +191,7 @@ describe('useWebSocket', () => {
   it('should provide subscribe function', async () => {
     const { useWebSocket } = await import('./use-websocket');
 
-    const { result } = renderHook(() => useWebSocket());
+    const { result } = renderHook(() => useWebSocket(), { wrapper: createWrapper() });
 
     act(() => {
       MockWebSocket.instances[0].simulateOpen();
@@ -196,7 +210,7 @@ describe('useWebSocket', () => {
   it('should provide unsubscribe function', async () => {
     const { useWebSocket } = await import('./use-websocket');
 
-    const { result } = renderHook(() => useWebSocket());
+    const { result } = renderHook(() => useWebSocket(), { wrapper: createWrapper() });
 
     act(() => {
       MockWebSocket.instances[0].simulateOpen();
@@ -219,7 +233,7 @@ describe('useWebSocket', () => {
   it('should ignore invalid JSON messages', async () => {
     const { useWebSocket } = await import('./use-websocket');
 
-    renderHook(() => useWebSocket());
+    renderHook(() => useWebSocket(), { wrapper: createWrapper() });
 
     act(() => {
       MockWebSocket.instances[0].simulateOpen();
@@ -235,7 +249,7 @@ describe('useWebSocket', () => {
   it('should close WebSocket on error', async () => {
     const { useWebSocket } = await import('./use-websocket');
 
-    renderHook(() => useWebSocket());
+    renderHook(() => useWebSocket(), { wrapper: createWrapper() });
 
     act(() => {
       MockWebSocket.instances[0].simulateError();
@@ -247,7 +261,7 @@ describe('useWebSocket', () => {
   it('should clean up on unmount', async () => {
     const { useWebSocket } = await import('./use-websocket');
 
-    const { unmount } = renderHook(() => useWebSocket());
+    const { unmount } = renderHook(() => useWebSocket(), { wrapper: createWrapper() });
 
     act(() => {
       MockWebSocket.instances[0].simulateOpen();
