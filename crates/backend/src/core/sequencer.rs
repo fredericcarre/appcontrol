@@ -478,10 +478,7 @@ pub async fn execute_start_subset(
 
 /// Dispatch a stop command to a component without waiting for completion.
 /// Transitions to STOPPING and sends the stop_cmd, but returns immediately.
-async fn dispatch_stop(
-    state: &Arc<AppState>,
-    component_id: Uuid,
-) -> Result<(), SequencerError> {
+async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), SequencerError> {
     let current = super::fsm::get_current_state(&state.db, component_id).await?;
 
     // Only stop if running or degraded
@@ -572,13 +569,12 @@ pub async fn stop_with_dependents(
     component_id: Uuid,
 ) -> Result<(), SequencerError> {
     // Get the application ID for this component
-    let app_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT application_id FROM components WHERE id = $1",
-    )
-    .bind(component_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SequencerError::Database(e.to_string()))?;
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| SequencerError::Database(e.to_string()))?;
 
     // Build the DAG for the application
     let dag = super::dag::build_dag(&state.db, app_id)

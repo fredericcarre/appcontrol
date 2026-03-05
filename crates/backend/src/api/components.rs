@@ -753,7 +753,10 @@ pub async fn restart_with_dependents(
             total_components = total_components,
             "Phase 2: Starting component and dependents"
         );
-        if let Err(e) = crate::core::sequencer::execute_start_subset(&state_clone, app_id, &all_components).await {
+        if let Err(e) =
+            crate::core::sequencer::execute_start_subset(&state_clone, app_id, &all_components)
+                .await
+        {
             tracing::error!("Failed to start component {} with dependents: {}", id, e);
             return;
         }

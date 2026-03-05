@@ -32,7 +32,7 @@ pub struct WaitQuery {
 #[derive(Debug, Clone)]
 pub struct PreflightResult {
     pub can_start: bool,
-    pub unreachable_agents: Vec<(Uuid, String)>,    // (agent_id, hostname)
+    pub unreachable_agents: Vec<(Uuid, String)>, // (agent_id, hostname)
     pub disconnected_gateways: Vec<(Uuid, String)>, // (gateway_id, name)
     pub components_without_agent: Vec<(Uuid, String)>, // (component_id, name)
 }
@@ -40,22 +40,24 @@ pub struct PreflightResult {
 /// Check if all agents for an application are reachable before starting
 pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult {
     // Get all components with their agent information
-    let components = sqlx::query_as::<_, (Uuid, String, Option<Uuid>, Option<String>, Option<Uuid>)>(
-        r#"
+    let components =
+        sqlx::query_as::<_, (Uuid, String, Option<Uuid>, Option<String>, Option<Uuid>)>(
+            r#"
         SELECT c.id, c.name, c.agent_id, a.hostname, a.gateway_id
         FROM components c
         LEFT JOIN agents a ON c.agent_id = a.id
         WHERE c.application_id = $1 AND c.is_optional = false
         "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+        )
+        .bind(app_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
 
     // Get connected agents and gateways from WebSocket hub
     let connected_agents: HashSet<Uuid> = state.ws_hub.connected_agent_ids().into_iter().collect();
-    let connected_gateways: HashSet<Uuid> = state.ws_hub.connected_gateway_ids().into_iter().collect();
+    let connected_gateways: HashSet<Uuid> =
+        state.ws_hub.connected_gateway_ids().into_iter().collect();
 
     let mut unreachable_agents = Vec::new();
     let mut disconnected_gateways = Vec::new();
@@ -81,7 +83,7 @@ pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult 
                     if !seen_gateways.contains(&gid) && !connected_gateways.contains(&gid) {
                         // Get gateway name
                         let gw_name = sqlx::query_scalar::<_, String>(
-                            "SELECT name FROM gateways WHERE id = $1"
+                            "SELECT name FROM gateways WHERE id = $1",
                         )
                         .bind(gid)
                         .fetch_optional(&state.db)
@@ -122,7 +124,10 @@ pub async fn start(
     }
 
     let dry_run = body.as_ref().and_then(|b| b.dry_run).unwrap_or(false);
-    let skip_preflight = body.as_ref().and_then(|b| b.skip_preflight).unwrap_or(false);
+    let skip_preflight = body
+        .as_ref()
+        .and_then(|b| b.skip_preflight)
+        .unwrap_or(false);
 
     // Pre-flight checks: verify all agents are reachable before starting
     let preflight = preflight_check(&state, app_id).await;
@@ -132,24 +137,33 @@ pub async fn start(
         let mut issues = Vec::new();
 
         if !preflight.unreachable_agents.is_empty() {
-            let agents: Vec<String> = preflight.unreachable_agents.iter()
+            let agents: Vec<String> = preflight
+                .unreachable_agents
+                .iter()
                 .map(|(_, h)| h.clone())
                 .collect();
             issues.push(format!("unreachable_agents: [{}]", agents.join(", ")));
         }
 
         if !preflight.disconnected_gateways.is_empty() {
-            let gateways: Vec<String> = preflight.disconnected_gateways.iter()
+            let gateways: Vec<String> = preflight
+                .disconnected_gateways
+                .iter()
                 .map(|(_, n)| n.clone())
                 .collect();
             issues.push(format!("disconnected_gateways: [{}]", gateways.join(", ")));
         }
 
         if !preflight.components_without_agent.is_empty() {
-            let components: Vec<String> = preflight.components_without_agent.iter()
+            let components: Vec<String> = preflight
+                .components_without_agent
+                .iter()
                 .map(|(_, n)| n.clone())
                 .collect();
-            issues.push(format!("components_without_agent: [{}]", components.join(", ")));
+            issues.push(format!(
+                "components_without_agent: [{}]",
+                components.join(", ")
+            ));
         }
 
         tracing::warn!(
@@ -334,9 +348,18 @@ pub async fn wait_running(
 
         let total = components.len();
         let running_count = components.iter().filter(|(_, _, s)| s == "RUNNING").count();
-        let failed: Vec<_> = components.iter().filter(|(_, _, s)| s == "FAILED").collect();
-        let unreachable: Vec<_> = components.iter().filter(|(_, _, s)| s == "UNREACHABLE").collect();
-        let starting_count = components.iter().filter(|(_, _, s)| s == "STARTING").count();
+        let failed: Vec<_> = components
+            .iter()
+            .filter(|(_, _, s)| s == "FAILED")
+            .collect();
+        let unreachable: Vec<_> = components
+            .iter()
+            .filter(|(_, _, s)| s == "UNREACHABLE")
+            .collect();
+        let starting_count = components
+            .iter()
+            .filter(|(_, _, s)| s == "STARTING")
+            .count();
         let stopped_count = components.iter().filter(|(_, _, s)| s == "STOPPED").count();
 
         // All components running → success
@@ -371,7 +394,8 @@ pub async fn wait_running(
 
         // Any unreachable → fail immediately (agent/gateway down)
         if !unreachable.is_empty() {
-            let unreachable_names: Vec<String> = unreachable.iter().map(|(_, n, _)| n.clone()).collect();
+            let unreachable_names: Vec<String> =
+                unreachable.iter().map(|(_, n, _)| n.clone()).collect();
             return Ok(Json(json!({
                 "status": "unreachable",
                 "error": "agent_unreachable",
@@ -390,10 +414,12 @@ pub async fn wait_running(
 
         // Timeout
         if start_time.elapsed() > timeout {
-            let not_running: Vec<_> = components.iter()
+            let not_running: Vec<_> = components
+                .iter()
                 .filter(|(_, _, s)| s != "RUNNING")
                 .collect();
-            let not_running_names: Vec<String> = not_running.iter().map(|(_, n, _)| n.clone()).collect();
+            let not_running_names: Vec<String> =
+                not_running.iter().map(|(_, n, _)| n.clone()).collect();
 
             return Ok(Json(json!({
                 "status": "timeout",
@@ -444,25 +470,43 @@ pub async fn health(
     let preflight = preflight_check(&state, app_id).await;
 
     let total = components.len();
-    let running = components.iter().filter(|(_, _, s, _)| s == "RUNNING").count();
-    let failed: Vec<_> = components.iter().filter(|(_, _, s, _)| s == "FAILED").collect();
-    let unreachable: Vec<_> = components.iter().filter(|(_, _, s, _)| s == "UNREACHABLE").collect();
-    let stopped: Vec<_> = components.iter().filter(|(_, _, s, _)| s == "STOPPED").collect();
-    let starting: Vec<_> = components.iter().filter(|(_, _, s, _)| s == "STARTING").collect();
+    let running = components
+        .iter()
+        .filter(|(_, _, s, _)| s == "RUNNING")
+        .count();
+    let failed: Vec<_> = components
+        .iter()
+        .filter(|(_, _, s, _)| s == "FAILED")
+        .collect();
+    let unreachable: Vec<_> = components
+        .iter()
+        .filter(|(_, _, s, _)| s == "UNREACHABLE")
+        .collect();
+    let stopped: Vec<_> = components
+        .iter()
+        .filter(|(_, _, s, _)| s == "STOPPED")
+        .collect();
+    let starting: Vec<_> = components
+        .iter()
+        .filter(|(_, _, s, _)| s == "STARTING")
+        .collect();
 
     // Determine overall health
     if running == total && preflight.can_start {
-        return Ok((StatusCode::OK, Json(json!({
-            "status": "healthy",
-            "app_id": app_id,
-            "components": {
-                "total": total,
-                "running": running,
-            },
-            "agents": {
-                "all_reachable": true,
-            }
-        }))));
+        return Ok((
+            StatusCode::OK,
+            Json(json!({
+                "status": "healthy",
+                "app_id": app_id,
+                "components": {
+                    "total": total,
+                    "running": running,
+                },
+                "agents": {
+                    "all_reachable": true,
+                }
+            })),
+        ));
     }
 
     // Not healthy - return 503 with details
@@ -487,34 +531,37 @@ pub async fn health(
         issues.push("gateways_disconnected");
     }
 
-    Ok((StatusCode::SERVICE_UNAVAILABLE, Json(json!({
-        "status": "unhealthy",
-        "app_id": app_id,
-        "issues": issues,
-        "components": {
-            "total": total,
-            "running": running,
-            "failed": failed.len(),
-            "unreachable": unreachable.len(),
-            "stopped": stopped.len(),
-            "starting": starting.len(),
-        },
-        "agents": {
-            "all_reachable": preflight.can_start,
-            "unreachable": preflight.unreachable_agents.iter()
-                .map(|(id, h)| json!({"id": id, "hostname": h}))
+    Ok((
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({
+            "status": "unhealthy",
+            "app_id": app_id,
+            "issues": issues,
+            "components": {
+                "total": total,
+                "running": running,
+                "failed": failed.len(),
+                "unreachable": unreachable.len(),
+                "stopped": stopped.len(),
+                "starting": starting.len(),
+            },
+            "agents": {
+                "all_reachable": preflight.can_start,
+                "unreachable": preflight.unreachable_agents.iter()
+                    .map(|(id, h)| json!({"id": id, "hostname": h}))
+                    .collect::<Vec<_>>(),
+                "disconnected_gateways": preflight.disconnected_gateways.iter()
+                    .map(|(id, n)| json!({"id": id, "name": n}))
+                    .collect::<Vec<_>>(),
+            },
+            "failed_components": failed.iter()
+                .map(|(id, name, _, _)| json!({"id": id, "name": name}))
                 .collect::<Vec<_>>(),
-            "disconnected_gateways": preflight.disconnected_gateways.iter()
-                .map(|(id, n)| json!({"id": id, "name": n}))
+            "unreachable_components": unreachable.iter()
+                .map(|(id, name, _, _)| json!({"id": id, "name": name}))
                 .collect::<Vec<_>>(),
-        },
-        "failed_components": failed.iter()
-            .map(|(id, name, _, _)| json!({"id": id, "name": name}))
-            .collect::<Vec<_>>(),
-        "unreachable_components": unreachable.iter()
-            .map(|(id, name, _, _)| json!({"id": id, "name": name}))
-            .collect::<Vec<_>>(),
-    }))))
+        })),
+    ))
 }
 
 /// GET /api/v1/orchestration/:app_id/preflight

@@ -115,12 +115,7 @@ pub struct AppWithStatus {
 }
 
 /// Compute global state and weather from component counts
-fn compute_app_status(
-    running: i64,
-    stopped: i64,
-    failed: i64,
-    total: i64,
-) -> (String, String) {
+fn compute_app_status(running: i64, stopped: i64, failed: i64, total: i64) -> (String, String) {
     if total == 0 {
         return ("UNKNOWN".to_string(), "cloudy".to_string());
     }
@@ -212,12 +207,8 @@ pub async fn list_apps(
             let stopped_count = a.stopped_count.unwrap_or(0);
             let failed_count = a.failed_count.unwrap_or(0);
 
-            let (global_state, weather) = compute_app_status(
-                running_count,
-                stopped_count,
-                failed_count,
-                component_count,
-            );
+            let (global_state, weather) =
+                compute_app_status(running_count, stopped_count, failed_count, component_count);
 
             json!({
                 "id": a.id,
@@ -327,8 +318,14 @@ pub async fn get_app(
     let components_json: Vec<Value> = components
         .into_iter()
         .map(|c| {
-            let agent_connected = c.agent_id.map(|aid| connected_agents.contains(&aid)).unwrap_or(false);
-            let gateway_connected = c.gateway_id.map(|gid| connected_gateways.contains(&gid)).unwrap_or(false);
+            let agent_connected = c
+                .agent_id
+                .map(|aid| connected_agents.contains(&aid))
+                .unwrap_or(false);
+            let gateway_connected = c
+                .gateway_id
+                .map(|gid| connected_gateways.contains(&gid))
+                .unwrap_or(false);
 
             // Determine connectivity status
             let connectivity_status = if c.agent_id.is_none() {
@@ -645,9 +642,13 @@ pub async fn cancel_operation(
             user_id = %user.user_id,
             "Operation cancelled and lock force-released"
         );
-        Ok(Json(json!({ "status": "cancelled", "lock_released": true })))
+        Ok(Json(
+            json!({ "status": "cancelled", "lock_released": true }),
+        ))
     } else {
-        Ok(Json(json!({ "status": "no_operation", "lock_released": false })))
+        Ok(Json(
+            json!({ "status": "no_operation", "lock_released": false }),
+        ))
     }
 }
 
@@ -870,7 +871,9 @@ pub async fn suspend_application(
             .unwrap_or(false);
 
     if is_suspended {
-        return Err(ApiError::Conflict("Application is already suspended".to_string()));
+        return Err(ApiError::Conflict(
+            "Application is already suspended".to_string(),
+        ));
     }
 
     // Suspend the application
@@ -946,7 +949,9 @@ pub async fn resume_application(
             .unwrap_or(false);
 
     if !is_suspended {
-        return Err(ApiError::Conflict("Application is not suspended".to_string()));
+        return Err(ApiError::Conflict(
+            "Application is not suspended".to_string(),
+        ));
     }
 
     // Resume the application

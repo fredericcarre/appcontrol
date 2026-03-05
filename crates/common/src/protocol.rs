@@ -416,15 +416,10 @@ pub enum GatewayEnvelope {
     DisconnectGateway { reason: String },
     /// Block an agent permanently until unblocked.
     /// The gateway should add the agent to a blocklist and reject future connections.
-    BlockAgent {
-        agent_id: Uuid,
-        reason: String,
-    },
+    BlockAgent { agent_id: Uuid, reason: String },
     /// Unblock a previously blocked agent.
     /// The gateway should remove the agent from the blocklist.
-    UnblockAgent {
-        agent_id: Uuid,
-    },
+    UnblockAgent { agent_id: Uuid },
 }
 
 /// Messages sent from Gateway to Backend.

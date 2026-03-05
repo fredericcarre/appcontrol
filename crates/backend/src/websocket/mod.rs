@@ -843,15 +843,16 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             .await;
 
             // Broadcast CommandResultEvent to subscribed frontend clients
-            if let Ok(Some((comp_id, comp_name, app_id))) = sqlx::query_as::<_, (uuid::Uuid, String, uuid::Uuid)>(
-                r#"SELECT c.id, c.name, c.application_id
+            if let Ok(Some((comp_id, comp_name, app_id))) =
+                sqlx::query_as::<_, (uuid::Uuid, String, uuid::Uuid)>(
+                    r#"SELECT c.id, c.name, c.application_id
                    FROM command_executions ce
                    JOIN components c ON ce.component_id = c.id
                    WHERE ce.request_id = $1"#,
-            )
-            .bind(request_id)
-            .fetch_optional(&state.db)
-            .await
+                )
+                .bind(request_id)
+                .fetch_optional(&state.db)
+                .await
             {
                 state.ws_hub.broadcast(
                     app_id,

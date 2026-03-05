@@ -212,10 +212,7 @@ impl CheckScheduler {
             return;
         }
 
-        tracing::debug!(
-            "Running checks for {} due components",
-            due_components.len()
-        );
+        tracing::debug!("Running checks for {} due components", due_components.len());
 
         // Mark all due components as in_flight and set last_checked_at to NOW
         // (start time, not completion time — prevents drift)
