@@ -29,6 +29,18 @@ V014__command_executions.sql                   # Command executions tracking tab
 V015__enrollment_tokens.sql                    # Agent enrollment tokens for secure onboarding
 V016__fsm_cache_notifications_locks.sql        # PostgreSQL-based FSM state cache, notification queue, advisory locks
 V017__remove_redis_dependency.sql              # Remove Redis dependency: PostgreSQL-based rate limiting and token revocation
+V018__local_auth.sql                           # Local authentication support
+V019__typed_params_output_streaming.sql        # Typed parameters and output streaming
+V020__gateway_agent_status.sql                 # Gateway and agent status tracking
+V021__discovery_estimates_airgap.sql           # Discovery estimates and air-gapped mode
+V022__platform_admin_sites_gateways.sql        # Platform admin, sites and gateways
+V023__discovery_enriched.sql                   # Enriched discovery data
+V024__gateway_failover_zones.sql               # Gateway failover zones
+V025__certificate_rotation.sql                 # Certificate rotation support
+V026__agent_system_info.sql                    # Agent system information
+V027__agent_metrics.sql                        # Agent metrics tracking
+V030__binding_profiles.sql                     # Binding profiles for import wizard
+V031__remove_component_type_constraint.sql     # Remove component_type CHECK constraint (flexible types)
 ```
 
 ## Complete Schema Reference
@@ -60,13 +72,13 @@ CREATE TABLE users (
 ```
 
 ### V004: components (FULL — includes all v4.2 fields)
+Note: V031 removes the CHECK constraint on component_type to allow flexible types.
 ```sql
 CREATE TABLE components (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
   name VARCHAR(200) NOT NULL,
-  component_type VARCHAR(50) NOT NULL
-    CHECK (component_type IN ('database','middleware','appserver','webfront','service','batch','custom')),
+  component_type VARCHAR(50) NOT NULL,  -- No CHECK constraint: allows any type value
   agent_id UUID REFERENCES agents(id),
   -- Core commands
   check_cmd TEXT,

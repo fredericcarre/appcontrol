@@ -193,15 +193,22 @@ pub async fn block_agent(
     .await
     .ok(); // Don't fail if table doesn't exist yet
 
+    // 3. Transition all components of this agent to UNREACHABLE
+    let components_affected = transition_agent_components_to_unreachable(&state, agent_id).await;
+
     tx.commit().await?;
 
-    // 3. Send disconnect command via WebSocket hub
-    state.ws_hub.disconnect_agent(agent_id);
+    // 4. Send block command to all gateways — adds agent to blocklist
+    // so it's rejected even on reconnection attempts
+    state
+        .ws_hub
+        .block_agent(agent_id, "Agent blocked by administrator");
 
     Ok(Json(json!({
         "status": "blocked",
         "agent_id": agent_id,
         "hostname": hostname,
+        "components_affected": components_affected,
     })))
 }
 
@@ -248,6 +255,9 @@ pub async fn unblock_agent(
         .bind(agent_id)
         .execute(&state.db)
         .await?;
+
+    // Send unblock command to all gateways — removes agent from blocklist
+    state.ws_hub.unblock_agent(agent_id);
 
     Ok(Json(json!({
         "status": "unblocked",
@@ -321,4 +331,92 @@ pub async fn get_agent_metrics(
         "minutes": minutes,
         "metrics": metrics,
     })))
+}
+
+/// Helper: Transition all components of an agent to UNREACHABLE when agent is blocked/disconnected.
+/// Returns the number of components affected.
+async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: Uuid) -> i32 {
+    use appcontrol_common::ComponentState;
+
+    // Get all components for this agent that are NOT already UNREACHABLE/STOPPED/STOPPING
+    #[derive(sqlx::FromRow)]
+    struct ComponentInfo {
+        id: Uuid,
+        name: String,
+        application_id: Uuid,
+        app_name: String,
+    }
+
+    let components: Vec<ComponentInfo> = sqlx::query_as(
+        r#"
+        SELECT c.id, c.name, c.application_id, a.name AS app_name
+        FROM components c
+        JOIN applications a ON c.application_id = a.id
+        WHERE c.agent_id = $1
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let mut affected = 0;
+
+    for comp in &components {
+        // Get current state
+        let current_state = match crate::core::fsm::get_current_state(&state.db, comp.id).await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        // Skip if already UNREACHABLE, STOPPED, or STOPPING
+        match current_state {
+            ComponentState::Unreachable | ComponentState::Stopped | ComponentState::Stopping => {
+                continue;
+            }
+            _ => {}
+        }
+
+        // Insert state transition (append-only)
+        let result = sqlx::query(
+            r#"
+            INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
+            VALUES ($1, $2, 'UNREACHABLE', 'agent_blocked',
+                    jsonb_build_object('previous_state', $2, 'agent_id', $3::text))
+            "#,
+        )
+        .bind(comp.id)
+        .bind(current_state.to_string())
+        .bind(agent_id.to_string())
+        .execute(&state.db)
+        .await;
+
+        if result.is_ok() {
+            affected += 1;
+
+            // Push WebSocket event
+            state.ws_hub.broadcast(
+                comp.application_id,
+                appcontrol_common::WsEvent::StateChange {
+                    component_id: comp.id,
+                    app_id: comp.application_id,
+                    component_name: Some(comp.name.clone()),
+                    app_name: Some(comp.app_name.clone()),
+                    from: current_state,
+                    to: ComponentState::Unreachable,
+                    at: chrono::Utc::now(),
+                },
+            );
+
+            tracing::info!(
+                component_id = %comp.id,
+                component_name = %comp.name,
+                from = %current_state,
+                agent_id = %agent_id,
+                "Component transitioned to UNREACHABLE (agent blocked)"
+            );
+        }
+    }
+
+    affected
 }

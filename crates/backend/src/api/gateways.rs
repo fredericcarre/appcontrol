@@ -616,14 +616,23 @@ pub async fn block_gateway(
     .await
     .ok(); // Don't fail if table doesn't exist yet
 
-    tx.commit().await?;
-
-    // 5. Send disconnect command to all agents via WebSocket hub
+    // 5. Transition all components of affected agents to UNREACHABLE
+    let mut components_affected = 0;
     for agent_id in &agent_ids {
-        state.ws_hub.disconnect_agent(*agent_id);
+        components_affected +=
+            transition_gateway_agent_components_to_unreachable(&state, *agent_id, gateway_id).await;
     }
 
-    // 6. Disconnect the gateway itself
+    tx.commit().await?;
+
+    // 6. Send block command to all agents via WebSocket hub
+    for agent_id in &agent_ids {
+        state
+            .ws_hub
+            .block_agent(*agent_id, "Gateway blocked by administrator");
+    }
+
+    // 7. Disconnect the gateway itself
     state.ws_hub.disconnect_gateway(gateway_id);
 
     Ok(Json(json!({
@@ -632,6 +641,7 @@ pub async fn block_gateway(
         "gateway_name": name,
         "zone": zone,
         "agents_disconnected": agent_count,
+        "components_affected": components_affected,
     })))
 }
 
@@ -889,6 +899,94 @@ pub async fn verify_agent_cert_pinning(
         Some(Some(fp)) => fp == presented_fingerprint,
         _ => false,
     }
+}
+
+/// Helper: Transition all components of an agent to UNREACHABLE when gateway is blocked.
+/// Returns the number of components affected.
+async fn transition_gateway_agent_components_to_unreachable(
+    state: &AppState,
+    agent_id: Uuid,
+    gateway_id: Uuid,
+) -> i32 {
+    use appcontrol_common::ComponentState;
+
+    #[derive(sqlx::FromRow)]
+    struct ComponentInfo {
+        id: Uuid,
+        name: String,
+        application_id: Uuid,
+        app_name: String,
+    }
+
+    let components: Vec<ComponentInfo> = sqlx::query_as(
+        r#"SELECT c.id, c.name, c.application_id, a.name AS app_name
+           FROM components c
+           JOIN applications a ON c.application_id = a.id
+           WHERE c.agent_id = $1"#,
+    )
+    .bind(agent_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let mut affected = 0;
+
+    for comp in &components {
+        let current_state = match crate::core::fsm::get_current_state(&state.db, comp.id).await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        // Skip if already UNREACHABLE, STOPPED, or STOPPING
+        match current_state {
+            ComponentState::Unreachable | ComponentState::Stopped | ComponentState::Stopping => {
+                continue;
+            }
+            _ => {}
+        }
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
+            VALUES ($1, $2, 'UNREACHABLE', 'gateway_blocked',
+                    jsonb_build_object('previous_state', $2, 'agent_id', $3::text, 'gateway_id', $4::text))
+            "#,
+        )
+        .bind(comp.id)
+        .bind(current_state.to_string())
+        .bind(agent_id.to_string())
+        .bind(gateway_id.to_string())
+        .execute(&state.db)
+        .await;
+
+        if result.is_ok() {
+            affected += 1;
+
+            state.ws_hub.broadcast(
+                comp.application_id,
+                appcontrol_common::WsEvent::StateChange {
+                    component_id: comp.id,
+                    app_id: comp.application_id,
+                    component_name: Some(comp.name.clone()),
+                    app_name: Some(comp.app_name.clone()),
+                    from: current_state,
+                    to: ComponentState::Unreachable,
+                    at: chrono::Utc::now(),
+                },
+            );
+
+            tracing::info!(
+                component_id = %comp.id,
+                component_name = %comp.name,
+                from = %current_state,
+                agent_id = %agent_id,
+                gateway_id = %gateway_id,
+                "Component transitioned to UNREACHABLE (gateway blocked)"
+            );
+        }
+    }
+
+    affected
 }
 
 #[cfg(test)]

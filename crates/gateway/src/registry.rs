@@ -129,6 +129,13 @@ impl AgentRegistry {
         }
     }
 
+    /// Get agent info by agent_id (used to re-announce after unblock).
+    pub fn get_by_agent_id(&self, agent_id: Uuid) -> Option<AgentInfo> {
+        self.agent_to_conn
+            .get(&agent_id)
+            .and_then(|conn_id| self.agents.get(&*conn_id).map(|info| info.clone()))
+    }
+
     /// Clear all agents (used when gateway is blocked)
     pub fn clear_all(&self) {
         let count = self.agents.len();

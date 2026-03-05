@@ -88,15 +88,19 @@ frontend/src/
 | Error branch | #FFE0E6 | #FF6B8A | none (edges pulse) |
 
 ## Component Type Icons (lucide-react)
+Component types are flexible strings - any value is allowed. Common types are mapped to icons:
+
 | Type | Icon | Color |
 |------|------|-------|
-| database | Database | #1565C0 |
-| middleware | Layers | #6A1B9A |
-| appserver | Server | #2E7D32 |
-| webfront | Globe | #E65100 |
-| service | Cog | #37474F |
-| batch | Clock | #4E342E |
-| custom | Box | #455A64 |
+| database, db | Database | #1565C0 |
+| middleware, mq, queue | Layers | #6A1B9A |
+| appserver, application, server | Server | #2E7D32 |
+| webfront, webserver, frontend | Globe | #E65100 |
+| service, api | Cog | #37474F |
+| batch, job | Clock | #4E342E |
+| loadbalancer, proxy, gateway | Network | #0277BD |
+| cache, redis | Zap | #F57C00 |
+| (other/unknown) | Box | #455A64 |
 
 ## Keyboard Shortcuts
 | Key | Action | Context |

@@ -1,4 +1,8 @@
+use sqlx::pool::PoolConnection;
+use sqlx::Postgres;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 /// Tracks in-flight operations per application using PostgreSQL advisory locks.
@@ -6,6 +10,9 @@ use uuid::Uuid;
 /// Advisory locks are cluster-wide, survive process crashes, and automatically
 /// release when the connection drops. This prevents concurrent start/stop/restart
 /// on the same application even across multiple backend instances (HA).
+///
+/// IMPORTANT: Advisory locks are connection-scoped. We must keep the same connection
+/// that acquired the lock until we release it.
 #[derive(Debug, Clone)]
 pub struct OperationLock {
     pool: Option<sqlx::PgPool>,
@@ -70,7 +77,7 @@ impl OperationLock {
             None => {
                 // Fallback: no DB pool — allow operation (testing/startup scenario)
                 return Ok(OperationGuard {
-                    pool: None,
+                    conn: None,
                     lock_key: 0,
                     app_id,
                 });
@@ -80,6 +87,7 @@ impl OperationLock {
         let key = Self::lock_key(app_id);
 
         // Acquire a dedicated connection (advisory locks are connection-scoped)
+        // We MUST keep this connection until we release the lock!
         let mut conn = pool
             .acquire()
             .await
@@ -93,6 +101,7 @@ impl OperationLock {
             .map_err(|e| LockError::Database(e.to_string()))?;
 
         if !acquired {
+            // Connection will be returned to pool, lock was not acquired
             return Err(LockError::Conflict {
                 app_id,
                 operation: operation.to_string(),
@@ -108,8 +117,9 @@ impl OperationLock {
             "Advisory lock acquired"
         );
 
+        // Store the connection in the guard - it will be used for unlocking
         Ok(OperationGuard {
-            pool: Some(pool.clone()),
+            conn: Some(Arc::new(Mutex::new(conn))),
             lock_key: key,
             app_id,
         })
@@ -124,26 +134,97 @@ impl OperationLock {
         // The operation status is tracked in the action_log table instead.
         None
     }
+
+    /// Force-release any advisory lock for an application.
+    /// This is a last-resort operation for stuck locks.
+    /// Uses pg_advisory_unlock_all() on a new connection to clear locks,
+    /// then terminates any backend connections holding the lock.
+    pub async fn force_unlock(&self, app_id: Uuid) -> Result<bool, LockError> {
+        let pool = match &self.pool {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+
+        let key = Self::lock_key(app_id);
+
+        // Try to unlock from a new connection (may not work if held by another connection)
+        let result: bool = sqlx::query_scalar("SELECT pg_advisory_unlock($1)")
+            .bind(key)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| LockError::Database(e.to_string()))?;
+
+        if result {
+            tracing::info!(app_id = %app_id, lock_key = key, "Advisory lock force-released");
+            return Ok(true);
+        }
+
+        // If that didn't work, find and terminate the connection holding the lock
+        let terminated: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) FROM (
+                SELECT pg_terminate_backend(pid)
+                FROM pg_locks
+                WHERE locktype = 'advisory'
+                  AND ((classid::bigint << 32) | objid::bigint) = $1
+                  AND pid != pg_backend_pid()
+            ) t
+            "#,
+        )
+        .bind(key)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| LockError::Database(e.to_string()))?;
+
+        if terminated > 0 {
+            tracing::warn!(
+                app_id = %app_id,
+                lock_key = key,
+                terminated_connections = terminated,
+                "Terminated connections holding advisory lock"
+            );
+            return Ok(true);
+        }
+
+        tracing::debug!(app_id = %app_id, lock_key = key, "No lock to release");
+        Ok(false)
+    }
 }
 
 /// RAII guard that releases the advisory lock when the operation completes (or the guard is dropped).
-#[derive(Debug)]
+///
+/// IMPORTANT: This guard holds onto the database connection that acquired the lock.
+/// The lock is only valid on that specific connection, so we must use the same
+/// connection to release it.
 pub struct OperationGuard {
-    pool: Option<sqlx::PgPool>,
+    conn: Option<Arc<Mutex<PoolConnection<Postgres>>>>,
     lock_key: i64,
     app_id: Uuid,
 }
 
+// Manual Debug impl since PoolConnection doesn't implement Debug nicely
+impl std::fmt::Debug for OperationGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OperationGuard")
+            .field("has_conn", &self.conn.is_some())
+            .field("lock_key", &self.lock_key)
+            .field("app_id", &self.app_id)
+            .finish()
+    }
+}
+
 impl Drop for OperationGuard {
     fn drop(&mut self) {
-        if let Some(pool) = self.pool.take() {
+        if let Some(conn_arc) = self.conn.take() {
             let key = self.lock_key;
             let app_id = self.app_id;
-            // Spawn a task to release the advisory lock
+
+            // Spawn a task to release the advisory lock using the SAME connection
             tokio::spawn(async move {
+                let mut conn = conn_arc.lock().await;
                 match sqlx::query("SELECT pg_advisory_unlock($1)")
                     .bind(key)
-                    .execute(&pool)
+                    .fetch_one(&mut **conn)
                     .await
                 {
                     Ok(_) => {
@@ -153,11 +234,12 @@ impl Drop for OperationGuard {
                         tracing::warn!(
                             app_id = %app_id,
                             lock_key = key,
-                            "Failed to release advisory lock (will auto-release on disconnect): {}",
+                            "Failed to release advisory lock: {}",
                             e
                         );
                     }
                 }
+                // Connection is returned to pool when `conn` is dropped here
             });
         }
     }

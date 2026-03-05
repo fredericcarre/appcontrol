@@ -39,8 +39,8 @@ pub fn is_valid_transition(from: ComponentState, to: ComponentState) -> bool {
         (Degraded, Running) | (Degraded, Failed) | (Degraded, Stopping) |
         // Stopping → Stopped
         (Stopping, Stopped) |
-        // Failed → Starting, Stopping
-        (Failed, Starting) | (Failed, Stopping)
+        // Failed → Starting, Stopping, Running (auto-recovery when check passes)
+        (Failed, Starting) | (Failed, Stopping) | (Failed, Running)
     )
 }
 
@@ -58,19 +58,26 @@ pub fn next_state_from_check(current: ComponentState, exit_code: i32) -> Option<
         (Starting, 0) => Some(Running),
         (Starting, _) => Some(Failed),
 
-        // Running: exit 0 = stay, exit 1 = Degraded, exit >= 2 = Failed
+        // Running: exit 0 = stay, exit != 0 = Failed
         (Running, 0) => None,
-        (Running, 1) => Some(Degraded),
         (Running, _) => Some(Failed),
 
-        // Degraded: exit 0 = Running, exit 1 = stay, exit >= 2 = Failed
+        // Degraded: exit 0 = Running, exit != 0 = Failed
+        // (Degraded state is reserved for future business logic, not exit codes)
         (Degraded, 0) => Some(Running),
-        (Degraded, 1) => None,
         (Degraded, _) => Some(Failed),
 
         // Stopping: check KO (process gone) → Stopped, check OK = stay in Stopping
         (Stopping, 0) => None,
         (Stopping, _) => Some(Stopped),
+
+        // Failed: exit 0 = Running (auto-recovery), exit != 0 = stay Failed
+        (Failed, 0) => Some(Running),
+        (Failed, _) => None,
+
+        // Unreachable: if agent comes back and check passes, restore to Running
+        (Unreachable, 0) => Some(Running),
+        (Unreachable, _) => Some(Failed),
 
         // Other states: checks don't trigger transitions
         _ => None,
@@ -221,8 +228,9 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_failed_to_running() {
-        assert!(!is_valid_transition(Failed, Running));
+    fn test_failed_to_running_auto_recovery() {
+        // Auto-recovery: when check passes (exit 0) on a Failed component, it can transition to Running
+        assert!(is_valid_transition(Failed, Running));
     }
 
     #[test]
@@ -243,8 +251,9 @@ mod tests {
     }
 
     #[test]
-    fn test_check_running_exit_1_degraded() {
-        assert_eq!(next_state_from_check(Running, 1), Some(Degraded));
+    fn test_check_running_exit_1_failed() {
+        // Any non-zero exit code from Running → Failed
+        assert_eq!(next_state_from_check(Running, 1), Some(Failed));
     }
 
     #[test]
@@ -263,8 +272,9 @@ mod tests {
     }
 
     #[test]
-    fn test_check_degraded_exit_1_no_change() {
-        assert_eq!(next_state_from_check(Degraded, 1), None);
+    fn test_check_degraded_exit_1_failed() {
+        // Any non-zero exit code from Degraded → Failed
+        assert_eq!(next_state_from_check(Degraded, 1), Some(Failed));
     }
 
     #[test]

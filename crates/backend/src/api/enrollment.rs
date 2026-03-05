@@ -607,13 +607,13 @@ pub async fn enroll(
         "gateway" => {
             // Upsert gateway record with certificate identity
             sqlx::query(
+                // NOTE: On conflict, we do NOT override is_active to preserve blocked status.
                 r#"INSERT INTO gateways (id, organization_id, name, zone, hostname, is_active, certificate_fingerprint, certificate_cn)
                    VALUES ($1, $2, $3, 'default', $3, true, $4, $5)
                    ON CONFLICT (id) DO UPDATE SET
                        hostname = EXCLUDED.hostname,
                        certificate_fingerprint = EXCLUDED.certificate_fingerprint,
-                       certificate_cn = EXCLUDED.certificate_cn,
-                       is_active = true"#,
+                       certificate_cn = EXCLUDED.certificate_cn"#,
             )
             .bind(entity_id)
             .bind(org_id)
@@ -625,6 +625,8 @@ pub async fn enroll(
         }
         _ => {
             // Upsert agent record
+            // NOTE: On conflict, we do NOT override is_active to preserve blocked status.
+            // A blocked agent must be explicitly unblocked before it can reconnect.
             sqlx::query(
                 r#"INSERT INTO agents (id, organization_id, hostname, is_active, certificate_fingerprint, certificate_cn, identity_verified)
                    VALUES ($1, $2, $3, true, $4, $5, true)
@@ -632,8 +634,7 @@ pub async fn enroll(
                        hostname = EXCLUDED.hostname,
                        certificate_fingerprint = EXCLUDED.certificate_fingerprint,
                        certificate_cn = EXCLUDED.certificate_cn,
-                       identity_verified = true,
-                       is_active = true"#,
+                       identity_verified = true"#,
             )
             .bind(entity_id)
             .bind(org_id)

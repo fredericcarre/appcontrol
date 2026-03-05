@@ -87,7 +87,7 @@ export function AgentTerminal({
           const rows = xtermRef.current?.rows || 24;
           wsRef.current.send(
             JSON.stringify({
-              type: 'TerminalResize',
+              type: 'terminal_resize',
               payload: { session_id: sessionId, cols, rows },
             })
           );
@@ -198,7 +198,7 @@ export function AgentTerminal({
     const cols = xtermRef.current?.cols || 80;
     const rows = xtermRef.current?.rows || 24;
     const startMsg = {
-      type: 'TerminalStart',
+      type: 'terminal_start',
       payload: {
         agent_id: agentId,
         shell: shell || null,
@@ -215,7 +215,7 @@ export function AgentTerminal({
       if (currentSessionIdRef.current && ws.readyState === WebSocket.OPEN) {
         ws.send(
           JSON.stringify({
-            type: 'TerminalClose',
+            type: 'terminal_close',
             payload: { session_id: currentSessionIdRef.current },
           })
         );
@@ -241,7 +241,7 @@ export function AgentTerminal({
         console.log('[Terminal] Sending input, encoded:', encoded);
         wsRef.current.send(
           JSON.stringify({
-            type: 'TerminalInput',
+            type: 'terminal_input',
             payload: { session_id: sessionId, data: encoded },
           })
         );

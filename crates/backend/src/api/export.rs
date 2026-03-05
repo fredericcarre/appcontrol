@@ -238,7 +238,6 @@ struct LinkRow {
 struct DepRow {
     from_component_id: Uuid,
     to_component_id: Uuid,
-    dep_type: Option<String>,
 }
 
 // ── Export Endpoint ─────────────────────────────────────────────────
@@ -494,7 +493,7 @@ pub async fn export_app_json(
 
     // Fetch dependencies
     let dep_rows = sqlx::query_as::<_, DepRow>(
-        "SELECT from_component_id, to_component_id, dep_type FROM dependencies WHERE application_id = $1",
+        "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
     )
     .bind(app_id)
     .fetch_all(&state.db)
@@ -508,7 +507,7 @@ pub async fn export_app_json(
             Some(DependencyExport {
                 from,
                 to,
-                dep_type: d.dep_type.filter(|t| t != "strong"),
+                dep_type: None, // dep_type column not in DB yet
             })
         })
         .collect();

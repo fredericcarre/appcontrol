@@ -15,11 +15,13 @@ pub mod gateways;
 pub mod groups;
 pub mod health;
 pub mod import;
+pub mod import_wizard;
 pub mod links;
 pub mod orchestration;
 pub mod organizations;
 pub mod permissions;
 pub mod pki_export;
+pub mod profiles;
 pub mod reports;
 pub mod sites;
 pub mod switchover;
@@ -52,6 +54,9 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/apps/:id/stop", post(apps::stop_app))
         .route("/apps/:id/start-branch", post(apps::start_branch))
         .route("/apps/:id/start-to", post(apps::start_to))
+        .route("/apps/:id/cancel", post(apps::cancel_operation))
+        .route("/apps/:id/suspend", put(apps::suspend_application))
+        .route("/apps/:id/resume", put(apps::resume_application))
         // Components
         .route(
             "/apps/:app_id/components",
@@ -72,6 +77,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/components/:id/start-with-deps",
             post(components::start_with_deps),
+        )
+        .route(
+            "/components/:id/restart-with-dependents",
+            post(components::restart_with_dependents),
         )
         .route(
             "/components/:id/command/:cmd",
@@ -203,6 +212,14 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/orchestration/apps/:app_id/wait-running",
             get(orchestration::wait_running),
         )
+        .route(
+            "/orchestration/apps/:app_id/health",
+            get(orchestration::health),
+        )
+        .route(
+            "/orchestration/apps/:app_id/preflight",
+            get(orchestration::preflight),
+        )
         // Variables
         .route(
             "/apps/:app_id/variables",
@@ -253,6 +270,31 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Map Import (YAML v3 legacy, JSON v4 native)
         .route("/import/yaml", post(import::import_yaml_map))
         .route("/import/json", post(import::import_json_map))
+        // Enhanced Import Wizard (with gateway resolution + binding profiles)
+        .route("/import/preview", post(import_wizard::preview_import))
+        .route("/import/execute", post(import_wizard::execute_import))
+        // Binding Profiles
+        .route(
+            "/apps/:app_id/profiles",
+            get(profiles::list_profiles).post(profiles::create_profile),
+        )
+        .route(
+            "/apps/:app_id/profiles/:name",
+            get(profiles::get_profile).delete(profiles::delete_profile),
+        )
+        .route(
+            "/apps/:app_id/profiles/:name/activate",
+            put(profiles::activate_profile),
+        )
+        // DR Pattern Rules
+        .route(
+            "/dr-pattern-rules",
+            get(profiles::list_dr_pattern_rules).post(profiles::create_dr_pattern_rule),
+        )
+        .route(
+            "/dr-pattern-rules/:id",
+            put(profiles::update_dr_pattern_rule).delete(profiles::delete_dr_pattern_rule),
+        )
         // JSON Export
         .route("/apps/:app_id/export", get(export::export_app_json))
         // API Keys

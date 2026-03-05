@@ -530,10 +530,13 @@ pub async fn start_component(
     )
     .await?;
 
-    // Trigger FSM transition to Starting
-    crate::core::fsm::transition_component(&state, id, appcontrol_common::ComponentState::Starting)
-        .await
-        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+    // Start the component: transition to Starting, dispatch start_cmd to agent
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::core::sequencer::start_single_component(&state_clone, id).await {
+            tracing::error!("Start component failed for {}: {}", id, e);
+        }
+    });
 
     Ok(Json(json!({ "status": "starting" })))
 }
@@ -565,9 +568,13 @@ pub async fn stop_component(
     )
     .await?;
 
-    crate::core::fsm::transition_component(&state, id, appcontrol_common::ComponentState::Stopping)
-        .await
-        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+    // Stop the component and all its dependents in reverse DAG order
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::core::sequencer::stop_with_dependents(&state_clone, id).await {
+            tracing::error!("Stop component with dependents failed for {}: {}", id, e);
+        }
+    });
 
     Ok(Json(json!({ "status": "stopping" })))
 }
@@ -670,6 +677,94 @@ pub async fn start_with_deps(
         "status": "starting_with_deps",
         "component_id": id,
         "total_components": total_components,
+    })))
+}
+
+/// Repair/restart a component by:
+/// 1. Stopping all dependents (components that depend on this one)
+/// 2. Stopping this component
+/// 3. Starting this component
+/// 4. Starting all dependents (in DAG order)
+pub async fn restart_with_dependents(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::Operate {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Build DAG and find all downstream dependents of this component
+    let dag = crate::core::dag::build_dag(&state.db, app_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let dependents = dag.find_all_dependents(id);
+    let dependent_count = dependents.len();
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "restart_with_dependents",
+        "component",
+        id,
+        json!({"component_id": id, "dependent_count": dependent_count}),
+    )
+    .await?;
+
+    // Acquire operation lock
+    let guard = state
+        .operation_lock
+        .try_lock(app_id, "restart_with_dependents", user.user_id)
+        .await
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+
+    // Build set of all components to restart (target + dependents)
+    let mut all_components = dependents.clone();
+    all_components.insert(id);
+    let total_components = all_components.len();
+
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        let _guard = guard;
+
+        // Phase 1: Stop the target component and all its dependents (in reverse DAG order)
+        tracing::info!(
+            component_id = %id,
+            dependent_count = dependent_count,
+            "Phase 1: Stopping component and dependents"
+        );
+        if let Err(e) = crate::core::sequencer::stop_with_dependents(&state_clone, id).await {
+            tracing::error!("Failed to stop component {} with dependents: {}", id, e);
+            return;
+        }
+
+        // Phase 2: Start all components (target + dependents) in DAG order
+        tracing::info!(
+            component_id = %id,
+            total_components = total_components,
+            "Phase 2: Starting component and dependents"
+        );
+        if let Err(e) = crate::core::sequencer::execute_start_subset(&state_clone, app_id, &all_components).await {
+            tracing::error!("Failed to start component {} with dependents: {}", id, e);
+            return;
+        }
+
+        tracing::info!(component_id = %id, "Restart with dependents completed");
+    });
+
+    Ok(Json(json!({
+        "status": "restarting_with_dependents",
+        "component_id": id,
+        "dependent_count": dependent_count,
     })))
 }
 

@@ -301,6 +301,10 @@ pub enum WsEvent {
     StateChange {
         component_id: Uuid,
         app_id: Uuid,
+        #[serde(default)]
+        component_name: Option<String>,
+        #[serde(default)]
+        app_name: Option<String>,
         from: ComponentState,
         to: ComponentState,
         at: DateTime<Utc>,
@@ -308,6 +312,10 @@ pub enum WsEvent {
     CheckResultEvent {
         component_id: Uuid,
         app_id: Uuid,
+        #[serde(default)]
+        component_name: Option<String>,
+        #[serde(default)]
+        app_name: Option<String>,
         check_type: String,
         exit_code: i32,
         at: DateTime<Utc>,
@@ -315,6 +323,8 @@ pub enum WsEvent {
     CommandResultEvent {
         request_id: Uuid,
         component_id: Uuid,
+        #[serde(default)]
+        component_name: Option<String>,
         exit_code: i32,
         stdout: String,
         stderr: String,
@@ -379,6 +389,15 @@ pub enum WsEvent {
         /// ISO 8601 timestamp
         timestamp: String,
     },
+    /// Auto-failover event: DR profile was automatically activated
+    AutoFailover {
+        app_id: Uuid,
+        switchover_id: Uuid,
+        from_profile: String,
+        to_profile: String,
+        unreachable_agents: Vec<String>,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 /// Envelope for Backend → Gateway communication.
@@ -395,6 +414,17 @@ pub enum GatewayEnvelope {
     /// Order the gateway to disconnect and close its connection.
     /// Used when the gateway is blocked or suspended.
     DisconnectGateway { reason: String },
+    /// Block an agent permanently until unblocked.
+    /// The gateway should add the agent to a blocklist and reject future connections.
+    BlockAgent {
+        agent_id: Uuid,
+        reason: String,
+    },
+    /// Unblock a previously blocked agent.
+    /// The gateway should remove the agent from the blocklist.
+    UnblockAgent {
+        agent_id: Uuid,
+    },
 }
 
 /// Messages sent from Gateway to Backend.
@@ -438,7 +468,7 @@ pub enum GatewayMessage {
 
 /// Client subscription message (frontend → backend WebSocket).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload")]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum WsClientMessage {
     Subscribe {
         app_id: Uuid,

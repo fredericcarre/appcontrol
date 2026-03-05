@@ -228,6 +228,9 @@ pub struct GatewayState {
     pub gateway_id: uuid::Uuid,
     /// Flag to signal gateway should disconnect (set when blocked by backend)
     pub shutdown_flag: std::sync::atomic::AtomicBool,
+    /// Blocklist of agent IDs that should be rejected on connection.
+    /// Set by backend via BlockAgent message, persists across reconnections.
+    pub blocked_agents: std::sync::RwLock<std::collections::HashSet<uuid::Uuid>>,
 }
 
 #[tokio::main]
@@ -269,6 +272,7 @@ async fn main() -> anyhow::Result<()> {
         config: config.clone(),
         gateway_id,
         shutdown_flag: std::sync::atomic::AtomicBool::new(false),
+        blocked_agents: std::sync::RwLock::new(std::collections::HashSet::new()),
     });
 
     // Spawn log forwarding task (sends gateway's own log batches to backend)
@@ -586,6 +590,22 @@ async fn handle_agent_connection(
                             cert_fingerprint,
                             ..
                         } => {
+                            // Check if agent is blocked before allowing registration
+                            let is_blocked = {
+                                let blocklist = state_clone.blocked_agents.read().unwrap();
+                                blocklist.contains(agent_id)
+                            };
+                            if is_blocked {
+                                tracing::warn!(
+                                    agent_id = %agent_id,
+                                    hostname = %hostname,
+                                    "REJECTED: agent is blocked in gateway blocklist — closing connection"
+                                );
+                                // Don't register, don't forward — the recv_task will end
+                                // and the connection will be closed
+                                break;
+                            }
+
                             tracing::info!(agent_id = %agent_id, hostname = %hostname, version = %version, "Agent registering");
                             // Use the proxy-provided cert fingerprint if available (trusted
                             // header from TLS-terminating proxy), otherwise fall back to
@@ -631,8 +651,49 @@ async fn handle_agent_connection(
                                 state_clone.router.forward_to_backend(&json);
                             }
                         }
-                        appcontrol_common::AgentMessage::Heartbeat { .. } => {
-                            state_clone.registry.heartbeat(conn_id);
+                        appcontrol_common::AgentMessage::Heartbeat { agent_id, .. } => {
+                            // Check if agent is in registry
+                            if state_clone.registry.get_conn_id(*agent_id).is_some() {
+                                state_clone.registry.heartbeat(conn_id);
+                            } else {
+                                // Agent not in registry - check if blocked
+                                let is_blocked = {
+                                    let blocklist = state_clone.blocked_agents.read().unwrap();
+                                    blocklist.contains(agent_id)
+                                };
+                                if !is_blocked {
+                                    // Agent was removed from registry (e.g., during block) but is now
+                                    // unblocked and still connected. Re-register it.
+                                    tracing::info!(
+                                        agent_id = %agent_id,
+                                        conn_id = %conn_id,
+                                        "Re-registering agent that was removed from registry but still connected"
+                                    );
+                                    // We don't have hostname/version, but we can get it from the connection
+                                    // For now, use placeholder - backend will update from its DB
+                                    state_clone.registry.register(
+                                        conn_id,
+                                        *agent_id,
+                                        "reconnected".to_string(),
+                                        None,
+                                        None,
+                                    );
+                                    state_clone.router.add_agent(*agent_id, tx_clone.clone());
+                                    *agent_id_clone.lock().unwrap() = Some(*agent_id);
+
+                                    // Notify backend
+                                    let notification = GatewayMessage::AgentConnected {
+                                        agent_id: *agent_id,
+                                        hostname: "reconnected".to_string(),
+                                        version: None,
+                                        cert_fingerprint: None,
+                                        cert_cn: None,
+                                    };
+                                    if let Ok(json) = serde_json::to_string(&notification) {
+                                        state_clone.router.forward_to_backend(&json);
+                                    }
+                                }
+                            }
                         }
                         _ => {}
                     }
@@ -1020,6 +1081,50 @@ fn handle_backend_message(state: &Arc<GatewayState>, text: &str) {
             state
                 .shutdown_flag
                 .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(GatewayEnvelope::BlockAgent { agent_id, reason }) => {
+            tracing::warn!(
+                agent_id = %agent_id,
+                reason = %reason,
+                "Backend ordered agent block — adding to blocklist and disconnecting"
+            );
+            // Add to blocklist (persists across reconnections)
+            {
+                let mut blocklist = state.blocked_agents.write().unwrap();
+                blocklist.insert(agent_id);
+            }
+            // Also disconnect the agent if currently connected
+            state.router.remove_agent(agent_id);
+            state.registry.remove_by_agent_id(agent_id);
+        }
+        Ok(GatewayEnvelope::UnblockAgent { agent_id }) => {
+            tracing::info!(
+                agent_id = %agent_id,
+                "Backend ordered agent unblock — removing from blocklist"
+            );
+            {
+                let mut blocklist = state.blocked_agents.write().unwrap();
+                blocklist.remove(&agent_id);
+            }
+
+            // If the agent is still connected, re-announce it to the backend
+            if let Some(info) = state.registry.get_by_agent_id(agent_id) {
+                tracing::info!(
+                    agent_id = %agent_id,
+                    hostname = %info.hostname,
+                    "Agent was still connected — sending AgentConnected to backend"
+                );
+                let connected_msg = GatewayMessage::AgentConnected {
+                    agent_id,
+                    hostname: info.hostname,
+                    version: info.version,
+                    cert_fingerprint: info.cert_fingerprint,
+                    cert_cn: None,
+                };
+                if let Ok(json) = serde_json::to_string(&connected_msg) {
+                    state.router.forward_to_backend(&json);
+                }
+            }
         }
         Ok(GatewayEnvelope::ForwardToAgent {
             target_agent_id,

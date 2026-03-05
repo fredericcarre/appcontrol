@@ -82,10 +82,16 @@ impl CheckScheduler {
         check_state.retain(|id, _| new_ids.contains(id));
 
         // Replace component configs
+        let with_check_cmd = configs.iter().filter(|c| c.check_cmd.is_some()).count();
         components.clear();
         for config in configs {
             components.insert(config.component_id, config);
         }
+        tracing::info!(
+            "Scheduler updated: {} total components, {} with check_cmd",
+            components.len(),
+            with_check_cmd
+        );
     }
 
     /// Main scheduler loop. Sends heartbeats every 60s and evaluates
@@ -206,6 +212,11 @@ impl CheckScheduler {
             return;
         }
 
+        tracing::debug!(
+            "Running checks for {} due components",
+            due_components.len()
+        );
+
         // Mark all due components as in_flight and set last_checked_at to NOW
         // (start time, not completion time — prevents drift)
         {
@@ -276,6 +287,13 @@ impl CheckScheduler {
             if exit_code_changed || stale {
                 cs.last_exit_code = Some(exit_code);
                 cs.last_sent_at = Some(now);
+
+                tracing::debug!(
+                    component_id = %comp_id,
+                    exit_code = exit_code,
+                    reason = if exit_code_changed { "changed" } else { "stale" },
+                    "Sending CheckResult"
+                );
 
                 let _ = self.msg_tx.send(AgentMessage::CheckResult(CheckResult {
                     component_id: *comp_id,

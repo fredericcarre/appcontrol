@@ -69,16 +69,20 @@ pub async fn transition_component(
         .await
         .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    // Read current state with row lock
-    let row = sqlx::query_as::<_, (String, Uuid)>(
-        "SELECT current_state, application_id FROM components WHERE id = $1 FOR UPDATE",
+    // Read current state with row lock, including names for event broadcasting
+    let row = sqlx::query_as::<_, (String, Uuid, String, String)>(
+        r#"SELECT c.current_state, c.application_id, c.name, a.name
+           FROM components c
+           JOIN applications a ON c.application_id = a.id
+           WHERE c.id = $1 FOR UPDATE OF c"#,
     )
     .bind(component_id)
     .fetch_optional(&mut *tx)
     .await
     .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    let (current_str, app_id) = row.ok_or(FsmError::ComponentNotFound(component_id))?;
+    let (current_str, app_id, component_name, app_name) =
+        row.ok_or(FsmError::ComponentNotFound(component_id))?;
     let current = parse_state(&current_str)?;
 
     if !is_valid_transition(current, new_state) {
@@ -129,6 +133,8 @@ pub async fn transition_component(
         appcontrol_common::WsEvent::StateChange {
             component_id,
             app_id,
+            component_name: Some(component_name.clone()),
+            app_name: Some(app_name.clone()),
             from: current,
             to: new_state,
             at: chrono::Utc::now(),
@@ -168,15 +174,19 @@ pub async fn force_transition_component(
         .await
         .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    let row = sqlx::query_as::<_, (String, Uuid)>(
-        "SELECT current_state, application_id FROM components WHERE id = $1 FOR UPDATE",
+    let row = sqlx::query_as::<_, (String, Uuid, String, String)>(
+        r#"SELECT c.current_state, c.application_id, c.name, a.name
+           FROM components c
+           JOIN applications a ON c.application_id = a.id
+           WHERE c.id = $1 FOR UPDATE OF c"#,
     )
     .bind(component_id)
     .fetch_optional(&mut *tx)
     .await
     .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    let (current_str, app_id) = row.ok_or(FsmError::ComponentNotFound(component_id))?;
+    let (current_str, app_id, component_name, app_name) =
+        row.ok_or(FsmError::ComponentNotFound(component_id))?;
     let current = parse_state(&current_str)?;
 
     // No FSM validation — force the transition
@@ -217,6 +227,8 @@ pub async fn force_transition_component(
         appcontrol_common::WsEvent::StateChange {
             component_id,
             app_id,
+            component_name: Some(component_name.clone()),
+            app_name: Some(app_name.clone()),
             from: current,
             to: new_state,
             at: chrono::Utc::now(),

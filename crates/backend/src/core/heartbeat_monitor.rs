@@ -15,8 +15,12 @@ use appcontrol_common::ComponentState;
 #[derive(Debug, sqlx::FromRow)]
 struct StaleComponent {
     component_id: Uuid,
+    component_name: String,
     agent_id: Uuid,
     application_id: Uuid,
+    app_name: String,
+    /// Whether the agent is blocked (is_active = false) vs stale heartbeat
+    agent_blocked: bool,
 }
 
 /// Start the heartbeat monitor background task.
@@ -42,15 +46,26 @@ async fn check_stale_agents(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // and that are NOT already in UNREACHABLE, STOPPED, or STOPPING state.
     let stale_components = sqlx::query_as::<_, StaleComponent>(
         r#"
-        SELECT c.id AS component_id, c.agent_id, c.application_id
+        SELECT c.id AS component_id, c.name AS component_name, c.agent_id, c.application_id,
+               app.name AS app_name, NOT a.is_active AS agent_blocked
         FROM components c
         JOIN agents a ON a.id = c.agent_id
         JOIN applications app ON app.id = c.application_id
         JOIN organizations o ON o.id = a.organization_id
-        WHERE a.is_active = true
-          AND a.last_heartbeat_at IS NOT NULL
-          AND a.last_heartbeat_at < now() - (o.heartbeat_timeout_seconds || ' seconds')::interval
-          AND c.agent_id IS NOT NULL
+        LEFT JOIN gateways g ON g.id = a.gateway_id
+        WHERE c.agent_id IS NOT NULL
+          AND (
+            -- Case 1: Active agent with stale heartbeat (timeout exceeded)
+            (a.is_active = true
+             AND a.last_heartbeat_at IS NOT NULL
+             AND a.last_heartbeat_at < now() - (o.heartbeat_timeout_seconds || ' seconds')::interval)
+            OR
+            -- Case 2: Blocked/inactive agent (components should be UNREACHABLE)
+            (a.is_active = false)
+            OR
+            -- Case 3: Gateway is blocked/inactive (all its agents' components should be UNREACHABLE)
+            (g.id IS NOT NULL AND g.is_active = false)
+          )
         "#,
     )
     .fetch_all(&state.db)
@@ -87,8 +102,13 @@ async fn check_stale_agents(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
             _ => {}
         }
 
-        // Transition to UNREACHABLE with 'heartbeat_timeout' trigger
-        if let Err(e) = transition_to_unreachable(state, comp, current_state).await {
+        // Transition to UNREACHABLE with appropriate trigger
+        let trigger = if comp.agent_blocked {
+            "agent_blocked"
+        } else {
+            "heartbeat_timeout"
+        };
+        if let Err(e) = transition_to_unreachable(state, comp, current_state, trigger).await {
             tracing::warn!(
                 component_id = %comp.component_id,
                 "Failed to transition to UNREACHABLE: {}", e
@@ -96,13 +116,9 @@ async fn check_stale_agents(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
         }
     }
 
-    // Mark stale agents as inactive
-    for agent_id in &agent_ids {
-        let _ = sqlx::query("UPDATE agents SET is_active = false WHERE id = $1")
-            .bind(agent_id)
-            .execute(&state.db)
-            .await;
-    }
+    // NOTE: We do NOT set is_active = false here.
+    // is_active is controlled only by explicit admin actions (block/unblock).
+    // The heartbeat_monitor only transitions component states to UNREACHABLE.
 
     Ok(())
 }
@@ -113,21 +129,30 @@ async fn transition_to_unreachable(
     state: &Arc<AppState>,
     comp: &StaleComponent,
     current_state: ComponentState,
+    trigger: &str,
 ) -> Result<(), crate::core::fsm::FsmError> {
-    // Insert state transition (append-only) with heartbeat_timeout trigger
+    // Insert state transition (append-only)
     sqlx::query(
         r#"
         INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
-        VALUES ($1, $2, 'UNREACHABLE', 'heartbeat_timeout',
+        VALUES ($1, $2, 'UNREACHABLE', $4,
                 jsonb_build_object('previous_state', $2, 'agent_id', $3::text))
         "#,
     )
     .bind(comp.component_id)
     .bind(current_state.to_string())
     .bind(comp.agent_id.to_string())
+    .bind(trigger)
     .execute(&state.db)
     .await
     .map_err(|e| crate::core::fsm::FsmError::Database(e.to_string()))?;
+
+    // Update cached current_state on the component
+    sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
+        .bind(comp.component_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| crate::core::fsm::FsmError::Database(e.to_string()))?;
 
     metrics::counter!(
         "state_transitions_total",
@@ -142,6 +167,8 @@ async fn transition_to_unreachable(
         appcontrol_common::WsEvent::StateChange {
             component_id: comp.component_id,
             app_id: comp.application_id,
+            component_name: Some(comp.component_name.clone()),
+            app_name: Some(comp.app_name.clone()),
             from: current_state,
             to: ComponentState::Unreachable,
             at: chrono::Utc::now(),
@@ -152,7 +179,8 @@ async fn transition_to_unreachable(
         component_id = %comp.component_id,
         from = %current_state,
         agent_id = %comp.agent_id,
-        "Component transitioned to UNREACHABLE (heartbeat timeout)"
+        trigger = %trigger,
+        "Component transitioned to UNREACHABLE"
     );
 
     Ok(())
@@ -169,7 +197,9 @@ mod tests {
             component_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
             application_id: Uuid::new_v4(),
+            agent_blocked: false,
         };
         assert_ne!(comp.component_id, comp.agent_id);
+        assert!(!comp.agent_blocked);
     }
 }

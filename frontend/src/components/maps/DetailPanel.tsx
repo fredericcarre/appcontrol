@@ -1,4 +1,4 @@
-import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch, ArrowRight } from 'lucide-react';
+import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch, ArrowRight, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -18,6 +18,7 @@ interface DetailPanelProps {
   onDiagnose?: () => void;
   onForceStop?: () => void;
   onStartWithDeps?: () => void;
+  onRepair?: () => void;
   canOperate?: boolean;
 }
 
@@ -64,9 +65,10 @@ export function DetailPanel({
   onDiagnose,
   onForceStop,
   onStartWithDeps,
+  onRepair,
   canOperate,
 }: DetailPanelProps) {
-  const state = (component.state || 'UNKNOWN') as ComponentState;
+  const state = (component.current_state || 'UNKNOWN') as ComponentState;
   const stateStyle = STATE_COLORS[state] || STATE_COLORS.UNKNOWN;
   const { data: transitions } = useStateTransitions(component.id);
   const { data: executions } = useCommandExecutions(component.id, 10);
@@ -116,6 +118,11 @@ export function DetailPanel({
                 <Skull className="h-3.5 w-3.5 mr-1" /> Force Kill
               </Button>
             </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={onRepair} className="flex-1">
+                <Wrench className="h-3.5 w-3.5 mr-1" /> Repair
+              </Button>
+            </div>
           </div>
         )}
       </div>
@@ -130,9 +137,9 @@ export function DetailPanel({
         </TabsList>
 
         <TabsContent value="info" className="flex-1 overflow-auto p-4 space-y-3">
-          <InfoRow icon={Server} label="Host" value={component.host} />
-          <InfoRow icon={Clock} label="Check Interval" value={`${component.check_interval_secs}s`} />
-          <InfoRow icon={Shield} label="Protected" value={component.is_protected ? 'Yes' : 'No'} />
+          <InfoRow icon={Server} label="Host" value={component.host || 'N/A'} />
+          <InfoRow icon={Clock} label="Check Interval" value={`${component.check_interval_seconds || 30}s`} />
+          <InfoRow icon={Shield} label="Optional" value={component.is_optional ? 'Yes' : 'No'} />
           {component.check_cmd && <InfoRow icon={Terminal} label="Check CMD" value={component.check_cmd} />}
           {component.start_cmd && <InfoRow icon={Play} label="Start CMD" value={component.start_cmd} />}
           {component.stop_cmd && <InfoRow icon={Square} label="Stop CMD" value={component.stop_cmd} />}

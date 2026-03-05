@@ -194,3 +194,17 @@ export function useStartWithDeps() {
     onSuccess: (_, id) => qc.invalidateQueries({ queryKey: ['components', id] }),
   });
 }
+
+/** Restart a component and all its dependents (components that depend on it).
+ *  This is the "repair" mode: stop dependents, stop target, start target, start dependents.
+ */
+export function useRestartWithDependents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (componentId: string) => {
+      const { data } = await client.post(`/components/${componentId}/restart-with-dependents`);
+      return data;
+    },
+    onSuccess: (_, id) => qc.invalidateQueries({ queryKey: ['components', id] }),
+  });
+}

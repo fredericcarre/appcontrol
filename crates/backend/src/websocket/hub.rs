@@ -340,6 +340,47 @@ impl Hub {
         tracing::info!(agent_id = %agent_id, "Agent forcibly disconnected");
     }
 
+    /// Block an agent permanently. Adds the agent to the gateway's blocklist
+    /// so it will be rejected even if it tries to reconnect.
+    /// This is more persistent than disconnect_agent which only drops the current connection.
+    pub fn block_agent(&self, agent_id: Uuid, reason: &str) {
+        // Send BlockAgent to ALL gateways so the agent is blocked everywhere
+        let block_msg = GatewayEnvelope::BlockAgent {
+            agent_id,
+            reason: reason.to_string(),
+        };
+
+        if let Ok(json) = serde_json::to_string(&block_msg) {
+            for gateway in self.gateways.iter() {
+                let _ = gateway.sender.send(json.clone());
+            }
+        }
+
+        // Also remove the routing entry if the agent is currently connected
+        self.agent_to_gateway.remove(&agent_id);
+
+        tracing::info!(
+            agent_id = %agent_id,
+            reason = %reason,
+            "Agent blocked on all gateways"
+        );
+    }
+
+    /// Unblock a previously blocked agent. Removes the agent from the gateway's blocklist
+    /// so it can reconnect.
+    pub fn unblock_agent(&self, agent_id: Uuid) {
+        // Send UnblockAgent to ALL gateways
+        let unblock_msg = GatewayEnvelope::UnblockAgent { agent_id };
+
+        if let Ok(json) = serde_json::to_string(&unblock_msg) {
+            for gateway in self.gateways.iter() {
+                let _ = gateway.sender.send(json.clone());
+            }
+        }
+
+        tracing::info!(agent_id = %agent_id, "Agent unblocked on all gateways");
+    }
+
     /// Forcibly disconnect a gateway for security reasons (e.g., blocked).
     /// Sends a DisconnectGateway message to the gateway and removes it.
     pub fn disconnect_gateway(&self, gateway_id: Uuid) {
@@ -484,8 +525,8 @@ mod tests {
                 assert_eq!(target_agent_id, agent_id);
                 assert!(matches!(message, BackendMessage::ExecuteCommand { .. }));
             }
-            GatewayEnvelope::DisconnectGateway { .. } => {
-                panic!("Expected ForwardToAgent, got DisconnectGateway");
+            _ => {
+                panic!("Expected ForwardToAgent");
             }
         }
     }
@@ -545,6 +586,8 @@ mod tests {
             WsEvent::StateChange {
                 component_id: Uuid::new_v4(),
                 app_id: app_a,
+                component_name: Some("test-component".to_string()),
+                app_name: Some("test-app".to_string()),
                 from: appcontrol_common::ComponentState::Unknown,
                 to: appcontrol_common::ComponentState::Running,
                 at: chrono::Utc::now(),

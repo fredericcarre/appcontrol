@@ -9,7 +9,11 @@ export interface Application {
   site_id: string | null;
   dr_site_id: string | null;
   weather: string;
+  global_state: string;
   component_count: number;
+  running_count: number;
+  stopped_count: number;
+  failed_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -21,28 +25,34 @@ export interface ApplicationDetail extends Application {
 
 export interface Component {
   id: string;
-  app_id: string;
+  application_id: string;
   name: string;
   display_name: string | null;
   description: string | null;
   icon: string | null;
   group_id: string | null;
-  host: string;
+  host: string | null;
   component_type: string;
-  state: string;
+  current_state: string;
   check_cmd: string | null;
   start_cmd: string | null;
   stop_cmd: string | null;
-  restart_cmd: string | null;
-  check_interval_secs: number;
+  check_interval_seconds: number;
+  start_timeout_seconds: number;
+  stop_timeout_seconds: number;
   agent_id: string | null;
-  group_name: string | null;
-  display_order: number;
+  is_optional: boolean;
   position_x: number | null;
   position_y: number | null;
-  is_protected: boolean;
   created_at: string;
   updated_at: string;
+  // Connectivity status (from enriched API response)
+  agent_hostname?: string | null;
+  agent_connected?: boolean;
+  gateway_id?: string | null;
+  gateway_name?: string | null;
+  gateway_connected?: boolean;
+  connectivity_status?: 'connected' | 'agent_disconnected' | 'gateway_disconnected' | 'no_agent';
 }
 
 export interface ComponentGroup {
@@ -152,7 +162,7 @@ export function useStartApp() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (appId: string) => {
-      const { data } = await client.post(`/apps/${appId}/start`);
+      const { data } = await client.post(`/apps/${appId}/start`, {});
       return data;
     },
     onSuccess: (_, appId) => qc.invalidateQueries({ queryKey: ['apps', appId] }),
@@ -163,7 +173,18 @@ export function useStopApp() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (appId: string) => {
-      const { data } = await client.post(`/apps/${appId}/stop`);
+      const { data } = await client.post(`/apps/${appId}/stop`, {});
+      return data;
+    },
+    onSuccess: (_, appId) => qc.invalidateQueries({ queryKey: ['apps', appId] }),
+  });
+}
+
+export function useCancelOperation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (appId: string) => {
+      const { data } = await client.post(`/apps/${appId}/cancel`, {});
       return data;
     },
     onSuccess: (_, appId) => qc.invalidateQueries({ queryKey: ['apps', appId] }),

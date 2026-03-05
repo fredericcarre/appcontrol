@@ -476,6 +476,213 @@ pub async fn execute_start_subset(
     Ok(())
 }
 
+/// Dispatch a stop command to a component without waiting for completion.
+/// Transitions to STOPPING and sends the stop_cmd, but returns immediately.
+async fn dispatch_stop(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+) -> Result<(), SequencerError> {
+    let current = super::fsm::get_current_state(&state.db, component_id).await?;
+
+    // Only stop if running or degraded
+    if !matches!(current, ComponentState::Running | ComponentState::Degraded) {
+        tracing::debug!(component_id = %component_id, state = ?current, "Skipping stop - not running");
+        return Ok(());
+    }
+
+    super::fsm::transition_component(state, component_id, ComponentState::Stopping).await?;
+
+    let row = sqlx::query_as::<_, (Option<String>, i32, Option<Uuid>)>(
+        "SELECT stop_cmd, stop_timeout_seconds, agent_id FROM components WHERE id = $1",
+    )
+    .bind(component_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| SequencerError::Database(e.to_string()))?;
+
+    let (stop_cmd, timeout_secs, agent_id) = row;
+    let agent_id = agent_id.ok_or(SequencerError::NoAgent(component_id))?;
+
+    if let Some(cmd) = stop_cmd {
+        let request_id = Uuid::new_v4();
+        let message = BackendMessage::ExecuteCommand {
+            request_id,
+            component_id,
+            command: cmd,
+            timeout_seconds: timeout_secs as u32,
+            exec_mode: "detached".to_string(),
+        };
+
+        record_command_dispatch(&state.db, request_id, component_id, agent_id, "stop").await;
+        state.ws_hub.send_to_agent(agent_id, message);
+
+        tracing::info!(
+            component_id = %component_id,
+            agent_id = %agent_id,
+            request_id = %request_id,
+            "Stop command dispatched"
+        );
+    }
+
+    Ok(())
+}
+
+/// Wait for a component to reach STOPPED state with a given timeout.
+async fn wait_for_stopped(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+    timeout_secs: u64,
+) -> Result<(), SequencerError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+
+    loop {
+        let current = super::fsm::get_current_state(&state.db, component_id).await?;
+        match current {
+            ComponentState::Stopped => return Ok(()),
+            ComponentState::Stopping => {
+                // Still stopping, keep waiting
+            }
+            _ => {
+                // Unexpected state
+                tracing::warn!(component_id = %component_id, state = ?current, "Unexpected state while waiting for STOPPED");
+            }
+        }
+
+        if std::time::Instant::now() > deadline {
+            tracing::warn!(component_id = %component_id, "Timeout waiting for STOPPED");
+            return Err(SequencerError::ComponentFailed(component_id));
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+}
+
+/// Stop a component and all its dependents in correct DAG order.
+///
+/// This is the proper way to stop a component: first stop all components that
+/// depend on it (in reverse topological order), then stop the target component.
+/// For example, if PostgreSQL is depended upon by UserService and OrderService,
+/// those services will be stopped first before PostgreSQL is stopped.
+///
+/// This function waits for each level to be fully STOPPED before proceeding
+/// to the next level. The timeout per component is based on its check_interval_seconds
+/// plus its stop_timeout_seconds to ensure the health check has time to detect the stop.
+pub async fn stop_with_dependents(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+) -> Result<(), SequencerError> {
+    // Get the application ID for this component
+    let app_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT application_id FROM components WHERE id = $1",
+    )
+    .bind(component_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| SequencerError::Database(e.to_string()))?;
+
+    // Build the DAG for the application
+    let dag = super::dag::build_dag(&state.db, app_id)
+        .await
+        .map_err(|e| SequencerError::Database(e.to_string()))?;
+
+    // Find all components that depend on this one (transitively)
+    let dependents = dag.find_all_dependents(component_id);
+
+    tracing::info!(
+        component_id = %component_id,
+        dependent_count = dependents.len(),
+        "Stopping component with dependents"
+    );
+
+    // Build a sub-DAG containing only the target component and its dependents
+    let mut subset = dependents.clone();
+    subset.insert(component_id);
+    let sub_dag = dag.sub_dag(&subset);
+
+    // Get topological levels and reverse them for stop order
+    let levels = sub_dag
+        .topological_levels()
+        .map_err(|e| SequencerError::Database(e.to_string()))?;
+
+    // Stop in reverse order (dependents first, then dependencies)
+    for level in levels.into_iter().rev() {
+        // Only stop components that are actually running
+        let running_in_level: Vec<Uuid> = {
+            let mut running = Vec::new();
+            for comp_id in level {
+                let current = super::fsm::get_current_state(&state.db, comp_id).await?;
+                if matches!(current, ComponentState::Running | ComponentState::Degraded) {
+                    running.push(comp_id);
+                }
+            }
+            running
+        };
+
+        if running_in_level.is_empty() {
+            continue;
+        }
+
+        tracing::info!(
+            target_component = %component_id,
+            level_size = running_in_level.len(),
+            components = ?running_in_level,
+            "Stopping components in level (reverse DAG order)"
+        );
+
+        // First, dispatch stop commands for all components in this level in parallel
+        let mut dispatch_tasks = Vec::new();
+        for comp_id in &running_in_level {
+            let state_clone = state.clone();
+            let comp_id = *comp_id;
+            dispatch_tasks.push(tokio::spawn(async move {
+                dispatch_stop(&state_clone, comp_id).await
+            }));
+        }
+
+        // Wait for all stop commands to be dispatched
+        for task in dispatch_tasks {
+            if let Err(e) = task.await {
+                tracing::error!("Dispatch task join error: {}", e);
+            }
+        }
+
+        // Then, wait for all components in this level to reach STOPPED
+        // Use a generous timeout: check_interval (30s default) + stop_timeout + buffer
+        let wait_timeout_secs = 90; // 30s check interval + 60s buffer
+
+        let mut wait_tasks = Vec::new();
+        for comp_id in running_in_level {
+            let state_clone = state.clone();
+            wait_tasks.push(tokio::spawn(async move {
+                wait_for_stopped(&state_clone, comp_id, wait_timeout_secs).await
+            }));
+        }
+
+        // Wait for all components to stop
+        let mut all_stopped = true;
+        for task in wait_tasks {
+            match task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::error!("Wait for stop failed: {}", e);
+                    all_stopped = false;
+                    // Continue with other components
+                }
+                Err(e) => {
+                    tracing::error!("Wait task join error: {}", e);
+                    all_stopped = false;
+                }
+            }
+        }
+
+        if !all_stopped {
+            tracing::warn!("Some components failed to stop, continuing with next level anyway");
+        }
+    }
+
+    Ok(())
+}
+
 /// Force-stop a single component: bypass FSM rules, send stop_cmd to agent.
 ///
 /// Used for production incidents where you need to kill a component immediately

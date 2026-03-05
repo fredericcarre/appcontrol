@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useApps } from '@/api/apps';
+import { useApps, useStartApp, useStopApp } from '@/api/apps';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,10 @@ import { useWebSocketStore } from '@/stores/websocket';
 import {
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   Plus, Activity, AlertTriangle, CheckCircle, XCircle,
+  Play, Square, Loader2, ArrowRight, Terminal, Wifi, WifiOff,
+  RefreshCw, Command,
 } from 'lucide-react';
+import { WsMessage } from '@/stores/websocket';
 
 const weatherIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   sunny: Sun,
@@ -31,20 +34,188 @@ function getWeatherVariant(weather: string) {
   return 'secondary' as const;
 }
 
+function getStateColor(state: string) {
+  switch (state) {
+    case 'RUNNING': return 'text-green-600';
+    case 'STOPPED': return 'text-gray-500';
+    case 'FAILED': return 'text-red-600';
+    case 'DEGRADED': return 'text-amber-600';
+    case 'STARTING': return 'text-blue-500';
+    case 'STOPPING': return 'text-blue-500';
+    default: return 'text-gray-400';
+  }
+}
+
+/** Format a WebSocket event for display in Live Events */
+function formatEvent(ev: WsMessage): { icon: React.ReactNode; text: string; color: string; context?: string } {
+  const payload = ev.payload || {};
+
+  // Extract component/app names for context
+  const compName = payload.component_name as string | undefined;
+  const appName = payload.app_name as string | undefined;
+  const context = compName ? `${appName ? appName + ' / ' : ''}${compName}` : undefined;
+
+  switch (ev.type) {
+    case 'StateChange': {
+      const from = String(payload.from || '?');
+      const to = String(payload.to || '?');
+      return {
+        icon: <ArrowRight className="h-3 w-3" />,
+        text: `${from} → ${to}`,
+        color: getStateColor(to),
+        context,
+      };
+    }
+
+    case 'CheckResultEvent': {
+      const exitCode = payload.exit_code as number;
+      const checkType = String(payload.check_type || 'health').toLowerCase();
+      const isOk = exitCode === 0;
+      return {
+        icon: isOk ? <CheckCircle className="h-3 w-3" /> : <XCircle className="h-3 w-3" />,
+        text: `${checkType}: ${isOk ? 'OK' : `exit ${exitCode}`}`,
+        color: isOk ? 'text-green-600' : (exitCode === 1 ? 'text-amber-500' : 'text-red-600'),
+        context,
+      };
+    }
+
+    case 'CommandResultEvent': {
+      const exitCode = payload.exit_code as number;
+      const isOk = exitCode === 0;
+      return {
+        icon: <Command className="h-3 w-3" />,
+        text: `cmd: ${isOk ? 'OK' : `exit ${exitCode}`}`,
+        color: isOk ? 'text-green-600' : 'text-red-600',
+        context: compName,
+      };
+    }
+
+    case 'AgentStatus': {
+      const connected = Boolean(payload.connected);
+      return {
+        icon: connected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />,
+        text: connected ? 'agent connected' : 'agent disconnected',
+        color: connected ? 'text-green-600' : 'text-amber-500',
+      };
+    }
+
+    case 'SwitchoverProgress': {
+      const phase = String(payload.phase || '?');
+      const status = String(payload.status || '?');
+      return {
+        icon: <RefreshCw className="h-3 w-3" />,
+        text: `switchover: ${phase} (${status})`,
+        color: status === 'completed' ? 'text-green-600' : 'text-blue-500',
+      };
+    }
+
+    case 'TerminalStarted':
+    case 'TerminalOutput':
+    case 'TerminalExit':
+    case 'TerminalError': {
+      return {
+        icon: <Terminal className="h-3 w-3" />,
+        text: ev.type.replace('Terminal', 'terminal ').toLowerCase(),
+        color: 'text-gray-500',
+      };
+    }
+
+    case 'LogEntry': {
+      const level = String(payload.level || 'INFO');
+      const source = String(payload.source_name || 'unknown');
+      const message = String(payload.message || '').slice(0, 50);
+      const levelColor = level === 'ERROR' ? 'text-red-600' :
+                         level === 'WARN' ? 'text-amber-500' : 'text-gray-500';
+      return {
+        icon: null,
+        text: `[${source}] ${message}${message.length >= 50 ? '...' : ''}`,
+        color: levelColor,
+      };
+    }
+
+    case 'AutoFailover': {
+      const fromProfile = String(payload.from_profile || '?');
+      const toProfile = String(payload.to_profile || '?');
+      return {
+        icon: <AlertTriangle className="h-3 w-3" />,
+        text: `auto-failover: ${fromProfile} → ${toProfile}`,
+        color: 'text-red-600',
+      };
+    }
+
+    default:
+      return {
+        icon: null,
+        text: ev.type,
+        color: 'text-gray-500',
+      };
+  }
+}
+
 export function DashboardPage() {
-  const { data: apps, isLoading } = useApps();
+  const { data: apps, isLoading, refetch } = useApps();
+  const startApp = useStartApp();
+  const stopApp = useStopApp();
   const messages = useWebSocketStore((s) => s.messages);
   const navigate = useNavigate();
+
+  // Track which app is being operated on
+  const [operatingAppId, setOperatingAppId] = useState<string | null>(null);
+  const [operationType, setOperationType] = useState<'start' | 'stop' | null>(null);
 
   const stats = useMemo(() => {
     if (!apps) return { total: 0, healthy: 0, degraded: 0, failed: 0 };
     return {
       total: apps.length,
-      healthy: apps.filter((a) => a.weather === 'sunny' || a.weather === 'fair').length,
-      degraded: apps.filter((a) => a.weather === 'cloudy' || a.weather === 'rainy').length,
-      failed: apps.filter((a) => a.weather === 'stormy').length,
+      healthy: apps.filter((a) => a.global_state === 'RUNNING').length,
+      degraded: apps.filter((a) => a.global_state === 'DEGRADED' || a.global_state === 'STOPPED').length,
+      failed: apps.filter((a) => a.global_state === 'FAILED').length,
     };
   }, [apps]);
+
+  const handleStart = useCallback((e: React.MouseEvent, appId: string, appName: string) => {
+    e.stopPropagation();
+    if (window.confirm(`Start all components of "${appName}"?`)) {
+      setOperatingAppId(appId);
+      setOperationType('start');
+      startApp.mutate(appId, {
+        onSuccess: () => {
+          // Refresh list after a delay to see status change
+          setTimeout(() => refetch(), 1000);
+          setTimeout(() => {
+            setOperatingAppId(null);
+            setOperationType(null);
+          }, 2000);
+        },
+        onError: () => {
+          setOperatingAppId(null);
+          setOperationType(null);
+        },
+      });
+    }
+  }, [startApp, refetch]);
+
+  const handleStop = useCallback((e: React.MouseEvent, appId: string, appName: string) => {
+    e.stopPropagation();
+    if (window.confirm(`Stop all components of "${appName}"?`)) {
+      setOperatingAppId(appId);
+      setOperationType('stop');
+      stopApp.mutate(appId, {
+        onSuccess: () => {
+          // Refresh list after a delay to see status change
+          setTimeout(() => refetch(), 1000);
+          setTimeout(() => {
+            setOperatingAppId(null);
+            setOperationType(null);
+          }, 2000);
+        },
+        onError: () => {
+          setOperatingAppId(null);
+          setOperationType(null);
+        },
+      });
+    }
+  }, [stopApp, refetch]);
 
   const recentEvents = messages.slice(-20).reverse();
 
@@ -77,25 +248,25 @@ export function DashboardPage() {
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-3">
-            <CheckCircle className="h-8 w-8 text-state-running" />
+            <CheckCircle className="h-8 w-8 text-green-600" />
             <div>
               <p className="text-2xl font-bold">{stats.healthy}</p>
-              <p className="text-xs text-muted-foreground">Healthy</p>
+              <p className="text-xs text-muted-foreground">Running</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-3">
-            <AlertTriangle className="h-8 w-8 text-state-degraded" />
+            <AlertTriangle className="h-8 w-8 text-amber-500" />
             <div>
               <p className="text-2xl font-bold">{stats.degraded}</p>
-              <p className="text-xs text-muted-foreground">Degraded</p>
+              <p className="text-xs text-muted-foreground">Degraded / Stopped</p>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-3">
-            <XCircle className="h-8 w-8 text-state-failed" />
+            <XCircle className="h-8 w-8 text-red-600" />
             <div>
               <p className="text-2xl font-bold">{stats.failed}</p>
               <p className="text-xs text-muted-foreground">Failed</p>
@@ -118,25 +289,68 @@ export function DashboardPage() {
               ) : (
                 <div className="space-y-2">
                   {apps.map((app) => (
-                    <button
+                    <div
                       key={app.id}
                       onClick={() => navigate(`/apps/${app.id}`)}
-                      className="w-full flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-accent transition-colors text-left"
+                      className="w-full flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-accent transition-colors cursor-pointer"
                     >
                       <WeatherIcon weather={app.weather || 'cloudy'} className="h-6 w-6 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">{app.name}</p>
                         <p className="text-xs text-muted-foreground truncate">{app.description}</p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant={getWeatherVariant(app.weather || 'cloudy')}>
-                          {app.weather || 'unknown'}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {app.component_count} components
-                        </span>
+
+                      {/* Component counts */}
+                      <div className="hidden sm:flex items-center gap-2 text-xs">
+                        {app.running_count > 0 && (
+                          <span className="text-green-600">{app.running_count} running</span>
+                        )}
+                        {app.stopped_count > 0 && (
+                          <span className="text-gray-500">{app.stopped_count} stopped</span>
+                        )}
+                        {app.failed_count > 0 && (
+                          <span className="text-red-600">{app.failed_count} failed</span>
+                        )}
                       </div>
-                    </button>
+
+                      {/* Global state badge */}
+                      <Badge variant={getWeatherVariant(app.weather || 'cloudy')} className="shrink-0">
+                        {app.global_state || 'UNKNOWN'}
+                      </Badge>
+
+                      {/* Action buttons */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {operatingAppId === app.id ? (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>{operationType === 'start' ? 'Starting...' : 'Stopping...'}</span>
+                          </div>
+                        ) : (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={(e) => handleStart(e, app.id, app.name)}
+                              disabled={startApp.isPending || stopApp.isPending}
+                              title="Start all components"
+                            >
+                              <Play className="h-4 w-4 text-green-600" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={(e) => handleStop(e, app.id, app.name)}
+                              disabled={startApp.isPending || stopApp.isPending}
+                              title="Stop all components"
+                            >
+                              <Square className="h-4 w-4 text-red-600" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
@@ -156,15 +370,29 @@ export function DashboardPage() {
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {recentEvents.map((ev, i) => (
-                    <div key={i} className="text-xs p-2 rounded bg-muted">
-                      <span className="text-muted-foreground">
-                        {new Date(ev.timestamp).toLocaleTimeString()}
-                      </span>
-                      {' '}
-                      <span className="font-medium">{ev.type}</span>
-                    </div>
-                  ))}
+                  {recentEvents.map((ev, i) => {
+                    const formatted = formatEvent(ev);
+                    return (
+                      <div key={i} className="text-xs p-2 rounded bg-muted">
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground shrink-0">
+                            {new Date(ev.timestamp).toLocaleTimeString()}
+                          </span>
+                          {formatted.icon && (
+                            <span className={formatted.color}>{formatted.icon}</span>
+                          )}
+                          <span className={`font-medium ${formatted.color}`}>
+                            {formatted.text}
+                          </span>
+                        </div>
+                        {formatted.context && (
+                          <div className="text-muted-foreground ml-[4.5rem] truncate">
+                            {formatted.context}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </ScrollArea>

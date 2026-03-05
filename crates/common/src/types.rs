@@ -52,6 +52,31 @@ impl PermissionLevel {
             _ => None,
         }
     }
+
+    /// Returns true if this permission level allows viewing resources
+    pub fn can_view(&self) -> bool {
+        *self >= PermissionLevel::View
+    }
+
+    /// Returns true if this permission level allows operating (start/stop) resources
+    pub fn can_operate(&self) -> bool {
+        *self >= PermissionLevel::Operate
+    }
+
+    /// Returns true if this permission level allows editing resources
+    pub fn can_edit(&self) -> bool {
+        *self >= PermissionLevel::Edit
+    }
+
+    /// Returns true if this permission level allows managing permissions
+    pub fn can_manage(&self) -> bool {
+        *self >= PermissionLevel::Manage
+    }
+
+    /// Returns true if this permission level is owner
+    pub fn is_owner(&self) -> bool {
+        *self >= PermissionLevel::Owner
+    }
 }
 
 /// Types of checks that can be run on a component.

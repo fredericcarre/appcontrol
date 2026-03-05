@@ -74,7 +74,7 @@ export function LogViewerModal({
     }
 
     const subscribeMsg = {
-      type: 'LogSubscribe',
+      type: 'log_subscribe',
       payload: {
         agent_id: agentId || null,
         gateway_id: gatewayId || null,
@@ -90,7 +90,7 @@ export function LogViewerModal({
       const currentWs = getGlobalWebSocket();
       if (currentWs && currentWs.readyState === WebSocket.OPEN) {
         const unsubscribeMsg = {
-          type: 'LogUnsubscribe',
+          type: 'log_unsubscribe',
           payload: {
             agent_id: agentId || null,
             gateway_id: gatewayId || null,
@@ -111,7 +111,7 @@ export function LogViewerModal({
 
     // Update subscription with new level
     const subscribeMsg = {
-      type: 'LogSubscribe',
+      type: 'log_subscribe',
       payload: {
         agent_id: agentId || null,
         gateway_id: gatewayId || null,

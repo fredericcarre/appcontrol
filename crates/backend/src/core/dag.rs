@@ -114,6 +114,35 @@ impl Dag {
         deps
     }
 
+    /// Find all downstream dependents of a component (transitive closure).
+    /// Returns the set of component IDs that depend on `component_id` (directly or transitively).
+    /// Does NOT include `component_id` itself.
+    /// These are the components that must be stopped BEFORE stopping `component_id`.
+    pub fn find_all_dependents(&self, component_id: Uuid) -> HashSet<Uuid> {
+        // Build reverse adjacency: for each node, who depends on it?
+        let mut reverse: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
+        for (&node, deps) in &self.adjacency {
+            for &dep in deps {
+                reverse.entry(dep).or_default().insert(node);
+            }
+        }
+
+        let mut dependents = HashSet::new();
+        let mut stack = vec![component_id];
+
+        while let Some(current) = stack.pop() {
+            if let Some(direct_dependents) = reverse.get(&current) {
+                for &dependent in direct_dependents {
+                    if dependents.insert(dependent) {
+                        stack.push(dependent);
+                    }
+                }
+            }
+        }
+
+        dependents
+    }
+
     /// Build a sub-DAG containing only the specified nodes and edges between them.
     pub fn sub_dag(&self, nodes: &HashSet<Uuid>) -> Dag {
         let mut sub = Dag::new();
@@ -354,6 +383,41 @@ mod tests {
         let deps_b = dag.find_all_dependencies(b);
         assert_eq!(deps_b.len(), 1);
         assert!(deps_b.contains(&a));
+    }
+
+    #[test]
+    fn test_find_all_dependents() {
+        let mut dag = Dag::new();
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let c = Uuid::from_u128(3);
+        let d = Uuid::from_u128(4);
+
+        dag.add_node(a);
+        dag.add_node(b);
+        dag.add_node(c);
+        dag.add_node(d);
+        // d depends on b and c, b depends on a, c depends on a
+        dag.add_edge(d, b);
+        dag.add_edge(d, c);
+        dag.add_edge(b, a);
+        dag.add_edge(c, a);
+
+        // a's dependents: b, c, d (everything depends on a transitively)
+        let deps = dag.find_all_dependents(a);
+        assert_eq!(deps.len(), 3);
+        assert!(deps.contains(&b));
+        assert!(deps.contains(&c));
+        assert!(deps.contains(&d));
+
+        // d has no dependents (it's at the top of the chain)
+        let deps_d = dag.find_all_dependents(d);
+        assert!(deps_d.is_empty());
+
+        // b's dependents: only d
+        let deps_b = dag.find_all_dependents(b);
+        assert_eq!(deps_b.len(), 1);
+        assert!(deps_b.contains(&d));
     }
 
     #[test]

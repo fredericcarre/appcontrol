@@ -843,31 +843,27 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             .await;
 
             // Broadcast CommandResultEvent to subscribed frontend clients
-            if let Ok(Some(comp_id)) = sqlx::query_scalar::<_, uuid::Uuid>(
-                "SELECT component_id FROM command_executions WHERE request_id = $1",
+            if let Ok(Some((comp_id, comp_name, app_id))) = sqlx::query_as::<_, (uuid::Uuid, String, uuid::Uuid)>(
+                r#"SELECT c.id, c.name, c.application_id
+                   FROM command_executions ce
+                   JOIN components c ON ce.component_id = c.id
+                   WHERE ce.request_id = $1"#,
             )
             .bind(request_id)
             .fetch_optional(&state.db)
             .await
             {
-                if let Ok(Some(app_id)) = sqlx::query_scalar::<_, uuid::Uuid>(
-                    "SELECT application_id FROM components WHERE id = $1",
-                )
-                .bind(comp_id)
-                .fetch_optional(&state.db)
-                .await
-                {
-                    state.ws_hub.broadcast(
-                        app_id,
-                        appcontrol_common::WsEvent::CommandResultEvent {
-                            request_id,
-                            component_id: comp_id,
-                            exit_code,
-                            stdout: stdout.clone(),
-                            stderr: stderr.clone(),
-                        },
-                    );
-                }
+                state.ws_hub.broadcast(
+                    app_id,
+                    appcontrol_common::WsEvent::CommandResultEvent {
+                        request_id,
+                        component_id: comp_id,
+                        component_name: Some(comp_name),
+                        exit_code,
+                        stdout: stdout.clone(),
+                        stderr: stderr.clone(),
+                    },
+                );
             }
 
             // Send Ack back to agent if sequence_id was provided.
@@ -991,10 +987,31 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                 os = ?os_name,
                 "Agent registered via gateway"
             );
+            // Check if agent is blocked before processing registration
+            let is_blocked: bool = sqlx::query_scalar(
+                "SELECT NOT COALESCE(is_active, true) FROM agents WHERE id = $1",
+            )
+            .bind(agent_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(false);
+
+            if is_blocked {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    hostname = %hostname,
+                    "REJECTED: registration from blocked agent"
+                );
+                // Don't process registration for blocked agents
+                return;
+            }
+
             // Update agent record with hostname, IPs, version, system info, and heartbeat
+            // NOTE: We do NOT set is_active = true here to respect blocked status
             if let Err(e) = sqlx::query(
                 "UPDATE agents SET hostname = $2, ip_addresses = $3, last_heartbeat_at = now(), \
-                 is_active = true, \
                  version = COALESCE($4, version), \
                  os_name = COALESCE($5, os_name), \
                  os_version = COALESCE($6, os_version), \
@@ -1004,7 +1021,7 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
                  disk_total_gb = COALESCE($10, disk_total_gb), \
                  certificate_fingerprint = COALESCE($11, certificate_fingerprint), \
                  identity_verified = ($11 IS NOT NULL) \
-                 WHERE id = $1",
+                 WHERE id = $1 AND is_active = true",
             )
             .bind(agent_id)
             .bind(&hostname)
@@ -1253,7 +1270,9 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
 /// Query all components assigned to an agent and send them as an UpdateConfig message.
 /// This is called when an agent connects (AgentConnected) so the agent's scheduler
 /// knows what components to health-check. Without this, the agent has no work to do.
-async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
+///
+/// Components belonging to suspended applications are excluded from the config.
+pub async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
     let rows = sqlx::query_as::<
         _,
         (
@@ -1273,12 +1292,15 @@ async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
             serde_json::Value, // env_vars
         ),
     >(
-        "SELECT id, name, check_cmd, start_cmd, stop_cmd,
-                integrity_check_cmd, post_start_check_cmd, infra_check_cmd,
-                rebuild_cmd, rebuild_infra_cmd,
-                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds,
-                COALESCE(env_vars, '{}'::jsonb)
-         FROM components WHERE agent_id = $1",
+        "SELECT c.id, c.name, c.check_cmd, c.start_cmd, c.stop_cmd,
+                c.integrity_check_cmd, c.post_start_check_cmd, c.infra_check_cmd,
+                c.rebuild_cmd, c.rebuild_infra_cmd,
+                c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
+                COALESCE(c.env_vars, '{}'::jsonb)
+         FROM components c
+         JOIN applications a ON c.application_id = a.id
+         WHERE c.agent_id = $1
+           AND a.is_suspended = false",
     )
     .bind(agent_id)
     .fetch_all(&state.db)
@@ -1350,5 +1372,82 @@ async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
             agent_id = %agent_id,
             "Failed to send UpdateConfig — agent not reachable via gateway"
         );
+    }
+}
+
+/// Push updated config to all agents affected by changes to an application or components.
+///
+/// Call this after:
+/// - Importing a new application (pass application_id)
+/// - Suspending/resuming an application (pass application_id)
+/// - Creating/updating/deleting components (pass component_ids)
+/// - Changing a component's agent_id (pass both old and new agent_ids)
+///
+/// This ensures agents receive real-time config updates without requiring reconnection.
+pub async fn push_config_to_affected_agents(
+    state: &Arc<AppState>,
+    application_id: Option<uuid::Uuid>,
+    component_ids: Option<&[uuid::Uuid]>,
+    additional_agent_ids: Option<&[uuid::Uuid]>,
+) {
+    let mut agent_ids: Vec<uuid::Uuid> = Vec::new();
+
+    // Find agents affected by application
+    if let Some(app_id) = application_id {
+        let app_agents: Vec<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT DISTINCT agent_id FROM components
+             WHERE application_id = $1 AND agent_id IS NOT NULL",
+        )
+        .bind(app_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+        agent_ids.extend(app_agents);
+    }
+
+    // Find agents affected by specific components
+    if let Some(comp_ids) = component_ids {
+        if !comp_ids.is_empty() {
+            let comp_agents: Vec<uuid::Uuid> = sqlx::query_scalar(
+                "SELECT DISTINCT agent_id FROM components
+                 WHERE id = ANY($1) AND agent_id IS NOT NULL",
+            )
+            .bind(comp_ids)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+            agent_ids.extend(comp_agents);
+        }
+    }
+
+    // Add any additional agents (e.g., old agent when component moves to new agent)
+    if let Some(extra) = additional_agent_ids {
+        agent_ids.extend(extra.iter().copied());
+    }
+
+    // Deduplicate
+    agent_ids.sort();
+    agent_ids.dedup();
+
+    if agent_ids.is_empty() {
+        tracing::debug!("No agents to notify for config push");
+        return;
+    }
+
+    tracing::info!(
+        agent_count = agent_ids.len(),
+        "Pushing config updates to affected agents"
+    );
+
+    // Send UpdateConfig to each connected agent
+    for agent_id in agent_ids {
+        if state.ws_hub.is_agent_connected(agent_id) {
+            send_config_to_agent(state, agent_id).await;
+        } else {
+            tracing::debug!(
+                agent_id = %agent_id,
+                "Skipping config push — agent not connected"
+            );
+        }
     }
 }

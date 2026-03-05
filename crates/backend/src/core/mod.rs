@@ -1,3 +1,4 @@
+pub mod auto_failover;
 pub mod branch;
 pub mod certificate_rotation;
 pub mod dag;
@@ -9,5 +10,6 @@ pub mod notifications;
 pub mod operation_lock;
 pub mod permissions;
 pub mod rebuild;
+pub mod resolution;
 pub mod sequencer;
 pub mod switchover;
