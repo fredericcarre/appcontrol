@@ -286,7 +286,7 @@ async fn execute_sync(
             .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
             match row {
-                Some((status, exit_code, stderr)) if status == "completed" => {
+                Some((status, exit_code, _stderr)) if status == "completed" => {
                     break serde_json::json!({
                         "component": name,
                         "status": "passed",
