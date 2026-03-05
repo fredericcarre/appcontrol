@@ -111,8 +111,8 @@ export function MapViewPage() {
     }
   }, [appId, subscribe]);
 
-  const components = app?.components || [];
-  const dependencies = app?.dependencies || [];
+  const components = useMemo(() => app?.components || [], [app?.components]);
+  const dependencies = useMemo(() => app?.dependencies || [], [app?.dependencies]);
 
   // Compute component state counts
   const componentCounts = useMemo(() => {

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Server, Radio, WifiOff, Wifi, AlertCircle, HelpCircle } from 'lucide-react';
+import { Server, Radio, WifiOff, Wifi, HelpCircle } from 'lucide-react';
 import {
   Tooltip,
   TooltipContent,

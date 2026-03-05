@@ -378,6 +378,7 @@ function AppMapInner({
   dependencies,
   groups,
   onSelectComponent,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   selectedComponentId,
   onStartAll,
   onStopAll,
