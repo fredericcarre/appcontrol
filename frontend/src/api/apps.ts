@@ -12,8 +12,11 @@ export interface Application {
   global_state: string;
   component_count: number;
   running_count: number;
+  starting_count?: number;
+  stopping_count?: number;
   stopped_count: number;
   failed_count: number;
+  unreachable_count?: number;
   created_at: string;
   updated_at: string;
 }

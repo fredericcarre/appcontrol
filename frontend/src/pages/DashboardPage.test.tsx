@@ -10,6 +10,7 @@ vi.mock('@/api/apps', () => ({
   useApps: vi.fn(),
   useStartApp: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useStopApp: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useCancelOperation: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }));
 
 import { useApps } from '@/api/apps';

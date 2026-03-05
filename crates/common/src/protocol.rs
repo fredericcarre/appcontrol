@@ -266,6 +266,12 @@ pub enum BackendMessage {
     TerminalClose {
         request_id: Uuid,
     },
+    /// Request agent to run all health checks immediately.
+    /// Used when agent reconnects after being UNREACHABLE to quickly
+    /// re-establish correct component states without waiting for intervals.
+    RunChecksNow {
+        request_id: Uuid,
+    },
 }
 
 impl BackendMessage {
@@ -286,6 +292,7 @@ impl BackendMessage {
             BackendMessage::TerminalInput { .. } => MessagePriority::High,
             BackendMessage::TerminalResize { .. } => MessagePriority::Normal,
             BackendMessage::TerminalClose { .. } => MessagePriority::High,
+            BackendMessage::RunChecksNow { .. } => MessagePriority::High,
         }
     }
 }

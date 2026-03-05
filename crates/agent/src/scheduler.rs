@@ -68,6 +68,28 @@ impl CheckScheduler {
         }
     }
 
+    /// Trigger immediate health checks for all components by resetting their
+    /// last_checked_at timestamps. This forces them to be "due" on the next scheduler tick.
+    ///
+    /// Used when agent reconnects to quickly recover component states from UNREACHABLE.
+    pub async fn run_all_checks_now(&self) {
+        let mut check_state = self.check_state.write().await;
+        for state in check_state.values_mut() {
+            // Reset last_checked_at to force the component to be "due" immediately
+            state.last_checked_at = None;
+            // Also reset last_sent_at to ensure we send the result regardless of staleness
+            state.last_sent_at = None;
+        }
+        tracing::info!(
+            "Triggered immediate checks for {} components",
+            check_state.len()
+        );
+        drop(check_state);
+
+        // Run due checks immediately instead of waiting for the next tick
+        self.run_due_checks().await;
+    }
+
     /// Replace the current component list with a new configuration from the backend.
     /// Cleans up check state for removed components.
     pub async fn update_components(&self, configs: Vec<ComponentConfig>) {

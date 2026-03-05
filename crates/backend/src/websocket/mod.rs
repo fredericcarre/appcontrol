@@ -707,6 +707,11 @@ async fn process_gateway_message(
                 // Push component config to the agent so its scheduler starts health checks.
                 send_config_to_agent(state, agent_id).await;
 
+                // Send RunChecksNow to trigger immediate health checks.
+                // This ensures components transition from UNREACHABLE to their actual state
+                // without waiting for the next scheduled check interval.
+                send_run_checks_now(state, agent_id);
+
                 // Update agent record: gateway_id, certificate fingerprint, version
                 if let Err(e) = sqlx::query(
                     "UPDATE agents SET gateway_id = $2, \
@@ -1372,6 +1377,29 @@ pub async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
         tracing::warn!(
             agent_id = %agent_id,
             "Failed to send UpdateConfig — agent not reachable via gateway"
+        );
+    }
+}
+
+/// Send RunChecksNow to an agent to trigger immediate health checks.
+///
+/// This is called when an agent reconnects to quickly restore component states
+/// from UNREACHABLE to their actual state without waiting for the next scheduled
+/// check interval.
+pub fn send_run_checks_now(state: &Arc<AppState>, agent_id: uuid::Uuid) {
+    let msg = appcontrol_common::BackendMessage::RunChecksNow {
+        request_id: uuid::Uuid::new_v4(),
+    };
+
+    if state.ws_hub.send_to_agent(agent_id, msg) {
+        tracing::info!(
+            agent_id = %agent_id,
+            "Sent RunChecksNow to agent"
+        );
+    } else {
+        tracing::debug!(
+            agent_id = %agent_id,
+            "Could not send RunChecksNow — agent not reachable"
         );
     }
 }

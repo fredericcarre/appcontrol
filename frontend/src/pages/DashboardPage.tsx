@@ -1,6 +1,6 @@
 import { useMemo, useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useApps, useStartApp, useStopApp } from '@/api/apps';
+import { useApps, useStartApp, useStopApp, useCancelOperation } from '@/api/apps';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import {
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   Plus, Activity, AlertTriangle, CheckCircle, XCircle,
   Play, Square, Loader2, ArrowRight, Terminal, Wifi, WifiOff,
-  RefreshCw, Command,
+  RefreshCw, Command, Ban,
 } from 'lucide-react';
 import { WsMessage } from '@/stores/websocket';
 
@@ -156,6 +156,7 @@ export function DashboardPage() {
   const { data: apps, isLoading, refetch } = useApps();
   const startApp = useStartApp();
   const stopApp = useStopApp();
+  const cancelOperation = useCancelOperation();
   const messages = useWebSocketStore((s) => s.messages);
   const navigate = useNavigate();
 
@@ -164,10 +165,11 @@ export function DashboardPage() {
   const [operationType, setOperationType] = useState<'start' | 'stop' | null>(null);
 
   const stats = useMemo(() => {
-    if (!apps) return { total: 0, healthy: 0, degraded: 0, failed: 0 };
+    if (!apps) return { total: 0, running: 0, transitioning: 0, degraded: 0, failed: 0 };
     return {
       total: apps.length,
-      healthy: apps.filter((a) => a.global_state === 'RUNNING').length,
+      running: apps.filter((a) => a.global_state === 'RUNNING').length,
+      transitioning: apps.filter((a) => a.global_state === 'STARTING' || a.global_state === 'STOPPING').length,
       degraded: apps.filter((a) => a.global_state === 'DEGRADED' || a.global_state === 'STOPPED').length,
       failed: apps.filter((a) => a.global_state === 'FAILED').length,
     };
@@ -217,6 +219,19 @@ export function DashboardPage() {
     }
   }, [stopApp, refetch]);
 
+  const handleCancel = useCallback((e: React.MouseEvent, appId: string) => {
+    e.stopPropagation();
+    if (window.confirm('Cancel the current operation and release the lock?')) {
+      cancelOperation.mutate(appId, {
+        onSuccess: () => {
+          setOperatingAppId(null);
+          setOperationType(null);
+          setTimeout(() => refetch(), 500);
+        },
+      });
+    }
+  }, [cancelOperation, refetch]);
+
   const recentEvents = messages.slice(-20).reverse();
 
   if (isLoading) {
@@ -236,7 +251,7 @@ export function DashboardPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card>
           <CardContent className="p-4 flex items-center gap-3">
             <Activity className="h-8 w-8 text-primary" />
@@ -250,11 +265,22 @@ export function DashboardPage() {
           <CardContent className="p-4 flex items-center gap-3">
             <CheckCircle className="h-8 w-8 text-green-600" />
             <div>
-              <p className="text-2xl font-bold">{stats.healthy}</p>
+              <p className="text-2xl font-bold">{stats.running}</p>
               <p className="text-xs text-muted-foreground">Running</p>
             </div>
           </CardContent>
         </Card>
+        {stats.transitioning > 0 && (
+          <Card>
+            <CardContent className="p-4 flex items-center gap-3">
+              <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
+              <div>
+                <p className="text-2xl font-bold">{stats.transitioning}</p>
+                <p className="text-xs text-muted-foreground">In Transition</p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
         <Card>
           <CardContent className="p-4 flex items-center gap-3">
             <AlertTriangle className="h-8 w-8 text-amber-500" />
@@ -305,11 +331,20 @@ export function DashboardPage() {
                         {app.running_count > 0 && (
                           <span className="text-green-600">{app.running_count} running</span>
                         )}
+                        {(app.starting_count ?? 0) > 0 && (
+                          <span className="text-blue-600 animate-pulse">{app.starting_count} starting</span>
+                        )}
+                        {(app.stopping_count ?? 0) > 0 && (
+                          <span className="text-blue-600 animate-pulse">{app.stopping_count} stopping</span>
+                        )}
                         {app.stopped_count > 0 && (
                           <span className="text-gray-500">{app.stopped_count} stopped</span>
                         )}
                         {app.failed_count > 0 && (
                           <span className="text-red-600">{app.failed_count} failed</span>
+                        )}
+                        {(app.unreachable_count ?? 0) > 0 && (
+                          <span className="text-gray-700">{app.unreachable_count} unreachable</span>
                         )}
                       </div>
 
@@ -321,9 +356,21 @@ export function DashboardPage() {
                       {/* Action buttons */}
                       <div className="flex items-center gap-1 shrink-0">
                         {operatingAppId === app.id ? (
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            <span>{operationType === 'start' ? 'Starting...' : 'Stopping...'}</span>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground px-2">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span>{operationType === 'start' ? 'Starting...' : 'Stopping...'}</span>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-red-600 hover:bg-red-50"
+                              onClick={(e) => handleCancel(e, app.id)}
+                              title="Cancel operation"
+                            >
+                              <Ban className="h-3.5 w-3.5 mr-1" />
+                              Cancel
+                            </Button>
                           </div>
                         ) : (
                           <>
@@ -332,7 +379,7 @@ export function DashboardPage() {
                               size="icon"
                               className="h-8 w-8"
                               onClick={(e) => handleStart(e, app.id, app.name)}
-                              disabled={startApp.isPending || stopApp.isPending}
+                              disabled={startApp.isPending || stopApp.isPending || (app.global_state === 'STARTING' || app.global_state === 'STOPPING')}
                               title="Start all components"
                             >
                               <Play className="h-4 w-4 text-green-600" />
@@ -342,7 +389,7 @@ export function DashboardPage() {
                               size="icon"
                               className="h-8 w-8"
                               onClick={(e) => handleStop(e, app.id, app.name)}
-                              disabled={startApp.isPending || stopApp.isPending}
+                              disabled={startApp.isPending || stopApp.isPending || (app.global_state === 'STARTING' || app.global_state === 'STOPPING')}
                               title="Stop all components"
                             >
                               <Square className="h-4 w-4 text-red-600" />

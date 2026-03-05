@@ -195,11 +195,15 @@ mod tests {
         // Basic struct construction test
         let comp = StaleComponent {
             component_id: Uuid::new_v4(),
+            component_name: "test-component".to_string(),
             agent_id: Uuid::new_v4(),
             application_id: Uuid::new_v4(),
+            app_name: "test-app".to_string(),
             agent_blocked: false,
         };
         assert_ne!(comp.component_id, comp.agent_id);
         assert!(!comp.agent_blocked);
+        assert_eq!(comp.component_name, "test-component");
+        assert_eq!(comp.app_name, "test-app");
     }
 }

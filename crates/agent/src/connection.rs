@@ -781,6 +781,17 @@ impl ConnectionManager {
                     });
                 });
             }
+            BackendMessage::RunChecksNow { request_id } => {
+                tracing::info!(
+                    request_id = %request_id,
+                    "Received RunChecksNow — triggering immediate health checks"
+                );
+
+                let scheduler = self.scheduler.clone();
+                tokio::spawn(async move {
+                    scheduler.run_all_checks_now().await;
+                });
+            }
         }
         // Continue processing messages
         true

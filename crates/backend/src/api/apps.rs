@@ -115,7 +115,14 @@ pub struct AppWithStatus {
 }
 
 /// Compute global state and weather from component counts
-fn compute_app_status(running: i64, stopped: i64, failed: i64, total: i64) -> (String, String) {
+fn compute_app_status(
+    running: i64,
+    stopped: i64,
+    failed: i64,
+    starting: i64,
+    stopping: i64,
+    total: i64,
+) -> (String, String) {
     if total == 0 {
         return ("UNKNOWN".to_string(), "cloudy".to_string());
     }
@@ -126,6 +133,14 @@ fn compute_app_status(running: i64, stopped: i64, failed: i64, total: i64) -> (S
     if failed > 0 {
         global_state = "FAILED".to_string();
         weather = "stormy".to_string();
+    } else if starting > 0 || stopping > 0 {
+        // Transitional states take precedence (operation in progress)
+        if starting > 0 {
+            global_state = "STARTING".to_string();
+        } else {
+            global_state = "STOPPING".to_string();
+        }
+        weather = "rainy".to_string();
     } else if running == total {
         global_state = "RUNNING".to_string();
         weather = "sunny".to_string();
@@ -167,8 +182,11 @@ pub async fn list_apps(
         updated_at: chrono::DateTime<chrono::Utc>,
         component_count: Option<i64>,
         running_count: Option<i64>,
+        starting_count: Option<i64>,
+        stopping_count: Option<i64>,
         stopped_count: Option<i64>,
         failed_count: Option<i64>,
+        unreachable_count: Option<i64>,
     }
 
     let apps = sqlx::query_as::<_, AppWithCounts>(
@@ -178,8 +196,11 @@ pub async fn list_apps(
             a.created_at, a.updated_at,
             COUNT(c.id) as component_count,
             COUNT(c.id) FILTER (WHERE c.current_state = 'RUNNING') as running_count,
+            COUNT(c.id) FILTER (WHERE c.current_state = 'STARTING') as starting_count,
+            COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPING') as stopping_count,
             COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPED') as stopped_count,
-            COUNT(c.id) FILTER (WHERE c.current_state IN ('FAILED', 'UNREACHABLE')) as failed_count
+            COUNT(c.id) FILTER (WHERE c.current_state = 'FAILED') as failed_count,
+            COUNT(c.id) FILTER (WHERE c.current_state = 'UNREACHABLE') as unreachable_count
         FROM applications a
         LEFT JOIN components c ON c.application_id = a.id
         WHERE a.organization_id = $1
@@ -204,11 +225,20 @@ pub async fn list_apps(
         .map(|a| {
             let component_count = a.component_count.unwrap_or(0);
             let running_count = a.running_count.unwrap_or(0);
+            let starting_count = a.starting_count.unwrap_or(0);
+            let stopping_count = a.stopping_count.unwrap_or(0);
             let stopped_count = a.stopped_count.unwrap_or(0);
             let failed_count = a.failed_count.unwrap_or(0);
+            let unreachable_count = a.unreachable_count.unwrap_or(0);
 
-            let (global_state, weather) =
-                compute_app_status(running_count, stopped_count, failed_count, component_count);
+            let (global_state, weather) = compute_app_status(
+                running_count,
+                stopped_count,
+                failed_count,
+                starting_count,
+                stopping_count,
+                component_count,
+            );
 
             json!({
                 "id": a.id,
@@ -221,8 +251,11 @@ pub async fn list_apps(
                 "updated_at": a.updated_at,
                 "component_count": component_count,
                 "running_count": running_count,
+                "starting_count": starting_count,
+                "stopping_count": stopping_count,
                 "stopped_count": stopped_count,
                 "failed_count": failed_count,
+                "unreachable_count": unreachable_count,
                 "global_state": global_state,
                 "weather": weather,
             })
