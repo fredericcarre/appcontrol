@@ -21,18 +21,18 @@ function createComponent(overrides: Partial<Component> = {}): Component {
     group_id: null,
     host: 'db-server-01',
     component_type: 'database',
-    state: 'RUNNING',
+    current_state: 'RUNNING',
     check_cmd: '/usr/local/bin/check_db.sh',
     start_cmd: '/usr/local/bin/start_db.sh',
     stop_cmd: '/usr/local/bin/stop_db.sh',
     restart_cmd: null,
-    check_interval_secs: 30,
+    check_interval_seconds: 30,
+    is_optional: false,
     agent_id: 'agent-1',
     group_name: null,
     display_order: 1,
     position_x: null,
     position_y: null,
-    is_protected: false,
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
     ...overrides,
@@ -147,7 +147,7 @@ describe('DetailPanel', () => {
   it('should show info tab by default with component details', () => {
     renderWithProviders(
       <DetailPanel
-        component={createComponent({ check_interval_secs: 30, is_protected: true })}
+        component={createComponent({ check_interval_seconds: 30, is_optional: true })}
         onClose={vi.fn()}
       />,
     );
@@ -156,10 +156,10 @@ describe('DetailPanel', () => {
     expect(screen.getByText('Yes')).toBeInTheDocument();
   });
 
-  it('should show "No" for non-protected components', () => {
+  it('should show "No" for non-optional components', () => {
     renderWithProviders(
       <DetailPanel
-        component={createComponent({ is_protected: false })}
+        component={createComponent({ is_optional: false })}
         onClose={vi.fn()}
       />,
     );
@@ -230,7 +230,7 @@ describe('DetailPanel', () => {
   it('should display UNKNOWN state for missing state', () => {
     renderWithProviders(
       <DetailPanel
-        component={createComponent({ state: '' })}
+        component={createComponent({ current_state: '' })}
         onClose={vi.fn()}
       />,
     );
