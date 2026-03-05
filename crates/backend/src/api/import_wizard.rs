@@ -1083,6 +1083,7 @@ struct GroupData {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ComponentData {
     name: Option<String>,
     display_name: Option<String>,
@@ -1204,6 +1205,7 @@ fn default_link_type() -> String {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct DependencyData {
     from: String,
     to: String,
