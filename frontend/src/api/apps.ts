@@ -17,6 +17,9 @@ export interface Application {
   stopped_count: number;
   failed_count: number;
   unreachable_count?: number;
+  is_suspended?: boolean;
+  suspended_at?: string | null;
+  suspended_by?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -158,6 +161,34 @@ export function useDeleteApp() {
       await client.delete(`/apps/${id}`);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['apps'] }),
+  });
+}
+
+export function useSuspendApp() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await client.put(`/apps/${id}/suspend`);
+      return data;
+    },
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['apps'] });
+      qc.invalidateQueries({ queryKey: ['apps', id] });
+    },
+  });
+}
+
+export function useResumeApp() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await client.put(`/apps/${id}/resume`);
+      return data;
+    },
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['apps'] });
+      qc.invalidateQueries({ queryKey: ['apps', id] });
+    },
   });
 }
 

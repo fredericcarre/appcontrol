@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   useApp,
   useStartApp,
@@ -13,6 +13,9 @@ import {
   useDeleteDependency,
   useUpdateComponentPositions,
   useExportAppMutation,
+  useDeleteApp,
+  useSuspendApp,
+  useResumeApp,
 } from '@/api/apps';
 import { useStartComponent, useStopComponent, useForceStopComponent, useStartWithDeps, useRestartWithDependents } from '@/api/components';
 import { usePermission } from '@/hooks/use-permission';
@@ -36,8 +39,16 @@ import { ImpactPreviewDialog } from '@/components/maps/ImpactPreviewDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   Pencil, Download, Save, ArrowLeft, Play, Square, Loader2,
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
+  MoreVertical, Trash2, Pause, PlayCircle,
 } from 'lucide-react';
 
 const weatherIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -62,8 +73,9 @@ function getWeatherVariant(weather: string) {
 
 export function MapViewPage() {
   const { appId } = useParams<{ appId: string }>();
+  const navigate = useNavigate();
   const { data: app, isLoading } = useApp(appId || '');
-  const { canOperate, canEdit } = usePermission(appId || '');
+  const { canOperate, canEdit, canManage } = usePermission(appId || '');
   const startApp = useStartApp();
   const stopApp = useStopApp();
   const cancelOperation = useCancelOperation();
@@ -80,6 +92,9 @@ export function MapViewPage() {
   const deleteDependency = useDeleteDependency();
   const updatePositions = useUpdateComponentPositions();
   const exportApp = useExportAppMutation();
+  const deleteApp = useDeleteApp();
+  const suspendApp = useSuspendApp();
+  const resumeApp = useResumeApp();
   const { subscribe } = useWebSocket();
 
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
@@ -536,6 +551,36 @@ export function MapViewPage() {
     }
   }, [appId, appName, exportApp]);
 
+  const handleDeleteApp = useCallback(async () => {
+    if (!appId || !app) return;
+    if (window.confirm(`Are you sure you want to delete "${app.name}"? This action cannot be undone.`)) {
+      try {
+        await deleteApp.mutateAsync(appId);
+        navigate('/apps');
+      } catch (error) {
+        console.error('Delete failed:', error);
+      }
+    }
+  }, [appId, app, deleteApp, navigate]);
+
+  const handleSuspendApp = useCallback(async () => {
+    if (!appId) return;
+    try {
+      await suspendApp.mutateAsync(appId);
+    } catch (error) {
+      console.error('Suspend failed:', error);
+    }
+  }, [appId, suspendApp]);
+
+  const handleResumeApp = useCallback(async () => {
+    if (!appId) return;
+    try {
+      await resumeApp.mutateAsync(appId);
+    } catch (error) {
+      console.error('Resume failed:', error);
+    }
+  }, [appId, resumeApp]);
+
   if (isLoading || !app) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -569,6 +614,12 @@ export function MapViewPage() {
                 <span className="text-xs bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200 px-2 py-1 rounded shrink-0">
                   Edit Mode
                 </span>
+              )}
+              {app.is_suspended && (
+                <Badge variant="secondary" className="shrink-0 bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+                  <Pause className="h-3 w-3 mr-1" />
+                  Suspended
+                </Badge>
               )}
             </div>
 
@@ -686,6 +737,44 @@ export function MapViewPage() {
                     </>
                   )}
                 </Button>
+              )}
+
+              {canManage && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {app.is_suspended ? (
+                      <DropdownMenuItem
+                        onClick={handleResumeApp}
+                        disabled={resumeApp.isPending}
+                      >
+                        <PlayCircle className="h-4 w-4 mr-2 text-green-600" />
+                        Resume Checks
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem
+                        onClick={handleSuspendApp}
+                        disabled={suspendApp.isPending}
+                      >
+                        <Pause className="h-4 w-4 mr-2 text-orange-600" />
+                        Suspend Checks
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={handleDeleteApp}
+                      disabled={deleteApp.isPending}
+                      className="text-red-600 focus:text-red-600"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete Application
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </div>
           </div>
