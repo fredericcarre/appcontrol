@@ -186,11 +186,10 @@ export function MapViewPage() {
     setOperationType('start');
     startApp.mutate(appId, {
       onSettled: () => {
-        // Keep showing for a bit longer so user sees the transition
-        setTimeout(() => {
-          setIsOperating(false);
-          setOperationType(null);
-        }, 2000);
+        // Clear local state immediately - UI will continue showing transitional
+        // state based on globalState === 'TRANSITIONING' from actual component states
+        setIsOperating(false);
+        setOperationType(null);
       },
     });
   }, [appId, startApp]);
@@ -201,10 +200,8 @@ export function MapViewPage() {
     setOperationType('stop');
     stopApp.mutate(appId, {
       onSettled: () => {
-        setTimeout(() => {
-          setIsOperating(false);
-          setOperationType(null);
-        }, 2000);
+        setIsOperating(false);
+        setOperationType(null);
       },
     });
   }, [appId, stopApp]);
@@ -609,11 +606,15 @@ export function MapViewPage() {
               {/* Start/Stop buttons */}
               {canOperate && !editMode && (
                 <>
-                  {isOperating ? (
+                  {(isOperating || globalState === 'TRANSITIONING') ? (
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-2 text-sm text-muted-foreground px-2">
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        <span>{operationType === 'start' ? 'Starting...' : 'Stopping...'}</span>
+                        <span>
+                          {isOperating
+                            ? (operationType === 'start' ? 'Starting...' : 'Stopping...')
+                            : (componentCounts.starting > 0 ? 'Starting...' : 'Stopping...')}
+                        </span>
                       </div>
                       <Button
                         variant="outline"
