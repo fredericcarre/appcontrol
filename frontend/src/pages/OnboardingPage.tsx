@@ -1,18 +1,20 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCreateApp, useCreateComponent, useAddDependency } from '@/api/apps';
+import { useGateways, Gateway } from '@/api/gateways';
+import { useAgents, Agent } from '@/api/agents';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
-import { ArrowLeft, ArrowRight, Check, Plus, Trash2 } from 'lucide-react';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGroup, SelectLabel } from '@/components/ui/select';
+import { ArrowLeft, ArrowRight, Check, Plus, Trash2, Server, Radio, AlertCircle } from 'lucide-react';
 
-const STEPS = ['Welcome', 'App Info', 'Components', 'Dependencies', 'Review', 'Done'] as const;
+const STEPS = ['Welcome', 'App Info', 'Gateway', 'Components', 'Dependencies', 'Review', 'Done'] as const;
 
 interface NewComponent {
   name: string;
-  host: string;
+  agent_id: string;
   component_type: string;
   check_cmd: string;
   start_cmd: string;
@@ -30,19 +32,67 @@ export function OnboardingPage() {
   const createComponent = useCreateComponent();
   const addDependency = useAddDependency();
 
+  // Fetch gateways and agents
+  const { data: gateways = [], isLoading: gatewaysLoading } = useGateways();
+  const { data: agents = [], isLoading: agentsLoading } = useAgents();
+
   const [step, setStep] = useState(0);
   const [appName, setAppName] = useState('');
   const [appDescription, setAppDescription] = useState('');
+  const [selectedGatewayIds, setSelectedGatewayIds] = useState<string[]>([]);
   const [components, setComponents] = useState<NewComponent[]>([]);
   const [dependencies, setDependencies] = useState<NewDependency[]>([]);
   const [creating, setCreating] = useState(false);
   const [createdAppId, setCreatedAppId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Filter agents by selected gateways
+  const availableAgents = useMemo(() => {
+    if (selectedGatewayIds.length === 0) return agents;
+    return agents.filter((a) => a.gateway_id && selectedGatewayIds.includes(a.gateway_id));
+  }, [agents, selectedGatewayIds]);
+
+  // Group agents by gateway for the selector
+  const agentsByGateway = useMemo(() => {
+    const map = new Map<string, { gateway: Gateway | null; agents: Agent[] }>();
+
+    // Create a map of gateway_id to gateway
+    const gatewayMap = new Map(gateways.map((g) => [g.id, g]));
+
+    for (const agent of availableAgents) {
+      const gwId = agent.gateway_id || 'none';
+      if (!map.has(gwId)) {
+        map.set(gwId, {
+          gateway: agent.gateway_id ? gatewayMap.get(agent.gateway_id) || null : null,
+          agents: [],
+        });
+      }
+      map.get(gwId)!.agents.push(agent);
+    }
+
+    return Array.from(map.entries()).map(([gwId, data]) => ({
+      gatewayId: gwId,
+      gatewayName: data.gateway?.name || 'No Gateway',
+      gatewayZone: data.gateway?.zone || '',
+      agents: data.agents.sort((a, b) => a.hostname.localeCompare(b.hostname)),
+    }));
+  }, [availableAgents, gateways]);
+
+  // Helper to get agent info by id
+  const getAgent = (agentId: string): Agent | undefined => {
+    return agents.find((a) => a.id === agentId);
+  };
+
+  const toggleGateway = (gwId: string) => {
+    setSelectedGatewayIds((prev) =>
+      prev.includes(gwId) ? prev.filter((id) => id !== gwId) : [...prev, gwId]
+    );
+  };
+
   const addComponent = () => {
     setComponents([...components, {
       name: '',
-      host: '',
+      agent_id: '',
       component_type: 'service',
       check_cmd: '',
       start_cmd: '',
@@ -52,7 +102,15 @@ export function OnboardingPage() {
 
   const removeComponent = (i: number) => {
     setComponents(components.filter((_, idx) => idx !== i));
-    setDependencies(dependencies.filter((d) => d.from !== i && d.to !== i));
+    // Update dependencies to account for removed index
+    setDependencies(
+      dependencies
+        .filter((d) => d.from !== i && d.to !== i)
+        .map((d) => ({
+          from: d.from > i ? d.from - 1 : d.from,
+          to: d.to > i ? d.to - 1 : d.to,
+        }))
+    );
   };
 
   const updateComponent = (i: number, field: keyof NewComponent, value: string) => {
@@ -75,10 +133,12 @@ export function OnboardingPage() {
       const componentIds: string[] = [];
 
       for (const comp of components) {
+        const agent = getAgent(comp.agent_id);
         const created = await createComponent.mutateAsync({
           app_id: app.id,
           name: comp.name,
-          host: comp.host,
+          host: agent?.hostname || '',
+          agent_id: comp.agent_id || undefined,
           component_type: comp.component_type,
           check_cmd: comp.check_cmd || undefined,
           start_cmd: comp.start_cmd || undefined,
@@ -98,7 +158,7 @@ export function OnboardingPage() {
       }
 
       setCreatedAppId(app.id);
-      setStep(5);
+      setStep(6);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create application';
       setError(message);
@@ -108,9 +168,15 @@ export function OnboardingPage() {
     }
   };
 
+  // Check if all components have agents assigned
+  const allComponentsResolved = components.length > 0 && components.every((c) => c.name.trim() && c.agent_id);
+
+  // Connected gateways only
+  const connectedGateways = gateways.filter((g) => g.connected);
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <div className="flex gap-2 items-center">
+      <div className="flex gap-2 items-center flex-wrap">
         {STEPS.map((s, i) => (
           <div key={s} className="flex items-center gap-2">
             <div className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-medium ${
@@ -120,7 +186,7 @@ export function OnboardingPage() {
             }`}>
               {i < step ? <Check className="h-4 w-4" /> : i + 1}
             </div>
-            {i < STEPS.length - 1 && <div className="w-8 h-0.5 bg-border" />}
+            {i < STEPS.length - 1 && <div className="w-6 h-0.5 bg-border" />}
           </div>
         ))}
       </div>
@@ -129,7 +195,7 @@ export function OnboardingPage() {
         <Card>
           <CardHeader>
             <CardTitle>Welcome to AppControl</CardTitle>
-            <CardDescription>Let's set up your first application. This wizard will guide you through creating an application, adding components, and defining dependencies.</CardDescription>
+            <CardDescription>Let's set up your first application. This wizard will guide you through creating an application, selecting gateways/agents, adding components, and defining dependencies.</CardDescription>
           </CardHeader>
           <CardFooter>
             <Button onClick={() => setStep(1)}>Get Started <ArrowRight className="h-4 w-4 ml-2" /></Button>
@@ -163,71 +229,177 @@ export function OnboardingPage() {
       {step === 2 && (
         <Card>
           <CardHeader>
-            <CardTitle>Components</CardTitle>
-            <CardDescription>Add the components of your application</CardDescription>
+            <CardTitle>Select Gateways</CardTitle>
+            <CardDescription>Choose which gateways host your application's agents. You can select multiple gateways.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {components.map((comp, i) => (
-              <div key={i} className="p-3 border border-border rounded-md space-y-3">
-                <div className="flex gap-2 items-start">
-                  <div className="flex-1 space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
-                      <Input placeholder="Component name" value={comp.name} onChange={(e) => updateComponent(i, 'name', e.target.value)} />
-                      <Input placeholder="hostname" value={comp.host} onChange={(e) => updateComponent(i, 'host', e.target.value)} />
-                    </div>
-                    <Select value={comp.component_type} onValueChange={(v) => updateComponent(i, 'component_type', v)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="database">Database</SelectItem>
-                        <SelectItem value="middleware">Middleware</SelectItem>
-                        <SelectItem value="appserver">App Server</SelectItem>
-                        <SelectItem value="webfront">Web Frontend</SelectItem>
-                        <SelectItem value="service">Service</SelectItem>
-                        <SelectItem value="batch">Batch</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button variant="ghost" size="icon" onClick={() => removeComponent(i)}>
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-                <div className="space-y-2 pt-2 border-t border-border/50">
-                  <p className="text-xs text-muted-foreground font-medium">Commands (shell)</p>
-                  <Input
-                    placeholder="Check command (e.g., pgrep -f myprocess)"
-                    value={comp.check_cmd}
-                    onChange={(e) => updateComponent(i, 'check_cmd', e.target.value)}
-                    className="font-mono text-sm"
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input
-                      placeholder="Start command"
-                      value={comp.start_cmd}
-                      onChange={(e) => updateComponent(i, 'start_cmd', e.target.value)}
-                      className="font-mono text-sm"
-                    />
-                    <Input
-                      placeholder="Stop command"
-                      value={comp.stop_cmd}
-                      onChange={(e) => updateComponent(i, 'stop_cmd', e.target.value)}
-                      className="font-mono text-sm"
-                    />
-                  </div>
-                </div>
+            {gatewaysLoading ? (
+              <p className="text-sm text-muted-foreground">Loading gateways...</p>
+            ) : connectedGateways.length === 0 ? (
+              <div className="p-4 border border-dashed border-border rounded-md text-center">
+                <AlertCircle className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground">No connected gateways found.</p>
+                <p className="text-xs text-muted-foreground mt-1">Please ensure at least one gateway is online.</p>
               </div>
-            ))}
-            <Button variant="outline" onClick={addComponent} className="w-full">
-              <Plus className="h-4 w-4 mr-2" /> Add Component
-            </Button>
+            ) : (
+              <div className="space-y-2">
+                {connectedGateways.map((gw) => {
+                  const isSelected = selectedGatewayIds.includes(gw.id);
+                  const gwAgentCount = agents.filter((a) => a.gateway_id === gw.id).length;
+                  return (
+                    <div
+                      key={gw.id}
+                      onClick={() => toggleGateway(gw.id)}
+                      className={`p-3 border rounded-md cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:border-muted-foreground/50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`h-8 w-8 rounded-full flex items-center justify-center ${
+                          isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                        }`}>
+                          <Radio className="h-4 w-4" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-medium">{gw.name}</p>
+                          <p className="text-xs text-muted-foreground">Zone: {gw.zone} · {gwAgentCount} agent{gwAgentCount !== 1 ? 's' : ''}</p>
+                        </div>
+                        {isSelected && <Check className="h-5 w-5 text-primary" />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
           <CardFooter className="justify-between">
             <Button variant="outline" onClick={() => setStep(1)}><ArrowLeft className="h-4 w-4 mr-2" /> Back</Button>
-            <Button onClick={() => setStep(3)} disabled={components.length === 0}>Next <ArrowRight className="h-4 w-4 ml-2" /></Button>
+            <Button onClick={() => setStep(3)} disabled={selectedGatewayIds.length === 0}>
+              Next <ArrowRight className="h-4 w-4 ml-2" />
+            </Button>
           </CardFooter>
         </Card>
       )}
 
       {step === 3 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Components</CardTitle>
+            <CardDescription>Add the components of your application and assign each to an agent</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {agentsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading agents...</p>
+            ) : availableAgents.length === 0 ? (
+              <div className="p-4 border border-dashed border-border rounded-md text-center">
+                <AlertCircle className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground">No agents available on selected gateways.</p>
+                <Button variant="link" onClick={() => setStep(2)}>Select different gateways</Button>
+              </div>
+            ) : (
+              <>
+                {components.map((comp, i) => {
+                  const selectedAgent = comp.agent_id ? getAgent(comp.agent_id) : null;
+                  return (
+                    <div key={i} className="p-3 border border-border rounded-md space-y-3">
+                      <div className="flex gap-2 items-start">
+                        <div className="flex-1 space-y-2">
+                          <Input
+                            placeholder="Component name"
+                            value={comp.name}
+                            onChange={(e) => updateComponent(i, 'name', e.target.value)}
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <Select value={comp.agent_id} onValueChange={(v) => updateComponent(i, 'agent_id', v)}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select agent...">
+                                  {selectedAgent && (
+                                    <span className="flex items-center gap-2">
+                                      <Server className="h-3 w-3" />
+                                      {selectedAgent.hostname}
+                                    </span>
+                                  )}
+                                </SelectValue>
+                              </SelectTrigger>
+                              <SelectContent>
+                                {agentsByGateway.map((group) => (
+                                  <SelectGroup key={group.gatewayId}>
+                                    <SelectLabel className="text-xs text-muted-foreground">
+                                      {group.gatewayName} {group.gatewayZone && `(${group.gatewayZone})`}
+                                    </SelectLabel>
+                                    {group.agents.map((agent) => (
+                                      <SelectItem key={agent.id} value={agent.id}>
+                                        <span className="flex items-center gap-2">
+                                          <span className={`h-2 w-2 rounded-full ${agent.connected ? 'bg-green-500' : 'bg-gray-400'}`} />
+                                          {agent.hostname}
+                                        </span>
+                                      </SelectItem>
+                                    ))}
+                                  </SelectGroup>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Select value={comp.component_type} onValueChange={(v) => updateComponent(i, 'component_type', v)}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="database">Database</SelectItem>
+                                <SelectItem value="middleware">Middleware</SelectItem>
+                                <SelectItem value="appserver">App Server</SelectItem>
+                                <SelectItem value="webfront">Web Frontend</SelectItem>
+                                <SelectItem value="service">Service</SelectItem>
+                                <SelectItem value="batch">Batch</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <Button variant="ghost" size="icon" onClick={() => removeComponent(i)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                      <div className="space-y-2 pt-2 border-t border-border/50">
+                        <p className="text-xs text-muted-foreground font-medium">Commands (shell)</p>
+                        <Input
+                          placeholder="Check command (e.g., pgrep -f myprocess)"
+                          value={comp.check_cmd}
+                          onChange={(e) => updateComponent(i, 'check_cmd', e.target.value)}
+                          className="font-mono text-sm"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <Input
+                            placeholder="Start command"
+                            value={comp.start_cmd}
+                            onChange={(e) => updateComponent(i, 'start_cmd', e.target.value)}
+                            className="font-mono text-sm"
+                          />
+                          <Input
+                            placeholder="Stop command"
+                            value={comp.stop_cmd}
+                            onChange={(e) => updateComponent(i, 'stop_cmd', e.target.value)}
+                            className="font-mono text-sm"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <Button variant="outline" onClick={addComponent} className="w-full">
+                  <Plus className="h-4 w-4 mr-2" /> Add Component
+                </Button>
+              </>
+            )}
+          </CardContent>
+          <CardFooter className="justify-between">
+            <Button variant="outline" onClick={() => setStep(2)}><ArrowLeft className="h-4 w-4 mr-2" /> Back</Button>
+            <Button onClick={() => setStep(4)} disabled={!allComponentsResolved}>
+              Next <ArrowRight className="h-4 w-4 ml-2" />
+            </Button>
+          </CardFooter>
+        </Card>
+      )}
+
+      {step === 4 && (
         <Card>
           <CardHeader>
             <CardTitle>Dependencies</CardTitle>
@@ -263,13 +435,13 @@ export function OnboardingPage() {
             </Button>
           </CardContent>
           <CardFooter className="justify-between">
-            <Button variant="outline" onClick={() => setStep(2)}><ArrowLeft className="h-4 w-4 mr-2" /> Back</Button>
-            <Button onClick={() => setStep(4)}>Next <ArrowRight className="h-4 w-4 ml-2" /></Button>
+            <Button variant="outline" onClick={() => setStep(3)}><ArrowLeft className="h-4 w-4 mr-2" /> Back</Button>
+            <Button onClick={() => setStep(5)}>Next <ArrowRight className="h-4 w-4 ml-2" /></Button>
           </CardFooter>
         </Card>
       )}
 
-      {step === 4 && (
+      {step === 5 && (
         <Card>
           <CardHeader>
             <CardTitle>Review</CardTitle>
@@ -282,24 +454,43 @@ export function OnboardingPage() {
               {appDescription && <p className="text-sm text-muted-foreground">{appDescription}</p>}
             </div>
             <div>
+              <p className="text-sm text-muted-foreground mb-2">Gateways ({selectedGatewayIds.length})</p>
+              <div className="flex flex-wrap gap-2">
+                {selectedGatewayIds.map((gwId) => {
+                  const gw = gateways.find((g) => g.id === gwId);
+                  return gw ? (
+                    <Badge key={gwId} variant="outline">
+                      <Radio className="h-3 w-3 mr-1" /> {gw.name}
+                    </Badge>
+                  ) : null;
+                })}
+              </div>
+            </div>
+            <div>
               <p className="text-sm text-muted-foreground mb-2">Components ({components.length})</p>
               <div className="space-y-2">
-                {components.map((c, i) => (
-                  <div key={i} className="p-2 bg-muted/50 rounded text-sm">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{c.component_type}</Badge>
-                      <span className="font-medium">{c.name}</span>
-                      <span className="text-muted-foreground">@ {c.host}</span>
-                    </div>
-                    {(c.check_cmd || c.start_cmd || c.stop_cmd) && (
-                      <div className="mt-1 text-xs text-muted-foreground font-mono">
-                        {c.check_cmd && <div>check: {c.check_cmd}</div>}
-                        {c.start_cmd && <div>start: {c.start_cmd}</div>}
-                        {c.stop_cmd && <div>stop: {c.stop_cmd}</div>}
+                {components.map((c, i) => {
+                  const agent = getAgent(c.agent_id);
+                  return (
+                    <div key={i} className="p-2 bg-muted/50 rounded text-sm">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">{c.component_type}</Badge>
+                        <span className="font-medium">{c.name}</span>
+                        <span className="text-muted-foreground">
+                          <Server className="h-3 w-3 inline mr-1" />
+                          {agent?.hostname || 'Unknown'}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {(c.check_cmd || c.start_cmd || c.stop_cmd) && (
+                        <div className="mt-1 text-xs text-muted-foreground font-mono">
+                          {c.check_cmd && <div>check: {c.check_cmd}</div>}
+                          {c.start_cmd && <div>start: {c.start_cmd}</div>}
+                          {c.stop_cmd && <div>stop: {c.stop_cmd}</div>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
             {dependencies.length > 0 && (
@@ -321,7 +512,7 @@ export function OnboardingPage() {
             </CardContent>
           )}
           <CardFooter className="justify-between">
-            <Button variant="outline" onClick={() => setStep(3)}><ArrowLeft className="h-4 w-4 mr-2" /> Back</Button>
+            <Button variant="outline" onClick={() => setStep(4)}><ArrowLeft className="h-4 w-4 mr-2" /> Back</Button>
             <Button onClick={handleCreate} disabled={creating}>
               {creating ? 'Creating...' : 'Create Application'}
             </Button>
@@ -329,7 +520,7 @@ export function OnboardingPage() {
         </Card>
       )}
 
-      {step === 5 && (
+      {step === 6 && (
         <Card>
           <CardHeader className="text-center">
             <div className="flex justify-center mb-4">

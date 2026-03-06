@@ -235,7 +235,7 @@ export function useAppComponents(appId: string) {
 export function useCreateComponent() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: Partial<Component> & { app_id: string; name: string; host: string }) => {
+    mutationFn: async (payload: Partial<Component> & { app_id: string; name: string; host?: string; agent_id?: string }) => {
       const { data } = await client.post<Component>(`/apps/${payload.app_id}/components`, payload);
       return data;
     },
