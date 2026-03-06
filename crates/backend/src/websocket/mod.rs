@@ -1518,10 +1518,11 @@ async fn mark_agent_components_unreachable(
         }
 
         // Update cached current_state on the component
-        if let Err(e) = sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
-            .bind(comp.id)
-            .execute(&state.db)
-            .await
+        if let Err(e) =
+            sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
+                .bind(comp.id)
+                .execute(&state.db)
+                .await
         {
             tracing::warn!(
                 component_id = %comp.id,
