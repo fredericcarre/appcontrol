@@ -14,6 +14,9 @@ interface NewComponent {
   name: string;
   host: string;
   component_type: string;
+  check_cmd: string;
+  start_cmd: string;
+  stop_cmd: string;
 }
 
 interface NewDependency {
@@ -34,9 +37,17 @@ export function OnboardingPage() {
   const [dependencies, setDependencies] = useState<NewDependency[]>([]);
   const [creating, setCreating] = useState(false);
   const [createdAppId, setCreatedAppId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const addComponent = () => {
-    setComponents([...components, { name: '', host: '', component_type: 'service' }]);
+    setComponents([...components, {
+      name: '',
+      host: '',
+      component_type: 'service',
+      check_cmd: '',
+      start_cmd: '',
+      stop_cmd: '',
+    }]);
   };
 
   const removeComponent = (i: number) => {
@@ -58,6 +69,7 @@ export function OnboardingPage() {
 
   const handleCreate = async () => {
     setCreating(true);
+    setError(null);
     try {
       const app = await createApp.mutateAsync({ name: appName, description: appDescription });
       const componentIds: string[] = [];
@@ -68,6 +80,9 @@ export function OnboardingPage() {
           name: comp.name,
           host: comp.host,
           component_type: comp.component_type,
+          check_cmd: comp.check_cmd || undefined,
+          start_cmd: comp.start_cmd || undefined,
+          stop_cmd: comp.stop_cmd || undefined,
         });
         componentIds.push(created.id);
       }
@@ -84,8 +99,10 @@ export function OnboardingPage() {
 
       setCreatedAppId(app.id);
       setStep(5);
-    } catch {
-      // error handled by React Query
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create application';
+      setError(message);
+      console.error('Create app error:', err);
     } finally {
       setCreating(false);
     }
@@ -151,25 +168,52 @@ export function OnboardingPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {components.map((comp, i) => (
-              <div key={i} className="flex gap-2 items-start p-3 border border-border rounded-md">
-                <div className="flex-1 space-y-2">
-                  <Input placeholder="Component name" value={comp.name} onChange={(e) => updateComponent(i, 'name', e.target.value)} />
-                  <Input placeholder="hostname" value={comp.host} onChange={(e) => updateComponent(i, 'host', e.target.value)} />
-                  <Select value={comp.component_type} onValueChange={(v) => updateComponent(i, 'component_type', v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="database">Database</SelectItem>
-                      <SelectItem value="middleware">Middleware</SelectItem>
-                      <SelectItem value="appserver">App Server</SelectItem>
-                      <SelectItem value="webfront">Web Frontend</SelectItem>
-                      <SelectItem value="service">Service</SelectItem>
-                      <SelectItem value="batch">Batch</SelectItem>
-                    </SelectContent>
-                  </Select>
+              <div key={i} className="p-3 border border-border rounded-md space-y-3">
+                <div className="flex gap-2 items-start">
+                  <div className="flex-1 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input placeholder="Component name" value={comp.name} onChange={(e) => updateComponent(i, 'name', e.target.value)} />
+                      <Input placeholder="hostname" value={comp.host} onChange={(e) => updateComponent(i, 'host', e.target.value)} />
+                    </div>
+                    <Select value={comp.component_type} onValueChange={(v) => updateComponent(i, 'component_type', v)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="database">Database</SelectItem>
+                        <SelectItem value="middleware">Middleware</SelectItem>
+                        <SelectItem value="appserver">App Server</SelectItem>
+                        <SelectItem value="webfront">Web Frontend</SelectItem>
+                        <SelectItem value="service">Service</SelectItem>
+                        <SelectItem value="batch">Batch</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={() => removeComponent(i)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => removeComponent(i)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
+                <div className="space-y-2 pt-2 border-t border-border/50">
+                  <p className="text-xs text-muted-foreground font-medium">Commands (shell)</p>
+                  <Input
+                    placeholder="Check command (e.g., pgrep -f myprocess)"
+                    value={comp.check_cmd}
+                    onChange={(e) => updateComponent(i, 'check_cmd', e.target.value)}
+                    className="font-mono text-sm"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      placeholder="Start command"
+                      value={comp.start_cmd}
+                      onChange={(e) => updateComponent(i, 'start_cmd', e.target.value)}
+                      className="font-mono text-sm"
+                    />
+                    <Input
+                      placeholder="Stop command"
+                      value={comp.stop_cmd}
+                      onChange={(e) => updateComponent(i, 'stop_cmd', e.target.value)}
+                      className="font-mono text-sm"
+                    />
+                  </div>
+                </div>
               </div>
             ))}
             <Button variant="outline" onClick={addComponent} className="w-full">
@@ -239,12 +283,21 @@ export function OnboardingPage() {
             </div>
             <div>
               <p className="text-sm text-muted-foreground mb-2">Components ({components.length})</p>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 {components.map((c, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm">
-                    <Badge variant="outline">{c.component_type}</Badge>
-                    <span className="font-medium">{c.name}</span>
-                    <span className="text-muted-foreground">@ {c.host}</span>
+                  <div key={i} className="p-2 bg-muted/50 rounded text-sm">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">{c.component_type}</Badge>
+                      <span className="font-medium">{c.name}</span>
+                      <span className="text-muted-foreground">@ {c.host}</span>
+                    </div>
+                    {(c.check_cmd || c.start_cmd || c.stop_cmd) && (
+                      <div className="mt-1 text-xs text-muted-foreground font-mono">
+                        {c.check_cmd && <div>check: {c.check_cmd}</div>}
+                        {c.start_cmd && <div>start: {c.start_cmd}</div>}
+                        {c.stop_cmd && <div>stop: {c.stop_cmd}</div>}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -260,6 +313,13 @@ export function OnboardingPage() {
               </div>
             )}
           </CardContent>
+          {error && (
+            <CardContent className="pt-0">
+              <div className="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
+                {error}
+              </div>
+            </CardContent>
+          )}
           <CardFooter className="justify-between">
             <Button variant="outline" onClick={() => setStep(3)}><ArrowLeft className="h-4 w-4 mr-2" /> Back</Button>
             <Button onClick={handleCreate} disabled={creating}>
