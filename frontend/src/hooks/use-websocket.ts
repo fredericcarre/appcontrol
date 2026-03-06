@@ -1,44 +1,45 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth';
 import { useWebSocketStore } from '@/stores/websocket';
 
-// Global WebSocket instance for sharing across components
+// Global WebSocket instance for sharing across components (singleton)
 let globalWs: WebSocket | null = null;
+let globalReconnectTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+let globalReconnectDelay = 1000;
+let globalPingTimer: ReturnType<typeof setInterval> | undefined = undefined;
+let globalConnectionCount = 0;
 
 export function getGlobalWebSocket(): WebSocket | null {
   return globalWs;
 }
 
 export function useWebSocket() {
-  const wsRef = useRef<WebSocket | null>(null);
   const token = useAuthStore((s) => s.token);
   const setConnected = useWebSocketStore((s) => s.setConnected);
   const addMessage = useWebSocketStore((s) => s.addMessage);
   const queryClient = useQueryClient();
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const reconnectDelay = useRef(1000);
   const connectRef = useRef<(() => void) | undefined>(undefined);
-  const pingTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   const connect = useCallback(() => {
     if (!token) return;
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    // Use the global WebSocket - only create if not already open/connecting
+    if (globalWs?.readyState === WebSocket.OPEN || globalWs?.readyState === WebSocket.CONNECTING) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws?token=${token}`);
 
     ws.onopen = () => {
       setConnected(true);
-      reconnectDelay.current = 1000;
+      globalReconnectDelay = 1000;
       const subs = useWebSocketStore.getState().subscribedApps;
       subs.forEach((appId) => {
         ws.send(JSON.stringify({ type: 'subscribe', payload: { app_id: appId } }));
       });
 
       // Send ping every 30 seconds to keep connection alive
-      if (pingTimer.current) clearInterval(pingTimer.current);
-      pingTimer.current = setInterval(() => {
+      if (globalPingTimer) clearInterval(globalPingTimer);
+      globalPingTimer = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'ping' }));
         }
@@ -80,18 +81,22 @@ export function useWebSocket() {
 
     ws.onclose = () => {
       setConnected(false);
-      if (pingTimer.current) clearInterval(pingTimer.current);
-      reconnectTimer.current = setTimeout(() => {
-        reconnectDelay.current = Math.min(reconnectDelay.current * 2, 60000);
-        connectRef.current?.();
-      }, reconnectDelay.current);
+      globalWs = null;
+      if (globalPingTimer) clearInterval(globalPingTimer);
+      globalPingTimer = undefined;
+      // Only reconnect if there are still active users of this hook
+      if (globalConnectionCount > 0) {
+        globalReconnectTimer = setTimeout(() => {
+          globalReconnectDelay = Math.min(globalReconnectDelay * 2, 60000);
+          connectRef.current?.();
+        }, globalReconnectDelay);
+      }
     };
 
     ws.onerror = () => {
       ws.close();
     };
 
-    wsRef.current = ws;
     globalWs = ws;
   }, [token, setConnected, addMessage, queryClient]);
 
@@ -101,23 +106,30 @@ export function useWebSocket() {
 
   const subscribe = useCallback((appId: string) => {
     useWebSocketStore.getState().addSubscription(appId);
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'subscribe', payload: { app_id: appId } }));
+    if (globalWs?.readyState === WebSocket.OPEN) {
+      globalWs.send(JSON.stringify({ type: 'subscribe', payload: { app_id: appId } }));
     }
   }, []);
 
   const unsubscribe = useCallback((appId: string) => {
     useWebSocketStore.getState().removeSubscription(appId);
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'unsubscribe', payload: { app_id: appId } }));
+    if (globalWs?.readyState === WebSocket.OPEN) {
+      globalWs.send(JSON.stringify({ type: 'unsubscribe', payload: { app_id: appId } }));
     }
   }, []);
 
   useEffect(() => {
+    globalConnectionCount++;
     connect();
     return () => {
-      clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
+      globalConnectionCount--;
+      // Only close if no more users of this hook
+      if (globalConnectionCount === 0) {
+        clearTimeout(globalReconnectTimer);
+        globalReconnectTimer = undefined;
+        globalWs?.close();
+        globalWs = null;
+      }
     };
   }, [connect]);
 

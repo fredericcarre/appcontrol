@@ -226,7 +226,11 @@ export function DashboardPage() {
     }
   }, [cancelOperation, refetch]);
 
-  const recentEvents = messages.slice(-20).reverse();
+  // Filter out terminal events (not useful in dashboard) and LogEntry (too verbose)
+  const recentEvents = messages
+    .filter((ev) => !ev.type.startsWith('Terminal') && ev.type !== 'LogEntry')
+    .slice(-20)
+    .reverse();
 
   if (isLoading) {
     return (
