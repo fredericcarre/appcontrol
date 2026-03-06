@@ -129,7 +129,8 @@ impl ConnectionManager {
     pub async fn run(self, mut msg_rx: mpsc::UnboundedReceiver<AgentMessage>) {
         let mut current_url_idx = 0;
         let mut backoff_secs = 1u64;
-        let max_backoff = 60u64;
+        // Reduced from 60s to 10s for faster recovery after agent unblock
+        let max_backoff = 10u64;
         let mut last_primary_attempt = std::time::Instant::now();
 
         loop {

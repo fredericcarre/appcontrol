@@ -82,9 +82,10 @@ services:
       TLS_ENABLED: "true"
       TLS_CERT_FILE: /certs/gateway.crt
       TLS_KEY_FILE: /certs/gateway.key
-      TLS_CA_FILE: /certs/pki-ca.crt
+      TLS_CA_FILE: /etc/appcontrol/combined-ca.crt
     volumes:
       - certs:/certs:ro
+      - ./certs/combined-ca.crt:/etc/appcontrol/combined-ca.crt:ro
     depends_on:
       init-certs:
         condition: service_completed_successfully

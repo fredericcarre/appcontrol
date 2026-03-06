@@ -115,7 +115,8 @@ export function InfrastructureSummary({
 
   return (
     <TooltipProvider>
-      <div className="absolute bottom-4 left-4 z-10 flex flex-col gap-2">
+      {/* Position above the React Flow Controls widget (bottom-16 to clear it) */}
+      <div className="absolute bottom-16 left-4 z-10 flex flex-col gap-2">
         {/* Gateways */}
         {gateways.length > 0 && (
           <div className="bg-card/95 backdrop-blur border border-border rounded-md px-3 py-2 shadow-sm">
