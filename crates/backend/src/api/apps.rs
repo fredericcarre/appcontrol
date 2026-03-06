@@ -27,7 +27,8 @@ pub struct ListAppsQuery {
 pub struct CreateAppRequest {
     pub name: String,
     pub description: Option<String>,
-    pub site_id: Uuid,
+    /// Site ID (optional - auto-selects default site if not provided)
+    pub site_id: Option<Uuid>,
     pub tags: Option<Value>,
 }
 
@@ -428,6 +429,41 @@ pub async fn create_app(
     validate_length("name", &body.name, 1, 200)?;
     validate_optional_length("description", &body.description, 2000)?;
 
+    // Resolve site_id: use provided value or auto-select default site
+    let site_id = match body.site_id {
+        Some(id) => id,
+        None => {
+            // Find default site for organization (prefer 'primary' type)
+            let site: Option<(Uuid,)> = sqlx::query_as(
+                "SELECT id FROM sites WHERE organization_id = $1 AND is_active = true \
+                 ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
+            )
+            .bind(user.organization_id)
+            .fetch_optional(&state.db)
+            .await?;
+
+            match site {
+                Some((id,)) => id,
+                None => {
+                    // Create a default site if none exists
+                    let new_site_id = Uuid::new_v4();
+                    sqlx::query(
+                        "INSERT INTO sites (id, organization_id, name, code, site_type) \
+                         VALUES ($1, $2, $3, $4, $5)",
+                    )
+                    .bind(new_site_id)
+                    .bind(user.organization_id)
+                    .bind("Default Site")
+                    .bind("DEFAULT")
+                    .bind("primary")
+                    .execute(&state.db)
+                    .await?;
+                    new_site_id
+                }
+            }
+        }
+    };
+
     // Log before execute
     let app_id = Uuid::new_v4();
     log_action(
@@ -451,7 +487,7 @@ pub async fn create_app(
     .bind(&body.name)
     .bind(&body.description)
     .bind(user.organization_id)
-    .bind(body.site_id)
+    .bind(site_id)
     .bind(body.tags.as_ref().unwrap_or(&json!([])))
     .fetch_one(&state.db)
     .await?;
