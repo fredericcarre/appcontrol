@@ -181,17 +181,14 @@ export function DashboardPage() {
       setOperatingAppId(appId);
       setOperationType('start');
       startApp.mutate(appId, {
-        onSuccess: () => {
-          // Refresh list after a delay to see status change
-          setTimeout(() => refetch(), 1000);
-          setTimeout(() => {
-            setOperatingAppId(null);
-            setOperationType(null);
-          }, 2000);
-        },
-        onError: () => {
+        onSettled: () => {
+          // Clear the local operating state - the app's global_state will
+          // indicate the actual transitional state (STARTING/STOPPING)
           setOperatingAppId(null);
           setOperationType(null);
+          // Refetch immediately and then again after 1 second
+          refetch();
+          setTimeout(() => refetch(), 1000);
         },
       });
     }
@@ -203,17 +200,14 @@ export function DashboardPage() {
       setOperatingAppId(appId);
       setOperationType('stop');
       stopApp.mutate(appId, {
-        onSuccess: () => {
-          // Refresh list after a delay to see status change
-          setTimeout(() => refetch(), 1000);
-          setTimeout(() => {
-            setOperatingAppId(null);
-            setOperationType(null);
-          }, 2000);
-        },
-        onError: () => {
+        onSettled: () => {
+          // Clear the local operating state - the app's global_state will
+          // indicate the actual transitional state (STARTING/STOPPING)
           setOperatingAppId(null);
           setOperationType(null);
+          // Refetch immediately and then again after 1 second
+          refetch();
+          setTimeout(() => refetch(), 1000);
         },
       });
     }
@@ -355,11 +349,18 @@ export function DashboardPage() {
 
                       {/* Action buttons */}
                       <div className="flex items-center gap-1 shrink-0">
-                        {operatingAppId === app.id ? (
+                        {/* Show spinner/cancel when:
+                            1. Local API call in progress (operatingAppId)
+                            2. OR app is in transitional state (STARTING/STOPPING) */}
+                        {(operatingAppId === app.id || app.global_state === 'STARTING' || app.global_state === 'STOPPING') ? (
                           <div className="flex items-center gap-2">
                             <div className="flex items-center gap-1.5 text-xs text-muted-foreground px-2">
                               <Loader2 className="h-4 w-4 animate-spin" />
-                              <span>{operationType === 'start' ? 'Starting...' : 'Stopping...'}</span>
+                              <span>
+                                {operatingAppId === app.id
+                                  ? (operationType === 'start' ? 'Starting...' : 'Stopping...')
+                                  : (app.global_state === 'STARTING' ? 'Starting...' : 'Stopping...')}
+                              </span>
                             </div>
                             <Button
                               variant="ghost"
@@ -379,7 +380,7 @@ export function DashboardPage() {
                               size="icon"
                               className="h-8 w-8"
                               onClick={(e) => handleStart(e, app.id, app.name)}
-                              disabled={startApp.isPending || stopApp.isPending || (app.global_state === 'STARTING' || app.global_state === 'STOPPING')}
+                              disabled={startApp.isPending || stopApp.isPending}
                               title="Start all components"
                             >
                               <Play className="h-4 w-4 text-green-600" />
@@ -389,7 +390,7 @@ export function DashboardPage() {
                               size="icon"
                               className="h-8 w-8"
                               onClick={(e) => handleStop(e, app.id, app.name)}
-                              disabled={startApp.isPending || stopApp.isPending || (app.global_state === 'STARTING' || app.global_state === 'STOPPING')}
+                              disabled={startApp.isPending || stopApp.isPending}
                               title="Stop all components"
                             >
                               <Square className="h-4 w-4 text-red-600" />

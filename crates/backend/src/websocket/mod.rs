@@ -476,7 +476,8 @@ async fn handle_gateway_socket(socket: ws::WebSocket, state: Arc<AppState>) {
                                 if let Ok(agent_msg) =
                                     serde_json::from_str::<appcontrol_common::AgentMessage>(&text)
                                 {
-                                    process_agent_message(&state_clone, agent_msg).await;
+                                    // No gateway_id available in backwards compat mode
+                                    process_agent_message(&state_clone, agent_msg, None).await;
                                 } else {
                                     tracing::warn!("Unknown message from gateway");
                                 }
@@ -592,7 +593,9 @@ async fn process_gateway_message(
             }
         }
         appcontrol_common::GatewayMessage::AgentMessage(agent_msg) => {
-            process_agent_message(state, agent_msg).await;
+            // Get the gateway_id from the cell for auto-registration
+            let gw_id = { *gateway_id_cell.lock().unwrap() };
+            process_agent_message(state, agent_msg, gw_id).await;
         }
         appcontrol_common::GatewayMessage::AgentConnected {
             agent_id,
@@ -749,6 +752,10 @@ async fn process_gateway_message(
             );
             state.ws_hub.unregister_agent_route(agent_id);
 
+            // Immediately transition all non-stopped components to UNREACHABLE
+            // This provides instant feedback to the UI when an agent disconnects
+            mark_agent_components_unreachable(state, agent_id, "agent_disconnect").await;
+
             // NOTE: We intentionally do NOT clear gateway_id here.
             // The agent keeps its gateway association even when temporarily disconnected.
             // gateway_id is only cleared when:
@@ -805,7 +812,13 @@ async fn process_gateway_message(
 }
 
 /// Process an incoming agent message: update FSM, record events, broadcast.
-async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::AgentMessage) {
+/// The optional gateway_id is used for auto-registration when receiving heartbeats
+/// from agents that aren't in the routing table (e.g., after gateway reconnect).
+async fn process_agent_message(
+    state: &Arc<AppState>,
+    msg: appcontrol_common::AgentMessage,
+    source_gateway_id: Option<uuid::Uuid>,
+) {
     match msg {
         appcontrol_common::AgentMessage::CheckResult(cr) => {
             tracing::debug!(
@@ -952,6 +965,24 @@ async fn process_agent_message(state: &Arc<AppState>, msg: appcontrol_common::Ag
             ..
         } => {
             tracing::trace!(agent_id = %agent_id, cpu = %cpu, memory = %memory, disk = ?disk, "Agent heartbeat");
+
+            // Auto-register agent route if we receive a heartbeat but agent is not in routing table.
+            // This handles the case where the gateway reconnected but didn't send AgentConnected.
+            if let Some(gw_id) = source_gateway_id {
+                if !state.ws_hub.is_agent_connected(agent_id) {
+                    tracing::info!(
+                        agent_id = %agent_id,
+                        gateway_id = %gw_id,
+                        "Auto-registering agent route from heartbeat (missing AgentConnected)"
+                    );
+                    state.ws_hub.register_agent_route(agent_id, gw_id);
+
+                    // Since the agent is now connected, trigger immediate health checks
+                    // to restore component states from UNREACHABLE
+                    send_run_checks_now(state, agent_id);
+                }
+            }
+
             // Batch heartbeat update — flushed every 5s instead of 1 SQL per heartbeat.
             // At 2500 agents this reduces PostgreSQL writes from 2500/min to ~12/min.
             state.heartbeat_batcher.record(agent_id).await;
@@ -1400,6 +1431,135 @@ pub fn send_run_checks_now(state: &Arc<AppState>, agent_id: uuid::Uuid) {
         tracing::debug!(
             agent_id = %agent_id,
             "Could not send RunChecksNow — agent not reachable"
+        );
+    }
+}
+
+/// Mark all components belonging to an agent as UNREACHABLE.
+///
+/// This is called when an agent disconnects to provide immediate feedback to the UI.
+/// Components in STOPPED or STOPPING state are skipped since they're intentionally stopped.
+/// The previous state is stored in the state_transition details for recovery when the
+/// agent reconnects.
+async fn mark_agent_components_unreachable(
+    state: &Arc<AppState>,
+    agent_id: uuid::Uuid,
+    trigger: &str,
+) {
+    // Row type for query
+    #[derive(sqlx::FromRow)]
+    struct ComponentInfo {
+        id: uuid::Uuid,
+        name: String,
+        current_state: String,
+        application_id: uuid::Uuid,
+        app_name: String,
+    }
+
+    // Find components that should be transitioned to UNREACHABLE
+    let components = match sqlx::query_as::<_, ComponentInfo>(
+        r#"
+        SELECT c.id, c.name, c.current_state, c.application_id, a.name AS app_name
+        FROM components c
+        JOIN applications a ON a.id = c.application_id
+        WHERE c.agent_id = $1
+          AND c.current_state NOT IN ('UNREACHABLE', 'STOPPED', 'STOPPING', 'UNKNOWN')
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(comps) => comps,
+        Err(e) => {
+            tracing::error!(
+                agent_id = %agent_id,
+                "Failed to query components for UNREACHABLE transition: {}", e
+            );
+            return;
+        }
+    };
+
+    if components.is_empty() {
+        tracing::debug!(
+            agent_id = %agent_id,
+            "No components need UNREACHABLE transition"
+        );
+        return;
+    }
+
+    tracing::info!(
+        agent_id = %agent_id,
+        count = components.len(),
+        "Transitioning components to UNREACHABLE due to agent disconnect"
+    );
+
+    for comp in components {
+        // Insert state transition (append-only)
+        if let Err(e) = sqlx::query(
+            r#"
+            INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
+            VALUES ($1, $2, 'UNREACHABLE', $3,
+                    jsonb_build_object('previous_state', $2, 'agent_id', $4::text))
+            "#,
+        )
+        .bind(comp.id)
+        .bind(&comp.current_state)
+        .bind(trigger)
+        .bind(agent_id.to_string())
+        .execute(&state.db)
+        .await
+        {
+            tracing::warn!(
+                component_id = %comp.id,
+                "Failed to insert state_transition to UNREACHABLE: {}", e
+            );
+            continue;
+        }
+
+        // Update cached current_state on the component
+        if let Err(e) = sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
+            .bind(comp.id)
+            .execute(&state.db)
+            .await
+        {
+            tracing::warn!(
+                component_id = %comp.id,
+                "Failed to update component current_state: {}", e
+            );
+            continue;
+        }
+
+        // Parse current_state as ComponentState enum
+        let from_state = match comp.current_state.as_str() {
+            "RUNNING" => appcontrol_common::ComponentState::Running,
+            "STOPPED" => appcontrol_common::ComponentState::Stopped,
+            "STARTING" => appcontrol_common::ComponentState::Starting,
+            "STOPPING" => appcontrol_common::ComponentState::Stopping,
+            "FAILED" => appcontrol_common::ComponentState::Failed,
+            "DEGRADED" => appcontrol_common::ComponentState::Degraded,
+            "UNREACHABLE" => appcontrol_common::ComponentState::Unreachable,
+            _ => appcontrol_common::ComponentState::Unknown,
+        };
+
+        // Broadcast WebSocket event
+        state.ws_hub.broadcast(
+            comp.application_id,
+            appcontrol_common::WsEvent::StateChange {
+                component_id: comp.id,
+                app_id: comp.application_id,
+                component_name: Some(comp.name.clone()),
+                app_name: Some(comp.app_name.clone()),
+                from: from_state,
+                to: appcontrol_common::ComponentState::Unreachable,
+                at: chrono::Utc::now(),
+            },
+        );
+
+        tracing::debug!(
+            component_id = %comp.id,
+            from = %comp.current_state,
+            "Component transitioned to UNREACHABLE"
         );
     }
 }
