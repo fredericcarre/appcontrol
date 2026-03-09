@@ -99,10 +99,12 @@ pub struct CheckResult {
     pub duration_ms: u32,
     pub at: DateTime<Utc>,
     /// Generic metrics extracted from stdout (any valid JSON).
+    ///
     /// Check commands can return JSON to provide rich operational data:
     /// - `{"active_users": 12, "users": ["Alice", "Bob"]}`
     /// - `{"queue_depth": 150, "consumers": 3}`
     /// - `{"connections": 45, "replication_lag_ms": 10}`
+    ///
     /// The frontend renders this generically without interpreting the schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics: Option<serde_json::Value>,
