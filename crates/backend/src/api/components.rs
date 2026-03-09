@@ -1275,3 +1275,100 @@ pub async fn resolve_components_for_agent(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Component Metrics (from check command stdout)
+// ---------------------------------------------------------------------------
+
+/// Get the latest metrics for a component.
+/// Metrics are extracted from check command stdout (any valid JSON).
+pub async fn get_component_metrics(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(component_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Get latest check event with metrics
+    let latest = sqlx::query_as::<_, (serde_json::Value, i16, chrono::DateTime<chrono::Utc>)>(
+        r#"SELECT metrics, exit_code, created_at
+           FROM check_events
+           WHERE component_id = $1 AND metrics IS NOT NULL
+           ORDER BY created_at DESC
+           LIMIT 1"#,
+    )
+    .bind(component_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    match latest {
+        Some((metrics, exit_code, at)) => Ok(Json(json!({
+            "component_id": component_id,
+            "metrics": metrics,
+            "exit_code": exit_code,
+            "at": at,
+        }))),
+        None => Ok(Json(json!({
+            "component_id": component_id,
+            "metrics": null,
+            "message": "No metrics available"
+        }))),
+    }
+}
+
+/// Get metrics history for a component (for charts).
+pub async fn get_component_metrics_history(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(component_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Get last 100 check events with metrics (last ~1 hour at 30s intervals)
+    let history = sqlx::query_as::<_, (serde_json::Value, i16, chrono::DateTime<chrono::Utc>)>(
+        r#"SELECT metrics, exit_code, created_at
+           FROM check_events
+           WHERE component_id = $1 AND metrics IS NOT NULL
+           ORDER BY created_at DESC
+           LIMIT 100"#,
+    )
+    .bind(component_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let points: Vec<Value> = history
+        .into_iter()
+        .map(|(metrics, exit_code, at)| {
+            json!({
+                "metrics": metrics,
+                "exit_code": exit_code,
+                "at": at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "component_id": component_id,
+        "history": points,
+    })))
+}

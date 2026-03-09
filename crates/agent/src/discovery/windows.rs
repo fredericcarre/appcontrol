@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use sysinfo::System;
 
 use appcontrol_common::{
-    CommandSuggestion, DiscoveredConnection, DiscoveredListener, DiscoveredScheduledJob,
-    DiscoveredService,
+    CommandSuggestion, DiscoveredConnection, DiscoveredFirewallRule, DiscoveredListener,
+    DiscoveredScheduledJob, DiscoveredService,
 };
 
 /// Scan TCP listeners and connections by parsing `netstat -ano` output.
@@ -196,6 +196,8 @@ pub fn suggest_commands(
     process_name: &str,
     services: &[DiscoveredService],
 ) -> (Option<CommandSuggestion>, Option<String>) {
+    let name_lower = process_name.to_lowercase();
+
     // Check if this PID matches a running Windows service
     for svc in services {
         if svc.pid == Some(pid) && svc.status == "running" {
@@ -205,6 +207,8 @@ pub fn suggest_commands(
                     start_cmd: Some(format!("net start {}", svc.name)),
                     stop_cmd: Some(format!("net stop {}", svc.name)),
                     restart_cmd: Some(format!("net stop {} && net start {}", svc.name, svc.name)),
+                    logs_cmd: None, // Windows services log to Event Viewer
+                    version_cmd: None,
                     confidence: "high".to_string(),
                     source: "windows-service".to_string(),
                 }),
@@ -213,27 +217,268 @@ pub fn suggest_commands(
         }
     }
 
-    // Fallback: tasklist-based check command
+    // Well-known applications with specialized commands
     let exe_name = if process_name.ends_with(".exe") {
         process_name.to_string()
     } else {
         format!("{}.exe", process_name)
     };
 
+    // MySQL - often installed as service but may run standalone
+    if name_lower.contains("mysqld") {
+        return (
+            Some(CommandSuggestion {
+                check_cmd: format!(
+                    "wmic Path win32_process Where \"Caption Like '{}%'\" get caption | findstr /I mysqld",
+                    process_name
+                ),
+                start_cmd: Some("sc start MySQL".to_string()),
+                stop_cmd: Some("sc stop MySQL".to_string()),
+                restart_cmd: Some("sc stop MySQL && sc start MySQL".to_string()),
+                logs_cmd: Some("type \"C:\\ProgramData\\MySQL\\MySQL Server*\\Data\\*.err\" | more".to_string()),
+                version_cmd: Some("mysql --version".to_string()),
+                confidence: "medium".to_string(),
+                source: "mysql".to_string(),
+            }),
+            Some("MySQL".to_string()),
+        );
+    }
+
+    // RabbitMQ (Erlang runtime)
+    if name_lower == "erl" || name_lower == "erl.exe" {
+        return (
+            Some(CommandSuggestion {
+                check_cmd: "wmic Path win32_process Where \"Caption = 'erl.exe'\" get caption | findstr erl.exe".to_string(),
+                start_cmd: Some("rabbitmq-service start".to_string()),
+                stop_cmd: Some("rabbitmq-service stop".to_string()),
+                restart_cmd: Some("rabbitmq-service stop && rabbitmq-service start".to_string()),
+                logs_cmd: Some("type \"%APPDATA%\\RabbitMQ\\log\\*.log\" | more".to_string()),
+                version_cmd: Some("rabbitmqctl version".to_string()),
+                confidence: "medium".to_string(),
+                source: "rabbitmq".to_string(),
+            }),
+            Some("RabbitMQ".to_string()),
+        );
+    }
+
+    // ElasticSearch (Java process)
+    if name_lower == "java" || name_lower == "java.exe" || name_lower.contains("javaw") {
+        // Note: The actual identification happens in correlate based on port 9200
+        return (
+            Some(CommandSuggestion {
+                check_cmd: format!(
+                    "wmic Path win32_process Where \"Caption = '{}'\" get CommandLine | findstr /I java",
+                    exe_name
+                ),
+                start_cmd: None, // Need cmdline context
+                stop_cmd: Some(format!(
+                    "wmic Path win32_process Where \"Caption = '{}'\" Call Terminate",
+                    exe_name
+                )),
+                restart_cmd: None,
+                logs_cmd: None, // Depends on application
+                version_cmd: Some("java -version".to_string()),
+                confidence: "low".to_string(),
+                source: "java".to_string(),
+            }),
+            None,
+        );
+    }
+
+    // Nginx
+    if name_lower.contains("nginx") {
+        return (
+            Some(CommandSuggestion {
+                check_cmd: "wmic process where \"ExecutablePath like '%nginx.exe'\" get ProcessID | findstr /R \"[0-9]\"".to_string(),
+                start_cmd: Some("nginx".to_string()),
+                stop_cmd: Some("wmic process where \"ExecutablePath like '%nginx.exe'\" call terminate".to_string()),
+                restart_cmd: Some("nginx -s reload".to_string()),
+                logs_cmd: Some("type nginx\\logs\\error.log | more".to_string()),
+                version_cmd: Some("nginx -v".to_string()),
+                confidence: "high".to_string(),
+                source: "nginx".to_string(),
+            }),
+            Some("nginx".to_string()),
+        );
+    }
+
+    // Generic .NET / custom EXE fallback with wmic-based stop
     (
         Some(CommandSuggestion {
             check_cmd: format!(
-                "tasklist /FI \"IMAGENAME eq {}\" | findstr /I {}",
-                exe_name, process_name
+                "wmic Path win32_process Where \"Caption = '{}'\" get caption | findstr /I {}",
+                exe_name,
+                process_name.split('.').next().unwrap_or(process_name)
             ),
-            start_cmd: None,
-            stop_cmd: None,
+            start_cmd: None, // Unknown - user must fill in
+            stop_cmd: Some(format!(
+                "wmic Path win32_process Where \"Caption = '{}'\" Call Terminate",
+                exe_name
+            )),
             restart_cmd: None,
+            logs_cmd: None,
+            version_cmd: None,
             confidence: "low".to_string(),
             source: "process".to_string(),
         }),
         None,
     )
+}
+
+// =========================================================================
+// Firewall Rules (netsh advfirewall)
+// =========================================================================
+
+/// Scan Windows Firewall rules using netsh advfirewall.
+pub fn scan_firewall_rules() -> Vec<DiscoveredFirewallRule> {
+    use std::process::Command;
+
+    let output = Command::new("netsh")
+        .args(["advfirewall", "firewall", "show", "rule", "name=all"])
+        .output();
+
+    let output = match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return Vec::new(),
+    };
+
+    let mut rules = Vec::new();
+    let mut current_name = String::new();
+    let mut current_action = String::new();
+    let mut current_direction = String::new();
+    let mut current_protocol = String::new();
+    let mut current_local_port: Option<u16> = None;
+    let mut current_remote_port: Option<u16> = None;
+    let mut current_enabled = true;
+
+    for line in output.lines() {
+        let line = line.trim();
+
+        if let Some(name) = line.strip_prefix("Rule Name:") {
+            // Flush previous rule
+            if !current_name.is_empty() && !current_action.is_empty() {
+                // Skip Microsoft/Windows system rules
+                if !current_name.starts_with("@") && !current_name.contains("Microsoft") {
+                    rules.push(DiscoveredFirewallRule {
+                        name: current_name.clone(),
+                        action: current_action.clone(),
+                        direction: current_direction.clone(),
+                        protocol: current_protocol.clone(),
+                        local_port: current_local_port,
+                        remote_port: current_remote_port,
+                        enabled: current_enabled,
+                    });
+                }
+            }
+            current_name = name.trim().to_string();
+            current_action = String::new();
+            current_direction = String::new();
+            current_protocol = String::new();
+            current_local_port = None;
+            current_remote_port = None;
+            current_enabled = true;
+        } else if let Some(enabled) = line.strip_prefix("Enabled:") {
+            current_enabled = enabled.trim().eq_ignore_ascii_case("Yes");
+        } else if let Some(direction) = line.strip_prefix("Direction:") {
+            current_direction = match direction.trim().to_lowercase().as_str() {
+                "in" => "in".to_string(),
+                "out" => "out".to_string(),
+                _ => direction.trim().to_lowercase(),
+            };
+        } else if let Some(action) = line.strip_prefix("Action:") {
+            current_action = match action.trim().to_lowercase().as_str() {
+                "allow" => "allow".to_string(),
+                "block" => "block".to_string(),
+                _ => action.trim().to_lowercase(),
+            };
+        } else if let Some(proto) = line.strip_prefix("Protocol:") {
+            current_protocol = proto.trim().to_lowercase();
+        } else if let Some(port) = line.strip_prefix("LocalPort:") {
+            let port_str = port.trim();
+            if port_str != "Any" {
+                // Handle single port (common case)
+                current_local_port = port_str.split(',').next().and_then(|p| p.trim().parse().ok());
+            }
+        } else if let Some(port) = line.strip_prefix("RemotePort:") {
+            let port_str = port.trim();
+            if port_str != "Any" {
+                current_remote_port = port_str.split(',').next().and_then(|p| p.trim().parse().ok());
+            }
+        }
+    }
+
+    // Flush last rule
+    if !current_name.is_empty() && !current_action.is_empty() {
+        if !current_name.starts_with("@") && !current_name.contains("Microsoft") {
+            rules.push(DiscoveredFirewallRule {
+                name: current_name,
+                action: current_action,
+                direction: current_direction,
+                protocol: current_protocol,
+                local_port: current_local_port,
+                remote_port: current_remote_port,
+                enabled: current_enabled,
+            });
+        }
+    }
+
+    rules
+}
+
+// =========================================================================
+// Process Domain (AD Account)
+// =========================================================================
+
+/// Read the domain (AD account) for a process using wmic.
+/// Returns the domain name if the process runs under a domain account.
+pub fn read_process_domain(pid: u32) -> Option<String> {
+    use std::process::Command;
+
+    // Use wmic to get process owner domain
+    let output = Command::new("wmic")
+        .args([
+            "process",
+            "where",
+            &format!("ProcessId={}", pid),
+            "get",
+            "Name",
+            "/value",
+        ])
+        .output();
+
+    // wmic process get can fail or return nothing, fallback to tasklist /v
+    // tasklist /v /FI "PID eq <pid>" shows the user name as DOMAIN\user
+    let output = Command::new("tasklist")
+        .args(["/v", "/FI", &format!("PID eq {}", pid), "/FO", "CSV"])
+        .output();
+
+    let output = match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return None,
+    };
+
+    // Parse CSV output: "Image Name","PID","Session Name","Session#","Mem Usage","Status","User Name",...
+    // User Name is in format "DOMAIN\user" or "NT AUTHORITY\SYSTEM"
+    for line in output.lines().skip(1) {
+        // Skip header
+        let fields = parse_csv_line(line);
+        if fields.len() >= 7 {
+            let user_field = fields[6];
+            if let Some(backslash_idx) = user_field.find('\\') {
+                let domain = &user_field[..backslash_idx];
+                // Skip local accounts and system accounts
+                if !domain.is_empty()
+                    && domain != "NT AUTHORITY"
+                    && domain != "NT SERVICE"
+                    && domain != "BUILTIN"
+                {
+                    return Some(domain.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 // =========================================================================
@@ -397,8 +642,20 @@ mod tests {
         assert!(suggestion.is_some());
         let s = suggestion.unwrap();
         assert_eq!(s.confidence, "low");
+        assert_eq!(s.source, "java"); // java process has specific handling
+        assert!(s.check_cmd.contains("wmic") || s.check_cmd.contains("java"));
+        assert_eq!(matched, None);
+    }
+
+    #[test]
+    fn test_suggest_commands_generic_fallback() {
+        let services = vec![];
+        let (suggestion, matched) = suggest_commands(9999, "myapp.exe", &services);
+        assert!(suggestion.is_some());
+        let s = suggestion.unwrap();
+        assert_eq!(s.confidence, "low");
         assert_eq!(s.source, "process");
-        assert!(s.check_cmd.contains("tasklist"));
+        assert!(s.check_cmd.contains("wmic"));
         assert_eq!(matched, None);
     }
 }

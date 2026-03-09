@@ -824,8 +824,19 @@ async fn process_agent_message(
             tracing::debug!(
                 component_id = %cr.component_id,
                 exit_code = cr.exit_code,
+                has_metrics = cr.metrics.is_some(),
                 "Processing check result"
             );
+
+            // Store check event with metrics for audit trail
+            if let Err(e) = crate::core::fsm::store_check_event(&state.db, &cr).await {
+                tracing::warn!(
+                    component_id = %cr.component_id,
+                    "Failed to store check event: {}", e
+                );
+            }
+
+            // Process FSM transition based on exit code
             if let Err(e) =
                 crate::core::fsm::process_check_result(state, cr.component_id, cr.exit_code).await
             {
@@ -1106,6 +1117,7 @@ async fn process_agent_message(
             ref connections,
             ref services,
             ref scheduled_jobs,
+            ref firewall_rules,
             scanned_at,
         } => {
             tracing::info!(
@@ -1116,6 +1128,7 @@ async fn process_agent_message(
                 connections = connections.len(),
                 services = services.len(),
                 scheduled_jobs = scheduled_jobs.len(),
+                firewall_rules = firewall_rules.len(),
                 "Discovery report received"
             );
             // Store the full report as JSONB
@@ -1125,6 +1138,7 @@ async fn process_agent_message(
                 "connections": connections,
                 "services": services,
                 "scheduled_jobs": scheduled_jobs,
+                "firewall_rules": firewall_rules,
             }))
             .unwrap_or_default();
 

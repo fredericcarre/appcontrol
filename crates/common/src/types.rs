@@ -98,6 +98,14 @@ pub struct CheckResult {
     pub stdout: Option<String>,
     pub duration_ms: u32,
     pub at: DateTime<Utc>,
+    /// Generic metrics extracted from stdout (any valid JSON).
+    /// Check commands can return JSON to provide rich operational data:
+    /// - `{"active_users": 12, "users": ["Alice", "Bob"]}`
+    /// - `{"queue_depth": 150, "consumers": 3}`
+    /// - `{"connections": 45, "replication_lag_ms": 10}`
+    /// The frontend renders this generically without interpreting the schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<serde_json::Value>,
 }
 
 /// Status for a diagnostic check level.
@@ -222,6 +230,9 @@ pub struct DiscoveredProcess {
     pub name: String,
     pub cmdline: String,
     pub user: String,
+    /// Windows domain (AD) or empty for local accounts
+    #[serde(default)]
+    pub domain: Option<String>,
     pub memory_bytes: u64,
     pub cpu_pct: f32,
     pub listening_ports: Vec<u16>,
@@ -289,6 +300,12 @@ pub struct CommandSuggestion {
     pub stop_cmd: Option<String>,
     #[serde(default)]
     pub restart_cmd: Option<String>,
+    /// Command to view logs (e.g., "tail -100 /var/log/mysql.log")
+    #[serde(default)]
+    pub logs_cmd: Option<String>,
+    /// Command to show version (e.g., "mysql --version")
+    #[serde(default)]
+    pub version_cmd: Option<String>,
     /// Confidence level: "high" (systemd/service), "medium" (pidfile), "low" (pgrep)
     pub confidence: String,
     /// Source of the suggestion: "systemd", "windows-service", "docker", "process"
@@ -344,6 +361,27 @@ pub struct DiscoveredService {
     pub display_name: String,
     pub status: String,
     pub pid: Option<u32>,
+}
+
+/// A firewall rule discovered on the host (Windows netsh / Linux iptables/firewalld).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredFirewallRule {
+    /// Rule name (Windows) or chain/rule number (Linux)
+    pub name: String,
+    /// "allow" or "block"
+    pub action: String,
+    /// "in" or "out"
+    pub direction: String,
+    /// TCP, UDP, or "any"
+    pub protocol: String,
+    /// Local port(s) this rule applies to
+    pub local_port: Option<u16>,
+    /// Remote port(s) this rule applies to
+    #[serde(default)]
+    pub remote_port: Option<u16>,
+    /// Whether the rule is currently enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 // ---------------------------------------------------------------------------

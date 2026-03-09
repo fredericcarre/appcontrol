@@ -87,6 +87,14 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             post(components::execute_command),
         )
         .route(
+            "/components/:id/metrics",
+            get(components::get_component_metrics),
+        )
+        .route(
+            "/components/:id/metrics/history",
+            get(components::get_component_metrics_history),
+        )
+        .route(
             "/components/:id/commands",
             get(components::list_custom_commands),
         )

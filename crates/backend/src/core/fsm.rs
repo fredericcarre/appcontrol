@@ -252,6 +252,7 @@ pub async fn force_transition_component(
 }
 
 /// Process an incoming check result and update state if needed.
+/// Also stores the check event in check_events for audit trail.
 pub async fn process_check_result(
     state: &Arc<AppState>,
     component_id: Uuid,
@@ -265,6 +266,36 @@ pub async fn process_check_result(
     } else {
         Ok(None)
     }
+}
+
+/// Store a check result in check_events with optional metrics.
+/// This is separate from FSM processing to handle the full CheckResult data.
+pub async fn store_check_event(
+    pool: &sqlx::PgPool,
+    check_result: &appcontrol_common::CheckResult,
+) -> Result<(), FsmError> {
+    let check_type = match check_result.check_type {
+        appcontrol_common::CheckType::Health => "health",
+        appcontrol_common::CheckType::Integrity => "integrity",
+        appcontrol_common::CheckType::PostStart => "post_start",
+        appcontrol_common::CheckType::Infrastructure => "infrastructure",
+    };
+
+    sqlx::query(
+        r#"INSERT INTO check_events (component_id, check_type, exit_code, stdout, duration_ms, metrics)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    )
+    .bind(check_result.component_id)
+    .bind(check_type)
+    .bind(check_result.exit_code as i16)
+    .bind(&check_result.stdout)
+    .bind(check_result.duration_ms as i32)
+    .bind(&check_result.metrics)
+    .execute(pool)
+    .await
+    .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    Ok(())
 }
 
 fn parse_state(s: &str) -> Result<ComponentState, FsmError> {

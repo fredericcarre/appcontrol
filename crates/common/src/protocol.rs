@@ -98,6 +98,9 @@ pub enum AgentMessage {
         /// Scheduled jobs (cron, systemd timers, Windows Task Scheduler)
         #[serde(default)]
         scheduled_jobs: Vec<crate::types::DiscoveredScheduledJob>,
+        /// Firewall rules (Windows netsh / Linux iptables)
+        #[serde(default)]
+        firewall_rules: Vec<crate::types::DiscoveredFirewallRule>,
         scanned_at: DateTime<Utc>,
     },
     /// Progress of an air-gap binary update received via WebSocket chunks.

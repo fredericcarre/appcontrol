@@ -60,6 +60,41 @@ AppControl provides a three-level diagnostic framework for progressively deeper 
 
 Diagnostic results are stored and can be used to drive the **Diagnostic & Rebuild** workflow, which performs a surgical reconstruction of failed components based on the assessment results.
 
+### Component Metrics
+
+AppControl supports **generic metrics extraction** from check commands. Any health, integrity, or infrastructure check script can return structured JSON data that gets stored, visualized, and used for dashboards.
+
+**How it works:**
+
+1. Check scripts output JSON data (pure JSON, tagged, or embedded in logs)
+2. The agent extracts metrics from stdout automatically
+3. Metrics are stored in the `check_events` table with every check run
+4. The UI displays metrics in the component detail panel with appropriate visualizations
+
+**Supported output formats:**
+
+| Format | Description |
+|--------|-------------|
+| Pure JSON | Entire stdout is a JSON object |
+| Tagged | `<appcontrol>{"metric": 1}</appcontrol>` |
+| Marker | Logs, then `---METRICS---`, then JSON |
+| Auto-detect | Last line containing a JSON object |
+
+**Example health check with metrics:**
+
+```bash
+#!/bin/bash
+CONNECTIONS=$(netstat -an | grep ESTABLISHED | wc -l)
+MEMORY_MB=$(free -m | awk '/^Mem:/{print $3}')
+
+echo '{"connections": '$CONNECTIONS', "memory_mb": '$MEMORY_MB'}'
+exit 0
+```
+
+**Widget types:** The UI supports multiple visualizations: `gauge` (percentage), `number`, `sparkline` (trend), `pie`, `bars`, `table`, `status`, and more. Add `_widget` suffix hints (e.g., `"cpu_percent_widget": "gauge"`) to suggest specific visualizations.
+
+For detailed documentation including widget examples, API endpoints, and best practices, see **[docs/METRICS.md](METRICS.md)**.
+
 ---
 
 ## Features

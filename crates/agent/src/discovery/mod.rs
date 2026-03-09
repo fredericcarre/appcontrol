@@ -20,6 +20,8 @@
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -154,6 +156,9 @@ pub fn scan(agent_id: Uuid, hostname: &str) -> AgentMessage {
     // Platform-specific scheduled job scanning
     let scheduled_jobs = scan_scheduled_jobs();
 
+    // Platform-specific firewall rule scanning
+    let firewall_rules = scan_firewall_rules();
+
     AgentMessage::DiscoveryReport {
         agent_id,
         hostname: hostname.to_string(),
@@ -162,6 +167,7 @@ pub fn scan(agent_id: Uuid, hostname: &str) -> AgentMessage {
         connections,
         services,
         scheduled_jobs,
+        firewall_rules,
         scanned_at: Utc::now(),
     }
 }
@@ -172,11 +178,15 @@ fn scan_network(sys: &System) -> (Vec<DiscoveredListener>, Vec<DiscoveredConnect
     {
         linux::scan_network(sys)
     }
+    #[cfg(target_os = "macos")]
+    {
+        macos::scan_network(sys)
+    }
     #[cfg(target_os = "windows")]
     {
         windows::scan_network(sys)
     }
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = sys;
         (Vec::new(), Vec::new())
@@ -189,11 +199,15 @@ fn scan_services() -> Vec<DiscoveredService> {
     {
         linux::scan_services()
     }
+    #[cfg(target_os = "macos")]
+    {
+        macos::scan_services()
+    }
     #[cfg(target_os = "windows")]
     {
         windows::scan_services()
     }
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         Vec::new()
     }
@@ -205,7 +219,11 @@ fn read_process_env(pid: u32) -> HashMap<String, String> {
     {
         linux::read_process_env(pid)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::read_process_env(pid)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         // Windows: reading env of another process requires SeDebugPrivilege,
         // which is not safe to assume. Skip for now.
@@ -220,12 +238,33 @@ fn scan_scheduled_jobs() -> Vec<DiscoveredScheduledJob> {
     {
         linux::scan_cron_jobs()
     }
+    #[cfg(target_os = "macos")]
+    {
+        macos::scan_scheduled_jobs()
+    }
     #[cfg(target_os = "windows")]
     {
         windows::scan_scheduled_tasks()
     }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        Vec::new()
+    }
+}
+
+/// Scan firewall rules — dispatches to platform-specific code.
+fn scan_firewall_rules() -> Vec<appcontrol_common::DiscoveredFirewallRule> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::scan_firewall_rules()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux::scan_firewall_rules()
+    }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
+        // macOS: pf rules require root, skip for now
         Vec::new()
     }
 }
@@ -292,24 +331,51 @@ fn scan_processes(
                 .map(|l| l.port)
                 .collect();
 
-            // Collect interesting environment variables (Linux only for now)
-            let env_vars = read_process_env(pid_u32);
+            // OPTIMIZATION: Only do expensive enrichment for processes that listen on ports
+            // (i.e., actual services). Other processes are noise for discovery purposes.
+            let is_service = !listening_ports.is_empty();
 
-            // Read working directory (Linux only)
-            let working_dir = read_working_dir(pid_u32);
+            // Collect interesting environment variables (services only)
+            let env_vars = if is_service {
+                read_process_env(pid_u32)
+            } else {
+                HashMap::new()
+            };
 
-            // Scan open files for configs and logs (Linux only)
-            let (config_files, log_files) = scan_open_files(pid_u32);
+            // Read working directory (services only)
+            let working_dir = if is_service {
+                read_working_dir(pid_u32)
+            } else {
+                None
+            };
 
-            // Generate command suggestions (cross-platform)
-            let (command_suggestion, matched_service) =
-                suggest_commands(pid_u32, &name, &cmdline, services);
+            // Scan open files for configs and logs (services only - this is the slowest part)
+            let (config_files, log_files) = if is_service {
+                scan_open_files(pid_u32)
+            } else {
+                (Vec::new(), Vec::new())
+            };
+
+            // Generate command suggestions (services only)
+            let (command_suggestion, matched_service) = if is_service {
+                suggest_commands(pid_u32, &name, &cmdline, services)
+            } else {
+                (None, None)
+            };
+
+            // Read process domain (Windows AD accounts, services only)
+            let domain = if is_service {
+                read_process_domain(pid_u32)
+            } else {
+                None
+            };
 
             Some(DiscoveredProcess {
                 pid: pid_u32,
                 name,
                 cmdline,
                 user,
+                domain,
                 memory_bytes: p.memory(),
                 cpu_pct: p.cpu_usage(),
                 listening_ports,
@@ -330,7 +396,11 @@ fn read_working_dir(pid: u32) -> Option<String> {
     {
         linux::read_working_dir(pid)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::read_working_dir(pid)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = pid;
         None
@@ -348,7 +418,11 @@ fn scan_open_files(
     {
         linux::scan_open_files(pid)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::scan_open_files(pid)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = pid;
         (Vec::new(), Vec::new())
@@ -366,15 +440,33 @@ fn suggest_commands(
     {
         linux::suggest_commands(pid, name, cmdline, services)
     }
+    #[cfg(target_os = "macos")]
+    {
+        macos::suggest_commands(pid, name, cmdline, services)
+    }
     #[cfg(target_os = "windows")]
     {
         let _ = cmdline;
         windows::suggest_commands(pid, name, services)
     }
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = (pid, name, cmdline, services);
         (None, None)
+    }
+}
+
+/// Read process domain (AD account) — dispatches to platform-specific code.
+fn read_process_domain(pid: u32) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::read_process_domain(pid)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Linux/macOS: no AD domain concept, always None
+        let _ = pid;
+        None
     }
 }
 
@@ -429,5 +521,72 @@ mod tests {
         assert!(!is_interesting_env("HOME"));
         assert!(!is_interesting_env("TERM"));
         assert!(!is_interesting_env("SHELL"));
+    }
+
+    #[test]
+    fn test_full_scan_debug() {
+        let agent_id = Uuid::new_v4();
+        let msg = scan(agent_id, "debug-host");
+        match msg {
+            AgentMessage::DiscoveryReport {
+                processes,
+                listeners,
+                connections,
+                services,
+                scheduled_jobs,
+                ..
+            } => {
+                println!("\n=== DISCOVERY SCAN RESULTS ===");
+                println!("Processes: {}", processes.len());
+                println!("Listeners: {}", listeners.len());
+                println!("Connections: {}", connections.len());
+                println!("Services: {}", services.len());
+                println!("Scheduled Jobs: {}", scheduled_jobs.len());
+
+                println!("\n--- TOP 30 PROCESSES (with ports or high CPU/mem) ---");
+                let mut interesting: Vec<_> = processes
+                    .iter()
+                    .filter(|p| !p.listening_ports.is_empty() || p.cpu_pct > 1.0 || p.memory_bytes > 100_000_000)
+                    .collect();
+                interesting.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
+                for p in interesting.iter().take(30) {
+                    println!(
+                        "  {:6} {:30} mem={:>8}MB cpu={:>5.1}% ports={:?}",
+                        p.pid,
+                        if p.name.len() > 30 { &p.name[..30] } else { &p.name },
+                        p.memory_bytes / 1_000_000,
+                        p.cpu_pct,
+                        p.listening_ports
+                    );
+                }
+
+                println!("\n--- LISTENERS ---");
+                for l in &listeners {
+                    println!("  :{:<5} {} PID={:?} proc={:?}", l.port, l.protocol, l.pid, l.process_name);
+                }
+
+                println!("\n--- CONNECTIONS (outbound, first 20) ---");
+                for c in connections.iter().take(20) {
+                    println!(
+                        "  local:{} -> {}:{} (PID={:?} {})",
+                        c.local_port, c.remote_addr, c.remote_port, c.pid, c.process_name.as_deref().unwrap_or("")
+                    );
+                }
+
+                println!("\n--- SERVICES ---");
+                for s in &services {
+                    println!("  {} ({}): {:?}", s.name, s.status, s.pid);
+                }
+
+                println!("\n--- SCHEDULED JOBS ---");
+                for j in &scheduled_jobs {
+                    println!("  {} [{}]: {}", j.name, j.schedule, j.command);
+                }
+
+                // On Mac, we should have at least processes
+                assert!(!processes.is_empty(), "Should have found some processes");
+            }
+            _ => panic!("Expected DiscoveryReport"),
+        }
     }
 }

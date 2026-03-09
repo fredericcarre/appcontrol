@@ -8,8 +8,9 @@ use std::path::Path;
 use sysinfo::System;
 
 use appcontrol_common::{
-    CommandSuggestion, DiscoveredConfigFile, DiscoveredConnection, DiscoveredListener,
-    DiscoveredLogFile, DiscoveredScheduledJob, DiscoveredService, ExtractedEndpoint,
+    CommandSuggestion, DiscoveredConfigFile, DiscoveredConnection, DiscoveredFirewallRule,
+    DiscoveredListener, DiscoveredLogFile, DiscoveredScheduledJob, DiscoveredService,
+    ExtractedEndpoint,
 };
 
 use super::is_interesting_env;
@@ -682,6 +683,8 @@ pub fn suggest_commands(
                     start_cmd: Some(format!("systemctl start {}", svc.name)),
                     stop_cmd: Some(format!("systemctl stop {}", svc.name)),
                     restart_cmd: Some(format!("systemctl restart {}", svc.name)),
+                    logs_cmd: Some(format!("journalctl -u {} -n 100 --no-pager", svc.name)),
+                    version_cmd: None,
                     confidence: "high".to_string(),
                     source: "systemd".to_string(),
                 }),
@@ -714,11 +717,175 @@ pub fn suggest_commands(
             start_cmd: None,
             stop_cmd: None,
             restart_cmd: None,
+            logs_cmd: None,
+            version_cmd: None,
             confidence: "low".to_string(),
             source: "process".to_string(),
         }),
         None,
     )
+}
+
+// =========================================================================
+// Firewall Rules (iptables / firewalld)
+// =========================================================================
+
+/// Scan Linux firewall rules using iptables or firewalld.
+pub fn scan_firewall_rules() -> Vec<DiscoveredFirewallRule> {
+    // Try iptables first (most common on Linux)
+    if let Some(rules) = scan_iptables() {
+        if !rules.is_empty() {
+            return rules;
+        }
+    }
+
+    // Try firewalld (RHEL/CentOS/Fedora)
+    if let Some(rules) = scan_firewalld() {
+        return rules;
+    }
+
+    Vec::new()
+}
+
+/// Scan iptables rules.
+fn scan_iptables() -> Option<Vec<DiscoveredFirewallRule>> {
+    use std::process::Command;
+
+    // Try to get INPUT chain rules (need root, may fail)
+    let output = Command::new("iptables")
+        .args(["-L", "INPUT", "-n", "-v", "--line-numbers"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut rules = Vec::new();
+
+    // Skip header lines
+    for line in stdout.lines().skip(2) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 9 {
+            continue;
+        }
+
+        // Format: num pkts bytes target prot opt in out source destination [extra]
+        let rule_num = parts[0];
+        let target = parts[3]; // ACCEPT, DROP, REJECT
+        let protocol = parts[4]; // tcp, udp, all
+        let destination = parts[8];
+
+        // Parse port from dpt:PORT if present
+        let local_port = line
+            .split_whitespace()
+            .find(|p| p.starts_with("dpt:"))
+            .and_then(|s| s.strip_prefix("dpt:"))
+            .and_then(|p| p.parse::<u16>().ok());
+
+        let action = match target.to_lowercase().as_str() {
+            "accept" => "allow",
+            "drop" | "reject" => "block",
+            _ => continue, // Skip chains like LOG, RETURN
+        };
+
+        rules.push(DiscoveredFirewallRule {
+            name: format!("INPUT-{}", rule_num),
+            action: action.to_string(),
+            direction: "in".to_string(),
+            protocol: protocol.to_lowercase(),
+            local_port,
+            remote_port: None,
+            enabled: true,
+        });
+    }
+
+    Some(rules)
+}
+
+/// Scan firewalld rules (RHEL/CentOS/Fedora).
+fn scan_firewalld() -> Option<Vec<DiscoveredFirewallRule>> {
+    use std::process::Command;
+
+    // Get active zones first
+    let zone_output = Command::new("firewall-cmd")
+        .args(["--get-active-zones"])
+        .output()
+        .ok()?;
+
+    if !zone_output.status.success() {
+        return None;
+    }
+
+    // Get allowed services and ports
+    let list_output = Command::new("firewall-cmd")
+        .args(["--list-all"])
+        .output()
+        .ok()?;
+
+    if !list_output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&list_output.stdout);
+    let mut rules = Vec::new();
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+
+        // Parse "services: ssh http https"
+        if let Some(services) = trimmed.strip_prefix("services:") {
+            for service in services.split_whitespace() {
+                rules.push(DiscoveredFirewallRule {
+                    name: format!("service-{}", service),
+                    action: "allow".to_string(),
+                    direction: "in".to_string(),
+                    protocol: "tcp".to_string(),
+                    local_port: well_known_service_port(service),
+                    remote_port: None,
+                    enabled: true,
+                });
+            }
+        }
+
+        // Parse "ports: 8080/tcp 9000/tcp"
+        if let Some(ports) = trimmed.strip_prefix("ports:") {
+            for port_spec in ports.split_whitespace() {
+                if let Some((port_str, proto)) = port_spec.split_once('/') {
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        rules.push(DiscoveredFirewallRule {
+                            name: format!("port-{}-{}", port, proto),
+                            action: "allow".to_string(),
+                            direction: "in".to_string(),
+                            protocol: proto.to_lowercase(),
+                            local_port: Some(port),
+                            remote_port: None,
+                            enabled: true,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Some(rules)
+}
+
+/// Map well-known service names to ports.
+fn well_known_service_port(service: &str) -> Option<u16> {
+    match service {
+        "ssh" => Some(22),
+        "http" => Some(80),
+        "https" => Some(443),
+        "ftp" => Some(21),
+        "smtp" => Some(25),
+        "dns" => Some(53),
+        "mysql" => Some(3306),
+        "postgresql" => Some(5432),
+        "redis" => Some(6379),
+        _ => None,
+    }
 }
 
 // =========================================================================

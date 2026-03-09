@@ -314,6 +314,9 @@ impl CheckScheduler {
                     "Sending CheckResult"
                 );
 
+                // Extract generic metrics from stdout (any valid JSON)
+                let metrics = extract_metrics_from_stdout(&stdout);
+
                 let _ = self.msg_tx.send(AgentMessage::CheckResult(CheckResult {
                     component_id: *comp_id,
                     check_type: CheckType::Health,
@@ -321,6 +324,7 @@ impl CheckScheduler {
                     stdout: Some(stdout.clone()),
                     duration_ms,
                     at: now,
+                    metrics,
                 }));
             }
         }
@@ -331,6 +335,64 @@ fn hash_command(cmd: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(cmd.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// Extract generic metrics from check command stdout.
+///
+/// Supports multiple formats (tried in order):
+/// 1. Entire stdout is valid JSON: `{"users": 12, "queue": 150}`
+/// 2. JSON wrapped in `<appcontrol>...</appcontrol>` tags (legacy format)
+/// 3. JSON after a `---METRICS---` marker
+/// 4. Auto-detect: last JSON object found in output (for mixed logs + JSON)
+///
+/// Returns `None` if no valid JSON is found (which is fine - most checks
+/// don't return metrics).
+fn extract_metrics_from_stdout(stdout: &str) -> Option<serde_json::Value> {
+    let trimmed = stdout.trim();
+
+    // 1. Try parsing entire stdout as JSON (pure JSON output)
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if value.is_object() {
+            return Some(value);
+        }
+    }
+
+    // 2. Legacy format: <appcontrol>JSON</appcontrol>
+    if let Some(start) = trimmed.find("<appcontrol>") {
+        if let Some(end) = trimmed.find("</appcontrol>") {
+            let json_part = &trimmed[start + 12..end];
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(json_part.trim()) {
+                if value.is_object() {
+                    return Some(value);
+                }
+            }
+        }
+    }
+
+    // 3. Marker format: ---METRICS---\nJSON
+    if let Some(marker_pos) = trimmed.find("---METRICS---") {
+        let json_part = &trimmed[marker_pos + 13..];
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(json_part.trim()) {
+            if value.is_object() {
+                return Some(value);
+            }
+        }
+    }
+
+    // 4. Auto-detect: find last line that is a valid JSON object
+    // This allows scripts to output logs and JSON mixed together
+    for line in stdout.lines().rev() {
+        let line_trimmed = line.trim();
+        if line_trimmed.starts_with('{') && line_trimmed.ends_with('}') {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(line_trimmed) {
+                if value.is_object() {
+                    return Some(value);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -630,5 +692,123 @@ mod tests {
             }
         }
         assert_eq!(count, 0, "Component should not be due yet (60s interval)");
+    }
+
+    // =========================================================================
+    // Metrics extraction tests
+    // =========================================================================
+
+    #[test]
+    fn test_extract_metrics_plain_json() {
+        let stdout = r#"{"active_users": 12, "queue_depth": 150}"#;
+        let metrics = extract_metrics_from_stdout(stdout);
+        assert!(metrics.is_some());
+        let m = metrics.unwrap();
+        assert_eq!(m["active_users"], 12);
+        assert_eq!(m["queue_depth"], 150);
+    }
+
+    #[test]
+    fn test_extract_metrics_json_with_whitespace() {
+        let stdout = r#"
+        {
+            "users": ["Alice", "Bob", "Charlie"],
+            "count": 3
+        }
+        "#;
+        let metrics = extract_metrics_from_stdout(stdout);
+        assert!(metrics.is_some());
+        let m = metrics.unwrap();
+        assert_eq!(m["count"], 3);
+        assert!(m["users"].is_array());
+    }
+
+    #[test]
+    fn test_extract_metrics_appcontrol_tags() {
+        let stdout = r#"Some log output here
+<appcontrol>{"state": "Started", "connections": 45}</appcontrol>
+More output"#;
+        let metrics = extract_metrics_from_stdout(stdout);
+        assert!(metrics.is_some());
+        let m = metrics.unwrap();
+        assert_eq!(m["state"], "Started");
+        assert_eq!(m["connections"], 45);
+    }
+
+    #[test]
+    fn test_extract_metrics_marker_format() {
+        let stdout = r#"Process is running OK
+Memory usage: 2.1GB
+---METRICS---
+{"memory_mb": 2150, "cpu_pct": 45.5, "status": "healthy"}"#;
+        let metrics = extract_metrics_from_stdout(stdout);
+        assert!(metrics.is_some());
+        let m = metrics.unwrap();
+        assert_eq!(m["memory_mb"], 2150);
+        assert_eq!(m["status"], "healthy");
+    }
+
+    #[test]
+    fn test_extract_metrics_no_json() {
+        let stdout = "Process nginx is running with PID 1234";
+        let metrics = extract_metrics_from_stdout(stdout);
+        assert!(metrics.is_none());
+    }
+
+    #[test]
+    fn test_extract_metrics_empty_stdout() {
+        let metrics = extract_metrics_from_stdout("");
+        assert!(metrics.is_none());
+    }
+
+    #[test]
+    fn test_extract_metrics_nested_json() {
+        let stdout = r#"{"cluster": {"nodes": 3, "master": "node-1"}, "shards": {"active": 15}}"#;
+        let metrics = extract_metrics_from_stdout(stdout);
+        assert!(metrics.is_some());
+        let m = metrics.unwrap();
+        assert_eq!(m["cluster"]["nodes"], 3);
+        assert_eq!(m["cluster"]["master"], "node-1");
+    }
+
+    #[test]
+    fn test_extract_metrics_auto_detect_mixed_output() {
+        // Simulates a script that outputs logs and JSON mixed together
+        let stdout = r#"[2024-03-09 14:30:15] Checking service status...
+[2024-03-09 14:30:15] Found 12 active connections
+[2024-03-09 14:30:16] Memory usage: 2.1GB
+{"widgets": [{"type": "number", "label": "Users", "value": 12}]}
+[2024-03-09 14:30:16] Check completed successfully"#;
+        let metrics = extract_metrics_from_stdout(stdout);
+        assert!(metrics.is_some());
+        let m = metrics.unwrap();
+        assert!(m["widgets"].is_array());
+        assert_eq!(m["widgets"][0]["value"], 12);
+    }
+
+    #[test]
+    fn test_extract_metrics_auto_detect_json_at_end() {
+        let stdout = r#"Service is running
+CPU: 45%
+Memory: 2.1GB
+{"cpu": 45, "memory_gb": 2.1, "status": "healthy"}"#;
+        let metrics = extract_metrics_from_stdout(stdout);
+        assert!(metrics.is_some());
+        let m = metrics.unwrap();
+        assert_eq!(m["cpu"], 45);
+        assert_eq!(m["status"], "healthy");
+    }
+
+    #[test]
+    fn test_extract_metrics_auto_detect_multiple_json_lines() {
+        // If multiple JSON lines exist, take the last one
+        let stdout = r#"{"intermediate": true}
+Some log line
+{"final": "result", "count": 42}"#;
+        let metrics = extract_metrics_from_stdout(stdout);
+        assert!(metrics.is_some());
+        let m = metrics.unwrap();
+        assert_eq!(m["final"], "result");
+        assert_eq!(m["count"], 42);
     }
 }

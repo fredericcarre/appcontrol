@@ -578,13 +578,16 @@ fn guess_component_type(process_name: &str, ports: &[u16]) -> &'static str {
     if name.contains("postgres") || name.contains("pgbouncer") {
         return "database";
     }
-    if name.contains("mysql") || name.contains("mariadb") {
+    if name.contains("mysql") || name.contains("mariadb") || name.contains("mysqld") {
         return "database";
     }
     if name.contains("mongo") {
         return "database";
     }
     if name.contains("oracle") || name.contains("tnslsnr") {
+        return "database";
+    }
+    if name.contains("sqlservr") || name.contains("mssql") {
         return "database";
     }
     if name.contains("redis") || name.contains("memcache") {
@@ -594,11 +597,12 @@ fn guess_component_type(process_name: &str, ports: &[u16]) -> &'static str {
         return "search";
     }
 
-    // Message queues
+    // Message queues - including Erlang runtime for RabbitMQ
     if name.contains("kafka")
         || name.contains("rabbit")
         || name.contains("activemq")
         || name.contains("mosquitto")
+        || name == "erl" || name == "erl.exe"  // Erlang VM = RabbitMQ
     {
         return "queue";
     }
@@ -610,18 +614,50 @@ fn guess_component_type(process_name: &str, ports: &[u16]) -> &'static str {
         || name.contains("haproxy")
         || name.contains("envoy")
         || name.contains("traefik")
+        || name.contains("iis") || name.contains("w3wp")  // IIS
     {
         return "proxy";
     }
 
-    // Known ports
+    // API services (common patterns)
+    if name.contains("restservice")
+        || name.contains("apiservice")
+        || name.contains("webapi")
+    {
+        return "api";
+    }
+
+    // Java processes - use port to disambiguate
+    if name == "java" || name == "java.exe" || name.contains("javaw") {
+        for port in ports {
+            match port {
+                9200 | 9300 => return "search",       // ElasticSearch
+                9092 | 2181 => return "queue",        // Kafka / ZooKeeper
+                8080 | 8443 | 8000..=8099 => return "appserver",  // Tomcat, Jetty, etc.
+                1521 => return "database",            // Oracle
+                _ => {}
+            }
+        }
+        return "appserver"; // Default for Java
+    }
+
+    // .NET runtimes and custom services (XComponent, etc.)
+    if name.contains("xcruntime") || name.contains("xcomponent") {
+        return "service";
+    }
+    if name.contains("dotnet") || name.ends_with(".dll") {
+        return "service";
+    }
+
+    // Known ports as fallback
     for port in ports {
         match port {
             5432 | 3306 | 1521 | 1433 | 27017 => return "database",
             6379 | 11211 => return "cache",
-            9092 | 5672 | 61616 => return "queue",
+            9092 | 5672 | 61616 | 1883 => return "queue",  // Added MQTT
             9200 | 8983 => return "search",
             80 | 443 | 8080 | 8443 => return "web",
+            9000..=9099 => return "api",  // Common REST API port range
             _ => {}
         }
     }
