@@ -100,6 +100,10 @@ struct GatewaySection {
 struct BackendSection {
     url: String,
     reconnect_interval_secs: u64,
+    /// Enrollment token for authentication and organization binding.
+    /// Required in production; can be omitted in dev mode (gateway will be unauthenticated).
+    #[serde(default)]
+    enrollment_token: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, Clone)]
@@ -143,6 +147,7 @@ impl GatewayConfig {
                 backend: BackendSection {
                     url: "ws://localhost:3000/ws/gateway".to_string(),
                     reconnect_interval_secs: 5,
+                    enrollment_token: None,
                 },
                 tls: None,
                 backend_tls: None,
@@ -173,6 +178,10 @@ impl GatewayConfig {
             if let Ok(s) = v.parse() {
                 config.backend.reconnect_interval_secs = s;
             }
+        }
+        // Enrollment token env var override (for organization binding)
+        if let Ok(v) = std::env::var("GATEWAY_ENROLLMENT_TOKEN") {
+            config.backend.enrollment_token = Some(v);
         }
 
         // TLS env var overrides (agent-facing server)
@@ -776,12 +785,13 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
 
     tracing::info!("Connected to backend");
 
-    // Send gateway registration
+    // Send gateway registration (with enrollment token for org binding if configured)
     let register_msg = GatewayMessage::Register {
         gateway_id: state.gateway_id,
         name: state.config.gateway.name.clone(),
         zone: state.config.gateway.zone.clone(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        enrollment_token: state.config.backend.enrollment_token.clone(),
     };
     let register_json = serde_json::to_string(&register_msg)?;
     write

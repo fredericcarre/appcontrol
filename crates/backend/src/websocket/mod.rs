@@ -527,7 +527,67 @@ async fn process_gateway_message(
             name,
             zone,
             version,
+            enrollment_token,
         } => {
+            // ── Enrollment token validation ──
+            // In production, the gateway should present an enrollment token.
+            // The token determines which organization the gateway belongs to.
+            let org_id: Option<uuid::Uuid> = if let Some(ref token) = enrollment_token {
+                // Validate the enrollment token and extract org_id
+                match validate_gateway_enrollment_token(&state.db, token).await {
+                    Ok(org) => Some(org),
+                    Err(reason) => {
+                        tracing::warn!(
+                            gateway_id = %gateway_id,
+                            reason = %reason,
+                            "REJECTED: invalid gateway enrollment token"
+                        );
+                        let disconnect = appcontrol_common::GatewayEnvelope::DisconnectGateway {
+                            reason: reason.to_string(),
+                        };
+                        if let Ok(json) = serde_json::to_string(&disconnect) {
+                            let _ = gw_tx.send(json);
+                        }
+                        return;
+                    }
+                }
+            } else {
+                // No token provided — check if dev mode (single org) or reject
+                // In dev mode with a single org, we allow unauthenticated gateway registration
+                let single_org: Option<uuid::Uuid> = sqlx::query_scalar(
+                    "SELECT id FROM organizations LIMIT 1",
+                )
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
+
+                if single_org.is_some() {
+                    tracing::warn!(
+                        gateway_id = %gateway_id,
+                        "Gateway registered without enrollment token (dev mode - using single org)"
+                    );
+                }
+                single_org
+            };
+
+            let org_id = match org_id {
+                Some(id) => id,
+                None => {
+                    tracing::warn!(
+                        gateway_id = %gateway_id,
+                        "REJECTED: no organization found and no enrollment token provided"
+                    );
+                    let disconnect = appcontrol_common::GatewayEnvelope::DisconnectGateway {
+                        reason: "Enrollment token required (no default organization)".to_string(),
+                    };
+                    if let Ok(json) = serde_json::to_string(&disconnect) {
+                        let _ = gw_tx.send(json);
+                    }
+                    return;
+                }
+            };
+
             // ── Gateway active check ──
             // If the gateway is blocked (is_active = false), reject the connection.
             let is_active: bool =
@@ -559,6 +619,8 @@ async fn process_gateway_message(
                 name = ?name,
                 zone = %zone,
                 version = %version,
+                org_id = %org_id,
+                has_token = enrollment_token.is_some(),
                 "Gateway registered"
             );
             // Store the gateway_id for this connection
@@ -577,13 +639,14 @@ async fn process_gateway_message(
             // Note: We only update last_heartbeat_at, NOT is_active (admin controls that)
             if let Err(e) = sqlx::query(
                 r#"INSERT INTO gateways (id, organization_id, name, zone, is_active, last_heartbeat_at)
-                   VALUES ($1, (SELECT id FROM organizations LIMIT 1), $2, $3, true, now())
+                   VALUES ($1, $2, $3, $4, true, now())
                    ON CONFLICT (id) DO UPDATE SET
                        name = EXCLUDED.name,
                        zone = EXCLUDED.zone,
                        last_heartbeat_at = now()"#,
             )
             .bind(gateway_id)
+            .bind(org_id)
             .bind(&display_name)
             .bind(&zone)
             .execute(&state.db)
@@ -1654,4 +1717,91 @@ pub async fn push_config_to_affected_agents(
             );
         }
     }
+}
+
+/// Validate a gateway enrollment token and return the organization ID.
+///
+/// This is used when a gateway connects via WebSocket and presents an enrollment token.
+/// The token must:
+/// - Be a valid enrollment token (hash matches stored hash)
+/// - Have scope = "gateway"
+/// - Not be expired
+/// - Not be revoked
+/// - Not exceed max_uses (if set)
+///
+/// Returns Ok(org_id) if valid, Err(reason) if invalid.
+async fn validate_gateway_enrollment_token(
+    db: &sqlx::PgPool,
+    token: &str,
+) -> Result<uuid::Uuid, &'static str> {
+    use sha2::Digest;
+
+    if !token.starts_with("ac_enroll_") {
+        return Err("Invalid token format");
+    }
+
+    // Hash the token and look it up
+    let token_hash = hex::encode(sha2::Sha256::digest(token.as_bytes()));
+
+    let token_row = sqlx::query_as::<
+        _,
+        (
+            uuid::Uuid,                    // id
+            uuid::Uuid,                    // organization_id
+            String,                        // scope
+            Option<i32>,                   // max_uses
+            i32,                           // current_uses
+            chrono::DateTime<chrono::Utc>, // expires_at
+        ),
+    >(
+        r#"SELECT id, organization_id, scope, max_uses, current_uses, expires_at
+           FROM enrollment_tokens
+           WHERE token_hash = $1
+           AND revoked_at IS NULL"#,
+    )
+    .bind(&token_hash)
+    .fetch_optional(db)
+    .await
+    .map_err(|_| "Database error")?;
+
+    let (token_id, org_id, scope, max_uses, current_uses, expires_at) = match token_row {
+        Some(row) => row,
+        None => return Err("Invalid or revoked token"),
+    };
+
+    // Check scope
+    if scope != "gateway" {
+        tracing::warn!(
+            token_id = %token_id,
+            scope = %scope,
+            "Gateway attempted to use non-gateway enrollment token"
+        );
+        return Err("Token scope must be 'gateway'");
+    }
+
+    // Check expiry
+    if chrono::Utc::now() > expires_at {
+        return Err("Token has expired");
+    }
+
+    // Check usage limit
+    if let Some(max) = max_uses {
+        if current_uses >= max {
+            return Err("Token has reached max uses");
+        }
+    }
+
+    // Increment usage count
+    let _ = sqlx::query("UPDATE enrollment_tokens SET current_uses = current_uses + 1 WHERE id = $1")
+        .bind(token_id)
+        .execute(db)
+        .await;
+
+    tracing::info!(
+        token_id = %token_id,
+        org_id = %org_id,
+        "Gateway enrollment token validated"
+    );
+
+    Ok(org_id)
 }

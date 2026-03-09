@@ -445,6 +445,10 @@ pub enum GatewayMessage {
         name: Option<String>,
         zone: String,
         version: String,
+        /// Enrollment token for authentication and organization binding.
+        /// Required in production; optional in dev mode for backward compatibility.
+        #[serde(default)]
+        enrollment_token: Option<String>,
     },
     /// Forward an agent message (agent_id is inside the AgentMessage).
     AgentMessage(AgentMessage),
@@ -562,6 +566,7 @@ mod tests {
             stdout: Some("OK".to_string()),
             duration_ms: 42,
             at: Utc::now(),
+            metrics: None,
         });
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: AgentMessage = serde_json::from_str(&json).unwrap();
@@ -818,6 +823,7 @@ mod tests {
             name: Some("gateway-prd-01".to_string()),
             zone: "PRD".to_string(),
             version: "0.1.0".to_string(),
+            enrollment_token: Some("ac_enroll_test123".to_string()),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: super::GatewayMessage = serde_json::from_str(&json).unwrap();
