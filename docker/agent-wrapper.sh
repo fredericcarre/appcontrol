@@ -41,6 +41,8 @@ if [ ! -f "${AGENT_DATA_DIR}/tls/agent.crt" ] && [ -n "${AGENT_ENROLLMENT_TOKEN:
         echo "[AGENT] Enrolled successfully with ID: ${ENROLLED_AGENT_ID}"
 
         # Generate agent config with mTLS
+        # Note: tls_insecure=true allows the agent to accept the gateway's self-signed cert
+        # while still using mTLS for client authentication
         cat > "${AGENT_CONFIG}" <<EOF
 agent:
   id: "${ENROLLED_AGENT_ID}"
@@ -49,6 +51,7 @@ agent:
 gateway:
   url: "wss://127.0.0.1:4443/ws"
   reconnect_interval_secs: 10
+  tls_insecure: true
 
 tls:
   enabled: true
