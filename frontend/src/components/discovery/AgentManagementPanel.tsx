@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { X, AlertTriangle, Trash2, Server, Clock, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { useAgents, useBulkDeleteAgents, type Agent } from '@/api/reports';
+import { useAgents, useBulkDeleteAgents } from '@/api/reports';
 import { cn } from '@/lib/utils';
 
 interface AgentManagementPanelProps {
@@ -16,17 +16,24 @@ export function AgentManagementPanel({ open, onClose }: AgentManagementPanelProp
   const bulkDelete = useBulkDeleteAgents();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [thresholdDays, setThresholdDays] = useState(7);
+  const [now, setNow] = useState(() => Date.now());
+
+  // Refresh timestamp every minute for accurate "last seen" display
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Filter stale agents (not seen for more than threshold days)
   const staleAgents = useMemo(() => {
     if (!agents) return [];
-    const threshold = Date.now() - thresholdDays * 24 * 60 * 60 * 1000;
+    const threshold = now - thresholdDays * 24 * 60 * 60 * 1000;
     return agents.filter((a) => {
       if (!a.last_heartbeat_at) return true; // Never connected
       const lastSeen = new Date(a.last_heartbeat_at).getTime();
       return lastSeen < threshold;
     });
-  }, [agents, thresholdDays]);
+  }, [agents, thresholdDays, now]);
 
   const toggleAgent = (id: string) => {
     setSelectedIds((prev) => {
@@ -58,7 +65,7 @@ export function AgentManagementPanel({ open, onClose }: AgentManagementPanelProp
   const formatLastSeen = (lastHeartbeat: string | null) => {
     if (!lastHeartbeat) return 'Never';
     const date = new Date(lastHeartbeat);
-    const days = Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
+    const days = Math.floor((now - date.getTime()) / (1000 * 60 * 60 * 24));
     if (days === 0) return 'Today';
     if (days === 1) return 'Yesterday';
     return `${days} days ago`;

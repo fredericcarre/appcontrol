@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -70,6 +70,8 @@ function ScanPhase() {
   } = useDiscoveryStore();
 
   const [showAgentPanel, setShowAgentPanel] = useState(false);
+  // Snapshot timestamp for stale calculations (avoids impure Date.now() in render)
+  const [now] = useState(() => Date.now());
 
   const { data: agentsData } = useAgents();
   const { data: reports } = useDiscoveryReports();
@@ -83,11 +85,11 @@ function ScanPhase() {
   const agentIdsWithReports = new Set(reports?.map((r) => r.agent_id) || []);
 
   // Count stale agents (not seen for 7+ days)
-  const staleAgentCount = agents.filter((a) => {
+  const staleAgentCount = useMemo(() => agents.filter((a) => {
     if (!a.last_heartbeat_at) return true;
-    const days = (Date.now() - new Date(a.last_heartbeat_at).getTime()) / (1000 * 60 * 60 * 24);
+    const days = (now - new Date(a.last_heartbeat_at).getTime()) / (1000 * 60 * 60 * 24);
     return days > 7;
-  }).length;
+  }).length, [agents, now]);
 
   const selectAll = () => setSelectedAgentIds(agents.map((a) => a.id));
 
@@ -171,7 +173,7 @@ function ScanPhase() {
                     ? new Date(agent.last_heartbeat_at)
                     : null;
                   const daysSinceHeartbeat = lastSeen
-                    ? Math.floor((Date.now() - lastSeen.getTime()) / (1000 * 60 * 60 * 24))
+                    ? Math.floor((now - lastSeen.getTime()) / (1000 * 60 * 60 * 24))
                     : null;
                   const isStale = daysSinceHeartbeat !== null && daysSinceHeartbeat > 7;
 
