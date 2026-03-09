@@ -546,14 +546,22 @@ mod tests {
                 println!("\n--- TOP 30 PROCESSES (with ports or high CPU/mem) ---");
                 let mut interesting: Vec<_> = processes
                     .iter()
-                    .filter(|p| !p.listening_ports.is_empty() || p.cpu_pct > 1.0 || p.memory_bytes > 100_000_000)
+                    .filter(|p| {
+                        !p.listening_ports.is_empty()
+                            || p.cpu_pct > 1.0
+                            || p.memory_bytes > 100_000_000
+                    })
                     .collect();
                 interesting.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
                 for p in interesting.iter().take(30) {
                     println!(
                         "  {:6} {:30} mem={:>8}MB cpu={:>5.1}% ports={:?}",
                         p.pid,
-                        if p.name.len() > 30 { &p.name[..30] } else { &p.name },
+                        if p.name.len() > 30 {
+                            &p.name[..30]
+                        } else {
+                            &p.name
+                        },
                         p.memory_bytes / 1_000_000,
                         p.cpu_pct,
                         p.listening_ports
@@ -562,14 +570,21 @@ mod tests {
 
                 println!("\n--- LISTENERS ---");
                 for l in &listeners {
-                    println!("  :{:<5} {} PID={:?} proc={:?}", l.port, l.protocol, l.pid, l.process_name);
+                    println!(
+                        "  :{:<5} {} PID={:?} proc={:?}",
+                        l.port, l.protocol, l.pid, l.process_name
+                    );
                 }
 
                 println!("\n--- CONNECTIONS (outbound, first 20) ---");
                 for c in connections.iter().take(20) {
                     println!(
                         "  local:{} -> {}:{} (PID={:?} {})",
-                        c.local_port, c.remote_addr, c.remote_port, c.pid, c.process_name.as_deref().unwrap_or("")
+                        c.local_port,
+                        c.remote_addr,
+                        c.remote_port,
+                        c.pid,
+                        c.process_name.as_deref().unwrap_or("")
                     );
                 }
 

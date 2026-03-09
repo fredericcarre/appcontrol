@@ -228,10 +228,7 @@ pub fn scan_scheduled_jobs() -> Vec<DiscoveredScheduledJob> {
     }
 
     // Scan LaunchAgents/LaunchDaemons for scheduled jobs
-    let plist_dirs = [
-        "/Library/LaunchDaemons",
-        "/Library/LaunchAgents",
-    ];
+    let plist_dirs = ["/Library/LaunchDaemons", "/Library/LaunchAgents"];
 
     // Expand home directory for user LaunchAgents
     if let Ok(home) = std::env::var("HOME") {
@@ -452,8 +449,7 @@ pub fn suggest_commands(
 ) -> (Option<CommandSuggestion>, Option<String>) {
     // Check if process matches a launchd service
     for svc in services {
-        if svc.name.contains(name)
-            || name.contains(&svc.name.replace("com.", "").replace('.', ""))
+        if svc.name.contains(name) || name.contains(&svc.name.replace("com.", "").replace('.', ""))
         {
             return (
                 Some(CommandSuggestion {
@@ -461,7 +457,10 @@ pub fn suggest_commands(
                     start_cmd: Some(format!("launchctl start {}", svc.name)),
                     stop_cmd: Some(format!("launchctl stop {}", svc.name)),
                     restart_cmd: Some(format!("launchctl kickstart -k system/{}", svc.name)),
-                    logs_cmd: Some(format!("log show --predicate 'subsystem == \"{}\"' --last 1h", svc.name)),
+                    logs_cmd: Some(format!(
+                        "log show --predicate 'subsystem == \"{}\"' --last 1h",
+                        svc.name
+                    )),
                     version_cmd: None,
                     confidence: "high".to_string(),
                     source: "launchd".to_string(),
@@ -493,8 +492,14 @@ pub fn suggest_commands(
                     start_cmd: Some(format!("brew services start {}", brew_name)),
                     stop_cmd: Some(format!("brew services stop {}", brew_name)),
                     restart_cmd: Some(format!("brew services restart {}", brew_name)),
-                    logs_cmd: Some(format!("cat $(brew --prefix)/var/log/{}*.log 2>/dev/null | tail -100", brew_name)),
-                    version_cmd: Some(format!("{} --version 2>/dev/null || brew info {}", proc_name, brew_name)),
+                    logs_cmd: Some(format!(
+                        "cat $(brew --prefix)/var/log/{}*.log 2>/dev/null | tail -100",
+                        brew_name
+                    )),
+                    version_cmd: Some(format!(
+                        "{} --version 2>/dev/null || brew info {}",
+                        proc_name, brew_name
+                    )),
                     confidence: "medium".to_string(),
                     source: "homebrew".to_string(),
                 }),

@@ -397,12 +397,18 @@ pub fn scan_firewall_rules() -> Vec<DiscoveredFirewallRule> {
             let port_str = port.trim();
             if port_str != "Any" {
                 // Handle single port (common case)
-                current_local_port = port_str.split(',').next().and_then(|p| p.trim().parse().ok());
+                current_local_port = port_str
+                    .split(',')
+                    .next()
+                    .and_then(|p| p.trim().parse().ok());
             }
         } else if let Some(port) = line.strip_prefix("RemotePort:") {
             let port_str = port.trim();
             if port_str != "Any" {
-                current_remote_port = port_str.split(',').next().and_then(|p| p.trim().parse().ok());
+                current_remote_port = port_str
+                    .split(',')
+                    .next()
+                    .and_then(|p| p.trim().parse().ok());
             }
         }
     }

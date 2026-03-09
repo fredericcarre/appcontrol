@@ -602,7 +602,9 @@ fn guess_component_type(process_name: &str, ports: &[u16]) -> &'static str {
         || name.contains("rabbit")
         || name.contains("activemq")
         || name.contains("mosquitto")
-        || name == "erl" || name == "erl.exe"  // Erlang VM = RabbitMQ
+        || name == "erl"
+        || name == "erl.exe"
+    // Erlang VM = RabbitMQ
     {
         return "queue";
     }
@@ -614,16 +616,15 @@ fn guess_component_type(process_name: &str, ports: &[u16]) -> &'static str {
         || name.contains("haproxy")
         || name.contains("envoy")
         || name.contains("traefik")
-        || name.contains("iis") || name.contains("w3wp")  // IIS
+        || name.contains("iis")
+        || name.contains("w3wp")
+    // IIS
     {
         return "proxy";
     }
 
     // API services (common patterns)
-    if name.contains("restservice")
-        || name.contains("apiservice")
-        || name.contains("webapi")
-    {
+    if name.contains("restservice") || name.contains("apiservice") || name.contains("webapi") {
         return "api";
     }
 
@@ -631,10 +632,10 @@ fn guess_component_type(process_name: &str, ports: &[u16]) -> &'static str {
     if name == "java" || name == "java.exe" || name.contains("javaw") {
         for port in ports {
             match port {
-                9200 | 9300 => return "search",       // ElasticSearch
-                9092 | 2181 => return "queue",        // Kafka / ZooKeeper
-                8080 | 8443 | 8000..=8099 => return "appserver",  // Tomcat, Jetty, etc.
-                1521 => return "database",            // Oracle
+                9200 | 9300 => return "search",                  // ElasticSearch
+                9092 | 2181 => return "queue",                   // Kafka / ZooKeeper
+                8080 | 8443 | 8000..=8099 => return "appserver", // Tomcat, Jetty, etc.
+                1521 => return "database",                       // Oracle
                 _ => {}
             }
         }
@@ -654,10 +655,10 @@ fn guess_component_type(process_name: &str, ports: &[u16]) -> &'static str {
         match port {
             5432 | 3306 | 1521 | 1433 | 27017 => return "database",
             6379 | 11211 => return "cache",
-            9092 | 5672 | 61616 | 1883 => return "queue",  // Added MQTT
+            9092 | 5672 | 61616 | 1883 => return "queue", // Added MQTT
             9200 | 8983 => return "search",
             80 | 443 | 8080 | 8443 => return "web",
-            9000..=9099 => return "api",  // Common REST API port range
+            9000..=9099 => return "api", // Common REST API port range
             _ => {}
         }
     }
