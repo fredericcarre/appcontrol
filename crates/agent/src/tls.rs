@@ -123,7 +123,9 @@ impl rustls::client::danger::ServerCertVerifier for InsecureCertVerifier {
 /// Build a TLS connector that presents client certificate (mTLS) but skips server
 /// certificate verification. Use for self-signed gateway certificates in dev/containers.
 /// WARNING: This is INSECURE and should not be used in production with untrusted networks.
-pub fn build_tls_connector_insecure(tls: &TlsSection) -> anyhow::Result<tokio_rustls::TlsConnector> {
+pub fn build_tls_connector_insecure(
+    tls: &TlsSection,
+) -> anyhow::Result<tokio_rustls::TlsConnector> {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
     // Load client certificate chain
