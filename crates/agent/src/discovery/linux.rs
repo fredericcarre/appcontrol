@@ -775,7 +775,7 @@ fn scan_iptables() -> Option<Vec<DiscoveredFirewallRule>> {
         let rule_num = parts[0];
         let target = parts[3]; // ACCEPT, DROP, REJECT
         let protocol = parts[4]; // tcp, udp, all
-        let destination = parts[8];
+        let _destination = parts[8];
 
         // Parse port from dpt:PORT if present
         let local_port = line
