@@ -847,8 +847,14 @@ impl TerminalManager {
                 interval_start = std::time::Instant::now();
             }
 
-            let result =
-                unsafe { ReadFile(output_read.get(), Some(&mut buffer), Some(&mut bytes_read), None) };
+            let result = unsafe {
+                ReadFile(
+                    output_read.get(),
+                    Some(&mut buffer),
+                    Some(&mut bytes_read),
+                    None,
+                )
+            };
 
             match result {
                 Ok(()) if bytes_read > 0 => {
