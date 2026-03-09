@@ -554,13 +554,12 @@ async fn process_gateway_message(
             } else {
                 // No token provided — check if dev mode (single org) or reject
                 // In dev mode with a single org, we allow unauthenticated gateway registration
-                let single_org: Option<uuid::Uuid> = sqlx::query_scalar(
-                    "SELECT id FROM organizations LIMIT 1",
-                )
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten();
+                let single_org: Option<uuid::Uuid> =
+                    sqlx::query_scalar("SELECT id FROM organizations LIMIT 1")
+                        .fetch_optional(&state.db)
+                        .await
+                        .ok()
+                        .flatten();
 
                 if single_org.is_some() {
                     tracing::warn!(
@@ -1792,10 +1791,11 @@ async fn validate_gateway_enrollment_token(
     }
 
     // Increment usage count
-    let _ = sqlx::query("UPDATE enrollment_tokens SET current_uses = current_uses + 1 WHERE id = $1")
-        .bind(token_id)
-        .execute(db)
-        .await;
+    let _ =
+        sqlx::query("UPDATE enrollment_tokens SET current_uses = current_uses + 1 WHERE id = $1")
+            .bind(token_id)
+            .execute(db)
+            .await;
 
     tracing::info!(
         token_id = %token_id,
