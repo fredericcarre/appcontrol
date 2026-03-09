@@ -62,7 +62,8 @@ AGENT_ID="${AGENT_ID:-$(hostname)}"
 
 # ── Generate agent config if not mounted ──────────────────────────────────────
 if [ ! -f "${AGENT_CONFIG}" ]; then
-    GATEWAY_URL="${GATEWAY_URL:-ws://127.0.0.1:4443/ws}"
+    # Use wss:// for TLS connection to gateway (self-signed cert, so tls_insecure=true)
+    GATEWAY_URL="${GATEWAY_URL:-wss://127.0.0.1:4443/ws}"
     echo "[INFO] Generating agent config: ${AGENT_CONFIG}"
     cat > "${AGENT_CONFIG}" <<EOF
 agent:
@@ -71,6 +72,7 @@ agent:
 
 gateway:
   url: "${GATEWAY_URL}"
+  tls_insecure: true
 
 labels:
   provider: azure

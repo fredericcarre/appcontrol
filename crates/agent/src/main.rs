@@ -140,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
         msg_tx,
         config.tls.as_ref(),
         advisory,
+        config.gateway.tls_insecure,
     );
 
     if advisory {

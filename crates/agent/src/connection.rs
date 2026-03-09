@@ -10,6 +10,58 @@ use crate::scheduler::CheckScheduler;
 use crate::terminal::TerminalManager;
 use appcontrol_common::{AgentMessage, BackendMessage};
 
+/// Certificate verifier that accepts any certificate (INSECURE).
+/// Only use for development/testing with self-signed certificates.
+#[derive(Debug)]
+struct InsecureCertVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for InsecureCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        // Accept any certificate without verification
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::ED25519,
+        ]
+    }
+}
+
 /// Manages the WebSocket connection to the gateway/backend.
 /// Supports multi-gateway failover with ordered strategy.
 /// When TLS is configured, uses mTLS with client certificate authentication.
@@ -34,6 +86,8 @@ pub struct ConnectionManager {
     advisory_mode: bool,
     /// Terminal session manager for interactive shell access.
     terminal_manager: Arc<TerminalManager>,
+    /// Skip TLS certificate verification (for self-signed certs in dev/containers).
+    tls_insecure: bool,
 }
 
 impl ConnectionManager {
@@ -49,6 +103,7 @@ impl ConnectionManager {
         msg_tx: mpsc::UnboundedSender<AgentMessage>,
         tls_config: Option<&TlsSection>,
         advisory_mode: bool,
+        tls_insecure: bool,
     ) -> Self {
         let (tls_connector, cert_fingerprint) = match tls_config {
             Some(tls) if tls.enabled => {
@@ -93,6 +148,7 @@ impl ConnectionManager {
             cert_fingerprint,
             advisory_mode,
             terminal_manager,
+            tls_insecure,
         }
     }
 
@@ -117,6 +173,7 @@ impl ConnectionManager {
             msg_tx,
             None,
             false,
+            false, // tls_insecure
         )
     }
 
@@ -187,6 +244,9 @@ impl ConnectionManager {
     ) -> anyhow::Result<()> {
         if let Some(ref connector) = self.tls_connector {
             self.connect_tls(connector, gateway_url, msg_rx).await
+        } else if self.tls_insecure && gateway_url.starts_with("wss://") {
+            // Insecure TLS mode: connect with TLS but skip certificate verification
+            self.connect_tls_insecure(gateway_url, msg_rx).await
         } else {
             self.connect_plaintext(gateway_url, msg_rx).await
         }
@@ -231,6 +291,74 @@ impl ConnectionManager {
         };
         let request = tokio_tungstenite::tungstenite::http::Request::builder()
             .uri(&ws_url)
+            .header("Host", host)
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header(
+                "Sec-WebSocket-Key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
+            .header("Sec-WebSocket-Version", "13")
+            .body(())
+            .map_err(|e| anyhow::anyhow!("Failed to build WS request: {}", e))?;
+
+        let (ws_stream, _) =
+            tokio_tungstenite::client_async(request, tokio_rustls::TlsStream::from(tls_stream))
+                .await?;
+        let (mut write, mut read) = ws_stream.split();
+
+        self.register_and_run(&mut write, &mut read, gateway_url, msg_rx)
+            .await
+    }
+
+    /// Connect with TLS but skip certificate verification (for self-signed certs).
+    /// WARNING: This is insecure and should only be used in development/containers.
+    async fn connect_tls_insecure(
+        &self,
+        gateway_url: &str,
+        msg_rx: &mut mpsc::UnboundedReceiver<AgentMessage>,
+    ) -> anyhow::Result<()> {
+        use futures_util::StreamExt;
+        use std::sync::Arc;
+
+        tracing::warn!(
+            "Connecting with INSECURE TLS (certificate verification disabled) — \
+             do not use in production with untrusted networks"
+        );
+
+        // Parse host from URL for SNI
+        let url = url::Url::parse(gateway_url)
+            .map_err(|e| anyhow::anyhow!("Invalid gateway URL: {}", e))?;
+        let host = url
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("No host in gateway URL"))?;
+        let port = url.port().unwrap_or(4443);
+
+        // Establish TCP connection
+        let tcp_stream = tokio::net::TcpStream::connect(format!("{}:{}", host, port)).await?;
+
+        // Build an insecure TLS config that accepts any certificate
+        let config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(InsecureCertVerifier))
+            .with_no_client_auth();
+
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+
+        // Perform TLS handshake (no client cert, no server verification)
+        let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
+            .map_err(|e| anyhow::anyhow!("Invalid server name for TLS: {}", e))?;
+        let tls_stream = connector.connect(server_name, tcp_stream).await?;
+
+        tracing::info!(
+            "TLS handshake complete (insecure mode) with gateway {}:{}",
+            host,
+            port
+        );
+
+        // Upgrade to WebSocket over TLS
+        let request = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri(gateway_url)
             .header("Host", host)
             .header("Connection", "Upgrade")
             .header("Upgrade", "websocket")

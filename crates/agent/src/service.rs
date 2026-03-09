@@ -219,6 +219,7 @@ fn run_service(_arguments: Vec<OsString>) -> anyhow::Result<()> {
             msg_tx,
             config.tls.as_ref(),
             config.is_advisory(),
+            config.gateway.tls_insecure,
         );
 
         let conn_handle = tokio::spawn(connection.run(msg_rx));

@@ -49,6 +49,10 @@ pub struct GatewaySection {
     pub primary_retry_secs: u64,
     #[serde(default = "default_reconnect_interval")]
     pub reconnect_interval_secs: u64,
+    /// Skip TLS certificate verification (for self-signed certs in dev/containers).
+    /// WARNING: Do not use in production with untrusted networks.
+    #[serde(default)]
+    pub tls_insecure: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -94,6 +98,7 @@ impl AgentConfig {
                     failover_strategy: default_failover_strategy(),
                     primary_retry_secs: default_primary_retry(),
                     reconnect_interval_secs: default_reconnect_interval(),
+                    tls_insecure: false,
                 },
                 tls: None,
                 labels: std::collections::HashMap::new(),
