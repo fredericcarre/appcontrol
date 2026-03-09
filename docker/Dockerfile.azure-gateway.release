@@ -3,7 +3,7 @@
 # Combined image for Azure Container Instances with Managed Identity support.
 # =============================================================================
 
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
 # Install base dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
