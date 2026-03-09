@@ -480,7 +480,7 @@ use appcontrol_common::AgentMessage;
 #[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 #[cfg(windows)]
-use windows::Win32::System::IO::{ReadFile, WriteFile};
+use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
 #[cfg(windows)]
 use windows::Win32::System::Console::{
     ClosePseudoConsole, CreatePseudoConsole, ResizePseudoConsole, COORD, HPCON,
