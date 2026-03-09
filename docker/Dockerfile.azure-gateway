@@ -47,7 +47,8 @@ COPY docker/supervisord-azure.conf /etc/supervisor/conf.d/appcontrol.conf
 
 # Entrypoint script for Azure Managed Identity login
 COPY docker/azure-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/azure-entrypoint.sh
+COPY docker/agent-wrapper.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/azure-entrypoint.sh /usr/local/bin/agent-wrapper.sh
 
 # Gateway listens on 4443 for agents (in case of local agents)
 EXPOSE 4443

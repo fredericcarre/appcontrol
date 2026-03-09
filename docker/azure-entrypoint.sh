@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Azure Gateway + Agent Entrypoint
-# Handles Azure Managed Identity login, enrollment, then starts supervisord.
+# Handles Azure Managed Identity login, then starts supervisord.
+# Agent enrollment is handled by agent-wrapper.sh after gateway is ready.
 # =============================================================================
 set -euo pipefail
 
@@ -56,36 +57,15 @@ EOF
     chown appcontrol:appcontrol "${GATEWAY_CONFIG}"
 fi
 
-# ── Agent config ──────────────────────────────────────────────────────────────
-AGENT_CONFIG="/etc/appcontrol/agent.yaml"
-AGENT_ID="${AGENT_ID:-$(hostname)}"
-
-# ── Generate agent config if not mounted ──────────────────────────────────────
-if [ ! -f "${AGENT_CONFIG}" ]; then
-    # Use wss:// for TLS connection to gateway (self-signed cert, so tls_insecure=true)
-    GATEWAY_URL="${GATEWAY_URL:-wss://127.0.0.1:4443/ws}"
-    echo "[INFO] Generating agent config: ${AGENT_CONFIG}"
-    cat > "${AGENT_CONFIG}" <<EOF
-agent:
-  id: "${AGENT_ID}"
-  mode: "active"
-
-gateway:
-  url: "${GATEWAY_URL}"
-  tls_insecure: true
-
-labels:
-  provider: azure
-  role: vm-controller
-  zone: "${GATEWAY_ZONE:-azure}"
-EOF
-    chown appcontrol:appcontrol "${AGENT_CONFIG}"
-fi
+# ── Create agent data directory ───────────────────────────────────────────────
+AGENT_DATA_DIR="/var/lib/appcontrol"
+mkdir -p "${AGENT_DATA_DIR}"
+chown -R appcontrol:appcontrol "${AGENT_DATA_DIR}"
 
 echo ""
 echo "[INFO] Gateway ID:   ${GATEWAY_ID:-azure-gateway}"
 echo "[INFO] Backend URL:  ${BACKEND_URL:-ws://localhost:3000/ws/gateway}"
-echo "[INFO] Agent ID:     ${AGENT_ID}"
+echo "[INFO] Agent enrollment token: ${AGENT_ENROLLMENT_TOKEN:-<not set>}"
 echo "[INFO] Starting supervisord..."
 echo ""
 
