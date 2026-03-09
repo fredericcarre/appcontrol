@@ -155,6 +155,8 @@ fn run_service() -> anyhow::Result<()> {
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher,
             operation_lock,
+            terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
+            log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),
         });
 
         let app = appcontrol_backend::create_router(state.clone());

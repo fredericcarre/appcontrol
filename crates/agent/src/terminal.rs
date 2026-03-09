@@ -478,7 +478,7 @@ use tokio::sync::Mutex;
 use appcontrol_common::AgentMessage;
 
 #[cfg(windows)]
-use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 #[cfg(windows)]
 use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
 #[cfg(windows)]

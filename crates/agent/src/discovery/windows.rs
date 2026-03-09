@@ -441,7 +441,7 @@ pub fn read_process_domain(pid: u32) -> Option<String> {
     use std::process::Command;
 
     // Use wmic to get process owner domain
-    let output = Command::new("wmic")
+    let _output = Command::new("wmic")
         .args([
             "process",
             "where",
