@@ -150,6 +150,8 @@ fn run_service() -> anyhow::Result<()> {
             rate_limiter: super::AgentRateLimiter::new(),
             config: config.clone(),
             gateway_id,
+            shutdown_flag: std::sync::atomic::AtomicBool::new(false),
+            blocked_agents: std::sync::RwLock::new(std::collections::HashSet::new()),
         });
 
         // Backend connection loop
