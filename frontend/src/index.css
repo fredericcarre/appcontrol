@@ -70,3 +70,77 @@
   box-shadow: 0 0 12px 4px rgba(59, 130, 246, 0.4);
   transition: box-shadow 0.2s ease;
 }
+
+/* Node entrance animation */
+@keyframes nodeEntrance {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+    filter: blur(10px);
+  }
+  50% {
+    opacity: 0.8;
+    filter: blur(2px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+.discovery-node-entering {
+  animation: nodeEntrance 0.5s ease-out forwards;
+}
+
+/* Pulse glow for selected/highlighted nodes */
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(74, 222, 128, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(74, 222, 128, 0.6);
+  }
+}
+
+.discovery-node-pulse {
+  animation: pulseGlow 2s ease-in-out infinite;
+}
+
+/* Host group entrance animation */
+@keyframes hostEntrance {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.discovery-host-entering {
+  animation: hostEntrance 0.4s ease-out forwards;
+}
+
+/* Edge flow particles */
+@keyframes flowParticle {
+  0% {
+    offset-distance: 0%;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    offset-distance: 100%;
+    opacity: 0;
+  }
+}
+
+.discovery-edge-particle {
+  animation: flowParticle 2s ease-in-out infinite;
+}

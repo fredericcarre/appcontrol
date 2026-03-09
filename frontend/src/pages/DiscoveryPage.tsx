@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +12,8 @@ import {
   Network,
   Rocket,
   RotateCcw,
+  X,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   useDiscoveryReports,
@@ -23,6 +26,9 @@ import { TopologyMap } from '@/components/discovery/TopologyMap';
 import { LayerSidebar } from '@/components/discovery/LayerSidebar';
 import { ServiceDetailPanel } from '@/components/discovery/ServiceDetailPanel';
 import { TopologyToolbar } from '@/components/discovery/TopologyToolbar';
+import { DiscoveryStepper } from '@/components/discovery/DiscoveryStepper';
+import { AgentManagementPanel } from '@/components/discovery/AgentManagementPanel';
+import { MatrixRain } from '@/components/discovery/MatrixRain';
 
 // ---------------------------------------------------------------------------
 // Main Page — 3-phase flow
@@ -32,11 +38,19 @@ export function DiscoveryPage() {
   const phase = useDiscoveryStore((s) => s.phase);
 
   return (
-    <>
+    <div className="flex flex-col h-full">
+      {/* Stepper - hidden in topology phase for more space */}
+      {phase !== 'topology' && (
+        <div className="mb-6 py-4 border-b border-border">
+          <DiscoveryStepper currentPhase={phase} />
+        </div>
+      )}
+
+      {/* Phase content */}
       {phase === 'scan' && <ScanPhase />}
       {phase === 'topology' && <TopologyPhase />}
       {phase === 'done' && <DonePhase />}
-    </>
+    </div>
   );
 }
 
@@ -45,13 +59,17 @@ export function DiscoveryPage() {
 // ---------------------------------------------------------------------------
 
 function ScanPhase() {
+  const navigate = useNavigate();
   const {
     selectedAgentIds,
     setSelectedAgentIds,
     toggleAgentId,
     setCorrelationResult,
     setPhase,
+    reset,
   } = useDiscoveryStore();
+
+  const [showAgentPanel, setShowAgentPanel] = useState(false);
 
   const { data: agentsData } = useAgents();
   const { data: reports } = useDiscoveryReports();
@@ -63,6 +81,13 @@ function ScanPhase() {
     : (agentsData as unknown as { agents?: Agent[] })?.agents || [];
 
   const agentIdsWithReports = new Set(reports?.map((r) => r.agent_id) || []);
+
+  // Count stale agents (not seen for 7+ days)
+  const staleAgentCount = agents.filter((a) => {
+    if (!a.last_heartbeat_at) return true;
+    const days = (Date.now() - new Date(a.last_heartbeat_at).getTime()) / (1000 * 60 * 60 * 24);
+    return days > 7;
+  }).length;
 
   const selectAll = () => setSelectedAgentIds(agents.map((a) => a.id));
 
@@ -78,19 +103,33 @@ function ScanPhase() {
     setPhase('topology');
   };
 
+  const isScanning = triggerAll.isPending || correlate.isPending;
+
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="space-y-6 relative">
+      {/* Matrix rain background during scanning */}
+      {isScanning && (
+        <div className="absolute inset-0 -m-6 overflow-hidden pointer-events-none z-0">
+          <MatrixRain opacity={0.08} color="#22c55e" />
+        </div>
+      )}
+
+      <div className="relative z-10">
         <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Radar className="h-6 w-6" />
+          <Radar className={`h-6 w-6 ${isScanning ? 'animate-pulse' : ''}`} />
           Discovery
+          {isScanning && (
+            <span className="text-sm font-normal text-emerald-600 ml-2">
+              {triggerAll.isPending ? 'Scanning...' : 'Analyzing...'}
+            </span>
+          )}
         </h1>
         <p className="text-muted-foreground mt-1">
           Select agents to scan, then analyze the topology of your infrastructure.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 relative z-10">
         {/* Agent selection */}
         <Card>
           <CardContent className="p-6 space-y-4">
@@ -99,9 +138,22 @@ function ScanPhase() {
                 <Server className="h-5 w-5" />
                 Agents
               </h3>
-              <Button size="sm" variant="outline" onClick={selectAll} className="text-xs">
-                Select All
-              </Button>
+              <div className="flex items-center gap-2">
+                {staleAgentCount > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowAgentPanel(true)}
+                    className="text-xs gap-1 text-amber-600 border-amber-300 hover:bg-amber-50"
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    {staleAgentCount} Stale
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" onClick={selectAll} className="text-xs">
+                  Select All
+                </Button>
+              </div>
             </div>
 
             {agents.length === 0 ? (
@@ -113,10 +165,20 @@ function ScanPhase() {
                 {agents.map((agent) => {
                   const checked = selectedAgentIds.includes(agent.id);
                   const hasReport = agentIdsWithReports.has(agent.id);
+                  const isConnected = agent.connected;
+                  const gatewayConnected = agent.gateway_connected;
+                  const lastSeen = agent.last_heartbeat_at
+                    ? new Date(agent.last_heartbeat_at)
+                    : null;
+                  const daysSinceHeartbeat = lastSeen
+                    ? Math.floor((Date.now() - lastSeen.getTime()) / (1000 * 60 * 60 * 24))
+                    : null;
+                  const isStale = daysSinceHeartbeat !== null && daysSinceHeartbeat > 7;
+
                   return (
                     <label
                       key={agent.id}
-                      className="flex items-center gap-3 p-2 rounded-md hover:bg-accent cursor-pointer"
+                      className={`flex items-center gap-3 p-2 rounded-md hover:bg-accent cursor-pointer ${isStale ? 'opacity-60' : ''}`}
                     >
                       <input
                         type="checkbox"
@@ -127,11 +189,32 @@ function ScanPhase() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium">{agent.hostname || agent.id}</span>
-                          <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                          <div
+                            className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-slate-400'}`}
+                            title={isConnected ? 'Connected' : 'Disconnected'}
+                          />
                         </div>
-                        <span className="text-xs text-muted-foreground truncate block">
-                          {agent.id}
-                        </span>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          {agent.gateway_name ? (
+                            <>
+                              <span className="font-medium text-foreground/70">{agent.gateway_name}</span>
+                              {agent.gateway_zone && (
+                                <span className="text-muted-foreground/60">({agent.gateway_zone})</span>
+                              )}
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full ${gatewayConnected ? 'bg-emerald-400' : 'bg-slate-300'}`}
+                                title={gatewayConnected ? 'Gateway connected' : 'Gateway disconnected'}
+                              />
+                            </>
+                          ) : (
+                            <span className="truncate">{agent.id}</span>
+                          )}
+                        </div>
+                        {isStale && daysSinceHeartbeat !== null && (
+                          <span className="text-[10px] text-amber-600">
+                            Last seen {daysSinceHeartbeat} days ago
+                          </span>
+                        )}
                       </div>
                       {hasReport && (
                         <Badge variant="secondary" className="text-[10px]">
@@ -197,10 +280,25 @@ function ScanPhase() {
                 Tip: First "Scan All Agents" to collect fresh data, then "Analyze Topology"
                 to visualize the cross-host service map.
               </div>
+
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  reset();
+                  navigate('/');
+                }}
+                className="w-full gap-2 text-muted-foreground hover:text-destructive"
+              >
+                <X className="h-4 w-4" />
+                Cancel Discovery
+              </Button>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* Stale agents management panel */}
+      <AgentManagementPanel open={showAgentPanel} onClose={() => setShowAgentPanel(false)} />
     </div>
   );
 }

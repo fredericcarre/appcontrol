@@ -1,4 +1,4 @@
-import { X, Shield, FileText, ScrollText, Terminal } from 'lucide-react';
+import { X, Shield, FileText, ScrollText, Terminal, Network } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -6,6 +6,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { COMPONENT_TYPE_ICONS, TECHNOLOGY_COLORS, type ComponentType } from '@/lib/colors';
 import { useDiscoveryStore } from '@/stores/discovery';
+import { useAgents } from '@/api/reports';
 
 const COMPONENT_TYPES: ComponentType[] = ['database', 'middleware', 'appserver', 'webfront', 'service', 'batch', 'custom'];
 
@@ -34,10 +35,15 @@ export function ServiceDetailPanel() {
     getEffectiveType,
   } = useDiscoveryStore();
 
+  const { data: agents } = useAgents();
+
   if (selectedServiceIndex === null || !correlationResult) return null;
 
   const service = correlationResult.services[selectedServiceIndex];
   if (!service) return null;
+
+  // Find agent info for gateway display
+  const agentInfo = agents?.find((a) => a.id === service.agent_id);
 
   const edits = serviceEdits.get(selectedServiceIndex);
   const effectiveName = getEffectiveName(selectedServiceIndex);
@@ -131,8 +137,40 @@ export function ServiceDetailPanel() {
                 </div>
               </div>
               <div>
-                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Agent ID</label>
-                <div className="text-[10px] font-mono text-muted-foreground truncate">{service.agent_id}</div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Gateway</label>
+                {agentInfo?.gateway_name ? (
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <Network className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-xs font-medium">{agentInfo.gateway_name}</span>
+                    {agentInfo.gateway_zone && (
+                      <span className="text-[10px] text-muted-foreground">({agentInfo.gateway_zone})</span>
+                    )}
+                    <div
+                      className={`w-1.5 h-1.5 rounded-full ml-auto ${
+                        agentInfo.gateway_connected ? 'bg-emerald-500' : 'bg-slate-400'
+                      }`}
+                      title={agentInfo.gateway_connected ? 'Gateway connected' : 'Gateway disconnected'}
+                    />
+                  </div>
+                ) : (
+                  <div className="text-[10px] font-mono text-muted-foreground truncate">
+                    {service.agent_id}
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Agent</label>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="text-xs">{service.hostname}</span>
+                  {agentInfo && (
+                    <div
+                      className={`w-1.5 h-1.5 rounded-full ml-auto ${
+                        agentInfo.connected ? 'bg-emerald-500' : 'bg-slate-400'
+                      }`}
+                      title={agentInfo.connected ? 'Agent connected' : 'Agent disconnected'}
+                    />
+                  )}
+                </div>
               </div>
             </div>
           </TabsContent>

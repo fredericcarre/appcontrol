@@ -22,6 +22,20 @@ const BATCH_H = 64;
 const HOST_PADDING_TOP = 52;
 const HOST_PADDING = 24;
 
+export interface AgentInfo {
+  id: string;
+  hostname: string;
+  gateway_name: string | null;
+  gateway_zone: string | null;
+  connected: boolean;
+  gateway_connected: boolean;
+}
+
+export interface ManualDependency {
+  from: number;
+  to: number;
+}
+
 interface LayoutInput {
   correlationResult: CorrelationResult;
   enabledIndices: Set<number>;
@@ -32,6 +46,8 @@ interface LayoutInput {
   highlightedServiceIndex: number | null;
   onToggle: (index: number) => void;
   onSelect: (index: number) => void;
+  agentInfoMap?: Map<string, AgentInfo>;
+  manualDependencies?: ManualDependency[];
 }
 
 interface LayoutOutput {
@@ -40,7 +56,7 @@ interface LayoutOutput {
 }
 
 export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput> {
-  const { correlationResult, enabledIndices, showUnresolved, showBatchJobs, getEffectiveName, getEffectiveType, highlightedServiceIndex, onToggle, onSelect } = input;
+  const { correlationResult, enabledIndices, showUnresolved, showBatchJobs, getEffectiveName, getEffectiveType, highlightedServiceIndex, onToggle, onSelect, agentInfoMap, manualDependencies = [] } = input;
   const { services, dependencies, unresolved_connections, scheduled_jobs } = correlationResult;
 
   // Group services by hostname
@@ -159,6 +175,7 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
     if (!elkHost) continue;
 
     const agentId = services[indices[0]]?.agent_id || '';
+    const agentInfo = agentInfoMap?.get(agentId);
 
     rfNodes.push({
       id: `host-${hostname}`,
@@ -168,6 +185,10 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
         hostname,
         agentId,
         serviceCount: indices.length,
+        gatewayName: agentInfo?.gateway_name,
+        gatewayZone: agentInfo?.gateway_zone,
+        gatewayConnected: agentInfo?.gateway_connected,
+        agentConnected: agentInfo?.connected,
       } satisfies HostGroupNodeData,
       style: { width: elkHost.width, height: elkHost.height },
       draggable: true,
@@ -294,6 +315,33 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
       }
     });
   }
+
+  // Manual dependency edges (user-created)
+  manualDependencies.forEach((md, i) => {
+    const fromSvc = services[md.from];
+    const toSvc = services[md.to];
+    if (!fromSvc || !toSvc) return;
+
+    rfEdges.push({
+      id: `manual-${i}`,
+      source: `svc-${md.from}`,
+      target: `svc-${md.to}`,
+      type: 'dependency',
+      data: {
+        technology: 'manual',
+        port: 0,
+        inferredVia: 'manual',
+        fromProcess: fromSvc.process_name,
+        toProcess: toSvc.process_name,
+        remoteAddr: toSvc.hostname,
+      } satisfies DependencyEdgeData,
+      style: {
+        stroke: '#10b981', // Emerald for manual
+        strokeWidth: 2,
+        strokeDasharray: '4 2',
+      },
+    });
+  });
 
   return { nodes: rfNodes, edges: rfEdges };
 }

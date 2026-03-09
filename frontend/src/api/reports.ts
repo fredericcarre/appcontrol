@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from './client';
 
 export interface AvailabilityReport {
@@ -70,6 +70,13 @@ export interface Agent {
   status: string;
   version: string;
   last_heartbeat: string;
+  last_heartbeat_at: string | null;
+  gateway_id: string | null;
+  gateway_name: string | null;
+  gateway_zone: string | null;
+  connected: boolean;
+  gateway_connected: boolean;
+  is_active: boolean;
 }
 
 export function useAgents() {
@@ -78,6 +85,19 @@ export function useAgents() {
     queryFn: async () => {
       const { data } = await client.get<{ agents: Agent[] }>('/agents');
       return data.agents;
+    },
+  });
+}
+
+export function useBulkDeleteAgents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (agentIds: string[]) => {
+      const { data } = await client.post('/agents/bulk-delete', { agent_ids: agentIds });
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['agents'] });
     },
   });
 }

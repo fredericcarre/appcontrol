@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useState, useEffect } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
 import { cn } from '@/lib/utils';
@@ -23,6 +23,13 @@ function ServiceNodeInner({ data, selected }: NodeProps & { data: ServiceNodeDat
   const IconComponent = iconMap[typeInfo.icon] || Box;
   const confColor = CONFIDENCE_COLORS[data.commandConfidence] || CONFIDENCE_COLORS.low;
 
+  // Track if node is newly rendered for entrance animation
+  const [isEntering, setIsEntering] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setIsEntering(false), 500);
+    return () => clearTimeout(timer);
+  }, []);
+
   const handleToggle = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -41,12 +48,14 @@ function ServiceNodeInner({ data, selected }: NodeProps & { data: ServiceNodeDat
       className={cn(
         'rounded-lg shadow-md border-2 w-[200px] bg-white cursor-pointer transition-all',
         selected && 'ring-2 ring-primary ring-offset-1',
-        data.highlighted && 'discovery-node-glow',
+        data.highlighted && 'discovery-node-glow discovery-node-pulse',
         !data.enabled && 'opacity-40',
+        isEntering && 'discovery-node-entering',
       )}
       style={{
         borderColor: typeInfo.color,
         borderLeftWidth: 4,
+        animationDelay: isEntering ? `${data.serviceIndex * 50}ms` : undefined,
       }}
     >
       <Handle type="target" position={Position.Top} className="!bg-slate-400 !w-2 !h-2" />

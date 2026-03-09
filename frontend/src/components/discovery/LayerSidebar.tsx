@@ -4,10 +4,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import {
   Server, Cog, Cloud, Clock, ChevronDown, ChevronRight, Search,
-  PanelLeftClose, PanelLeft,
+  PanelLeftClose, PanelLeft, Box, ArrowRight,
 } from 'lucide-react';
 import { COMPONENT_TYPE_ICONS, type ComponentType } from '@/lib/colors';
 import { useDiscoveryStore } from '@/stores/discovery';
+import { useApps } from '@/api/apps';
 import { cn } from '@/lib/utils';
 
 export function LayerSidebar() {
@@ -29,7 +30,9 @@ export function LayerSidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [hostsOpen, setHostsOpen] = useState(true);
   const [servicesOpen, setServicesOpen] = useState(true);
+  const [appsOpen, setAppsOpen] = useState(true);
 
+  const { data: existingApps } = useApps();
   const services = useMemo(() => correlationResult?.services || [], [correlationResult]);
   const unresolved = useMemo(() => correlationResult?.unresolved_connections || [], [correlationResult]);
   const scheduledJobs = useMemo(() => correlationResult?.scheduled_jobs || [], [correlationResult]);
@@ -194,6 +197,47 @@ export function LayerSidebar() {
                   );
                 })}
             </div>
+          )}
+
+          {/* EXISTING APPS Section */}
+          {existingApps && existingApps.length > 0 && (
+            <>
+              <button
+                onClick={() => setAppsOpen(!appsOpen)}
+                className="flex items-center gap-1.5 w-full px-2 py-1.5 rounded-md hover:bg-accent text-left"
+              >
+                {appsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                <Box className="h-3.5 w-3.5 text-blue-500" />
+                <span className="text-xs font-semibold flex-1">EXISTING APPS</span>
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{existingApps.length}</Badge>
+              </button>
+              {appsOpen && (
+                <div className="pl-4 space-y-0.5">
+                  {existingApps
+                    .filter((app) => matchesSearch(app.name))
+                    .slice(0, 10)
+                    .map((app) => (
+                      <a
+                        key={app.id}
+                        href={`/apps/${app.id}`}
+                        className="flex items-center gap-2 w-full px-2 py-1 rounded hover:bg-accent text-left group"
+                      >
+                        <Box className="h-3 w-3 text-blue-400 flex-shrink-0" />
+                        <span className="text-xs truncate flex-1">{app.name}</span>
+                        <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">
+                          {app.component_count}
+                        </Badge>
+                        <ArrowRight className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </a>
+                    ))}
+                  {existingApps.length > 10 && (
+                    <div className="px-2 py-1 text-[10px] text-muted-foreground">
+                      +{existingApps.length - 10} more apps
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
 
           {/* BATCH JOBS Section */}

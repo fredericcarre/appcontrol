@@ -420,3 +420,105 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
 
     affected
 }
+
+// ===========================================================================
+// Bulk delete stale agents
+// ===========================================================================
+
+/// Request body for bulk agent deletion
+#[derive(Debug, Deserialize)]
+pub struct BulkDeleteRequest {
+    pub agent_ids: Vec<Uuid>,
+}
+
+/// POST /api/v1/agents/bulk-delete — Delete multiple stale agents
+///
+/// This permanently deletes agents that are no longer connected or needed.
+/// Only admin users can perform this operation.
+/// Components associated with these agents will have their agent_id set to NULL.
+pub async fn bulk_delete_agents(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<BulkDeleteRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    if body.agent_ids.is_empty() {
+        return Err(ApiError::Validation(
+            "At least one agent_id is required".to_string(),
+        ));
+    }
+
+    // Verify all agents belong to the user's organization
+    let valid_agents: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, hostname FROM agents WHERE id = ANY($1) AND organization_id = $2",
+    )
+    .bind(&body.agent_ids)
+    .bind(user.organization_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    if valid_agents.is_empty() {
+        return Err(ApiError::NotFound);
+    }
+
+    let valid_ids: Vec<Uuid> = valid_agents.iter().map(|(id, _)| *id).collect();
+
+    // Log before execute
+    crate::middleware::audit::log_action(
+        &state.db,
+        user.user_id,
+        "bulk_delete_agents",
+        "agent",
+        Uuid::nil(),
+        json!({
+            "agent_ids": valid_ids,
+            "count": valid_ids.len(),
+        }),
+    )
+    .await
+    .ok();
+
+    let mut tx = state.db.begin().await?;
+
+    // 1. Transition components to UNREACHABLE and clear agent_id
+    let mut components_affected = 0;
+    for agent_id in &valid_ids {
+        components_affected += transition_agent_components_to_unreachable(&state, *agent_id).await;
+    }
+
+    // 2. Clear agent_id from components (don't delete components)
+    sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = ANY($1)")
+        .bind(&valid_ids)
+        .execute(&mut *tx)
+        .await?;
+
+    // 3. Delete discovery reports for these agents
+    sqlx::query("DELETE FROM discovery_reports WHERE agent_id = ANY($1)")
+        .bind(&valid_ids)
+        .execute(&mut *tx)
+        .await?;
+
+    // 4. Delete the agents
+    let delete_result = sqlx::query("DELETE FROM agents WHERE id = ANY($1)")
+        .bind(&valid_ids)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    // 5. Notify gateways to remove these agents from their registry
+    for agent_id in &valid_ids {
+        state
+            .ws_hub
+            .block_agent(*agent_id, "Agent deleted by administrator");
+    }
+
+    Ok(Json(json!({
+        "deleted": delete_result.rows_affected(),
+        "agent_ids": valid_ids,
+        "components_affected": components_affected,
+    })))
+}

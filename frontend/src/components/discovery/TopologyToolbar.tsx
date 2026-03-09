@@ -3,12 +3,22 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
-  Loader2, CheckSquare, Square, Rocket,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Loader2, CheckSquare, Square, Rocket, X, Check, MapPin,
 } from 'lucide-react';
 import { useDiscoveryStore } from '@/stores/discovery';
 import { useCreateDraft, useApplyDraft } from '@/api/discovery';
+import { useSites } from '@/api/sites';
 import type { CorrelatedService } from '@/api/discovery';
 import type { ServiceEdits } from './TopologyMap.types';
+import { CancelConfirmDialog } from './CancelConfirmDialog';
+import { DependencyModeToggle } from './DependencyModeToggle';
 
 export function TopologyToolbar() {
   const {
@@ -23,10 +33,15 @@ export function TopologyToolbar() {
     setAppName,
     setCreatedAppId,
     setPhase,
+    setCancelConfirmOpen,
+    manualDependencies,
+    selectedSiteId,
+    setSelectedSiteId,
   } = useDiscoveryStore();
 
   const createDraft = useCreateDraft();
   const applyDraft = useApplyDraft();
+  const { data: sites } = useSites();
   const [creating, setCreating] = useState(false);
 
   const services = correlationResult?.services || [];
@@ -35,7 +50,7 @@ export function TopologyToolbar() {
   const selectedCount = enabledServiceIndices.size;
 
   const handleCreateApp = async () => {
-    if (!appName.trim() || selectedCount === 0) return;
+    if (!appName.trim() || selectedCount === 0 || !selectedSiteId) return;
     setCreating(true);
 
     try {
@@ -69,7 +84,7 @@ export function TopologyToolbar() {
         };
       });
 
-      // Build dependencies between selected services
+      // Build dependencies between selected services (auto-detected)
       const depsToInclude = dependencies.filter(
         (d) =>
           d.from_service_index !== null &&
@@ -84,9 +99,23 @@ export function TopologyToolbar() {
         inferred_via: d.inferred_via,
       }));
 
+      // Add manual dependencies (user-created)
+      const manualDepsToInclude = manualDependencies.filter(
+        (md) => indexToTempId.has(md.from) && indexToTempId.has(md.to)
+      );
+
+      for (const md of manualDepsToInclude) {
+        draftDeps.push({
+          from_temp_id: indexToTempId.get(md.from)!,
+          to_temp_id: indexToTempId.get(md.to)!,
+          inferred_via: 'manual',
+        });
+      }
+
       // Create draft
       const draft = await createDraft.mutateAsync({
         name: appName.trim(),
+        site_id: selectedSiteId || undefined,
         components,
         dependencies: draftDeps,
       });
@@ -104,44 +133,108 @@ export function TopologyToolbar() {
   };
 
   return (
-    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10">
-      <div className="flex items-center gap-2 bg-card/95 backdrop-blur-sm border border-border rounded-lg shadow-lg px-3 py-2">
-        {/* Selection */}
-        <div className="flex items-center gap-1.5 pr-2 border-r border-border">
-          <button onClick={enableAll} className="p-1 rounded hover:bg-accent" title="Select all">
-            <CheckSquare className="h-3.5 w-3.5 text-muted-foreground" />
-          </button>
-          <button onClick={disableAll} className="p-1 rounded hover:bg-accent" title="Deselect all">
-            <Square className="h-3.5 w-3.5 text-muted-foreground" />
-          </button>
-          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-mono">
-            {selectedCount}/{totalServices}
-          </Badge>
-        </div>
+    <>
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10">
+        <div className="flex items-center gap-2 bg-card/95 backdrop-blur-sm border border-border rounded-lg shadow-lg px-3 py-2">
+          {/* Mini step indicator */}
+          <div className="flex items-center gap-1 pr-2 border-r border-border">
+            <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center" title="Selection complete">
+              <Check className="h-3 w-3 text-white" />
+            </div>
+            <div className="w-4 h-0.5 bg-emerald-500" />
+            <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center" title="Current: Topology">
+              <span className="text-[10px] font-bold text-primary-foreground">2</span>
+            </div>
+            <div className="w-4 h-0.5 bg-muted-foreground/20" />
+            <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center" title="Creation">
+              <span className="text-[10px] font-bold text-muted-foreground">3</span>
+            </div>
+          </div>
 
-        {/* App name + Create */}
-        <div className="flex items-center gap-2">
-          <Input
-            value={appName}
-            onChange={(e) => setAppName(e.target.value)}
-            placeholder="Application name..."
-            className="h-7 w-48 text-xs"
-          />
-          <Button
-            size="sm"
-            className="h-7 text-xs gap-1.5"
-            disabled={!appName.trim() || selectedCount === 0 || creating}
-            onClick={handleCreateApp}
-          >
-            {creating ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Rocket className="h-3.5 w-3.5" />
-            )}
-            Create Application
-          </Button>
+          {/* Cancel button */}
+          <div className="pr-2 border-r border-border">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs gap-1 text-muted-foreground hover:text-destructive"
+              onClick={() => setCancelConfirmOpen(true)}
+            >
+              <X className="h-3.5 w-3.5" />
+              Cancel
+            </Button>
+          </div>
+
+          {/* Selection */}
+          <div className="flex items-center gap-1.5 pr-2 border-r border-border">
+            <button onClick={enableAll} className="p-1 rounded hover:bg-accent" title="Select all">
+              <CheckSquare className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+            <button onClick={disableAll} className="p-1 rounded hover:bg-accent" title="Deselect all">
+              <Square className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-mono">
+              {selectedCount}/{totalServices}
+            </Badge>
+          </div>
+
+          {/* Dependency creation mode toggle */}
+          <div className="pr-2 border-r border-border">
+            <DependencyModeToggle />
+          </div>
+
+          {/* Site selector */}
+          <div className="pr-2 border-r border-border">
+            <Select
+              value={selectedSiteId || ''}
+              onValueChange={(v) => setSelectedSiteId(v || null)}
+            >
+              <SelectTrigger className="h-7 w-36 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <MapPin className="h-3 w-3 text-muted-foreground" />
+                  <SelectValue placeholder="Select site..." />
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                {sites?.map((site) => (
+                  <SelectItem key={site.id} value={site.id}>
+                    <span className="flex items-center gap-1.5">
+                      <span>{site.name}</span>
+                      <span className="text-[10px] text-muted-foreground">({site.code})</span>
+                    </span>
+                  </SelectItem>
+                ))}
+                {(!sites || sites.length === 0) && (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">No sites available</div>
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* App name + Create */}
+          <div className="flex items-center gap-2">
+            <Input
+              value={appName}
+              onChange={(e) => setAppName(e.target.value)}
+              placeholder="Application name..."
+              className="h-7 w-40 text-xs"
+            />
+            <Button
+              size="sm"
+              className="h-7 text-xs gap-1.5"
+              disabled={!appName.trim() || selectedCount === 0 || !selectedSiteId || creating}
+              onClick={handleCreateApp}
+            >
+              {creating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Rocket className="h-3.5 w-3.5" />
+              )}
+              Create
+            </Button>
+          </div>
         </div>
       </div>
-    </div>
+      <CancelConfirmDialog />
+    </>
   );
 }

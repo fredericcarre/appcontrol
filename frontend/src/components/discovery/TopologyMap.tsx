@@ -24,6 +24,8 @@ import { DependencyEdge } from './DependencyEdge';
 import { UnresolvedEdge } from './UnresolvedEdge';
 import { COMPONENT_TYPE_ICONS, type ComponentType } from '@/lib/colors';
 import { useDiscoveryStore } from '@/stores/discovery';
+import { useAgents } from '@/api/reports';
+import type { AgentInfo } from './layout';
 
 const nodeTypes: NodeTypes = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -54,7 +56,32 @@ function TopologyMapInner() {
     highlightedServiceIndex,
     toggleServiceEnabled,
     setSelectedServiceIndex,
+    dependencyMode,
+    pendingDependency,
+    setPendingDependency,
+    addManualDependency,
+    setDependencyMode,
+    manualDependencies,
   } = useDiscoveryStore();
+
+  const { data: agents } = useAgents();
+
+  // Build agent info map for passing to layout
+  const agentInfoMap = useMemo(() => {
+    if (!agents) return undefined;
+    const map = new Map<string, AgentInfo>();
+    for (const agent of agents) {
+      map.set(agent.id, {
+        id: agent.id,
+        hostname: agent.hostname,
+        gateway_name: agent.gateway_name,
+        gateway_zone: agent.gateway_zone,
+        connected: agent.connected,
+        gateway_connected: agent.gateway_connected,
+      });
+    }
+    return map;
+  }, [agents]);
 
   const onToggle = useCallback((idx: number) => toggleServiceEnabled(idx), [toggleServiceEnabled]);
   const onSelect = useCallback((idx: number) => setSelectedServiceIndex(idx), [setSelectedServiceIndex]);
@@ -69,6 +96,8 @@ function TopologyMapInner() {
     highlightedServiceIndex,
     onToggle,
     onSelect,
+    agentInfoMap,
+    manualDependencies,
   });
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes);
@@ -97,19 +126,51 @@ function TopologyMapInner() {
     }
   }, [layoutNodes, layoutEdges, setNodes, setEdges, fitView]);
 
+  // Handle ESC key to exit dependency creation mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && dependencyMode === 'create') {
+        setPendingDependency(null);
+        setDependencyMode('view');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [dependencyMode, setPendingDependency, setDependencyMode]);
+
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
-      if (node.type === 'service') {
-        const idx = (node.data as { serviceIndex: number }).serviceIndex;
-        setSelectedServiceIndex(idx);
+      if (node.type !== 'service') return;
+
+      const idx = (node.data as { serviceIndex: number }).serviceIndex;
+
+      // Handle dependency creation mode
+      if (dependencyMode === 'create') {
+        if (!pendingDependency) {
+          // First click: set source
+          setPendingDependency({ fromIndex: idx });
+        } else if (pendingDependency.fromIndex !== idx) {
+          // Second click on different node: create dependency
+          addManualDependency(pendingDependency.fromIndex, idx);
+          setPendingDependency(null);
+        }
+        return;
       }
+
+      // Normal mode: select node
+      setSelectedServiceIndex(idx);
     },
-    [setSelectedServiceIndex]
+    [dependencyMode, pendingDependency, setPendingDependency, addManualDependency, setSelectedServiceIndex]
   );
 
   const onPaneClick = useCallback(() => {
+    if (dependencyMode === 'create') {
+      // Cancel pending dependency on pane click
+      setPendingDependency(null);
+      return;
+    }
     setSelectedServiceIndex(null);
-  }, [setSelectedServiceIndex]);
+  }, [dependencyMode, setPendingDependency, setSelectedServiceIndex]);
 
   const miniMapNodeColor = useMemo(
     () => (node: Node) => {
@@ -122,8 +183,10 @@ function TopologyMapInner() {
     []
   );
 
+  const isCreateMode = dependencyMode === 'create';
+
   return (
-    <div className="w-full h-full relative">
+    <div className={`w-full h-full relative ${isCreateMode ? 'cursor-crosshair' : ''}`}>
       {isLayouting && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/60 backdrop-blur-sm">
           <div className="flex items-center gap-3 bg-card p-4 rounded-lg shadow-lg border">

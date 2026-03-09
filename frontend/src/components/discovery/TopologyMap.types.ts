@@ -8,6 +8,10 @@ export interface HostGroupNodeData {
   hostname: string;
   agentId: string;
   serviceCount: number;
+  gatewayName?: string | null;
+  gatewayZone?: string | null;
+  gatewayConnected?: boolean;
+  agentConnected?: boolean;
   [key: string]: unknown;
 }
 

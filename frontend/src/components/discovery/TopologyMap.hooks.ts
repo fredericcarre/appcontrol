@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Node, Edge } from '@xyflow/react';
-import { computeElkLayout } from './layout';
+import { computeElkLayout, type AgentInfo, type ManualDependency } from './layout';
 import type { CorrelationResult } from '@/api/discovery';
 
 interface UseTopologyLayoutInput {
@@ -13,6 +13,8 @@ interface UseTopologyLayoutInput {
   highlightedServiceIndex: number | null;
   onToggle: (index: number) => void;
   onSelect: (index: number) => void;
+  agentInfoMap?: Map<string, AgentInfo>;
+  manualDependencies?: ManualDependency[];
 }
 
 interface UseTopologyLayoutOutput {
@@ -38,6 +40,8 @@ export function useTopologyLayout(input: UseTopologyLayoutInput): UseTopologyLay
     highlightedServiceIndex,
     onToggle,
     onSelect,
+    agentInfoMap,
+    manualDependencies,
   } = input;
 
   const runLayout = useCallback(async () => {
@@ -61,6 +65,8 @@ export function useTopologyLayout(input: UseTopologyLayoutInput): UseTopologyLay
         highlightedServiceIndex,
         onToggle,
         onSelect,
+        agentInfoMap,
+        manualDependencies,
       });
 
       // Only apply if this is still the latest layout request
@@ -75,7 +81,7 @@ export function useTopologyLayout(input: UseTopologyLayoutInput): UseTopologyLay
         setIsLayouting(false);
       }
     }
-  }, [correlationResult, enabledIndices, showUnresolved, showBatchJobs, getEffectiveName, getEffectiveType, highlightedServiceIndex, onToggle, onSelect]);
+  }, [correlationResult, enabledIndices, showUnresolved, showBatchJobs, getEffectiveName, getEffectiveType, highlightedServiceIndex, onToggle, onSelect, agentInfoMap, manualDependencies]);
 
   // Run layout on correlation result change or filter change
   useEffect(() => {

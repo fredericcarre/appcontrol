@@ -272,6 +272,7 @@ export function useCreateDraft() {
   return useMutation({
     mutationFn: async (params: {
       name: string;
+      site_id?: string;
       components: Array<{
         temp_id: string;
         name: string;

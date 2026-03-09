@@ -313,6 +313,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api-keys/:id", delete(api_keys::delete_api_key))
         // Agents
         .route("/agents", get(agents::list_agents))
+        .route("/agents/bulk-delete", post(agents::bulk_delete_agents))
         .route("/agents/:id", get(agents::get_agent))
         .route("/agents/:id/block", post(agents::block_agent))
         .route("/agents/:id/unblock", post(agents::unblock_agent))
