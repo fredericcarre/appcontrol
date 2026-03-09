@@ -243,7 +243,14 @@ impl ConnectionManager {
         msg_rx: &mut mpsc::UnboundedReceiver<AgentMessage>,
     ) -> anyhow::Result<()> {
         if let Some(ref connector) = self.tls_connector {
-            self.connect_tls(connector, gateway_url, msg_rx).await
+            if self.tls_insecure {
+                // mTLS with insecure server verification: present client cert but accept
+                // any server certificate (for self-signed gateway certs in containers)
+                self.connect_tls_mtls_insecure(gateway_url, msg_rx).await
+            } else {
+                // Normal mTLS: present client cert and verify server certificate
+                self.connect_tls(connector, gateway_url, msg_rx).await
+            }
         } else if self.tls_insecure && gateway_url.starts_with("wss://") {
             // Insecure TLS mode: connect with TLS but skip certificate verification
             self.connect_tls_insecure(gateway_url, msg_rx).await
@@ -279,6 +286,85 @@ impl ConnectionManager {
 
         tracing::info!(
             "mTLS handshake complete with gateway {}:{} — client certificate presented",
+            host,
+            port
+        );
+
+        // Upgrade to WebSocket over TLS
+        let ws_url = if gateway_url.starts_with("ws://") {
+            gateway_url.replace("ws://", "wss://")
+        } else {
+            gateway_url.to_string()
+        };
+        let request = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri(&ws_url)
+            .header("Host", host)
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header(
+                "Sec-WebSocket-Key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
+            .header("Sec-WebSocket-Version", "13")
+            .body(())
+            .map_err(|e| anyhow::anyhow!("Failed to build WS request: {}", e))?;
+
+        let (ws_stream, _) =
+            tokio_tungstenite::client_async(request, tokio_rustls::TlsStream::from(tls_stream))
+                .await?;
+        let (mut write, mut read) = ws_stream.split();
+
+        self.register_and_run(&mut write, &mut read, gateway_url, msg_rx)
+            .await
+    }
+
+    /// Connect with mTLS (client cert) but skip server certificate verification.
+    /// Use for self-signed gateway certificates when the agent has its own mTLS cert.
+    /// WARNING: This skips server verification and should only be used in dev/containers.
+    async fn connect_tls_mtls_insecure(
+        &self,
+        gateway_url: &str,
+        msg_rx: &mut mpsc::UnboundedReceiver<AgentMessage>,
+    ) -> anyhow::Result<()> {
+        use futures_util::StreamExt;
+
+        tracing::warn!(
+            "Connecting with mTLS (client cert) but INSECURE server verification — \
+             do not use in production with untrusted networks"
+        );
+
+        // Parse host from URL for SNI
+        let url = url::Url::parse(gateway_url)
+            .map_err(|e| anyhow::anyhow!("Invalid gateway URL: {}", e))?;
+        let host = url
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("No host in gateway URL"))?;
+        let port = url.port().unwrap_or(4443);
+
+        // Establish TCP connection
+        let tcp_stream = tokio::net::TcpStream::connect(format!("{}:{}", host, port)).await?;
+
+        // Build an insecure TLS connector that presents client cert but accepts any server cert
+        // Get cert/key paths from environment or default paths
+        let data_dir =
+            std::env::var("DATA_DIR").unwrap_or_else(|_| "/var/lib/appcontrol".to_string());
+        let tls_config = crate::config::TlsSection {
+            enabled: true,
+            cert_file: Some(format!("{}/tls/agent.crt", data_dir)),
+            key_file: Some(format!("{}/tls/agent.key", data_dir)),
+            ca_file: Some(format!("{}/tls/ca.crt", data_dir)),
+        };
+
+        let connector = crate::tls::build_tls_connector_insecure(&tls_config)
+            .map_err(|e| anyhow::anyhow!("Failed to build insecure mTLS connector: {}", e))?;
+
+        // Perform TLS handshake with mTLS (client cert) but no server verification
+        let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
+            .map_err(|e| anyhow::anyhow!("Invalid server name for TLS: {}", e))?;
+        let tls_stream = connector.connect(server_name, tcp_stream).await?;
+
+        tracing::info!(
+            "mTLS handshake complete (insecure server verification) with gateway {}:{} — client certificate presented",
             host,
             port
         );
