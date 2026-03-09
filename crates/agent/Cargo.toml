@@ -47,5 +47,6 @@ windows = { version = "0.58", features = [
     # ConPTY support for terminal access
     "Win32_System_Console",
     "Win32_System_Pipes",
+    "Win32_System_IO",
     "Win32_Storage_FileSystem",
 ] }

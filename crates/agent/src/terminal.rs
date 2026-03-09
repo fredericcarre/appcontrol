@@ -480,7 +480,7 @@ use appcontrol_common::AgentMessage;
 #[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 #[cfg(windows)]
-use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
+use windows::Win32::System::IO::{ReadFile, WriteFile};
 #[cfg(windows)]
 use windows::Win32::System::Console::{
     ClosePseudoConsole, CreatePseudoConsole, ResizePseudoConsole, COORD, HPCON,
@@ -496,15 +496,56 @@ use windows::Win32::System::Threading::{
     STARTUPINFOEXW,
 };
 
+/// Wrapper around Windows HANDLE to make it Send+Sync.
+/// Windows handles are kernel object identifiers and are safe to send between threads.
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+struct SendableHandle(HANDLE);
+
+#[cfg(windows)]
+unsafe impl Send for SendableHandle {}
+#[cfg(windows)]
+unsafe impl Sync for SendableHandle {}
+
+#[cfg(windows)]
+impl SendableHandle {
+    fn new(handle: HANDLE) -> Self {
+        Self(handle)
+    }
+    fn get(&self) -> HANDLE {
+        self.0
+    }
+}
+
+/// Wrapper around Windows HPCON to make it Send+Sync.
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+struct SendableHpcon(HPCON);
+
+#[cfg(windows)]
+unsafe impl Send for SendableHpcon {}
+#[cfg(windows)]
+unsafe impl Sync for SendableHpcon {}
+
+#[cfg(windows)]
+impl SendableHpcon {
+    fn new(hpc: HPCON) -> Self {
+        Self(hpc)
+    }
+    fn get(&self) -> HPCON {
+        self.0
+    }
+}
+
 /// A single terminal session on Windows.
 #[cfg(windows)]
 struct TerminalSession {
     /// ConPTY handle.
-    hpc: HPCON,
+    hpc: SendableHpcon,
     /// Process handle.
-    process_handle: HANDLE,
+    process_handle: SendableHandle,
     /// Input pipe write handle (we write to this).
-    input_write: HANDLE,
+    input_write: SendableHandle,
     /// Channel to send input data to the PTY writer task.
     input_tx: mpsc::UnboundedSender<Vec<u8>>,
     /// Last activity timestamp for idle timeout.
@@ -623,11 +664,11 @@ impl TerminalManager {
         // Create input channel
         let (input_tx, input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
-        // Store session
+        // Store session with sendable wrappers
         let session = TerminalSession {
-            hpc,
-            process_handle,
-            input_write,
+            hpc: SendableHpcon::new(hpc),
+            process_handle: SendableHandle::new(process_handle),
+            input_write: SendableHandle::new(input_write),
             input_tx,
             last_activity: std::time::Instant::now(),
         };
@@ -640,7 +681,7 @@ impl TerminalManager {
         // Spawn output reader task
         let sessions_clone = self.sessions.clone();
         let msg_tx = self.msg_tx.clone();
-        let output_read_handle = output_read;
+        let output_read_handle = SendableHandle::new(output_read);
 
         tokio::task::spawn_blocking(move || {
             Self::read_output_loop_blocking(request_id, output_read_handle, msg_tx, sessions_clone);
@@ -648,7 +689,7 @@ impl TerminalManager {
 
         // Spawn input writer task
         let sessions_clone2 = self.sessions.clone();
-        let input_write_handle = input_write;
+        let input_write_handle = SendableHandle::new(input_write);
 
         tokio::spawn(async move {
             Self::write_input_loop(request_id, input_write_handle, input_rx, sessions_clone2).await;
@@ -759,7 +800,7 @@ impl TerminalManager {
     /// and frontend when commands produce large amounts of output.
     fn read_output_loop_blocking(
         request_id: Uuid,
-        output_read: HANDLE,
+        output_read: SendableHandle,
         msg_tx: mpsc::UnboundedSender<AgentMessage>,
         sessions: Arc<Mutex<HashMap<Uuid, TerminalSession>>>,
     ) {
@@ -807,7 +848,7 @@ impl TerminalManager {
             }
 
             let result =
-                unsafe { ReadFile(output_read, Some(&mut buffer), Some(&mut bytes_read), None) };
+                unsafe { ReadFile(output_read.get(), Some(&mut buffer), Some(&mut bytes_read), None) };
 
             match result {
                 Ok(()) if bytes_read > 0 => {
@@ -843,7 +884,7 @@ impl TerminalManager {
 
         // Clean up output read handle
         unsafe {
-            let _ = CloseHandle(output_read);
+            let _ = CloseHandle(output_read.get());
         }
 
         // Remove session and notify
@@ -864,7 +905,7 @@ impl TerminalManager {
     /// Write input to ConPTY.
     async fn write_input_loop(
         request_id: Uuid,
-        input_write: HANDLE,
+        input_write: SendableHandle,
         mut input_rx: mpsc::UnboundedReceiver<Vec<u8>>,
         sessions: Arc<Mutex<HashMap<Uuid, TerminalSession>>>,
     ) {
@@ -885,7 +926,7 @@ impl TerminalManager {
                 let mut bytes_written: u32 = 0;
                 unsafe {
                     WriteFile(
-                        input_write_copy,
+                        input_write_copy.get(),
                         Some(&data_clone),
                         Some(&mut bytes_written),
                         None,
@@ -932,7 +973,7 @@ impl TerminalManager {
             };
 
             unsafe {
-                ResizePseudoConsole(session.hpc, size)
+                ResizePseudoConsole(session.hpc.get(), size)
                     .map_err(|e| format!("ResizePseudoConsole failed: {}", e))?;
             }
 
@@ -960,12 +1001,12 @@ impl TerminalManager {
 
             unsafe {
                 // Terminate the process
-                let _ = TerminateProcess(session.process_handle, 0);
+                let _ = TerminateProcess(session.process_handle.get(), 0);
 
                 // Close handles
-                ClosePseudoConsole(session.hpc);
-                let _ = CloseHandle(session.process_handle);
-                let _ = CloseHandle(session.input_write);
+                ClosePseudoConsole(session.hpc.get());
+                let _ = CloseHandle(session.process_handle.get());
+                let _ = CloseHandle(session.input_write.get());
             }
 
             Ok(())
