@@ -131,11 +131,12 @@ backend:
   reconnect_interval_secs: 5
 
 # TLS configuration (after PKI init and enrollment)
+# Use forward slashes - they work on Windows and avoid YAML escape issues
 # tls:
 #   enabled: true
-#   cert_file: "C:\\ProgramData\\AppControl\\config\\tls\\gateway.crt"
-#   key_file: "C:\\ProgramData\\AppControl\\config\\tls\\gateway.key"
-#   ca_file: "C:\\ProgramData\\AppControl\\config\\tls\\ca.crt"
+#   cert_file: "C:/ProgramData/AppControl/config/tls/gateway.crt"
+#   key_file: "C:/ProgramData/AppControl/config/tls/gateway.key"
+#   ca_file: "C:/ProgramData/AppControl/config/tls/ca.crt"
 "@ | Out-File -Encoding UTF8 "$env:ProgramData\AppControl\config\gateway.yaml"
 ```
 
@@ -243,7 +244,52 @@ curl http://localhost:4443/health
 
 ---
 
-## 10. Troubleshooting
+## 10. Important: Windows path handling
+
+### YAML paths
+
+In YAML configuration files, **always use forward slashes** (`/`) instead of
+backslashes (`\`). Backslashes are escape characters in YAML:
+
+```yaml
+# WRONG - \t is interpreted as tab, \a as bell character
+cert_file: "C:\ProgramData\AppControl\tls\agent.crt"
+
+# CORRECT - forward slashes work on Windows
+cert_file: "C:/ProgramData/AppControl/tls/agent.crt"
+```
+
+### Absolute vs relative paths
+
+Windows services start with `C:\Windows\System32` as the working directory,
+not the directory containing the executable. **Always use absolute paths** in
+configuration files:
+
+```yaml
+# WRONG - relative path won't work when running as a service
+cert_file: "./tls/agent.crt"
+
+# CORRECT - absolute path works regardless of working directory
+cert_file: "C:/ProgramData/AppControl/config/tls/agent.crt"
+```
+
+The enrollment command (`--enroll`) automatically generates absolute paths
+since v1.2.10.
+
+### Self-signed certificates
+
+If the gateway uses a self-signed certificate (common in dev/test), add
+`tls_insecure: true` under the `gateway` section (not `tls`):
+
+```yaml
+gateway:
+  url: "wss://gateway:4443/ws"
+  tls_insecure: true   # Accept self-signed gateway certificate
+```
+
+---
+
+## 11. Troubleshooting
 
 ### Service won't start
 
@@ -286,7 +332,7 @@ Get-NetFirewallRule | Where-Object { $_.LocalPort -eq 4443 }
 
 ---
 
-## 11. Directory structure (Windows)
+## 12. Directory structure (Windows)
 
 ```
 C:\Program Files\AppControl\

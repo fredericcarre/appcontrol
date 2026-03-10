@@ -306,6 +306,7 @@ gateway:
   failover_strategy: "ordered"  # "ordered" or "round-robin"
   primary_retry_secs: 300       # How often to try primary gateway
   reconnect_interval_secs: 10   # Reconnect delay
+  tls_insecure: false           # Set to true for self-signed gateway certs (dev only)
 
 # mTLS certificates
 tls:

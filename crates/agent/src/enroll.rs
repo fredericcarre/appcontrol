@@ -84,8 +84,14 @@ pub async fn enroll(gateway_url: &str, token: &str, config_dir: &str) -> anyhow:
         .unwrap_or("?");
 
     // Write certificates to disk
+    // Use absolute paths so the config works regardless of working directory
+    // (critical for Windows services which start in C:\Windows\System32)
     let dir = Path::new(config_dir);
     std::fs::create_dir_all(dir)?;
+    // Canonicalize after creating to get the absolute path
+    let dir = dir
+        .canonicalize()
+        .unwrap_or_else(|_| dir.to_path_buf());
 
     let tls_dir = dir.join("tls");
     std::fs::create_dir_all(&tls_dir)?;
@@ -156,7 +162,7 @@ data_dir: "{}"
         to_yaml_path(&cert_path),
         to_yaml_path(&key_path),
         to_yaml_path(&ca_path),
-        to_yaml_path(dir),
+        to_yaml_path(&dir),
     );
 
     let config_path = dir.join("agent.yaml");
