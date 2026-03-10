@@ -363,8 +363,8 @@ impl ConnectionManager {
             }
             None => {
                 // Fallback to DATA_DIR env var or default path
-                let data_dir = std::env::var("DATA_DIR")
-                    .unwrap_or_else(|_| "/var/lib/appcontrol".to_string());
+                let data_dir =
+                    std::env::var("DATA_DIR").unwrap_or_else(|_| "/var/lib/appcontrol".to_string());
                 tracing::debug!(
                     "No TLS config in agent.yaml, using DATA_DIR={} for cert paths",
                     data_dir

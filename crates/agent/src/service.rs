@@ -154,7 +154,10 @@ fn run_service(_arguments: Vec<OsString>) -> anyhow::Result<()> {
     }
 
     tracing::info!("AppControl Agent Windows Service starting...");
-    tracing::info!("Command line args: {:?}", std::env::args().collect::<Vec<_>>());
+    tracing::info!(
+        "Command line args: {:?}",
+        std::env::args().collect::<Vec<_>>()
+    );
 
     // Channel to receive stop events
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();

@@ -89,9 +89,7 @@ pub async fn enroll(gateway_url: &str, token: &str, config_dir: &str) -> anyhow:
     let dir = Path::new(config_dir);
     std::fs::create_dir_all(dir)?;
     // Canonicalize after creating to get the absolute path
-    let dir = dir
-        .canonicalize()
-        .unwrap_or_else(|_| dir.to_path_buf());
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
 
     let tls_dir = dir.join("tls");
     std::fs::create_dir_all(&tls_dir)?;
@@ -131,9 +129,7 @@ pub async fn enroll(gateway_url: &str, token: &str, config_dir: &str) -> anyhow:
     // IMPORTANT: Use forward slashes in paths for YAML compatibility.
     // Backslashes are escape characters in YAML (e.g., \t = tab, \n = newline).
     // Forward slashes work on both Windows and Unix.
-    let to_yaml_path = |p: &Path| -> String {
-        p.to_string_lossy().replace('\\', "/")
-    };
+    let to_yaml_path = |p: &Path| -> String { p.to_string_lossy().replace('\\', "/") };
 
     let config_content = format!(
         r#"# AppControl Agent Configuration

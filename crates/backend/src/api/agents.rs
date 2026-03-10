@@ -440,13 +440,12 @@ pub async fn delete_agent(
     }
 
     // Verify agent exists and belongs to user's organization
-    let agent: Option<(Uuid, String)> = sqlx::query_as(
-        "SELECT id, hostname FROM agents WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(agent_id)
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let agent: Option<(Uuid, String)> =
+        sqlx::query_as("SELECT id, hostname FROM agents WHERE id = $1 AND organization_id = $2")
+            .bind(agent_id)
+            .bind(user.organization_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     let (_, hostname) = agent.ok_or(ApiError::NotFound)?;
 
