@@ -78,9 +78,11 @@ function ScanPhase() {
   const triggerAll = useTriggerAllScans();
   const correlate = useCorrelate();
 
-  const agents: Agent[] = Array.isArray(agentsData)
-    ? agentsData
-    : (agentsData as unknown as { agents?: Agent[] })?.agents || [];
+  const agents: Agent[] = useMemo(() => {
+    return Array.isArray(agentsData)
+      ? agentsData
+      : (agentsData as unknown as { agents?: Agent[] })?.agents || [];
+  }, [agentsData]);
 
   const agentIdsWithReports = new Set(reports?.map((r) => r.agent_id) || []);
 

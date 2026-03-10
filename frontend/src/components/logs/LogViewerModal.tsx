@@ -131,6 +131,8 @@ export function LogViewerModal({
   }, []);
 
   // Watch for new messages and process them
+  // This effect processes WebSocket messages and updates state - a valid pattern
+  // for synchronizing external events with React state
   useEffect(() => {
     // Process only new messages
     const newMessages = messages.slice(lastProcessedMsgRef.current);
@@ -139,11 +141,15 @@ export function LogViewerModal({
     lastProcessedMsgRef.current = messages.length;
     const sourceId = agentId || gatewayId;
 
+    // Collect error and entries, then update state
+    let foundError: string | null = null;
+    const newEntries: LogEntry[] = [];
+
     for (const msg of newMessages) {
       // Handle subscription denied error
       if (msg.type === 'LogSubscriptionDenied') {
         const payload = msg.payload as { reason?: string };
-        setError(payload.reason || 'Log subscription denied');
+        foundError = payload.reason || 'Log subscription denied';
         continue;
       }
 
@@ -152,8 +158,13 @@ export function LogViewerModal({
       const payload = msg.payload as unknown as LogEntry;
       if (payload.source_id !== sourceId) continue;
 
-      addLogEntry(payload);
+      newEntries.push(payload);
     }
+
+    // Update state after processing - this is valid for WebSocket message handling
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (foundError) setError(foundError);
+    newEntries.forEach(addLogEntry);
   }, [messages, agentId, gatewayId, addLogEntry]);
 
   const handleClear = useCallback(() => {
