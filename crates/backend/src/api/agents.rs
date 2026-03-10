@@ -478,7 +478,13 @@ pub async fn delete_agent(
         .execute(&state.db)
         .await?;
 
-    // 4. Delete the agent
+    // 4. Delete certificate events for this agent
+    sqlx::query("DELETE FROM certificate_events WHERE agent_id = $1")
+        .bind(agent_id)
+        .execute(&state.db)
+        .await?;
+
+    // 5. Delete the agent
     sqlx::query("DELETE FROM agents WHERE id = $1")
         .bind(agent_id)
         .execute(&state.db)
