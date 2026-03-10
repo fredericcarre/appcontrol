@@ -89,8 +89,53 @@ EOF
     fi
 elif [ -f "${AGENT_DATA_DIR}/tls/agent.crt" ]; then
     echo "[AGENT] Already enrolled (certificate exists)"
+    # Ensure config exists with correct settings
+    if [ ! -f "${AGENT_CONFIG}" ]; then
+        ENROLLED_AGENT_ID=$(openssl x509 -in "${AGENT_DATA_DIR}/tls/agent.crt" -noout -subject 2>/dev/null | sed 's/.*CN = //' || hostname)
+        cat > "${AGENT_CONFIG}" <<EOF
+agent:
+  id: "${ENROLLED_AGENT_ID}"
+  mode: "active"
+
+gateway:
+  url: "wss://127.0.0.1:4443/ws"
+  reconnect_interval_secs: 10
+  tls_insecure: true
+
+tls:
+  enabled: true
+  cert_file: "${AGENT_DATA_DIR}/tls/agent.crt"
+  key_file: "${AGENT_DATA_DIR}/tls/agent.key"
+  ca_file: "${AGENT_DATA_DIR}/tls/ca.crt"
+
+labels:
+  provider: azure
+  role: vm-controller
+  zone: "${GATEWAY_ZONE}"
+
+data_dir: "${AGENT_DATA_DIR}"
+EOF
+    fi
 else
-    echo "[AGENT] No enrollment token, using insecure mode"
+    echo "[AGENT] No enrollment token, generating config for insecure mode"
+    HOSTNAME=$(hostname)
+    cat > "${AGENT_CONFIG}" <<EOF
+agent:
+  id: "${HOSTNAME}"
+  mode: "active"
+
+gateway:
+  url: "wss://127.0.0.1:4443/ws"
+  reconnect_interval_secs: 10
+  tls_insecure: true
+
+labels:
+  provider: azure
+  role: vm-controller
+  zone: "${GATEWAY_ZONE}"
+
+data_dir: "${AGENT_DATA_DIR}"
+EOF
 fi
 
 # Start the agent
