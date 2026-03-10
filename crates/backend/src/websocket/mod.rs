@@ -1050,8 +1050,15 @@ async fn process_agent_message(
                     );
                     state.ws_hub.register_agent_route(agent_id, gw_id);
 
-                    // Since the agent is now connected, trigger immediate health checks
-                    // to restore component states from UNREACHABLE
+                    // Send component config to agent first — without this, agent's scheduler
+                    // doesn't know what components to health-check. This fixes drift issues
+                    // where agent reconnects but doesn't receive its config.
+                    let state_clone = state.clone();
+                    tokio::spawn(async move {
+                        send_config_to_agent(&state_clone, agent_id).await;
+                    });
+
+                    // Then trigger immediate health checks to restore component states
                     send_run_checks_now(state, agent_id);
                 }
             }
