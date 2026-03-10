@@ -139,13 +139,13 @@ agent:
 gateway:
   url: "{}"
   reconnect_interval_secs: 10
+  tls_insecure: true
 
 tls:
   enabled: true
   cert_file: "{}"
   key_file: "{}"
   ca_file: "{}"
-  tls_insecure: true
 
 # Data directory for agent state (buffer DB)
 data_dir: "{}"
