@@ -21,6 +21,72 @@ pub struct ReportQuery {
     pub format: Option<String>, // json, csv
 }
 
+/// Query params for global audit endpoint
+#[derive(Debug, Deserialize)]
+pub struct GlobalAuditQuery {
+    pub app_id: Option<Uuid>,
+    pub user_id: Option<Uuid>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+/// Global audit log - returns all actions across the organization
+pub async fn global_audit(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Query(params): Query<GlobalAuditQuery>,
+) -> Result<Json<Vec<Value>>, ApiError> {
+    let limit = params.limit.unwrap_or(50).min(500);
+    let offset = params.offset.unwrap_or(0);
+
+    // Filter by organization via the user who performed the action
+    // action_log doesn't have organization_id, so we join through users
+    let logs = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, Uuid, serde_json::Value, chrono::DateTime<chrono::Utc>)>(
+        r#"
+        SELECT
+            al.id,
+            al.user_id,
+            COALESCE(u.email, 'system') as user_email,
+            al.action,
+            al.resource_type,
+            al.resource_id,
+            al.details,
+            al.created_at
+        FROM action_log al
+        LEFT JOIN users u ON u.id = al.user_id
+        WHERE u.organization_id = $1
+          AND ($2::uuid IS NULL OR al.resource_id = $2)
+          AND ($3::uuid IS NULL OR al.user_id = $3)
+        ORDER BY al.created_at DESC
+        LIMIT $4 OFFSET $5
+        "#,
+    )
+    .bind(user.organization_id)
+    .bind(params.app_id)
+    .bind(params.user_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.db)
+    .await?;
+
+    let data: Vec<Value> = logs
+        .iter()
+        .map(|(id, _uid, user_email, action, target_type, target_id, details, at)| {
+            json!({
+                "id": id,
+                "user_email": user_email,
+                "action": action,
+                "target_type": target_type,
+                "target_id": target_id,
+                "details": details,
+                "created_at": at
+            })
+        })
+        .collect();
+
+    Ok(Json(data))
+}
+
 pub async fn availability(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,

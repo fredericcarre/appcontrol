@@ -201,6 +201,8 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/apps/:app_id/reports/audit", get(reports::audit))
         .route("/apps/:app_id/reports/compliance", get(reports::compliance))
         .route("/apps/:app_id/reports/rto", get(reports::rto))
+        // Global audit log (org-level, all apps)
+        .route("/reports/audit", get(reports::global_audit))
         .route("/apps/:app_id/activity", get(reports::activity_feed))
         .route("/apps/:app_id/health-summary", get(reports::health_summary))
         // Orchestration (scheduler)
