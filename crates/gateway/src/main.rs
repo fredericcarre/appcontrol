@@ -1039,6 +1039,10 @@ fn build_server_tls_config(tls: &TlsSection) -> anyhow::Result<Arc<rustls::Serve
 
 /// Generate a self-signed certificate for development/testing.
 /// This ensures TLS is always used, even without configured certificates.
+///
+/// Client certificates are accepted but not verified (any cert is accepted).
+/// This allows agents enrolled via /enroll to connect even though the gateway
+/// doesn't have the backend's CA to verify the agent certs.
 fn generate_dev_tls_config() -> anyhow::Result<Arc<rustls::ServerConfig>> {
     use rcgen::{generate_simple_self_signed, CertifiedKey};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -1062,18 +1066,83 @@ fn generate_dev_tls_config() -> anyhow::Result<Arc<rustls::ServerConfig>> {
     let key_der = PrivateKeyDer::try_from(key_pair.serialize_der())
         .map_err(|e| anyhow::anyhow!("Failed to serialize private key: {:?}", e))?;
 
-    // Build server config without client cert verification (dev mode)
+    // Build server config that ACCEPTS any client certificate (for dev/containers).
+    // In production, configure proper TLS with CA to verify client certs.
+    // We use a custom verifier that accepts any certificate without verification.
     let config = rustls::ServerConfig::builder()
-        .with_no_client_auth()
+        .with_client_cert_verifier(Arc::new(DevClientCertVerifier))
         .with_single_cert(vec![cert_der], key_der)
         .map_err(|e| anyhow::anyhow!("Failed to build dev TLS config: {}", e))?;
 
     tracing::info!(
         "Self-signed TLS certificate generated for development — \
-         enrollment and agent connections will be encrypted"
+         enrollment and agent connections will be encrypted. \
+         Client certificates will be accepted without verification (INSECURE)."
     );
 
     Ok(Arc::new(config))
+}
+
+/// Development client certificate verifier that accepts any client certificate.
+/// This allows agents enrolled via /enroll to connect even when the gateway
+/// doesn't have the backend's CA. INSECURE: only for dev/containers.
+#[derive(Debug)]
+struct DevClientCertVerifier;
+
+impl rustls::server::danger::ClientCertVerifier for DevClientCertVerifier {
+    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
+        // No root hints - we accept any CA
+        &[]
+    }
+
+    fn verify_client_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
+        // Accept any certificate without verification
+        Ok(rustls::server::danger::ClientCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::ED25519,
+        ]
+    }
+
+    fn client_auth_mandatory(&self) -> bool {
+        // Client certificates are optional for /enroll but required for /ws
+        // The /ws handler checks for the certificate presence
+        false
+    }
 }
 
 /// Parse and route a message from the backend.
