@@ -15,4 +15,11 @@ ignore = [
     # Tracked for upgrade; risk is limited to malicious DB server responses
     # which is not applicable in our controlled PostgreSQL environment.
     "RUSTSEC-2024-0363",
+
+    # quinn-proto 0.11.13 — QUIC protocol vulnerability
+    # Pulled in transitively by reqwest via its HTTP/3 support.
+    # We don't use HTTP/3 (QUIC) in our internal communications;
+    # all traffic is HTTP/1.1 or HTTP/2 over TLS.
+    # Will be resolved when reqwest updates to a fixed quinn version.
+    "RUSTSEC-2026-0037",
 ]
