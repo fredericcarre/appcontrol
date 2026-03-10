@@ -134,6 +134,28 @@ fn service_main(arguments: Vec<OsString>) {
 
 #[cfg(windows)]
 fn run_service(_arguments: Vec<OsString>) -> anyhow::Result<()> {
+    // Initialize logging EARLY so we can see errors during startup
+    // Write to a log file since Windows services have no console
+    let log_path = std::env::var("APPCONTROL_LOG_FILE")
+        .unwrap_or_else(|_| "C:\\appcontrol\\agent.log".to_string());
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .ok();
+
+    if let Some(file) = log_file {
+        use tracing_subscriber::fmt::writer::MakeWriterExt;
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(file.with_max_level(tracing::Level::DEBUG))
+            .with_ansi(false)
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    }
+
+    tracing::info!("AppControl Agent Windows Service starting...");
+    tracing::info!("Command line args: {:?}", std::env::args().collect::<Vec<_>>());
+
     // Channel to receive stop events
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
 
@@ -165,6 +187,8 @@ fn run_service(_arguments: Vec<OsString>) -> anyhow::Result<()> {
         .skip_while(|a| a != "--config")
         .nth(1)
         .unwrap_or_else(|| crate::config::default_config_path());
+
+    tracing::info!("Using config path: {}", config_path);
 
     // Build the tokio runtime inside the service
     let runtime = tokio::runtime::Runtime::new()?;
