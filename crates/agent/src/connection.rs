@@ -88,6 +88,8 @@ pub struct ConnectionManager {
     terminal_manager: Arc<TerminalManager>,
     /// Skip TLS certificate verification (for self-signed certs in dev/containers).
     tls_insecure: bool,
+    /// TLS configuration (cert/key/ca paths) for mTLS insecure mode.
+    tls_config: Option<TlsSection>,
 }
 
 impl ConnectionManager {
@@ -149,6 +151,7 @@ impl ConnectionManager {
             advisory_mode,
             terminal_manager,
             tls_insecure,
+            tls_config: tls_config.cloned(),
         }
     }
 
@@ -162,7 +165,7 @@ impl ConnectionManager {
         scheduler: Arc<CheckScheduler>,
         msg_tx: mpsc::UnboundedSender<AgentMessage>,
     ) -> Self {
-        Self::new(
+        let mut mgr = Self::new(
             vec![gateway_url],
             "ordered".to_string(),
             300,
@@ -174,7 +177,9 @@ impl ConnectionManager {
             None,
             false,
             false, // tls_insecure
-        )
+        );
+        mgr.tls_config = None;
+        mgr
     }
 
     /// Get the next sequence_id for reliable message delivery.
@@ -344,15 +349,33 @@ impl ConnectionManager {
         // Establish TCP connection
         let tcp_stream = tokio::net::TcpStream::connect(format!("{}:{}", host, port)).await?;
 
-        // Build an insecure TLS connector that presents client cert but accepts any server cert
-        // Get cert/key paths from environment or default paths
-        let data_dir =
-            std::env::var("DATA_DIR").unwrap_or_else(|_| "/var/lib/appcontrol".to_string());
-        let tls_config = crate::config::TlsSection {
-            enabled: true,
-            cert_file: Some(format!("{}/tls/agent.crt", data_dir)),
-            key_file: Some(format!("{}/tls/agent.key", data_dir)),
-            ca_file: Some(format!("{}/tls/ca.crt", data_dir)),
+        // Build an insecure TLS connector that presents client cert but accepts any server cert.
+        // Use the TLS config from agent.yaml if available, otherwise fall back to DATA_DIR paths.
+        let tls_config = match &self.tls_config {
+            Some(cfg) => {
+                tracing::debug!(
+                    "Using TLS config from agent.yaml: cert={:?}, key={:?}, ca={:?}",
+                    cfg.cert_file,
+                    cfg.key_file,
+                    cfg.ca_file
+                );
+                cfg.clone()
+            }
+            None => {
+                // Fallback to DATA_DIR env var or default path
+                let data_dir = std::env::var("DATA_DIR")
+                    .unwrap_or_else(|_| "/var/lib/appcontrol".to_string());
+                tracing::debug!(
+                    "No TLS config in agent.yaml, using DATA_DIR={} for cert paths",
+                    data_dir
+                );
+                crate::config::TlsSection {
+                    enabled: true,
+                    cert_file: Some(format!("{}/tls/agent.crt", data_dir)),
+                    key_file: Some(format!("{}/tls/agent.key", data_dir)),
+                    ca_file: Some(format!("{}/tls/ca.crt", data_dir)),
+                }
+            }
         };
 
         let connector = crate::tls::build_tls_connector_insecure(&tls_config)
