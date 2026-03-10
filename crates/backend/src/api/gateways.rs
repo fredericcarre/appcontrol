@@ -39,6 +39,7 @@ pub struct GatewayRow {
     pub is_active: bool,
     pub is_primary: bool,
     pub priority: i32,
+    pub version: Option<String>,
     pub last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -55,6 +56,7 @@ pub struct GatewayListItem {
     pub priority: i32,
     pub agent_count: i64,
     pub connected: bool,
+    pub version: Option<String>,
     pub last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -82,6 +84,7 @@ pub async fn list_gateways(
             bool,
             bool,
             i32,
+            Option<String>,
             Option<chrono::DateTime<chrono::Utc>>,
             i64,
         ),
@@ -93,6 +96,7 @@ pub async fn list_gateways(
                g.is_active,
                COALESCE(g.is_primary, false) as is_primary,
                COALESCE(g.priority, 0) as priority,
+               g.version,
                g.last_heartbeat_at,
                COALESCE((SELECT COUNT(*) FROM agents a WHERE a.gateway_id = g.id), 0) as agent_count
            FROM gateways g
@@ -111,7 +115,7 @@ pub async fn list_gateways(
     let mut zones_map: std::collections::HashMap<String, Vec<GatewayListItem>> =
         std::collections::HashMap::new();
 
-    for (id, name, zone, is_active, is_primary, priority, last_heartbeat, agent_count) in gateways {
+    for (id, name, zone, is_active, is_primary, priority, version, last_heartbeat, agent_count) in gateways {
         // Connection status is determined by actual WebSocket connection in the hub
         let connected = is_active && connected_ids.contains(&id);
 
@@ -142,6 +146,7 @@ pub async fn list_gateways(
             priority,
             agent_count,
             connected,
+            version,
             last_heartbeat_at: last_heartbeat,
         };
 
@@ -200,7 +205,7 @@ pub async fn get_gateway(
                   certificate_fingerprint, is_active,
                   COALESCE(is_primary, false) as is_primary,
                   COALESCE(priority, 0) as priority,
-                  last_heartbeat_at, created_at
+                  version, last_heartbeat_at, created_at
            FROM gateways
            WHERE id = $1 AND organization_id = $2"#,
     )

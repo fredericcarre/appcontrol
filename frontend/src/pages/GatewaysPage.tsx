@@ -224,6 +224,11 @@ function GatewayItem({
         </Button>
         <Network className="h-4 w-4 text-muted-foreground shrink-0" />
         <span className="font-medium">{gateway.name}</span>
+        {gateway.version && (
+          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+            v{gateway.version}
+          </span>
+        )}
         <div className="flex items-center gap-2 ml-auto">
           {getRoleBadge(gateway, isSingleGateway)}
           {getConnectionBadge(gateway)}

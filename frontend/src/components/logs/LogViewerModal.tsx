@@ -45,6 +45,7 @@ export function LogViewerModal({
 }: LogViewerModalProps) {
   const [minLevel, setMinLevel] = useState<LogLevel>('DEBUG');
   const [entries, setEntries] = useState<LogEntry[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const isSubscribedRef = useRef(false);
   const lastProcessedMsgRef = useRef(0);
 
@@ -139,6 +140,13 @@ export function LogViewerModal({
     const sourceId = agentId || gatewayId;
 
     for (const msg of newMessages) {
+      // Handle subscription denied error
+      if (msg.type === 'LogSubscriptionDenied') {
+        const payload = msg.payload as { reason?: string };
+        setError(payload.reason || 'Log subscription denied');
+        continue;
+      }
+
       if (msg.type !== 'LogEntry') continue;
 
       const payload = msg.payload as unknown as LogEntry;
@@ -205,7 +213,14 @@ export function LogViewerModal({
           </div>
         </DialogHeader>
         <div className="flex-1 min-h-0 relative">
-          <LogViewer entries={entries} onClear={handleClear} />
+          {error ? (
+            <div className="flex flex-col items-center justify-center h-full text-center p-6">
+              <div className="text-red-500 text-lg font-medium mb-2">Access Denied</div>
+              <div className="text-muted-foreground">{error}</div>
+            </div>
+          ) : (
+            <LogViewer entries={entries} onClear={handleClear} />
+          )}
         </div>
       </DialogContent>
     </Dialog>

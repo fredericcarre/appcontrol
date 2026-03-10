@@ -11,6 +11,7 @@ export interface Gateway {
   priority: number;
   agent_count: number;
   connected: boolean;
+  version: string | null;
   last_heartbeat_at: string | null;
 }
 

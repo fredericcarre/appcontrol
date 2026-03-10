@@ -121,7 +121,7 @@ export function LogViewer({ entries, onClear, maxEntries = 1000 }: LogViewerProp
           variant="ghost"
           size="sm"
           onClick={onClear}
-          className="text-gray-400 hover:text-gray-100"
+          className="text-gray-400 hover:text-gray-100 focus-visible:ring-2 focus-visible:ring-gray-500 focus-visible:text-gray-100"
         >
           <Trash2 className="h-4 w-4 mr-1" />
           Clear

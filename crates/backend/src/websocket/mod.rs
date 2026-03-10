@@ -352,6 +352,18 @@ async fn handle_client_socket(
                                     user_id = %user_id,
                                     "Log subscription DENIED — admin only"
                                 );
+                                // Send error back to client
+                                let error_event = serde_json::json!({
+                                    "type": "LogSubscriptionDenied",
+                                    "payload": {
+                                        "agent_id": agent_id,
+                                        "gateway_id": gateway_id,
+                                        "reason": "Log viewing requires administrator privileges"
+                                    }
+                                });
+                                if let Ok(json) = serde_json::to_string(&error_event) {
+                                    state_clone.ws_hub.send_to_connection(conn_id, json);
+                                }
                                 continue;
                             }
 
