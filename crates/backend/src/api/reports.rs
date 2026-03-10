@@ -41,7 +41,19 @@ pub async fn global_audit(
 
     // Filter by organization via the user who performed the action
     // action_log doesn't have organization_id, so we join through users
-    let logs = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, Uuid, serde_json::Value, chrono::DateTime<chrono::Utc>)>(
+    let logs = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            String,
+            String,
+            Uuid,
+            serde_json::Value,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         r#"
         SELECT
             al.id,
@@ -71,17 +83,19 @@ pub async fn global_audit(
 
     let data: Vec<Value> = logs
         .iter()
-        .map(|(id, _uid, user_email, action, target_type, target_id, details, at)| {
-            json!({
-                "id": id,
-                "user_email": user_email,
-                "action": action,
-                "target_type": target_type,
-                "target_id": target_id,
-                "details": details,
-                "created_at": at
-            })
-        })
+        .map(
+            |(id, _uid, user_email, action, target_type, target_id, details, at)| {
+                json!({
+                    "id": id,
+                    "user_email": user_email,
+                    "action": action,
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "details": details,
+                    "created_at": at
+                })
+            },
+        )
         .collect();
 
     Ok(Json(data))

@@ -273,7 +273,13 @@ pub async fn create_component(
 
     // Push config to affected agent so it starts health checks immediately
     let agent_ids = resolved_agent_id.map(|id| vec![id]);
-    crate::websocket::push_config_to_affected_agents(&state, Some(app_id), None, agent_ids.as_deref()).await;
+    crate::websocket::push_config_to_affected_agents(
+        &state,
+        Some(app_id),
+        None,
+        agent_ids.as_deref(),
+    )
+    .await;
 
     Ok((StatusCode::CREATED, Json(json!(component))))
 }
@@ -371,7 +377,13 @@ pub async fn update_component(
 
     // Push config to affected agent so it picks up the changes
     let agent_ids = resolved_agent_id.map(|id| vec![id]);
-    crate::websocket::push_config_to_affected_agents(&state, Some(current), None, agent_ids.as_deref()).await;
+    crate::websocket::push_config_to_affected_agents(
+        &state,
+        Some(current),
+        None,
+        agent_ids.as_deref(),
+    )
+    .await;
 
     Ok(Json(json!(component)))
 }
@@ -411,7 +423,13 @@ pub async fn delete_component(
 
     // Push config to affected agent so it stops checking this component
     let agent_ids = agent_id.map(|id| vec![id]);
-    crate::websocket::push_config_to_affected_agents(&state, Some(app_id), None, agent_ids.as_deref()).await;
+    crate::websocket::push_config_to_affected_agents(
+        &state,
+        Some(app_id),
+        None,
+        agent_ids.as_deref(),
+    )
+    .await;
 
     Ok(StatusCode::NO_CONTENT)
 }

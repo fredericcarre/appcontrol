@@ -115,7 +115,9 @@ pub async fn list_gateways(
     let mut zones_map: std::collections::HashMap<String, Vec<GatewayListItem>> =
         std::collections::HashMap::new();
 
-    for (id, name, zone, is_active, is_primary, priority, version, last_heartbeat, agent_count) in gateways {
+    for (id, name, zone, is_active, is_primary, priority, version, last_heartbeat, agent_count) in
+        gateways
+    {
         // Connection status is determined by actual WebSocket connection in the hub
         let connected = is_active && connected_ids.contains(&id);
 
