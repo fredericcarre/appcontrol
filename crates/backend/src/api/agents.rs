@@ -422,6 +422,85 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
 }
 
 // ===========================================================================
+// Delete single agent
+// ===========================================================================
+
+/// DELETE /api/v1/agents/:id — Delete a single agent
+///
+/// This permanently deletes an agent. Components associated with this agent
+/// will have their agent_id set to NULL and will transition to UNREACHABLE.
+/// Only admin users can perform this operation.
+pub async fn delete_agent(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(agent_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Verify agent exists and belongs to user's organization
+    let agent: Option<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, hostname FROM agents WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(agent_id)
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (_, hostname) = agent.ok_or(ApiError::NotFound)?;
+
+    // Log before execute
+    crate::middleware::audit::log_action(
+        &state.db,
+        user.user_id,
+        "delete_agent",
+        "agent",
+        agent_id,
+        json!({
+            "hostname": hostname,
+        }),
+    )
+    .await
+    .ok();
+
+    // 1. Transition components to UNREACHABLE
+    let components_affected = transition_agent_components_to_unreachable(&state, agent_id).await;
+
+    // 2. Clear agent_id from components (don't delete components)
+    sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = $1")
+        .bind(agent_id)
+        .execute(&state.db)
+        .await?;
+
+    // 3. Delete discovery reports for this agent
+    sqlx::query("DELETE FROM discovery_reports WHERE agent_id = $1")
+        .bind(agent_id)
+        .execute(&state.db)
+        .await?;
+
+    // 4. Delete the agent
+    sqlx::query("DELETE FROM agents WHERE id = $1")
+        .bind(agent_id)
+        .execute(&state.db)
+        .await?;
+
+    tracing::info!(
+        agent_id = %agent_id,
+        hostname = %hostname,
+        components_affected = components_affected,
+        "Agent deleted"
+    );
+
+    Ok(Json(json!({
+        "status": "deleted",
+        "agent_id": agent_id,
+        "hostname": hostname,
+        "components_affected": components_affected,
+    })))
+}
+
+// ===========================================================================
 // Bulk delete stale agents
 // ===========================================================================
 

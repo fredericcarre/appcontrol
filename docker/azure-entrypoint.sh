@@ -62,6 +62,10 @@ AGENT_DATA_DIR="/var/lib/appcontrol"
 mkdir -p "${AGENT_DATA_DIR}"
 chown -R appcontrol:appcontrol "${AGENT_DATA_DIR}"
 
+# ── Export env vars required by supervisord (must exist even if empty) ────────
+# Supervisord's %(ENV_xxx)s requires all referenced vars to be defined
+export AGENT_ENROLLMENT_TOKEN="${AGENT_ENROLLMENT_TOKEN:-}"
+
 echo ""
 echo "[INFO] Gateway ID:   ${GATEWAY_ID:-azure-gateway}"
 echo "[INFO] Backend URL:  ${BACKEND_URL:-ws://localhost:3000/ws/gateway}"
