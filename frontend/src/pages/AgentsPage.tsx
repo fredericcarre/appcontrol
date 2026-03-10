@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useAgents, useBlockAgent, useUnblockAgent, type Agent } from '@/api/agents';
+import { useAgents, useBlockAgent, useUnblockAgent, useDeleteAgent, type Agent } from '@/api/agents';
 import { useGateways } from '@/api/gateways';
 import { useAuthStore } from '@/stores/auth';
 import { Card, CardContent } from '@/components/ui/card';
@@ -52,6 +52,7 @@ import {
   ChevronRight,
   Terminal,
   FileText,
+  Trash2,
 } from 'lucide-react';
 import { TerminalModal } from '@/components/terminal/TerminalModal';
 import { LogViewerModal } from '@/components/logs/LogViewerModal';
@@ -70,15 +71,17 @@ export function AgentsPage() {
   const { data: gateways } = useGateways();
   const blockAgent = useBlockAgent();
   const unblockAgent = useUnblockAgent();
+  const deleteAgent = useDeleteAgent();
 
   // Search and filters
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'connected' | 'disconnected'>('all');
   const [gatewayFilter, setGatewayFilter] = useState<string>('all');
 
-  // Block/unblock confirmation dialogs
+  // Block/unblock/delete confirmation dialogs
   const [blockConfirm, setBlockConfirm] = useState<Agent | null>(null);
   const [unblockConfirm, setUnblockConfirm] = useState<Agent | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<Agent | null>(null);
 
   // Expanded agent for metrics view
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
@@ -127,6 +130,12 @@ export function AgentsPage() {
     if (!unblockConfirm) return;
     await unblockAgent.mutateAsync(unblockConfirm.id);
     setUnblockConfirm(null);
+  };
+
+  const handleDelete = async () => {
+    if (!deleteConfirm) return;
+    await deleteAgent.mutateAsync(deleteConfirm.id);
+    setDeleteConfirm(null);
   };
 
   if (isLoading) {
@@ -354,6 +363,14 @@ export function AgentsPage() {
                                 Unblock Agent
                               </DropdownMenuItem>
                             )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={(e) => { e.stopPropagation(); setDeleteConfirm(agent); }}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete Agent
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -419,6 +436,31 @@ export function AgentsPage() {
             </Button>
             <Button onClick={(e) => { e.stopPropagation(); handleUnblock(); }} disabled={unblockAgent.isPending} className="bg-green-600 hover:bg-green-700">
               {unblockAgent.isPending ? 'Unblocking...' : 'Unblock Agent'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Agent Confirmation Dialog */}
+      <Dialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-destructive" />
+              Delete Agent
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to permanently delete the agent{' '}
+              <span className="font-medium">{deleteConfirm?.hostname}</span>? This action cannot be
+              undone. The agent will need to re-enroll if you want to add it back.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirm(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleteAgent.isPending}>
+              {deleteAgent.isPending ? 'Deleting...' : 'Delete Agent'}
             </Button>
           </DialogFooter>
         </DialogContent>
