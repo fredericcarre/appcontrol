@@ -271,6 +271,10 @@ pub async fn create_component(
     .fetch_one(&state.db)
     .await?;
 
+    // Push config to affected agent so it starts health checks immediately
+    let agent_ids = resolved_agent_id.map(|id| vec![id]);
+    crate::websocket::push_config_to_affected_agents(&state, Some(app_id), None, agent_ids.as_deref()).await;
+
     Ok((StatusCode::CREATED, Json(json!(component))))
 }
 
@@ -365,6 +369,10 @@ pub async fn update_component(
     .await?
     .ok_or_not_found()?;
 
+    // Push config to affected agent so it picks up the changes
+    let agent_ids = resolved_agent_id.map(|id| vec![id]);
+    crate::websocket::push_config_to_affected_agents(&state, Some(current), None, agent_ids.as_deref()).await;
+
     Ok(Json(json!(component)))
 }
 
@@ -373,8 +381,9 @@ pub async fn delete_component(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+    // Get app_id and agent_id before deleting
+    let (app_id, agent_id): (Uuid, Option<Uuid>) =
+        sqlx::query_as("SELECT application_id, agent_id FROM components WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
             .await?
@@ -399,6 +408,10 @@ pub async fn delete_component(
         .bind(id)
         .execute(&state.db)
         .await?;
+
+    // Push config to affected agent so it stops checking this component
+    let agent_ids = agent_id.map(|id| vec![id]);
+    crate::websocket::push_config_to_affected_agents(&state, Some(app_id), None, agent_ids.as_deref()).await;
 
     Ok(StatusCode::NO_CONTENT)
 }
