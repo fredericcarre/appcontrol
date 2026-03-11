@@ -648,13 +648,30 @@ async fn process_gateway_message(
             // Auto-register/update gateway in database (upsert)
             // This ensures the gateway appears in the UI even if not pre-created
             // Note: We only update last_heartbeat_at, NOT is_active (admin controls that)
+            //
+            // For new gateways: auto-assign is_primary and priority based on zone:
+            // - First gateway in a zone becomes primary (is_primary=true, priority=0)
+            // - Subsequent gateways are standby (is_primary=false, priority=N)
             if let Err(e) = sqlx::query(
-                r#"INSERT INTO gateways (id, organization_id, name, zone, is_active, last_heartbeat_at)
-                   VALUES ($1, $2, $3, $4, true, now())
-                   ON CONFLICT (id) DO UPDATE SET
-                       name = EXCLUDED.name,
-                       zone = EXCLUDED.zone,
-                       last_heartbeat_at = now()"#,
+                r#"
+                WITH zone_info AS (
+                    SELECT
+                        COALESCE(MAX(priority), -1) + 1 AS next_priority,
+                        COUNT(*) = 0 AS is_first_in_zone
+                    FROM gateways
+                    WHERE organization_id = $2 AND zone = $4 AND id != $1
+                )
+                INSERT INTO gateways (id, organization_id, name, zone, is_active, is_primary, priority, last_heartbeat_at)
+                SELECT $1, $2, $3, $4, true,
+                       zi.is_first_in_zone,
+                       zi.next_priority,
+                       now()
+                FROM zone_info zi
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    zone = EXCLUDED.zone,
+                    last_heartbeat_at = now()
+                "#,
             )
             .bind(gateway_id)
             .bind(org_id)
