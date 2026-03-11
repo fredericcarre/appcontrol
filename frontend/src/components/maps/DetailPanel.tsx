@@ -1,4 +1,5 @@
-import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch, ArrowRight, Wrench } from 'lucide-react';
+import { useState } from 'react';
+import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch, ArrowRight, Wrench, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -6,7 +7,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { STATE_COLORS, ComponentState } from '@/lib/colors';
 import { Component } from '@/api/apps';
-import { useStateTransitions, useCommandExecutions } from '@/api/components';
+import { useStateTransitions, useCommandExecutions, CommandExecution } from '@/api/components';
 
 interface DetailPanelProps {
   component: Component;
@@ -165,22 +166,7 @@ export function DetailPanel({
                   Recent Executions
                 </h4>
                 {executions.map((exec) => (
-                  <div key={exec.id} className="border rounded-md p-2 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono">{exec.command_type}</span>
-                      <Badge
-                        variant={exec.status === 'completed' ? 'running' : exec.status === 'failed' ? 'failed' : 'outline'}
-                        className="text-[10px] h-4"
-                      >
-                        {exec.status}
-                      </Badge>
-                    </div>
-                    <div className="text-[10px] text-muted-foreground">
-                      {timeAgo(exec.dispatched_at)}
-                      {exec.duration_ms != null && ` · ${exec.duration_ms}ms`}
-                      {exec.exit_code != null && ` · exit ${exec.exit_code}`}
-                    </div>
-                  </div>
+                  <ExecutionRow key={exec.id} execution={exec} />
                 ))}
               </div>
             )}
@@ -250,6 +236,85 @@ function InfoRow({ icon: Icon, label, value }: { icon: React.ComponentType<{ cla
         <span className="text-muted-foreground">{label}:</span>{' '}
         <span className="font-medium break-all">{value}</span>
       </div>
+    </div>
+  );
+}
+
+function ExecutionRow({ execution }: { execution: CommandExecution }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const hasOutput = execution.stdout || execution.stderr;
+
+  const handleCopy = () => {
+    const text = [
+      execution.stdout && `=== STDOUT ===\n${execution.stdout}`,
+      execution.stderr && `=== STDERR ===\n${execution.stderr}`,
+    ].filter(Boolean).join('\n\n');
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="border rounded-md overflow-hidden">
+      <div
+        className={`p-2 space-y-1 ${hasOutput ? 'cursor-pointer hover:bg-accent/50' : ''}`}
+        onClick={() => hasOutput && setExpanded(!expanded)}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1">
+            {hasOutput && (
+              expanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />
+            )}
+            <span className="text-xs font-mono">{execution.command_type}</span>
+          </div>
+          <Badge
+            variant={execution.status === 'completed' ? 'running' : execution.status === 'failed' ? 'failed' : 'outline'}
+            className="text-[10px] h-4"
+          >
+            {execution.status}
+          </Badge>
+        </div>
+        <div className="text-[10px] text-muted-foreground">
+          {timeAgo(execution.dispatched_at)}
+          {execution.duration_ms != null && ` · ${execution.duration_ms}ms`}
+          {execution.exit_code != null && ` · exit ${execution.exit_code}`}
+        </div>
+      </div>
+
+      {expanded && hasOutput && (
+        <div className="border-t bg-slate-950 dark:bg-slate-900">
+          <div className="flex items-center justify-between px-2 py-1 border-b border-slate-700">
+            <span className="text-[10px] text-slate-400">Output</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5"
+              onClick={(e) => { e.stopPropagation(); handleCopy(); }}
+            >
+              {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-slate-400" />}
+            </Button>
+          </div>
+          <div className="max-h-48 overflow-auto">
+            {execution.stdout && (
+              <div className="p-2">
+                <div className="text-[10px] text-emerald-400 mb-1">stdout:</div>
+                <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-all">
+                  {execution.stdout}
+                </pre>
+              </div>
+            )}
+            {execution.stderr && (
+              <div className="p-2 border-t border-slate-700">
+                <div className="text-[10px] text-red-400 mb-1">stderr:</div>
+                <pre className="text-xs text-red-300 font-mono whitespace-pre-wrap break-all">
+                  {execution.stderr}
+                </pre>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -109,8 +109,8 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         '--tw-ring-color': isHighlighted ? data.highlightColor : undefined,
       }}
     >
-      {/* Target at bottom: receives edges from dependents below */}
-      <Handle type="target" position={Position.Bottom} className="!bg-gray-400 !w-2 !h-2" />
+      {/* Target at top: receives edges from dependents above */}
+      <Handle type="target" position={Position.Top} className="!bg-gray-400 !w-2 !h-2" />
 
       {/* Branch indicator badge */}
       {isHighlighted && !isImpactHighlight && (
@@ -242,8 +242,8 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         )}
       </div>
 
-      {/* Source at top: sends edges to dependencies above */}
-      <Handle type="source" position={Position.Top} className="!bg-gray-400 !w-2 !h-2" />
+      {/* Source at bottom: sends edges to dependencies below */}
+      <Handle type="source" position={Position.Bottom} className="!bg-gray-400 !w-2 !h-2" />
     </div>
   );
 }
