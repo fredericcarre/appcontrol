@@ -301,6 +301,7 @@ export function JsonEditor({
       <style>{`
         .json-line {
           min-height: 1.5em;
+          color: #e2e8f0; /* Default text color for punctuation */
         }
         .json-error-line {
           background-color: rgba(239, 68, 68, 0.2);
