@@ -16,9 +16,55 @@ struct DueSchedule {
     organization_id: Uuid,
     name: String,
     agent_ids: Vec<Uuid>,
-    #[allow(dead_code)]
     frequency: String,
     retention_days: i32,
+}
+
+/// Calculate next run time based on frequency.
+fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
+    use chrono::{Datelike, Duration, Timelike, Utc};
+
+    let now = Utc::now();
+
+    match frequency {
+        "hourly" => {
+            now.with_minute(0)
+                .and_then(|t| t.with_second(0))
+                .map(|t| t + Duration::hours(1))
+                .unwrap_or(now + Duration::hours(1))
+        }
+        "daily" => {
+            now.with_hour(0)
+                .and_then(|t| t.with_minute(0))
+                .and_then(|t| t.with_second(0))
+                .map(|t| t + Duration::days(1))
+                .unwrap_or(now + Duration::days(1))
+        }
+        "weekly" => {
+            let days_until_sunday = (7 - now.weekday().num_days_from_sunday()) % 7;
+            let days_until_sunday = if days_until_sunday == 0 { 7 } else { days_until_sunday };
+            now.with_hour(0)
+                .and_then(|t| t.with_minute(0))
+                .and_then(|t| t.with_second(0))
+                .map(|t| t + Duration::days(days_until_sunday as i64))
+                .unwrap_or(now + Duration::days(7))
+        }
+        "monthly" => {
+            let next_month = if now.month() == 12 {
+                now.with_year(now.year() + 1)
+                    .and_then(|t| t.with_month(1))
+            } else {
+                now.with_month(now.month() + 1)
+            };
+            next_month
+                .and_then(|t| t.with_day(1))
+                .and_then(|t| t.with_hour(0))
+                .and_then(|t| t.with_minute(0))
+                .and_then(|t| t.with_second(0))
+                .unwrap_or(now + Duration::days(30))
+        }
+        _ => now + Duration::days(1),
+    }
 }
 
 /// Start the snapshot scheduler background task.
@@ -169,15 +215,17 @@ async fn execute_single_schedule(
     .await?;
 
     // Update the schedule: set last_run_at and calculate next_run_at
+    let next_run = calculate_next_run(&schedule.frequency);
     sqlx::query(
         r#"
         UPDATE snapshot_schedules
         SET last_run_at = now(),
-            next_run_at = calculate_next_run(frequency, now())
+            next_run_at = $2
         WHERE id = $1
         "#,
     )
     .bind(schedule.id)
+    .bind(next_run)
     .execute(&state.db)
     .await?;
 

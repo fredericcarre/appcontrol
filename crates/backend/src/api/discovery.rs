@@ -1478,9 +1478,11 @@ pub async fn create_schedule(
     .await?;
 
     let schedule_id = Uuid::new_v4();
+    let next_run = calculate_next_run(&body.frequency);
+
     sqlx::query(
-        "INSERT INTO snapshot_schedules (id, organization_id, name, agent_ids, frequency, retention_days, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        "INSERT INTO snapshot_schedules (id, organization_id, name, agent_ids, frequency, retention_days, next_run_at, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(schedule_id)
     .bind(user.organization_id)
@@ -1488,16 +1490,10 @@ pub async fn create_schedule(
     .bind(&body.agent_ids)
     .bind(&body.frequency)
     .bind(body.retention_days)
+    .bind(next_run)
     .bind(user.user_id)
     .execute(&state.db)
     .await?;
-
-    // Fetch the created schedule to return with calculated next_run_at
-    let (next_run,): (Option<chrono::DateTime<chrono::Utc>>,) =
-        sqlx::query_as("SELECT next_run_at FROM snapshot_schedules WHERE id = $1")
-            .bind(schedule_id)
-            .fetch_one(&state.db)
-            .await?;
 
     Ok(Json(json!({
         "id": schedule_id,
@@ -1579,17 +1575,26 @@ pub async fn update_schedule(
             .await?;
     }
     if let Some(ref frequency) = body.frequency {
-        sqlx::query("UPDATE snapshot_schedules SET frequency = $2, next_run_at = calculate_next_run($2, NOW()) WHERE id = $1")
+        let next_run = calculate_next_run(frequency);
+        sqlx::query("UPDATE snapshot_schedules SET frequency = $2, next_run_at = $3 WHERE id = $1")
             .bind(schedule_id)
             .bind(frequency)
+            .bind(next_run)
             .execute(&state.db)
             .await?;
     }
     if let Some(enabled) = body.enabled {
         if enabled {
-            sqlx::query("UPDATE snapshot_schedules SET enabled = $2, next_run_at = calculate_next_run(frequency, NOW()) WHERE id = $1")
+            // Get current frequency to calculate next_run
+            let freq: String = sqlx::query_scalar("SELECT frequency FROM snapshot_schedules WHERE id = $1")
+                .bind(schedule_id)
+                .fetch_one(&state.db)
+                .await?;
+            let next_run = calculate_next_run(&freq);
+            sqlx::query("UPDATE snapshot_schedules SET enabled = $2, next_run_at = $3 WHERE id = $1")
                 .bind(schedule_id)
                 .bind(enabled)
+                .bind(next_run)
                 .execute(&state.db)
                 .await?;
         } else {
@@ -1609,6 +1614,57 @@ pub async fn update_schedule(
     }
 
     Ok(Json(json!({ "updated": true, "schedule_id": schedule_id })))
+}
+
+/// Calculate next run time based on frequency.
+fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
+    use chrono::{Datelike, Duration, Timelike, Utc};
+
+    let now = Utc::now();
+
+    match frequency {
+        "hourly" => {
+            // Next hour
+            now.with_minute(0)
+                .and_then(|t| t.with_second(0))
+                .map(|t| t + Duration::hours(1))
+                .unwrap_or(now + Duration::hours(1))
+        }
+        "daily" => {
+            // Next day at midnight
+            now.with_hour(0)
+                .and_then(|t| t.with_minute(0))
+                .and_then(|t| t.with_second(0))
+                .map(|t| t + Duration::days(1))
+                .unwrap_or(now + Duration::days(1))
+        }
+        "weekly" => {
+            // Next week (Sunday) at midnight
+            let days_until_sunday = (7 - now.weekday().num_days_from_sunday()) % 7;
+            let days_until_sunday = if days_until_sunday == 0 { 7 } else { days_until_sunday };
+            now.with_hour(0)
+                .and_then(|t| t.with_minute(0))
+                .and_then(|t| t.with_second(0))
+                .map(|t| t + Duration::days(days_until_sunday as i64))
+                .unwrap_or(now + Duration::days(7))
+        }
+        "monthly" => {
+            // First day of next month at midnight
+            let next_month = if now.month() == 12 {
+                now.with_year(now.year() + 1)
+                    .and_then(|t| t.with_month(1))
+            } else {
+                now.with_month(now.month() + 1)
+            };
+            next_month
+                .and_then(|t| t.with_day(1))
+                .and_then(|t| t.with_hour(0))
+                .and_then(|t| t.with_minute(0))
+                .and_then(|t| t.with_second(0))
+                .unwrap_or(now + Duration::days(30))
+        }
+        _ => now + Duration::days(1), // Default to daily
+    }
 }
 
 /// Delete a snapshot schedule.
