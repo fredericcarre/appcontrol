@@ -9,7 +9,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { BarChart3, FileText, Shield, CheckCircle, AlertTriangle, TrendingUp, Download, Clock, Activity } from 'lucide-react';
+import { BarChart3, FileText, Shield, CheckCircle, TrendingUp, Download, Clock, Activity } from 'lucide-react';
 import client from '@/api/client';
 import { useQuery } from '@tanstack/react-query';
 
