@@ -85,6 +85,8 @@ interface AppMapProps {
   // Edge highlight (when clicking an edge)
   edgeHighlight?: EdgeHighlight | null;
   onEdgeClick?: (edgeId: string, sourceId: string, targetId: string) => void;
+  // Allow dragging nodes in view mode for visualization
+  allowDrag?: boolean;
 }
 
 /**
@@ -225,6 +227,8 @@ function buildNodes(
   impactPreview?: ImpactPreview | null,
   edgeHighlight?: EdgeHighlight | null,
   infraHighlight?: Set<string> | null,
+  forceAutoLayout?: boolean,
+  allowDrag?: boolean,
 ): Node[] {
   const groupColorMap: Record<string, string> = {};
   if (groups) {
@@ -236,7 +240,8 @@ function buildNodes(
   const autoPositions = computeDagrePositions(components, dependencies);
 
   return components.map((c) => {
-    const hasPosition = c.position_x != null && c.position_y != null;
+    // Use saved position only if not forcing auto-layout
+    const hasPosition = !forceAutoLayout && c.position_x != null && c.position_y != null;
     const pos = hasPosition
       ? { x: c.position_x!, y: c.position_y! }
       : autoPositions.get(c.id) || { x: 50, y: 50 };
@@ -278,7 +283,7 @@ function buildNodes(
       id: c.id,
       type: 'component',
       position: pos,
-      draggable: editable,
+      draggable: editable || allowDrag,
       data: {
         label: c.name,
         displayName: c.display_name,
@@ -406,12 +411,16 @@ function AppMapInner({
   branchHighlight,
   edgeHighlight,
   onEdgeClick,
+  allowDrag = true, // Default to allowing drag in view mode
 }: AppMapProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, fitView } = useReactFlow();
 
   // Infrastructure highlight (when hovering over agents/gateways in summary)
   const [infraHighlight, setInfraHighlight] = useState<Set<string> | null>(null);
+
+  // Force auto-layout flag (ignores saved positions when true)
+  const [forceAutoLayout, setForceAutoLayout] = useState(false);
 
   const handleHighlightComponents = useCallback((componentIds: string[]) => {
     setInfraHighlight(new Set(componentIds));
@@ -420,6 +429,14 @@ function AppMapInner({
   const handleClearHighlight = useCallback(() => {
     setInfraHighlight(null);
   }, []);
+
+  const handleAutoLayout = useCallback(() => {
+    setForceAutoLayout(true);
+    // Fit view after layout is applied
+    requestAnimationFrame(() => {
+      fitView({ padding: 0.2 });
+    });
+  }, [fitView]);
 
   const initialNodes = useMemo(
     () => buildNodes(
@@ -438,8 +455,10 @@ function AppMapInner({
       impactPreview,
       edgeHighlight,
       infraHighlight,
+      forceAutoLayout,
+      allowDrag,
     ),
-    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight],
+    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag],
   );
 
   const initialEdges = useMemo(
@@ -586,7 +605,7 @@ function AppMapInner({
         fitViewOptions={{ padding: 0.2 }}
         minZoom={0.1}
         maxZoom={2}
-        nodesDraggable={editable}
+        nodesDraggable={editable || allowDrag}
         nodesConnectable={editable}
         elementsSelectable={true}
         deleteKeyCode={editable ? ['Delete', 'Backspace'] : null}
@@ -613,6 +632,7 @@ function AppMapInner({
               onToggleActivity={onToggleActivity}
               activityOpen={activityOpen}
               canOperate={canOperate}
+              onAutoLayout={handleAutoLayout}
             />
             <InfrastructureSummary
               components={components}

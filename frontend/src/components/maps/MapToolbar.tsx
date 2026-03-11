@@ -3,7 +3,7 @@ import { useReactFlow } from '@xyflow/react';
 import { Button } from '@/components/ui/button';
 import {
   ZoomIn, ZoomOut, Maximize, Play, Square,
-  GitBranch, Share2, Activity,
+  GitBranch, Share2, Activity, LayoutGrid,
 } from 'lucide-react';
 
 interface MapToolbarProps {
@@ -14,9 +14,10 @@ interface MapToolbarProps {
   onToggleActivity?: () => void;
   activityOpen?: boolean;
   canOperate?: boolean;
+  onAutoLayout?: () => void;
 }
 
-export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShare, onToggleActivity, activityOpen, canOperate }: MapToolbarProps) {
+export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShare, onToggleActivity, activityOpen, canOperate, onAutoLayout }: MapToolbarProps) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
 
   const handleFit = useCallback(() => fitView({ padding: 0.2 }), [fitView]);
@@ -32,6 +33,9 @@ export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShar
         </Button>
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleFit}>
           <Maximize className="h-4 w-4" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onAutoLayout} title="Auto Layout">
+          <LayoutGrid className="h-4 w-4" />
         </Button>
       </div>
 
