@@ -192,7 +192,8 @@ function computeDagrePositions(
   }
 
   for (const d of dependencies) {
-    g.setEdge(d.to_component_id, d.from_component_id);
+    // from depends on to → from is placed above to (dependents at top, bases at bottom)
+    g.setEdge(d.from_component_id, d.to_component_id);
   }
 
   Dagre.layout(g);
