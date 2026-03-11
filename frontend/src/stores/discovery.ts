@@ -1,6 +1,22 @@
 import { create } from 'zustand';
-import type { CorrelationResult } from '@/api/discovery';
+import type { CorrelationResult, TechnologyHint } from '@/api/discovery';
 import type { DiscoveryPhase, ServiceEdits } from '@/components/discovery/TopologyMap.types';
+
+// Service triage status
+export type TriageStatus = 'pending' | 'include' | 'ignore';
+
+// AI suggestion for unidentified services
+export interface AISuggestion {
+  technology: TechnologyHint;
+  suggestedName: string;
+  description: string;
+  commands: {
+    check?: string;
+    start?: string;
+    stop?: string;
+  };
+  confidence: 'high' | 'medium' | 'low';
+}
 
 // Enhanced agent info with gateway details
 export interface EnhancedAgentInfo {
@@ -78,6 +94,21 @@ interface DiscoveryState {
   setSelectedServiceIndex: (index: number | null) => void;
   highlightedServiceIndex: number | null;
   setHighlightedServiceIndex: (index: number | null) => void;
+
+  // Triage state (new phase between scan and topology)
+  serviceTriageStatus: Map<number, TriageStatus>;
+  setServiceTriageStatus: (index: number, status: TriageStatus) => void;
+  bulkSetTriageStatus: (indices: number[], status: TriageStatus) => void;
+  aiSuggestions: Map<number, AISuggestion>;
+  setAISuggestion: (index: number, suggestion: AISuggestion) => void;
+  clearAISuggestions: () => void;
+  getTriageCounts: () => { included: number; ignored: number; pending: number; total: number };
+  getTriageProgress: () => number;
+
+  // Identified vs unidentified services
+  isServiceIdentified: (index: number) => boolean;
+  getUnidentifiedServices: () => number[];
+  getIdentifiedServices: () => number[];
 
   // Filters
   showUnresolved: boolean;
@@ -222,6 +253,76 @@ export const useDiscoveryStore = create<DiscoveryState>()((set, get) => ({
   highlightedServiceIndex: null,
   setHighlightedServiceIndex: (index) => set({ highlightedServiceIndex: index }),
 
+  // Triage state
+  serviceTriageStatus: new Map(),
+  setServiceTriageStatus: (index, status) =>
+    set((s) => {
+      const map = new Map(s.serviceTriageStatus);
+      map.set(index, status);
+      // Also update enabledServiceIndices based on triage
+      const enabled = new Set(s.enabledServiceIndices);
+      if (status === 'include') enabled.add(index);
+      else enabled.delete(index);
+      return { serviceTriageStatus: map, enabledServiceIndices: enabled };
+    }),
+  bulkSetTriageStatus: (indices, status) =>
+    set((s) => {
+      const map = new Map(s.serviceTriageStatus);
+      const enabled = new Set(s.enabledServiceIndices);
+      indices.forEach((i) => {
+        map.set(i, status);
+        if (status === 'include') enabled.add(i);
+        else enabled.delete(i);
+      });
+      return { serviceTriageStatus: map, enabledServiceIndices: enabled };
+    }),
+  aiSuggestions: new Map(),
+  setAISuggestion: (index, suggestion) =>
+    set((s) => {
+      const map = new Map(s.aiSuggestions);
+      map.set(index, suggestion);
+      return { aiSuggestions: map };
+    }),
+  clearAISuggestions: () => set({ aiSuggestions: new Map() }),
+  getTriageCounts: () => {
+    const s = get();
+    const total = s.correlationResult?.services.length || 0;
+    let included = 0;
+    let ignored = 0;
+    s.serviceTriageStatus.forEach((status) => {
+      if (status === 'include') included++;
+      else if (status === 'ignore') ignored++;
+    });
+    return { included, ignored, pending: total - included - ignored, total };
+  },
+  getTriageProgress: () => {
+    const { included, ignored, total } = get().getTriageCounts();
+    return total > 0 ? Math.round(((included + ignored) / total) * 100) : 0;
+  },
+
+  // Service identification helpers
+  isServiceIdentified: (index) => {
+    const s = get();
+    const service = s.correlationResult?.services[index];
+    return !!service?.technology_hint;
+  },
+  getUnidentifiedServices: () => {
+    const s = get();
+    const result: number[] = [];
+    s.correlationResult?.services.forEach((svc, i) => {
+      if (!svc.technology_hint) result.push(i);
+    });
+    return result;
+  },
+  getIdentifiedServices: () => {
+    const s = get();
+    const result: number[] = [];
+    s.correlationResult?.services.forEach((svc, i) => {
+      if (svc.technology_hint) result.push(i);
+    });
+    return result;
+  },
+
   showUnresolved: true,
   toggleShowUnresolved: () => set((s) => ({ showUnresolved: !s.showUnresolved })),
   showBatchJobs: true,
@@ -251,6 +352,8 @@ export const useDiscoveryStore = create<DiscoveryState>()((set, get) => ({
       enabledServiceIndices: new Set(),
       selectedServiceIndex: null,
       highlightedServiceIndex: null,
+      serviceTriageStatus: new Map(),
+      aiSuggestions: new Map(),
       showUnresolved: true,
       showBatchJobs: true,
       searchQuery: '',

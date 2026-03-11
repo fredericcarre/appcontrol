@@ -69,3 +69,86 @@ export const TECHNOLOGY_COLORS: Record<string, string> = {
   ssh: '#263238',
   default: '#94a3b8',
 };
+
+// Technology icons mapping (icon name from tech_patterns.rs → lucide icon + color)
+// These are used by discovery to display recognized technologies
+export const TECHNOLOGY_ICONS: Record<string, { icon: string; color: string; label: string }> = {
+  // Databases
+  oracle: { icon: 'Database', color: '#F80000', label: 'Oracle' },
+  sqlserver: { icon: 'Database', color: '#CC2927', label: 'SQL Server' },
+  db2: { icon: 'Database', color: '#054ADA', label: 'IBM DB2' },
+  sybase: { icon: 'Database', color: '#003545', label: 'SAP ASE' },
+  mysql: { icon: 'Database', color: '#4479A1', label: 'MySQL' },
+  postgresql: { icon: 'Database', color: '#336791', label: 'PostgreSQL' },
+  mongodb: { icon: 'Database', color: '#47A248', label: 'MongoDB' },
+  redis: { icon: 'Zap', color: '#DC382D', label: 'Redis' },
+  elastic: { icon: 'Search', color: '#FEC514', label: 'ElasticSearch' },
+  elasticsearch: { icon: 'Search', color: '#FEC514', label: 'ElasticSearch' },
+
+  // Middleware - IBM
+  ibmmq: { icon: 'Layers', color: '#054ADA', label: 'IBM MQ' },
+  websphere: { icon: 'Server', color: '#054ADA', label: 'WebSphere' },
+  liberty: { icon: 'Server', color: '#054ADA', label: 'Liberty' },
+
+  // Middleware - TIBCO
+  tibco: { icon: 'Layers', color: '#E31837', label: 'TIBCO' },
+  tibcoems: { icon: 'Layers', color: '#E31837', label: 'TIBCO EMS' },
+  tibcobw: { icon: 'Workflow', color: '#E31837', label: 'TIBCO BW' },
+
+  // Middleware - Oracle
+  weblogic: { icon: 'Server', color: '#F80000', label: 'WebLogic' },
+  tuxedo: { icon: 'Layers', color: '#F80000', label: 'Tuxedo' },
+
+  // Message Queues
+  rabbitmq: { icon: 'Layers', color: '#FF6600', label: 'RabbitMQ' },
+  kafka: { icon: 'Layers', color: '#231F20', label: 'Kafka' },
+  activemq: { icon: 'Layers', color: '#D5382F', label: 'ActiveMQ' },
+
+  // Schedulers
+  controlm: { icon: 'Calendar', color: '#E31837', label: 'Control-M' },
+  autosys: { icon: 'Calendar', color: '#005B85', label: 'AutoSys' },
+  dollaruniverse: { icon: 'Calendar', color: '#1E88E5', label: 'Dollar Universe' },
+  tws: { icon: 'Calendar', color: '#054ADA', label: 'IBM TWS' },
+
+  // File Transfer
+  connectdirect: { icon: 'ArrowLeftRight', color: '#054ADA', label: 'Connect:Direct' },
+  axway: { icon: 'ArrowLeftRight', color: '#7B1FA2', label: 'Axway CFT' },
+
+  // Security
+  cyberark: { icon: 'Shield', color: '#0070AD', label: 'CyberArk' },
+
+  // Web Servers
+  nginx: { icon: 'Globe', color: '#009639', label: 'Nginx' },
+  apache: { icon: 'Globe', color: '#D22128', label: 'Apache' },
+  iis: { icon: 'Globe', color: '#0078D4', label: 'IIS' },
+  haproxy: { icon: 'Network', color: '#106DA9', label: 'HAProxy' },
+  f5: { icon: 'Network', color: '#E4002B', label: 'F5 BIG-IP' },
+
+  // App Servers
+  tomcat: { icon: 'Server', color: '#F8DC75', label: 'Tomcat' },
+  jboss: { icon: 'Server', color: '#CC0000', label: 'JBoss' },
+  wildfly: { icon: 'Server', color: '#CC0000', label: 'WildFly' },
+
+  // Languages/Runtimes
+  nodejs: { icon: 'Server', color: '#339933', label: 'Node.js' },
+  dotnet: { icon: 'Server', color: '#512BD4', label: '.NET' },
+
+  // XComponent
+  xcomponent: { icon: 'Puzzle', color: '#6366F1', label: 'XComponent' },
+
+  // Infrastructure
+  docker: { icon: 'Container', color: '#2496ED', label: 'Docker' },
+  zookeeper: { icon: 'Folder', color: '#C73A63', label: 'ZooKeeper' },
+};
+
+// Layer colors for grouping in discovery
+export const LAYER_COLORS: Record<string, string> = {
+  'Database': '#1565C0',
+  'Middleware': '#6A1B9A',
+  'Application': '#2E7D32',
+  'Access Points': '#E65100',
+  'Scheduler': '#4E342E',
+  'File Transfer': '#795548',
+  'Security': '#0070AD',
+  'Infrastructure': '#37474F',
+};

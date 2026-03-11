@@ -25,6 +25,8 @@ mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
+mod tech_patterns;
+
 use chrono::Utc;
 use std::collections::HashMap;
 use sysinfo::System;
@@ -370,6 +372,10 @@ fn scan_processes(
                 None
             };
 
+            // Identify technology from process name, cmdline, and ports
+            let technology_hint =
+                tech_patterns::identify_technology(&name, &cmdline, &listening_ports);
+
             Some(DiscoveredProcess {
                 pid: pid_u32,
                 name,
@@ -385,6 +391,7 @@ fn scan_processes(
                 log_files,
                 command_suggestion,
                 matched_service,
+                technology_hint,
             })
         })
         .collect()

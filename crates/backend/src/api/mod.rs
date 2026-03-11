@@ -483,6 +483,20 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             put(discovery::update_draft_dependencies),
         )
         .route("/discovery/drafts/:id/apply", post(discovery::apply_draft))
+        // Scheduled snapshots
+        .route(
+            "/discovery/schedules",
+            get(discovery::list_schedules).post(discovery::create_schedule),
+        )
+        .route(
+            "/discovery/schedules/:id",
+            patch(discovery::update_schedule).delete(discovery::delete_schedule),
+        )
+        .route("/discovery/snapshots", get(discovery::list_snapshots))
+        .route(
+            "/discovery/snapshots/compare",
+            post(discovery::compare_snapshots),
+        )
         // Air-gap agent update
         .route(
             "/admin/agent-binaries",

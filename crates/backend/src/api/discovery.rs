@@ -23,7 +23,7 @@
 //! - POST /api/v1/discovery/drafts/:id/apply    — apply draft → create real app
 
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     response::Json,
 };
 use serde::Deserialize;
@@ -352,6 +352,20 @@ pub async fn correlate(
                 .cloned()
                 .unwrap_or(json!([]));
             let matched_service = process_data.and_then(|p| p.get("matched_service")).cloned();
+            let technology_hint = process_data
+                .and_then(|p| p.get("technology_hint"))
+                .cloned();
+
+            // Use technology_hint for display name and component type if available
+            let (display_name, component_type) = if let Some(ref tech) = technology_hint {
+                let tech_name = tech.get("display_name").and_then(|n| n.as_str()).unwrap_or(proc_name);
+                let tech_layer = tech.get("layer").and_then(|l| l.as_str()).unwrap_or("");
+                let comp_type = layer_to_component_type(tech_layer)
+                    .unwrap_or_else(|| guess_component_type(proc_name, &port_list));
+                (format!("{}@{}", tech_name, hostname), comp_type)
+            } else {
+                (format!("{}@{}", proc_name, hostname), guess_component_type(proc_name, &port_list))
+            };
 
             services.push(json!({
                 "agent_id": agent_id,
@@ -359,12 +373,13 @@ pub async fn correlate(
                 "process_name": proc_name,
                 "ports": port_list,
                 "port_details": ports,
-                "suggested_name": format!("{}@{}", proc_name, hostname),
-                "component_type": guess_component_type(proc_name, &port_list),
+                "suggested_name": display_name,
+                "component_type": component_type,
                 "command_suggestion": command_suggestion,
                 "config_files": config_files,
                 "log_files": log_files,
                 "matched_service": matched_service,
+                "technology_hint": technology_hint,
             }));
 
             // Index by all reachable addresses
@@ -571,6 +586,21 @@ fn find_service_index(services: &[Value], agent_id: &Uuid, proc_name: &str) -> O
 }
 
 /// Heuristic: guess component type from process name and ports.
+/// Convert technology layer to component type.
+fn layer_to_component_type(layer: &str) -> Option<&'static str> {
+    match layer {
+        "Database" => Some("database"),
+        "Middleware" => Some("middleware"),
+        "Application" => Some("appserver"),
+        "Access Points" => Some("webfront"),
+        "Scheduler" => Some("batch"),
+        "File Transfer" => Some("service"),
+        "Security" => Some("service"),
+        "Infrastructure" => Some("service"),
+        _ => None,
+    }
+}
+
 fn guess_component_type(process_name: &str, ports: &[u16]) -> &'static str {
     let name = process_name.to_lowercase();
 
@@ -1325,5 +1355,484 @@ pub async fn apply_draft(
         "mode": "advisory",
         "components_created": draft_comps.len(),
         "dependencies_created": dep_count,
+    })))
+}
+
+// ===========================================================================
+// Snapshot Schedules — automated discovery snapshots for comparison
+// ===========================================================================
+
+/// List snapshot schedules for the organization.
+pub async fn list_schedules(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Vec<Uuid>,
+            String,
+            Option<String>,
+            bool,
+            i32,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        "SELECT id, name, agent_ids, frequency, cron_expression, enabled,
+                retention_days, last_run_at, next_run_at, created_at
+         FROM snapshot_schedules
+         WHERE organization_id = $1
+         ORDER BY created_at DESC",
+    )
+    .bind(user.organization_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let schedules: Vec<Value> = rows
+        .iter()
+        .map(
+            |(
+                id,
+                name,
+                agent_ids,
+                frequency,
+                cron_expr,
+                enabled,
+                retention_days,
+                last_run,
+                next_run,
+                created_at,
+            )| {
+                json!({
+                    "id": id,
+                    "name": name,
+                    "agent_ids": agent_ids,
+                    "frequency": frequency,
+                    "cron_expression": cron_expr,
+                    "enabled": enabled,
+                    "retention_days": retention_days,
+                    "last_run_at": last_run,
+                    "next_run_at": next_run,
+                    "created_at": created_at,
+                })
+            },
+        )
+        .collect();
+
+    Ok(Json(json!({ "schedules": schedules })))
+}
+
+/// Create a new snapshot schedule.
+#[derive(Debug, Deserialize)]
+pub struct CreateScheduleRequest {
+    pub name: String,
+    pub agent_ids: Vec<Uuid>,
+    pub frequency: String,
+    #[serde(default = "default_retention")]
+    pub retention_days: i32,
+}
+
+fn default_retention() -> i32 {
+    30
+}
+
+pub async fn create_schedule(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<CreateScheduleRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    if body.agent_ids.is_empty() {
+        return Err(ApiError::Validation(
+            "At least one agent_id is required".to_string(),
+        ));
+    }
+
+    let valid_frequencies = ["hourly", "daily", "weekly", "monthly"];
+    if !valid_frequencies.contains(&body.frequency.as_str()) {
+        return Err(ApiError::Validation(format!(
+            "Invalid frequency. Must be one of: {:?}",
+            valid_frequencies
+        )));
+    }
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "discovery_create_schedule",
+        "snapshot_schedule",
+        Uuid::nil(),
+        json!({ "name": &body.name, "frequency": &body.frequency, "agents": body.agent_ids.len() }),
+    )
+    .await?;
+
+    let schedule_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO snapshot_schedules (id, organization_id, name, agent_ids, frequency, retention_days, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(schedule_id)
+    .bind(user.organization_id)
+    .bind(&body.name)
+    .bind(&body.agent_ids)
+    .bind(&body.frequency)
+    .bind(body.retention_days)
+    .bind(user.user_id)
+    .execute(&state.db)
+    .await?;
+
+    // Fetch the created schedule to return with calculated next_run_at
+    let (next_run,): (Option<chrono::DateTime<chrono::Utc>>,) =
+        sqlx::query_as("SELECT next_run_at FROM snapshot_schedules WHERE id = $1")
+            .bind(schedule_id)
+            .fetch_one(&state.db)
+            .await?;
+
+    Ok(Json(json!({
+        "id": schedule_id,
+        "name": body.name,
+        "agent_ids": body.agent_ids,
+        "frequency": body.frequency,
+        "retention_days": body.retention_days,
+        "enabled": true,
+        "next_run_at": next_run,
+    })))
+}
+
+/// Update a snapshot schedule.
+#[derive(Debug, Deserialize, serde::Serialize)]
+pub struct UpdateScheduleRequest {
+    pub name: Option<String>,
+    pub agent_ids: Option<Vec<Uuid>>,
+    pub frequency: Option<String>,
+    pub enabled: Option<bool>,
+    pub retention_days: Option<i32>,
+}
+
+pub async fn update_schedule(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(schedule_id): Path<Uuid>,
+    Json(body): Json<UpdateScheduleRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Verify ownership
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM snapshot_schedules WHERE id = $1 AND organization_id = $2)",
+    )
+    .bind(schedule_id)
+    .bind(user.organization_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    if !exists {
+        return Err(ApiError::NotFound);
+    }
+
+    // Check that at least one field is provided
+    if body.name.is_none()
+        && body.agent_ids.is_none()
+        && body.frequency.is_none()
+        && body.enabled.is_none()
+        && body.retention_days.is_none()
+    {
+        return Err(ApiError::Validation("No fields to update".to_string()));
+    }
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "discovery_update_schedule",
+        "snapshot_schedule",
+        schedule_id,
+        json!({ "updates": &body }),
+    )
+    .await?;
+
+    // Execute updates for each provided field
+    if let Some(ref name) = body.name {
+        sqlx::query("UPDATE snapshot_schedules SET name = $2 WHERE id = $1")
+            .bind(schedule_id)
+            .bind(name)
+            .execute(&state.db)
+            .await?;
+    }
+    if let Some(ref agent_ids) = body.agent_ids {
+        sqlx::query("UPDATE snapshot_schedules SET agent_ids = $2 WHERE id = $1")
+            .bind(schedule_id)
+            .bind(agent_ids)
+            .execute(&state.db)
+            .await?;
+    }
+    if let Some(ref frequency) = body.frequency {
+        sqlx::query("UPDATE snapshot_schedules SET frequency = $2, next_run_at = calculate_next_run($2, NOW()) WHERE id = $1")
+            .bind(schedule_id)
+            .bind(frequency)
+            .execute(&state.db)
+            .await?;
+    }
+    if let Some(enabled) = body.enabled {
+        if enabled {
+            sqlx::query("UPDATE snapshot_schedules SET enabled = $2, next_run_at = calculate_next_run(frequency, NOW()) WHERE id = $1")
+                .bind(schedule_id)
+                .bind(enabled)
+                .execute(&state.db)
+                .await?;
+        } else {
+            sqlx::query("UPDATE snapshot_schedules SET enabled = $2 WHERE id = $1")
+                .bind(schedule_id)
+                .bind(enabled)
+                .execute(&state.db)
+                .await?;
+        }
+    }
+    if let Some(retention_days) = body.retention_days {
+        sqlx::query("UPDATE snapshot_schedules SET retention_days = $2 WHERE id = $1")
+            .bind(schedule_id)
+            .bind(retention_days)
+            .execute(&state.db)
+            .await?;
+    }
+
+    Ok(Json(json!({ "updated": true, "schedule_id": schedule_id })))
+}
+
+/// Delete a snapshot schedule.
+pub async fn delete_schedule(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(schedule_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "discovery_delete_schedule",
+        "snapshot_schedule",
+        schedule_id,
+        json!({}),
+    )
+    .await?;
+
+    let result = sqlx::query(
+        "DELETE FROM snapshot_schedules WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(schedule_id)
+    .bind(user.organization_id)
+    .execute(&state.db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+
+    Ok(Json(json!({ "deleted": true })))
+}
+
+// ===========================================================================
+// Scheduled Snapshots — captured snapshots from scheduled runs
+// ===========================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct ListSnapshotsQuery {
+    pub schedule_id: Option<Uuid>,
+}
+
+/// List scheduled snapshots.
+pub async fn list_snapshots(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Query(query): Query<ListSnapshotsQuery>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    let rows = if let Some(schedule_id) = query.schedule_id {
+        sqlx::query_as::<
+            _,
+            (Uuid, Uuid, String, Vec<Uuid>, Vec<Uuid>, chrono::DateTime<chrono::Utc>),
+        >(
+            "SELECT ss.id, ss.schedule_id, sch.name, ss.agent_ids, ss.report_ids, ss.captured_at
+             FROM scheduled_snapshots ss
+             JOIN snapshot_schedules sch ON sch.id = ss.schedule_id
+             WHERE ss.organization_id = $1 AND ss.schedule_id = $2
+             ORDER BY ss.captured_at DESC
+             LIMIT 100",
+        )
+        .bind(user.organization_id)
+        .bind(schedule_id)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as::<
+            _,
+            (Uuid, Uuid, String, Vec<Uuid>, Vec<Uuid>, chrono::DateTime<chrono::Utc>),
+        >(
+            "SELECT ss.id, ss.schedule_id, sch.name, ss.agent_ids, ss.report_ids, ss.captured_at
+             FROM scheduled_snapshots ss
+             JOIN snapshot_schedules sch ON sch.id = ss.schedule_id
+             WHERE ss.organization_id = $1
+             ORDER BY ss.captured_at DESC
+             LIMIT 100",
+        )
+        .bind(user.organization_id)
+        .fetch_all(&state.db)
+        .await?
+    };
+
+    let snapshots: Vec<Value> = rows
+        .iter()
+        .map(|(id, schedule_id, schedule_name, agent_ids, report_ids, captured_at)| {
+            json!({
+                "id": id,
+                "schedule_id": schedule_id,
+                "schedule_name": schedule_name,
+                "agent_ids": agent_ids,
+                "report_ids": report_ids,
+                "captured_at": captured_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "snapshots": snapshots })))
+}
+
+/// Compare two snapshots and return differences.
+#[derive(Debug, Deserialize)]
+pub struct CompareSnapshotsRequest {
+    pub snapshot_id_1: Uuid,
+    pub snapshot_id_2: Uuid,
+}
+
+pub async fn compare_snapshots(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<CompareSnapshotsRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Fetch both snapshots' correlation results
+    let snap1 = sqlx::query_as::<_, (serde_json::Value,)>(
+        "SELECT COALESCE(correlation_result, '{}'::jsonb)
+         FROM scheduled_snapshots
+         WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(body.snapshot_id_1)
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let snap2 = sqlx::query_as::<_, (serde_json::Value,)>(
+        "SELECT COALESCE(correlation_result, '{}'::jsonb)
+         FROM scheduled_snapshots
+         WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(body.snapshot_id_2)
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (corr1,) = snap1.ok_or(ApiError::NotFound)?;
+    let (corr2,) = snap2.ok_or(ApiError::NotFound)?;
+
+    // Extract services from both correlations
+    let services1 = corr1
+        .get("services")
+        .and_then(|s| s.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let services2 = corr2
+        .get("services")
+        .and_then(|s| s.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // Build keys for comparison: (hostname, process_name, ports)
+    fn service_key(svc: &Value) -> String {
+        let host = svc.get("hostname").and_then(|h| h.as_str()).unwrap_or("");
+        let proc = svc.get("process_name").and_then(|p| p.as_str()).unwrap_or("");
+        let ports: Vec<String> = svc
+            .get("ports")
+            .and_then(|p| p.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n.to_string())).collect())
+            .unwrap_or_default();
+        format!("{}:{}:{}", host, proc, ports.join(","))
+    }
+
+    let keys1: std::collections::HashSet<String> = services1.iter().map(service_key).collect();
+    let keys2: std::collections::HashSet<String> = services2.iter().map(service_key).collect();
+
+    // Added: in snapshot 2 but not in snapshot 1
+    let added: Vec<Value> = services2
+        .iter()
+        .filter(|s| !keys1.contains(&service_key(s)))
+        .cloned()
+        .collect();
+
+    // Removed: in snapshot 1 but not in snapshot 2
+    let removed: Vec<Value> = services1
+        .iter()
+        .filter(|s| !keys2.contains(&service_key(s)))
+        .cloned()
+        .collect();
+
+    // Modified: same key but different details (simplified - check port count changes)
+    let mut modified: Vec<Value> = Vec::new();
+    for svc1 in &services1 {
+        let key = service_key(svc1);
+        if keys2.contains(&key) {
+            // Find matching service in snapshot 2
+            if let Some(svc2) = services2.iter().find(|s| service_key(s) == key) {
+                let ports1: Vec<u64> = svc1
+                    .get("ports")
+                    .and_then(|p| p.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
+                    .unwrap_or_default();
+                let ports2: Vec<u64> = svc2
+                    .get("ports")
+                    .and_then(|p| p.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
+                    .unwrap_or_default();
+
+                if ports1 != ports2 {
+                    modified.push(json!({
+                        "before": svc1,
+                        "after": svc2,
+                        "changes": [format!("ports: {:?} → {:?}", ports1, ports2)],
+                    }));
+                }
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "added": added,
+        "removed": removed,
+        "modified": modified,
+        "summary": {
+            "added_count": added.len(),
+            "removed_count": removed.len(),
+            "modified_count": modified.len(),
+        }
     })))
 }

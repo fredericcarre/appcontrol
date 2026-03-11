@@ -75,7 +75,7 @@ export interface UnresolvedEdgeData {
 // Store types
 // ---------------------------------------------------------------------------
 
-export type DiscoveryPhase = 'scan' | 'topology' | 'done';
+export type DiscoveryPhase = 'scan' | 'triage' | 'topology' | 'done';
 
 export interface ServiceEdits {
   name?: string;

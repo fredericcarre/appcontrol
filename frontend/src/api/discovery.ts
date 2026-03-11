@@ -22,6 +22,13 @@ export interface DiscoveryReportDetail extends DiscoveryReport {
   };
 }
 
+export interface TechnologyHint {
+  id: string;           // "elasticsearch", "rabbitmq", "ibmmq", etc.
+  display_name: string; // "ElasticSearch", "RabbitMQ", "IBM MQ"
+  icon: string;         // "elastic", "rabbitmq", "ibmmq"
+  layer: string;        // "Database", "Middleware", "Application", etc.
+}
+
 export interface DiscoveredProcess {
   pid: number;
   name: string;
@@ -36,6 +43,7 @@ export interface DiscoveredProcess {
   log_files?: DiscoveredLogFile[];
   command_suggestion?: CommandSuggestion;
   matched_service?: string;
+  technology_hint?: TechnologyHint;
 }
 
 export interface DiscoveredConfigFile {
@@ -113,6 +121,7 @@ export interface CorrelatedService {
   config_files?: DiscoveredConfigFile[];
   log_files?: DiscoveredLogFile[];
   matched_service?: string;
+  technology_hint?: TechnologyHint;
 }
 
 export interface CorrelatedDependency {
@@ -141,6 +150,32 @@ export interface CorrelationResult {
   dependencies: CorrelatedDependency[];
   unresolved_connections: UnresolvedConnection[];
   scheduled_jobs: DiscoveredScheduledJob[];
+}
+
+// --- Scheduled Snapshots ---
+
+export type ScheduleFrequency = 'hourly' | 'daily' | 'weekly' | 'monthly';
+
+export interface SnapshotSchedule {
+  id: string;
+  name: string;
+  agent_ids: string[];
+  frequency: ScheduleFrequency;
+  cron_expression?: string;
+  enabled: boolean;
+  last_run_at?: string;
+  next_run_at?: string;
+  created_at: string;
+  retention_days: number;
+}
+
+export interface ScheduledSnapshot {
+  id: string;
+  schedule_id: string;
+  schedule_name: string;
+  agent_ids: string[];
+  captured_at: string;
+  report_ids: string[];
 }
 
 // --- Drafts ---
@@ -316,6 +351,101 @@ export function useApplyDraft() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['discovery', 'drafts'] });
       qc.invalidateQueries({ queryKey: ['apps'] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled Snapshots
+// ---------------------------------------------------------------------------
+
+export function useSnapshotSchedules() {
+  return useQuery<SnapshotSchedule[]>({
+    queryKey: ['discovery', 'schedules'],
+    queryFn: async () => {
+      const { data } = await client.get('/discovery/schedules');
+      return data.schedules;
+    },
+  });
+}
+
+export function useScheduledSnapshots(scheduleId?: string) {
+  return useQuery<ScheduledSnapshot[]>({
+    queryKey: ['discovery', 'snapshots', scheduleId],
+    queryFn: async () => {
+      const url = scheduleId
+        ? `/discovery/snapshots?schedule_id=${scheduleId}`
+        : '/discovery/snapshots';
+      const { data } = await client.get(url);
+      return data.snapshots;
+    },
+  });
+}
+
+export function useCreateSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: {
+      name: string;
+      agent_ids: string[];
+      frequency: ScheduleFrequency;
+      retention_days?: number;
+    }) => {
+      const { data } = await client.post('/discovery/schedules', params);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['discovery', 'schedules'] });
+    },
+  });
+}
+
+export function useUpdateSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: {
+      id: string;
+      name?: string;
+      agent_ids?: string[];
+      frequency?: ScheduleFrequency;
+      enabled?: boolean;
+      retention_days?: number;
+    }) => {
+      const { id, ...body } = params;
+      const { data } = await client.patch(`/discovery/schedules/${id}`, body);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['discovery', 'schedules'] });
+    },
+  });
+}
+
+export function useDeleteSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (scheduleId: string) => {
+      await client.delete(`/discovery/schedules/${scheduleId}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['discovery', 'schedules'] });
+    },
+  });
+}
+
+export function useCompareSnapshots() {
+  return useMutation<{
+    added: CorrelatedService[];
+    removed: CorrelatedService[];
+    modified: Array<{
+      before: CorrelatedService;
+      after: CorrelatedService;
+      changes: string[];
+    }>;
+  }, Error, { snapshot_id_1: string; snapshot_id_2: string }>({
+    mutationFn: async (params) => {
+      const { data } = await client.post('/discovery/snapshots/compare', params);
+      return data;
     },
   });
 }

@@ -12,4 +12,5 @@ pub mod permissions;
 pub mod rebuild;
 pub mod resolution;
 pub mod sequencer;
+pub mod snapshot_scheduler;
 pub mod switchover;

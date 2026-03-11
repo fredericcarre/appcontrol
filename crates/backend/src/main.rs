@@ -165,6 +165,16 @@ async fn main() -> anyhow::Result<()> {
         .await;
     });
 
+    // Start snapshot scheduler background task (checks every 60s)
+    let scheduler_state = state.clone();
+    tokio::spawn(async move {
+        appcontrol_backend::core::snapshot_scheduler::run_snapshot_scheduler(
+            scheduler_state,
+            std::time::Duration::from_secs(60),
+        )
+        .await;
+    });
+
     // Rate limiter cleanup task (every 5 minutes)
     let rl_state = state.clone();
     tokio::spawn(async move {

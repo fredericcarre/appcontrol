@@ -1,18 +1,20 @@
-import { Check, Radar, Map, Rocket } from 'lucide-react';
+import { Check, Radar, Filter, Map, Rocket } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { DiscoveryPhase } from './TopologyMap.types';
 
 interface DiscoveryStepperProps {
   currentPhase: DiscoveryPhase;
+  triageProgress?: number;
 }
 
 const STEPS = [
-  { phase: 'scan' as const, label: 'Selection', icon: Radar, description: 'Select agents to scan' },
-  { phase: 'topology' as const, label: 'Topology', icon: Map, description: 'Review and edit topology' },
-  { phase: 'done' as const, label: 'Creation', icon: Rocket, description: 'Application created' },
+  { phase: 'scan' as const, label: 'Scan', icon: Radar, description: 'Scan agents' },
+  { phase: 'triage' as const, label: 'Triage', icon: Filter, description: 'Sort components' },
+  { phase: 'topology' as const, label: 'Build', icon: Map, description: 'Build the map' },
+  { phase: 'done' as const, label: 'Done', icon: Rocket, description: 'App created' },
 ];
 
-export function DiscoveryStepper({ currentPhase }: DiscoveryStepperProps) {
+export function DiscoveryStepper({ currentPhase, triageProgress }: DiscoveryStepperProps) {
   const currentIndex = STEPS.findIndex((s) => s.phase === currentPhase);
 
   return (
@@ -51,6 +53,11 @@ export function DiscoveryStepper({ currentPhase }: DiscoveryStepperProps) {
                     )}
                   >
                     {step.label}
+                    {step.phase === 'triage' && isCurrent && triageProgress !== undefined && (
+                      <span className="ml-1 text-xs font-normal text-primary">
+                        {triageProgress}%
+                      </span>
+                    )}
                   </div>
                   <div className="text-[10px] text-muted-foreground hidden sm:block">
                     {step.description}

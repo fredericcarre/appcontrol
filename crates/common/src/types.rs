@@ -225,6 +225,20 @@ impl OrgRole {
 // Discovery types (passive topology scanning)
 // ---------------------------------------------------------------------------
 
+/// Technology identification from process/cmdline pattern matching.
+/// This enables automatic icon assignment, naming, and layer grouping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TechnologyHint {
+    /// Technology identifier (e.g., "elasticsearch", "rabbitmq", "mysql")
+    pub id: String,
+    /// Human-readable display name (e.g., "ElasticSearch", "RabbitMQ", "MySQL")
+    pub display_name: String,
+    /// Icon identifier for frontend (e.g., "elastic", "rabbitmq", "mysql")
+    pub icon: String,
+    /// Layer/category for grouping (e.g., "Database", "Middleware", "Infrastructure")
+    pub layer: String,
+}
+
 /// A process discovered by the agent's passive scanner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredProcess {
@@ -256,6 +270,9 @@ pub struct DiscoveredProcess {
     /// Matched system service name (systemd unit / Windows service)
     #[serde(default)]
     pub matched_service: Option<String>,
+    /// Detected technology (icon, display name, layer) from pattern matching
+    #[serde(default)]
+    pub technology_hint: Option<TechnologyHint>,
 }
 
 /// A config file found open by a discovered process.

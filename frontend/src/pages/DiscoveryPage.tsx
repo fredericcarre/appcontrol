@@ -29,6 +29,7 @@ import { TopologyToolbar } from '@/components/discovery/TopologyToolbar';
 import { DiscoveryStepper } from '@/components/discovery/DiscoveryStepper';
 import { AgentManagementPanel } from '@/components/discovery/AgentManagementPanel';
 import { MatrixRain } from '@/components/discovery/MatrixRain';
+import { TriagePhase } from '@/components/discovery/TriagePhase';
 
 // ---------------------------------------------------------------------------
 // Main Page — 3-phase flow
@@ -36,18 +37,21 @@ import { MatrixRain } from '@/components/discovery/MatrixRain';
 
 export function DiscoveryPage() {
   const phase = useDiscoveryStore((s) => s.phase);
+  const getTriageProgress = useDiscoveryStore((s) => s.getTriageProgress);
+  const triageProgress = getTriageProgress();
 
   return (
     <div className="flex flex-col h-full">
       {/* Stepper - hidden in topology phase for more space */}
       {phase !== 'topology' && (
         <div className="mb-6 py-4 border-b border-border">
-          <DiscoveryStepper currentPhase={phase} />
+          <DiscoveryStepper currentPhase={phase} triageProgress={triageProgress} />
         </div>
       )}
 
       {/* Phase content */}
       {phase === 'scan' && <ScanPhase />}
+      {phase === 'triage' && <TriagePhase />}
       {phase === 'topology' && <TopologyPhase />}
       {phase === 'done' && <DonePhase />}
     </div>
@@ -104,7 +108,7 @@ function ScanPhase() {
     if (selectedAgentIds.length === 0) return;
     const result = await correlate.mutateAsync({ agent_ids: selectedAgentIds });
     setCorrelationResult(result);
-    setPhase('topology');
+    setPhase('triage');
   };
 
   const isScanning = triggerAll.isPending || correlate.isPending;

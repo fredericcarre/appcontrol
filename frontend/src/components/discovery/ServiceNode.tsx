@@ -2,14 +2,18 @@ import { memo, useCallback, useState, useEffect } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
 import { cn } from '@/lib/utils';
-import { COMPONENT_TYPE_ICONS, type ComponentType } from '@/lib/colors';
+import { COMPONENT_TYPE_ICONS, TECHNOLOGY_ICONS, type ComponentType } from '@/lib/colors';
 import {
   Database, Layers, Server, Globe, Cog, Clock, Box,
+  Search, Calendar, ArrowLeftRight, Shield, Network,
+  Workflow, Zap, Container, Folder, Puzzle,
 } from 'lucide-react';
 import type { ServiceNodeData } from './TopologyMap.types';
 
 const iconMap: Record<string, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
   Database, Layers, Server, Globe, Cog, Clock, Box,
+  Search, Calendar, ArrowLeftRight, Shield, Network,
+  Workflow, Zap, Container, Folder, Puzzle,
 };
 
 const CONFIDENCE_COLORS: Record<string, string> = {
@@ -19,9 +23,15 @@ const CONFIDENCE_COLORS: Record<string, string> = {
 };
 
 function ServiceNodeInner({ data, selected }: NodeProps & { data: ServiceNodeData }) {
-  const typeInfo = COMPONENT_TYPE_ICONS[data.componentType as ComponentType] || COMPONENT_TYPE_ICONS.service;
+  // Use technology_hint if available, otherwise fall back to componentType
+  const techHint = data.service?.technology_hint;
+  const techInfo = techHint?.icon ? TECHNOLOGY_ICONS[techHint.icon] : null;
+  const typeInfo = techInfo || COMPONENT_TYPE_ICONS[data.componentType as ComponentType] || COMPONENT_TYPE_ICONS.service;
   const IconComponent = iconMap[typeInfo.icon] || Box;
   const confColor = CONFIDENCE_COLORS[data.commandConfidence] || CONFIDENCE_COLORS.low;
+
+  // Use technology display name if available
+  const displayLabel = techHint?.display_name || data.label;
 
   // Track if node is newly rendered for entrance animation
   const [isEntering, setIsEntering] = useState(true);
@@ -71,8 +81,8 @@ function ServiceNodeInner({ data, selected }: NodeProps & { data: ServiceNodeDat
             className="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
           />
           <IconComponent className="h-4 w-4 flex-shrink-0" style={{ color: typeInfo.color }} />
-          <span className="font-semibold text-xs truncate flex-1" title={data.label}>
-            {data.label}
+          <span className="font-semibold text-xs truncate flex-1" title={displayLabel}>
+            {displayLabel}
           </span>
           <div
             className={cn('w-2.5 h-2.5 rounded-full flex-shrink-0', confColor)}
