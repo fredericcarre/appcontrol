@@ -40,22 +40,20 @@ export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShar
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onAutoLayout} title="Auto Layout">
           <LayoutGrid className="h-4 w-4" />
         </Button>
-        {onSaveLayout && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`h-8 w-8 ${hasUnsavedPositions ? 'text-primary' : ''}`}
-            onClick={onSaveLayout}
-            disabled={!hasUnsavedPositions || isSavingLayout}
-            title="Save Layout"
-          >
-            {isSavingLayout ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className={`h-8 w-8 ${hasUnsavedPositions ? 'text-primary' : 'text-muted-foreground'}`}
+          onClick={onSaveLayout}
+          disabled={!onSaveLayout || !hasUnsavedPositions || isSavingLayout}
+          title={onSaveLayout ? "Save Layout" : "Save Layout (requires edit permission)"}
+        >
+          {isSavingLayout ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Save className="h-4 w-4" />
+          )}
+        </Button>
       </div>
 
       {canOperate && (
