@@ -46,11 +46,25 @@ export function LogViewerModal({
   const [minLevel, setMinLevel] = useState<LogLevel>('DEBUG');
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [sourceConnected, setSourceConnected] = useState<boolean | null>(null);
   const isSubscribedRef = useRef(false);
   const lastProcessedMsgRef = useRef(0);
 
   const wsConnected = useWebSocketStore((s) => s.connected);
   const messages = useWebSocketStore((s) => s.messages);
+
+  // Reset source connection state when modal opens/closes
+  // This is valid: we reset state on close to ensure clean state on reopen
+  useEffect(() => {
+    if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSourceConnected(null);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setError(null);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEntries([]);
+    }
+  }, [open]);
 
   // Derive subscription state from refs and props
   const subscriptionState = useMemo(() => {
@@ -153,6 +167,17 @@ export function LogViewerModal({
         continue;
       }
 
+      // Handle subscription confirmation - valid WebSocket event handling
+      if (msg.type === 'LogSubscriptionConfirmed') {
+        const payload = msg.payload as { agent_id?: string; gateway_id?: string; connected?: boolean };
+        const msgSourceId = payload.agent_id || payload.gateway_id;
+        if (msgSourceId === sourceId) {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setSourceConnected(payload.connected ?? false);
+        }
+        continue;
+      }
+
       if (msg.type !== 'LogEntry') continue;
 
       const payload = msg.payload as unknown as LogEntry;
@@ -230,7 +255,17 @@ export function LogViewerModal({
               <div className="text-muted-foreground">{error}</div>
             </div>
           ) : (
-            <LogViewer entries={entries} onClear={handleClear} />
+            <LogViewer
+              entries={entries}
+              onClear={handleClear}
+              waitingMessage={
+                sourceConnected === false
+                  ? `${sourceType === 'agent' ? 'Agent' : 'Gateway'} is not connected. Logs will appear when it reconnects.`
+                  : sourceConnected === null
+                  ? 'Connecting to log stream...'
+                  : undefined
+              }
+            />
           )}
         </div>
       </DialogContent>

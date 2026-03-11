@@ -7,7 +7,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { STATE_COLORS, ComponentState } from '@/lib/colors';
 import { Component } from '@/api/apps';
-import { useStateTransitions, useCommandExecutions, CommandExecution } from '@/api/components';
+import { useStateTransitions, useCommandExecutions, useCheckEvents, CommandExecution, CheckEvent } from '@/api/components';
 
 interface DetailPanelProps {
   component: Component;
@@ -73,6 +73,7 @@ export function DetailPanel({
   const stateStyle = STATE_COLORS[state] || STATE_COLORS.UNKNOWN;
   const { data: transitions } = useStateTransitions(component.id);
   const { data: executions } = useCommandExecutions(component.id, 10);
+  const { data: checkEvents } = useCheckEvents(component.id, 10);
 
   return (
     <div className="w-[360px] border-l border-border bg-card h-full flex flex-col">
@@ -163,10 +164,22 @@ export function DetailPanel({
             {executions && executions.length > 0 && (
               <div className="mt-4 space-y-2">
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  Recent Executions
+                  Recent Commands
                 </h4>
                 {executions.map((exec) => (
                   <ExecutionRow key={exec.id} execution={exec} />
+                ))}
+              </div>
+            )}
+
+            {/* Recent check events */}
+            {checkEvents && checkEvents.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Recent Checks
+                </h4>
+                {checkEvents.map((event) => (
+                  <CheckEventRow key={event.id} event={event} />
                 ))}
               </div>
             )}
@@ -312,6 +325,57 @@ function ExecutionRow({ execution }: { execution: CommandExecution }) {
                 </pre>
               </div>
             )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CheckEventRow({ event }: { event: CheckEvent }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasOutput = !!event.stdout;
+
+  const checkTypeLabel = {
+    health: 'Health',
+    integrity: 'Integrity',
+    infrastructure: 'Infra',
+    post_start: 'Post-start',
+  }[event.check_type] || event.check_type;
+
+  const isSuccess = event.exit_code === 0;
+
+  return (
+    <div className="border rounded-md overflow-hidden">
+      <div
+        className={`p-2 space-y-1 ${hasOutput ? 'cursor-pointer hover:bg-accent/50' : ''}`}
+        onClick={() => hasOutput && setExpanded(!expanded)}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1">
+            {hasOutput && (
+              expanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />
+            )}
+            <span className="text-xs font-mono">{checkTypeLabel}</span>
+          </div>
+          <Badge
+            variant={isSuccess ? 'running' : 'failed'}
+            className="text-[10px] h-4"
+          >
+            {isSuccess ? 'OK' : `exit ${event.exit_code}`}
+          </Badge>
+        </div>
+        <div className="text-[10px] text-muted-foreground">
+          {timeAgo(event.created_at)} · {event.duration_ms}ms
+        </div>
+      </div>
+
+      {expanded && hasOutput && (
+        <div className="border-t bg-slate-950 dark:bg-slate-900">
+          <div className="p-2 max-h-32 overflow-auto">
+            <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-all">
+              {event.stdout}
+            </pre>
           </div>
         </div>
       )}

@@ -373,10 +373,24 @@ async fn handle_client_socket(
                                     aid,
                                     min_level.clone(),
                                 );
+                                // Check if agent is connected and send confirmation
+                                let agent_connected = state_clone.ws_hub.is_agent_connected(aid);
+                                let confirm_event = serde_json::json!({
+                                    "type": "LogSubscriptionConfirmed",
+                                    "payload": {
+                                        "agent_id": aid,
+                                        "connected": agent_connected,
+                                        "min_level": min_level
+                                    }
+                                });
+                                if let Ok(json) = serde_json::to_string(&confirm_event) {
+                                    state_clone.ws_hub.send_to_connection(conn_id, json);
+                                }
                                 tracing::debug!(
                                     user_id = %user_id,
                                     agent_id = %aid,
                                     min_level = %min_level,
+                                    agent_connected = agent_connected,
                                     "Log subscription added for agent"
                                 );
                             }
@@ -386,6 +400,18 @@ async fn handle_client_socket(
                                     gid,
                                     min_level.clone(),
                                 );
+                                // Send confirmation for gateway subscription
+                                let confirm_event = serde_json::json!({
+                                    "type": "LogSubscriptionConfirmed",
+                                    "payload": {
+                                        "gateway_id": gid,
+                                        "connected": true,  // Gateway is always connected if reachable
+                                        "min_level": min_level
+                                    }
+                                });
+                                if let Ok(json) = serde_json::to_string(&confirm_event) {
+                                    state_clone.ws_hub.send_to_connection(conn_id, json);
+                                }
                                 tracing::debug!(
                                     user_id = %user_id,
                                     gateway_id = %gid,

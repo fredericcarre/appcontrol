@@ -814,39 +814,76 @@ pub async fn execute_command(
     Path((id, cmd)): Path<(Uuid, String)>,
     body: Option<Json<ExecuteCommandBody>>,
 ) -> Result<Json<Value>, ApiError> {
-    let (app_id, agent_id) = sqlx::query_as::<_, (Uuid, Option<Uuid>)>(
-        "SELECT application_id, agent_id FROM components WHERE id = $1",
+    // Fetch component with all command columns
+    #[derive(sqlx::FromRow)]
+    struct ComponentCmd {
+        application_id: Uuid,
+        agent_id: Option<Uuid>,
+        check_cmd: Option<String>,
+        start_cmd: Option<String>,
+        stop_cmd: Option<String>,
+        restart_cmd: Option<String>,
+        integrity_check_cmd: Option<String>,
+        infra_check_cmd: Option<String>,
+    }
+
+    let comp = sqlx::query_as::<_, ComponentCmd>(
+        "SELECT application_id, agent_id, check_cmd, start_cmd, stop_cmd, restart_cmd, \
+                integrity_check_cmd, infra_check_cmd \
+         FROM components WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
 
-    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    let perm = effective_permission(&state.db, user.user_id, comp.application_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
     }
 
-    // Look up the command definition from component_commands
-    let cmd_row = sqlx::query_as::<_, (Uuid, String, bool)>(
-        "SELECT id, command, requires_confirmation FROM component_commands WHERE component_id = $1 AND name = $2",
-    )
-    .bind(id)
-    .bind(&cmd)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    // Check if this is a built-in command
+    let builtin_cmd = match cmd.as_str() {
+        "check" => comp.check_cmd.clone(),
+        "start" => comp.start_cmd.clone(),
+        "stop" => comp.stop_cmd.clone(),
+        "restart" => comp.restart_cmd.clone(),
+        "integrity_check" => comp.integrity_check_cmd.clone(),
+        "infra_check" => comp.infra_check_cmd.clone(),
+        _ => None,
+    };
 
-    let (command_id, command_template, _requires_confirmation) = cmd_row;
+    // If it's a built-in command, use it directly; otherwise look up in component_commands
+    let (command_id, command_template): (Option<Uuid>, String) = if let Some(builtin) = builtin_cmd {
+        (None, builtin)
+    } else {
+        // Look up the command definition from component_commands
+        let cmd_row = sqlx::query_as::<_, (Uuid, String, bool)>(
+            "SELECT id, command, requires_confirmation FROM component_commands WHERE component_id = $1 AND name = $2",
+        )
+        .bind(id)
+        .bind(&cmd)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
 
-    // Load parameter definitions and validate/interpolate
-    let params = sqlx::query_as::<_, crate::api::command_params::InputParamRow>(
-        "SELECT id, command_id, name, description, default_value, validation_regex, required, display_order, created_at \
-         FROM command_input_params WHERE command_id = $1 ORDER BY display_order, name",
-    )
-    .bind(command_id)
-    .fetch_all(&state.db)
-    .await?;
+        (Some(cmd_row.0), cmd_row.1)
+    };
+
+    let agent_id = comp.agent_id;
+
+    // Load parameter definitions and validate/interpolate (only for custom commands)
+    let params = if let Some(cid) = command_id {
+        sqlx::query_as::<_, crate::api::command_params::InputParamRow>(
+            "SELECT id, command_id, name, description, default_value, validation_regex, required, display_order, created_at \
+             FROM command_input_params WHERE command_id = $1 ORDER BY display_order, name",
+        )
+        .bind(cid)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        vec![]
+    };
 
     let param_values = body
         .as_ref()
@@ -881,14 +918,16 @@ pub async fn execute_command(
     let request_id = Uuid::new_v4();
 
     // Record dispatch in command_executions for audit trail
+    let command_type_label = if command_id.is_none() { &cmd } else { "custom" };
     if let Err(e) = sqlx::query(
         "INSERT INTO command_executions (request_id, component_id, agent_id, command_type, status, user_id, command_text)
-         VALUES ($1, $2, $3, 'custom', 'dispatched', $4, $5)
+         VALUES ($1, $2, $3, $4, 'dispatched', $5, $6)
          ON CONFLICT (request_id) DO NOTHING",
     )
     .bind(request_id)
     .bind(id)
     .bind(agent_id)
+    .bind(command_type_label)
     .bind(user.user_id)
     .bind(&final_command)
     .execute(&state.db)
@@ -1215,6 +1254,58 @@ pub async fn list_state_transitions(
     .await?;
 
     Ok(Json(json!({ "transitions": transitions })))
+}
+
+// ---------------------------------------------------------------------------
+// Check Events History
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct CheckEventRow {
+    pub id: i64,
+    pub component_id: Uuid,
+    pub check_type: String,
+    pub exit_code: i16,
+    pub stdout: Option<String>,
+    pub duration_ms: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// List recent check events (health/integrity/infra checks) for a component.
+pub async fn list_check_events(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(component_id): Path<Uuid>,
+    axum::extract::Query(query): axum::extract::Query<ExecutionHistoryQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    let limit = query.limit.unwrap_or(20).min(100);
+    let offset = query.offset.unwrap_or(0);
+
+    let events = sqlx::query_as::<_, CheckEventRow>(
+        "SELECT id, component_id, check_type, exit_code, stdout, duration_ms, created_at \
+         FROM check_events \
+         WHERE component_id = $1 \
+         ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+    )
+    .bind(component_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(json!({ "events": events })))
 }
 
 // ---------------------------------------------------------------------------

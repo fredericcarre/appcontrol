@@ -170,7 +170,21 @@ export function CommandModal({ componentId, open, onOpenChange }: CommandModalPr
         },
       ]);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Command failed';
+      let message = 'Command failed';
+      // Check for axios error with response
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const axiosErr = err as any;
+      if (axiosErr?.response?.status === 404) {
+        if (cmdLabel.startsWith('custom:') || customCommands?.some((c) => c.name === cmdLabel)) {
+          message = `Custom command "${cmdLabel}" not found. It may have been deleted.`;
+        } else {
+          message = `Command "${cmdLabel}" not found for this component.`;
+        }
+      } else if (axiosErr?.response?.data?.error) {
+        message = axiosErr.response.data.error;
+      } else if (err instanceof Error) {
+        message = err.message;
+      }
       setOutput((prev) => [
         ...prev,
         { text: message, timestamp: new Date().toISOString(), type: 'stderr' },

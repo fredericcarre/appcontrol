@@ -121,6 +121,30 @@ export function useCommandExecutions(componentId: string, limit = 20) {
   });
 }
 
+export interface CheckEvent {
+  id: number;
+  component_id: string;
+  check_type: string;
+  exit_code: number;
+  stdout: string | null;
+  duration_ms: number;
+  created_at: string;
+}
+
+export function useCheckEvents(componentId: string, limit = 10) {
+  return useQuery({
+    queryKey: ['components', componentId, 'check-events'],
+    queryFn: async () => {
+      const { data } = await client.get<{ events: CheckEvent[] }>(
+        `/components/${componentId}/check-events?limit=${limit}`,
+      );
+      return data.events;
+    },
+    enabled: !!componentId,
+    refetchInterval: 15_000,
+  });
+}
+
 export function useExecuteCommand() {
   const qc = useQueryClient();
   return useMutation({

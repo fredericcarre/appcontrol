@@ -106,6 +106,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/components/:id/state-transitions",
             get(components::list_state_transitions),
         )
+        .route(
+            "/components/:id/check-events",
+            get(components::list_check_events),
+        )
         // Component positions (for map designer)
         .route(
             "/components/:id/position",

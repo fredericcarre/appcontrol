@@ -448,13 +448,25 @@ export function ActivityPanel({
 }: ActivityPanelProps) {
   const { data: events, isLoading } = useActivityFeed(appId);
 
+  // Deduplicate events by unique key (kind + component_id + at)
+  const deduplicatedEvents = useMemo(() => {
+    if (!events) return [];
+    const seen = new Set<string>();
+    return events.filter((event) => {
+      const key = `${event.kind}-${event.component_id || 'app'}-${event.at}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [events]);
+
   // Group events by day
   const groupedEvents = useMemo(() => {
-    if (!events) return [];
+    if (!deduplicatedEvents || deduplicatedEvents.length === 0) return [];
     const groups: Array<{ label: string; events: ActivityEvent[] }> = [];
     let currentLabel = '';
 
-    for (const event of events) {
+    for (const event of deduplicatedEvents) {
       const date = new Date(event.at);
       const today = new Date();
       const yesterday = new Date();
@@ -481,7 +493,7 @@ export function ActivityPanel({
     }
 
     return groups;
-  }, [events]);
+  }, [deduplicatedEvents]);
 
   return (
     <div className="w-[380px] border-l border-border bg-card h-full flex flex-col">

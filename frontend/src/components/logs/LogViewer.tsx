@@ -17,6 +17,8 @@ interface LogViewerProps {
   entries: LogEntry[];
   onClear: () => void;
   maxEntries?: number;
+  /** Custom message to show when waiting for logs */
+  waitingMessage?: string;
 }
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -50,7 +52,7 @@ function formatTimestamp(ts: string): string {
   }
 }
 
-export function LogViewer({ entries, onClear, maxEntries = 1000 }: LogViewerProps) {
+export function LogViewer({ entries, onClear, maxEntries = 1000, waitingMessage }: LogViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [search, setSearch] = useState('');
@@ -137,7 +139,7 @@ export function LogViewer({ entries, onClear, maxEntries = 1000 }: LogViewerProp
       >
         {filteredEntries.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-500">
-            {entries.length === 0 ? 'Waiting for logs...' : 'No matching entries'}
+            {entries.length === 0 ? (waitingMessage || 'Waiting for logs...') : 'No matching entries'}
           </div>
         ) : (
           filteredEntries.map((entry, index) => (
