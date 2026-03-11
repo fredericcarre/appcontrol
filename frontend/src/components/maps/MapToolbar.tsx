@@ -26,7 +26,7 @@ export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShar
   const handleFit = useCallback(() => fitView({ padding: 0.2 }), [fitView]);
 
   return (
-    <div className="absolute top-4 left-4 z-10 flex gap-2">
+    <div className="absolute top-24 left-4 z-10 flex gap-2">
       <div className="flex gap-1 bg-card border border-border rounded-md p-1 shadow-sm">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => zoomIn()}>
           <ZoomIn className="h-4 w-4" />

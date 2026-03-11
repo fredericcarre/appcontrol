@@ -197,8 +197,8 @@ function computeDagrePositions(
   }
 
   for (const d of dependencies) {
-    // from depends on to → from is placed above to (dependents at top, bases at bottom)
-    g.setEdge(d.from_component_id, d.to_component_id);
+    // to (base) is placed above from (dependent) → bases at top, dependents at bottom
+    g.setEdge(d.to_component_id, d.from_component_id);
   }
 
   Dagre.layout(g);
@@ -425,7 +425,8 @@ function AppMapInner({
   const [infraHighlight, setInfraHighlight] = useState<Set<string> | null>(null);
 
   // Force auto-layout flag (ignores saved positions when true)
-  const [forceAutoLayout, setForceAutoLayout] = useState(false);
+  // Start with true so auto-layout is applied on initial load
+  const [forceAutoLayout, setForceAutoLayout] = useState(true);
 
   // Track pending position changes (for save layout feature)
   const [pendingPositions, setPendingPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
@@ -438,13 +439,25 @@ function AppMapInner({
     setInfraHighlight(null);
   }, []);
 
+  // Capture all node positions for saving after auto-layout
+  const captureAutoLayoutPositions = useCallback(() => {
+    const autoPositions = computeDagrePositions(components, dependencies);
+    const newPending = new Map<string, { x: number; y: number }>();
+    for (const [id, pos] of autoPositions) {
+      newPending.set(id, pos);
+    }
+    setPendingPositions(newPending);
+  }, [components, dependencies]);
+
   const handleAutoLayout = useCallback(() => {
     setForceAutoLayout(true);
+    // Capture positions so they can be saved
+    captureAutoLayoutPositions();
     // Fit view after layout is applied
     requestAnimationFrame(() => {
       fitView({ padding: 0.2 });
     });
-  }, [fitView]);
+  }, [fitView, captureAutoLayoutPositions]);
 
   const handleSaveLayout = useCallback(() => {
     if (pendingPositions.size === 0 || !onSaveLayout) return;

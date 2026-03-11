@@ -787,7 +787,7 @@ export function MapViewPage() {
 
         {/* Branch highlight legend */}
         {branchHighlight && !editMode && (
-          <div className="absolute top-16 left-4 z-10 bg-card/90 backdrop-blur border border-border rounded-md px-3 py-2 text-xs space-y-1">
+          <div className="absolute top-36 left-4 z-10 bg-card/90 backdrop-blur border border-border rounded-md px-3 py-2 text-xs space-y-1">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-indigo-500" />
               <span>Selected</span>
