@@ -3,7 +3,7 @@ import { useReactFlow } from '@xyflow/react';
 import { Button } from '@/components/ui/button';
 import {
   ZoomIn, ZoomOut, Maximize, Play, Square,
-  GitBranch, Share2, Activity, LayoutGrid,
+  GitBranch, Share2, Activity, LayoutGrid, Save, Loader2,
 } from 'lucide-react';
 
 interface MapToolbarProps {
@@ -15,9 +15,12 @@ interface MapToolbarProps {
   activityOpen?: boolean;
   canOperate?: boolean;
   onAutoLayout?: () => void;
+  onSaveLayout?: () => void;
+  hasUnsavedPositions?: boolean;
+  isSavingLayout?: boolean;
 }
 
-export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShare, onToggleActivity, activityOpen, canOperate, onAutoLayout }: MapToolbarProps) {
+export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShare, onToggleActivity, activityOpen, canOperate, onAutoLayout, onSaveLayout, hasUnsavedPositions, isSavingLayout }: MapToolbarProps) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
 
   const handleFit = useCallback(() => fitView({ padding: 0.2 }), [fitView]);
@@ -37,6 +40,22 @@ export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShar
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onAutoLayout} title="Auto Layout">
           <LayoutGrid className="h-4 w-4" />
         </Button>
+        {onSaveLayout && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className={`h-8 w-8 ${hasUnsavedPositions ? 'text-primary' : ''}`}
+            onClick={onSaveLayout}
+            disabled={!hasUnsavedPositions || isSavingLayout}
+            title="Save Layout"
+          >
+            {isSavingLayout ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+          </Button>
+        )}
       </div>
 
       {canOperate && (

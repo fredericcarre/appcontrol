@@ -87,6 +87,9 @@ interface AppMapProps {
   onEdgeClick?: (edgeId: string, sourceId: string, targetId: string) => void;
   // Allow dragging nodes in view mode for visualization
   allowDrag?: boolean;
+  // Layout saving
+  onSaveLayout?: (positions: Array<{ id: string; x: number; y: number }>) => void;
+  isSavingLayout?: boolean;
 }
 
 /**
@@ -412,6 +415,8 @@ function AppMapInner({
   edgeHighlight,
   onEdgeClick,
   allowDrag = true, // Default to allowing drag in view mode
+  onSaveLayout,
+  isSavingLayout,
 }: AppMapProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition, fitView } = useReactFlow();
@@ -421,6 +426,9 @@ function AppMapInner({
 
   // Force auto-layout flag (ignores saved positions when true)
   const [forceAutoLayout, setForceAutoLayout] = useState(false);
+
+  // Track pending position changes (for save layout feature)
+  const [pendingPositions, setPendingPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
 
   const handleHighlightComponents = useCallback((componentIds: string[]) => {
     setInfraHighlight(new Set(componentIds));
@@ -437,6 +445,17 @@ function AppMapInner({
       fitView({ padding: 0.2 });
     });
   }, [fitView]);
+
+  const handleSaveLayout = useCallback(() => {
+    if (pendingPositions.size === 0 || !onSaveLayout) return;
+    const positions = Array.from(pendingPositions.entries()).map(([id, pos]) => ({
+      id,
+      x: pos.x,
+      y: pos.y,
+    }));
+    onSaveLayout(positions);
+    setPendingPositions(new Map());
+  }, [pendingPositions, onSaveLayout]);
 
   const initialNodes = useMemo(
     () => buildNodes(
@@ -481,10 +500,24 @@ function AppMapInner({
     (changes: NodeChange[]) => {
       setNodes((nds) => applyNodeChanges(changes, nds));
 
+      // Track position changes for edit mode callback
       if (editable && onNodePositionChange) {
         changes.forEach((change) => {
           if (change.type === 'position' && change.position && change.dragging === false) {
             onNodePositionChange(change.id, change.position.x, change.position.y);
+          }
+        });
+      }
+
+      // Track position changes for save layout feature (view mode)
+      if (!editable && allowDrag && onSaveLayout) {
+        changes.forEach((change) => {
+          if (change.type === 'position' && change.position && change.dragging === false) {
+            setPendingPositions((prev) => {
+              const next = new Map(prev);
+              next.set(change.id, { x: change.position!.x, y: change.position!.y });
+              return next;
+            });
           }
         });
       }
@@ -497,7 +530,7 @@ function AppMapInner({
         });
       }
     },
-    [setNodes, editable, onNodePositionChange, onDeleteNode],
+    [setNodes, editable, onNodePositionChange, onDeleteNode, allowDrag, onSaveLayout],
   );
 
   const handleEdgesChange = useCallback(
@@ -633,6 +666,9 @@ function AppMapInner({
               activityOpen={activityOpen}
               canOperate={canOperate}
               onAutoLayout={handleAutoLayout}
+              onSaveLayout={onSaveLayout ? handleSaveLayout : undefined}
+              hasUnsavedPositions={pendingPositions.size > 0}
+              isSavingLayout={isSavingLayout}
             />
             <InfrastructureSummary
               components={components}

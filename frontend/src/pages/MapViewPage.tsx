@@ -445,6 +445,11 @@ export function MapViewPage() {
     });
   }, []);
 
+  // Handler for saving layout positions from view mode
+  const handleSaveLayoutPositions = useCallback((positions: Array<{ id: string; x: number; y: number }>) => {
+    updatePositions.mutate(positions);
+  }, [updatePositions]);
+
   const handleConnect = useCallback((sourceId: string, targetId: string) => {
     if (!appId) return;
     addDependency.mutate({
@@ -834,6 +839,9 @@ export function MapViewPage() {
           branchHighlight={branchHighlight}
           edgeHighlight={edgeHighlight}
           onEdgeClick={handleEdgeClick}
+          // Layout saving (view mode)
+          onSaveLayout={canEdit ? handleSaveLayoutPositions : undefined}
+          isSavingLayout={updatePositions.isPending}
         />
       </div>
 
