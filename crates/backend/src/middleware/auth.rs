@@ -98,6 +98,12 @@ fn extract_token(request: &Request) -> TokenSource {
 }
 
 /// Check if a token has been revoked (stored in PostgreSQL revoked_tokens table).
+/// Public version for use by ws-token endpoint.
+pub async fn is_token_revoked_public(pool: &sqlx::PgPool, token: &str) -> bool {
+    is_token_revoked(pool, token).await
+}
+
+/// Check if a token has been revoked (stored in PostgreSQL revoked_tokens table).
 async fn is_token_revoked(pool: &sqlx::PgPool, token: &str) -> bool {
     let fingerprint = token_fingerprint(token);
 

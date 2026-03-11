@@ -17,6 +17,7 @@ export interface AuditEntry {
   user_email: string;
   target_type: string;
   target_id: string;
+  target_name?: string;
   details: Record<string, unknown>;
   created_at: string;
 }
@@ -25,7 +26,7 @@ export function useAvailabilityReport(appId: string, period: string) {
   return useQuery({
     queryKey: ['reports', 'availability', appId, period],
     queryFn: async () => {
-      const { data } = await client.get<AvailabilityReport>(`/reports/availability/${appId}`, { params: { period } });
+      const { data } = await client.get<AvailabilityReport>(`/apps/${appId}/reports/availability`, { params: { period } });
       return data;
     },
     enabled: !!appId,
@@ -53,11 +54,18 @@ export function useAuditLog(params: { app_id?: string; user_id?: string; limit?:
   });
 }
 
+export interface ComplianceReport {
+  report: string;
+  dora_compliant: boolean;
+  audit_trail_entries: number;
+  append_only_enforced: boolean;
+}
+
 export function useComplianceReport(appId: string) {
   return useQuery({
     queryKey: ['reports', 'compliance', appId],
     queryFn: async () => {
-      const { data } = await client.get(`/reports/compliance/${appId}`);
+      const { data } = await client.get<ComplianceReport>(`/apps/${appId}/reports/compliance`);
       return data;
     },
     enabled: !!appId,

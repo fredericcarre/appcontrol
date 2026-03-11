@@ -26,17 +26,77 @@ struct StaleComponent {
 /// Start the heartbeat monitor background task.
 /// Runs every `check_interval` seconds, queries for agents whose last_heartbeat_at
 /// exceeds the organization's configured timeout, and transitions their components
-/// to UNREACHABLE.
+/// to UNREACHABLE. Also monitors gateway heartbeats and marks them disconnected.
 pub async fn run_heartbeat_monitor(state: Arc<AppState>, check_interval: Duration) {
     let mut interval = tokio::time::interval(check_interval);
 
     loop {
         interval.tick().await;
 
+        // Check stale gateways first (they affect agent connectivity)
+        if let Err(e) = check_stale_gateways(&state).await {
+            tracing::error!("Gateway heartbeat monitor error: {}", e);
+        }
+
         if let Err(e) = check_stale_agents(&state).await {
             tracing::error!("Heartbeat monitor error: {}", e);
         }
     }
+}
+
+/// Gateway heartbeat timeout in seconds (2 minutes).
+/// Gateways should send heartbeats every 60 seconds, so 2 minutes means we missed 2+.
+const GATEWAY_HEARTBEAT_TIMEOUT_SECS: i64 = 120;
+
+/// Check for gateways that have missed heartbeats and mark them as suspended.
+async fn check_stale_gateways(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
+    // Find gateways with stale heartbeats that are still marked as 'active'
+    // Mark them as 'suspended' (the valid status for unavailable gateways)
+    let stale_result = sqlx::query(
+        r#"
+        UPDATE gateways
+        SET status = 'suspended'
+        WHERE status = 'active'
+          AND last_heartbeat_at IS NOT NULL
+          AND last_heartbeat_at < now() - ($1 || ' seconds')::interval
+        "#,
+    )
+    .bind(GATEWAY_HEARTBEAT_TIMEOUT_SECS)
+    .execute(&state.db)
+    .await?;
+    let stale_count = stale_result.rows_affected();
+
+    if stale_count > 0 {
+        tracing::warn!(
+            count = stale_count,
+            timeout_secs = GATEWAY_HEARTBEAT_TIMEOUT_SECS,
+            "Marked stale gateways as suspended (no heartbeat)"
+        );
+    }
+
+    // Also update gateways that reconnect (have recent heartbeat but are marked suspended)
+    let reconnected_result = sqlx::query(
+        r#"
+        UPDATE gateways
+        SET status = 'active'
+        WHERE status = 'suspended'
+          AND last_heartbeat_at IS NOT NULL
+          AND last_heartbeat_at >= now() - ($1 || ' seconds')::interval
+        "#,
+    )
+    .bind(GATEWAY_HEARTBEAT_TIMEOUT_SECS)
+    .execute(&state.db)
+    .await?;
+    let reconnected_count = reconnected_result.rows_affected();
+
+    if reconnected_count > 0 {
+        tracing::info!(
+            count = reconnected_count,
+            "Gateways reconnected (heartbeat resumed)"
+        );
+    }
+
+    Ok(())
 }
 
 /// Check for agents that have missed their heartbeat timeout and transition

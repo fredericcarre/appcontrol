@@ -882,6 +882,44 @@ async fn process_gateway_message(
                 }
             }
         }
+        appcontrol_common::GatewayMessage::Heartbeat {
+            gateway_id,
+            connected_agents,
+            buffer_messages,
+            buffer_bytes,
+        } => {
+            tracing::debug!(
+                gateway_id = %gateway_id,
+                connected_agents = connected_agents,
+                buffer_messages = buffer_messages,
+                buffer_bytes = buffer_bytes,
+                "Gateway heartbeat received"
+            );
+
+            // Update gateway's last heartbeat timestamp
+            if let Err(e) = sqlx::query(
+                "UPDATE gateways SET last_heartbeat_at = now() WHERE id = $1",
+            )
+            .bind(gateway_id)
+            .execute(&state.db)
+            .await
+            {
+                tracing::warn!(
+                    gateway_id = %gateway_id,
+                    "Failed to update gateway heartbeat: {}", e
+                );
+            }
+
+            // Log warning if gateway has buffered messages (backend was unreachable)
+            if buffer_messages > 0 {
+                tracing::warn!(
+                    gateway_id = %gateway_id,
+                    buffer_messages = buffer_messages,
+                    buffer_bytes = buffer_bytes,
+                    "Gateway reports buffered messages (possible connectivity issues)"
+                );
+            }
+        }
     }
 }
 

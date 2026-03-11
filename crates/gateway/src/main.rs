@@ -300,19 +300,49 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Connect to backend in background with auto-reconnect
+    // Connect to backend in background with auto-reconnect and exponential backoff
     let state_clone = state.clone();
     tokio::spawn(async move {
+        let base_delay = state_clone.config.backend.reconnect_interval_secs;
+        let mut current_delay = base_delay;
+        let max_delay = 60u64; // Cap at 60 seconds
+        let mut consecutive_failures = 0u32;
+
         loop {
-            tracing::info!("Connecting to backend: {}", state_clone.config.backend.url);
-            if let Err(e) = connect_to_backend(&state_clone).await {
-                tracing::error!("Backend connection error: {}. Reconnecting...", e);
+            tracing::info!(
+                "Connecting to backend: {} (attempt after {}s delay)",
+                state_clone.config.backend.url,
+                if consecutive_failures == 0 { 0 } else { current_delay }
+            );
+
+            match connect_to_backend(&state_clone).await {
+                Ok(()) => {
+                    // Connection closed gracefully (e.g., backend shutdown)
+                    tracing::info!("Backend connection closed gracefully");
+                    // Reset backoff on graceful close
+                    current_delay = base_delay;
+                    consecutive_failures = 0;
+                }
+                Err(e) => {
+                    consecutive_failures += 1;
+                    tracing::error!(
+                        error = %e,
+                        consecutive_failures = consecutive_failures,
+                        "Backend connection error"
+                    );
+
+                    // Exponential backoff: delay = base * 2^(failures-1), capped at max_delay
+                    current_delay = (base_delay * 2u64.pow(consecutive_failures.min(6) - 1)).min(max_delay);
+                }
             }
+
             state_clone.router.clear_backend_sender();
-            tokio::time::sleep(std::time::Duration::from_secs(
-                state_clone.config.backend.reconnect_interval_secs,
-            ))
-            .await;
+
+            tracing::info!(
+                delay_secs = current_delay,
+                "Reconnecting to backend after delay"
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(current_delay)).await;
         }
     });
 
@@ -818,6 +848,20 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
     let (backend_tx, mut backend_rx) = tokio::sync::mpsc::channel::<String>(CHANNEL_CAPACITY);
     state.router.set_backend_sender(backend_tx);
 
+    // Ping/pong and heartbeat intervals
+    let ping_interval = std::time::Duration::from_secs(30);
+    let heartbeat_interval = std::time::Duration::from_secs(60);
+    let pong_timeout = std::time::Duration::from_secs(10);
+
+    let mut ping_timer = tokio::time::interval(ping_interval);
+    let mut heartbeat_timer = tokio::time::interval(heartbeat_interval);
+    let mut last_pong = std::time::Instant::now();
+    let mut waiting_for_pong = false;
+
+    // Skip the first immediate tick
+    ping_timer.tick().await;
+    heartbeat_timer.tick().await;
+
     loop {
         // Check if we've been ordered to disconnect (e.g., gateway blocked by admin)
         if state
@@ -832,7 +876,47 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
             return Err(anyhow::anyhow!("Gateway was blocked by administrator"));
         }
 
+        // Check for pong timeout (connection dead)
+        if waiting_for_pong && last_pong.elapsed() > pong_timeout + ping_interval {
+            tracing::error!(
+                elapsed_secs = last_pong.elapsed().as_secs(),
+                "Backend connection appears dead (no pong received) — reconnecting"
+            );
+            return Err(anyhow::anyhow!("Backend connection timeout (no pong)"));
+        }
+
         tokio::select! {
+            // Periodic ping to detect dead connections
+            _ = ping_timer.tick() => {
+                tracing::debug!("Sending ping to backend");
+                match write.send(tokio_tungstenite::tungstenite::Message::Ping(vec![])).await {
+                    Ok(()) => {
+                        waiting_for_pong = true;
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to send ping to backend");
+                        return Err(e.into());
+                    }
+                }
+            }
+
+            // Periodic heartbeat to backend (gateway status)
+            _ = heartbeat_timer.tick() => {
+                let heartbeat = GatewayMessage::Heartbeat {
+                    gateway_id: state.gateway_id,
+                    connected_agents: state.registry.connected_count(),
+                    buffer_messages: state.router.buffer_stats().0,
+                    buffer_bytes: state.router.buffer_stats().1,
+                };
+                if let Ok(json) = serde_json::to_string(&heartbeat) {
+                    tracing::debug!(agents = state.registry.connected_count(), "Sending gateway heartbeat");
+                    if let Err(e) = write.send(tokio_tungstenite::tungstenite::Message::Text(json)).await {
+                        tracing::error!(error = %e, "Failed to send heartbeat to backend");
+                        return Err(e.into());
+                    }
+                }
+            }
+
             // Messages from agents to forward to backend
             Some(msg) = backend_rx.recv() => {
                 tracing::debug!(bytes = msg.len(), "Sending message from channel to backend WebSocket");
@@ -851,6 +935,7 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
                     }
                 }
             }
+
             // Messages from backend to route to agents
             Some(ws_msg) = read.next() => {
                 match ws_msg {
@@ -863,7 +948,22 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
                             return Err(anyhow::anyhow!("Gateway was blocked by administrator"));
                         }
                     }
-                    Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => return Ok(()),
+                    Ok(tokio_tungstenite::tungstenite::Message::Pong(_)) => {
+                        tracing::debug!("Received pong from backend");
+                        last_pong = std::time::Instant::now();
+                        waiting_for_pong = false;
+                    }
+                    Ok(tokio_tungstenite::tungstenite::Message::Ping(data)) => {
+                        // Respond to ping from backend
+                        if let Err(e) = write.send(tokio_tungstenite::tungstenite::Message::Pong(data)).await {
+                            tracing::error!(error = %e, "Failed to send pong to backend");
+                            return Err(e.into());
+                        }
+                    }
+                    Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
+                        tracing::info!("Backend sent close frame");
+                        return Ok(());
+                    }
                     Err(e) => return Err(e.into()),
                     _ => {}
                 }

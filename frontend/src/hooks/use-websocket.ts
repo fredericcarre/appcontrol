@@ -1,7 +1,8 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth';
 import { useWebSocketStore } from '@/stores/websocket';
+import client from '@/api/client';
 
 // Global WebSocket instance for sharing across components (singleton)
 let globalWs: WebSocket | null = null;
@@ -9,19 +10,64 @@ let globalReconnectTimer: ReturnType<typeof setTimeout> | undefined = undefined;
 let globalReconnectDelay = 1000;
 let globalPingTimer: ReturnType<typeof setInterval> | undefined = undefined;
 let globalConnectionCount = 0;
+let globalWsToken: string | null = null;
+let globalTokenFetchPromise: Promise<string | null> | null = null;
+
+// Fetch WebSocket token from cookie-based endpoint
+async function fetchWsToken(): Promise<string | null> {
+  try {
+    const { data } = await client.get<{ token: string }>('/auth/ws-token');
+    globalWsToken = data.token;
+    return data.token;
+  } catch {
+    return null;
+  }
+}
+
+// Get or fetch the WebSocket token
+async function getWsToken(memoryToken: string | null): Promise<string | null> {
+  // If we have a token in memory (from login), use it
+  if (memoryToken) {
+    globalWsToken = memoryToken;
+    return memoryToken;
+  }
+  // If we already have a cached WS token, use it
+  if (globalWsToken) return globalWsToken;
+  // If we're already fetching, wait for that
+  if (globalTokenFetchPromise) return globalTokenFetchPromise;
+  // Fetch from the endpoint
+  globalTokenFetchPromise = fetchWsToken();
+  const token = await globalTokenFetchPromise;
+  globalTokenFetchPromise = null;
+  return token;
+}
 
 export function getGlobalWebSocket(): WebSocket | null {
   return globalWs;
 }
 
 export function useWebSocket() {
-  const token = useAuthStore((s) => s.token);
+  const memoryToken = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
   const setConnected = useWebSocketStore((s) => s.setConnected);
   const addMessage = useWebSocketStore((s) => s.addMessage);
   const queryClient = useQueryClient();
   const connectRef = useRef<(() => void) | undefined>(undefined);
+  const [wsToken, setWsToken] = useState<string | null>(memoryToken);
+
+  // Fetch WS token on mount if user is authenticated but no memory token
+  useEffect(() => {
+    if (user && !memoryToken && !globalWsToken) {
+      getWsToken(null).then((token) => {
+        if (token) setWsToken(token);
+      });
+    } else if (memoryToken) {
+      setWsToken(memoryToken);
+    }
+  }, [user, memoryToken]);
 
   const connect = useCallback(() => {
+    const token = wsToken || globalWsToken;
     if (!token) return;
     // Use the global WebSocket - only create if not already open/connecting
     if (globalWs?.readyState === WebSocket.OPEN || globalWs?.readyState === WebSocket.CONNECTING) return;
@@ -98,7 +144,7 @@ export function useWebSocket() {
     };
 
     globalWs = ws;
-  }, [token, setConnected, addMessage, queryClient]);
+  }, [wsToken, setConnected, addMessage, queryClient]);
 
   useEffect(() => {
     connectRef.current = connect;

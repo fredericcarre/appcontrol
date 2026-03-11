@@ -149,10 +149,72 @@ pub async fn auth_info(
     }))
 }
 
+/// GET /api/v1/auth/ws-token — Get a token for WebSocket connection.
+///
+/// This endpoint extracts the JWT from the HttpOnly cookie and returns it.
+/// Used by the frontend after a page refresh to reconnect the WebSocket.
+/// The cookie is HttpOnly so JavaScript cannot read it directly.
+pub async fn ws_token(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::Json<serde_json::Value>, axum::http::StatusCode> {
+    // Extract token from cookie
+    let cookie_header = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok());
+
+    let token = cookie_header.and_then(|cookies| {
+        for cookie in cookies.split(';') {
+            let cookie = cookie.trim();
+            if let Some(token) = cookie.strip_prefix(&format!(
+                "{}=",
+                crate::middleware::auth::AUTH_COOKIE_NAME
+            )) {
+                return Some(token.to_string());
+            }
+        }
+        None
+    });
+
+    let token = match token {
+        Some(t) => t,
+        None => return Err(axum::http::StatusCode::UNAUTHORIZED),
+    };
+
+    // Validate the token
+    let claims = jwt::validate_token(&token, &state.config.jwt_secret, &state.config.jwt_issuer)
+        .map_err(|_| axum::http::StatusCode::UNAUTHORIZED)?;
+
+    // Check if token is revoked
+    if crate::middleware::auth::is_token_revoked_public(&state.db, &token).await {
+        return Err(axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    let user_id: Uuid = claims
+        .sub
+        .parse()
+        .map_err(|_| axum::http::StatusCode::UNAUTHORIZED)?;
+    let org_id: Uuid = claims
+        .org
+        .parse()
+        .map_err(|_| axum::http::StatusCode::UNAUTHORIZED)?;
+
+    Ok(axum::Json(serde_json::json!({
+        "token": token,
+        "user": {
+            "id": user_id,
+            "organization_id": org_id,
+            "email": claims.email,
+            "role": claims.role,
+        }
+    })))
+}
+
 /// Auth routes (no auth middleware — these ARE login/info endpoints).
 pub fn auth_routes() -> axum::Router<std::sync::Arc<crate::AppState>> {
     use axum::routing::{get, post};
     axum::Router::new()
         .route("/auth/login", post(login))
         .route("/auth/info", get(auth_info))
+        .route("/auth/ws-token", get(ws_token))
 }

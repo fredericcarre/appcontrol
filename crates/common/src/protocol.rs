@@ -473,6 +473,16 @@ pub enum GatewayMessage {
         gateway_id: Uuid,
         entries: Vec<LogEntry>,
     },
+    /// Periodic heartbeat from gateway to backend (connection health + stats).
+    Heartbeat {
+        gateway_id: Uuid,
+        /// Number of agents currently connected to this gateway.
+        connected_agents: usize,
+        /// Number of messages buffered while backend was disconnected.
+        buffer_messages: usize,
+        /// Total bytes buffered while backend was disconnected.
+        buffer_bytes: usize,
+    },
 }
 
 /// Client subscription message (frontend → backend WebSocket).

@@ -41,6 +41,7 @@ pub async fn global_audit(
 
     // Filter by organization via the user who performed the action
     // action_log doesn't have organization_id, so we join through users
+    // We also LEFT JOIN various tables to resolve target names
     let logs = sqlx::query_as::<
         _,
         (
@@ -52,6 +53,10 @@ pub async fn global_audit(
             Uuid,
             serde_json::Value,
             chrono::DateTime<chrono::Utc>,
+            Option<String>, // app_name
+            Option<String>, // component_name
+            Option<String>, // agent_hostname
+            Option<String>, // gateway_name
         ),
     >(
         r#"
@@ -63,9 +68,17 @@ pub async fn global_audit(
             al.resource_type,
             al.resource_id,
             al.details,
-            al.created_at
+            al.created_at,
+            app.name as app_name,
+            comp.name as component_name,
+            ag.hostname as agent_hostname,
+            gw.name as gateway_name
         FROM action_log al
         LEFT JOIN users u ON u.id = al.user_id
+        LEFT JOIN applications app ON app.id = al.resource_id AND al.resource_type = 'application'
+        LEFT JOIN components comp ON comp.id = al.resource_id AND al.resource_type = 'component'
+        LEFT JOIN agents ag ON ag.id = al.resource_id AND al.resource_type = 'agent'
+        LEFT JOIN gateways gw ON gw.id = al.resource_id AND al.resource_type = 'gateway'
         WHERE u.organization_id = $1
           AND ($2::uuid IS NULL OR al.resource_id = $2)
           AND ($3::uuid IS NULL OR al.user_id = $3)
@@ -84,14 +97,29 @@ pub async fn global_audit(
     let data: Vec<Value> = logs
         .iter()
         .map(
-            |(id, _uid, user_email, action, target_type, target_id, details, at)| {
+            |(id, _uid, user_email, action, target_type, target_id, details, at, app_name, comp_name, agent_hostname, gateway_name)| {
+                // Resolve target name from the joined tables
+                let target_name = app_name.clone()
+                    .or_else(|| comp_name.clone())
+                    .or_else(|| agent_hostname.clone())
+                    .or_else(|| gateway_name.clone());
+
+                // Include the resolved name in details for frontend consumption
+                let mut enriched_details = details.clone();
+                if let Some(name) = &target_name {
+                    if let Some(obj) = enriched_details.as_object_mut() {
+                        obj.insert("name".to_string(), json!(name));
+                    }
+                }
+
                 json!({
                     "id": id,
                     "user_email": user_email,
                     "action": action,
                     "target_type": target_type,
                     "target_id": target_id,
-                    "details": details,
+                    "target_name": target_name,
+                    "details": enriched_details,
                     "created_at": at
                 })
             },
