@@ -914,12 +914,11 @@ async fn process_gateway_message(
             );
 
             // Update gateway's last heartbeat timestamp
-            if let Err(e) = sqlx::query(
-                "UPDATE gateways SET last_heartbeat_at = now() WHERE id = $1",
-            )
-            .bind(gateway_id)
-            .execute(&state.db)
-            .await
+            if let Err(e) =
+                sqlx::query("UPDATE gateways SET last_heartbeat_at = now() WHERE id = $1")
+                    .bind(gateway_id)
+                    .execute(&state.db)
+                    .await
             {
                 tracing::warn!(
                     gateway_id = %gateway_id,

@@ -97,9 +97,23 @@ pub async fn global_audit(
     let data: Vec<Value> = logs
         .iter()
         .map(
-            |(id, _uid, user_email, action, target_type, target_id, details, at, app_name, comp_name, agent_hostname, gateway_name)| {
+            |(
+                id,
+                _uid,
+                user_email,
+                action,
+                target_type,
+                target_id,
+                details,
+                at,
+                app_name,
+                comp_name,
+                agent_hostname,
+                gateway_name,
+            )| {
                 // Resolve target name from the joined tables
-                let target_name = app_name.clone()
+                let target_name = app_name
+                    .clone()
                     .or_else(|| comp_name.clone())
                     .or_else(|| agent_hostname.clone())
                     .or_else(|| gateway_name.clone());

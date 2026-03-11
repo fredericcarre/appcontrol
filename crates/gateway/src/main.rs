@@ -312,7 +312,11 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!(
                 "Connecting to backend: {} (attempt after {}s delay)",
                 state_clone.config.backend.url,
-                if consecutive_failures == 0 { 0 } else { current_delay }
+                if consecutive_failures == 0 {
+                    0
+                } else {
+                    current_delay
+                }
             );
 
             match connect_to_backend(&state_clone).await {
@@ -332,7 +336,8 @@ async fn main() -> anyhow::Result<()> {
                     );
 
                     // Exponential backoff: delay = base * 2^(failures-1), capped at max_delay
-                    current_delay = (base_delay * 2u64.pow(consecutive_failures.min(6) - 1)).min(max_delay);
+                    current_delay =
+                        (base_delay * 2u64.pow(consecutive_failures.min(6) - 1)).min(max_delay);
                 }
             }
 

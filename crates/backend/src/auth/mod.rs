@@ -166,10 +166,9 @@ pub async fn ws_token(
     let token = cookie_header.and_then(|cookies| {
         for cookie in cookies.split(';') {
             let cookie = cookie.trim();
-            if let Some(token) = cookie.strip_prefix(&format!(
-                "{}=",
-                crate::middleware::auth::AUTH_COOKIE_NAME
-            )) {
+            if let Some(token) =
+                cookie.strip_prefix(&format!("{}=", crate::middleware::auth::AUTH_COOKIE_NAME))
+            {
                 return Some(token.to_string());
             }
         }
