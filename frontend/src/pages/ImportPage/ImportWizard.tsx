@@ -18,6 +18,7 @@ import {
   ConflictAction,
 } from '@/api/import';
 import { useGateways, Gateway } from '@/api/gateways';
+import { JsonEditor, JsonError } from '@/components/JsonEditor';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Wizard Steps
@@ -29,6 +30,7 @@ interface WizardState {
   // Step 1: Upload
   content: string;
   format: 'json' | 'yaml';
+  jsonError: JsonError | null;
   // Step 2: Gateway
   selectedGatewayIds: string[];
   selectedDrGatewayIds: string[];
@@ -48,6 +50,7 @@ interface WizardState {
 const initialState: WizardState = {
   content: '',
   format: 'json',
+  jsonError: null,
   selectedGatewayIds: [],
   selectedDrGatewayIds: [],
   preview: null,
@@ -90,6 +93,8 @@ export default function ImportWizard() {
   const canProceed = (): boolean => {
     switch (step) {
       case 'upload':
+        // For JSON format, also check for validation errors
+        if (state.format === 'json' && state.jsonError) return false;
         return state.content.trim().length > 0;
       case 'gateway':
         return state.selectedGatewayIds.length > 0;
@@ -215,6 +220,7 @@ export default function ImportWizard() {
               format={state.format}
               onContentChange={(content) => updateState({ content })}
               onFormatChange={(format) => updateState({ format })}
+              onJsonErrorChange={(jsonError) => updateState({ jsonError })}
             />
           )}
           {step === 'gateway' && (
@@ -302,9 +308,10 @@ interface UploadStepProps {
   format: 'json' | 'yaml';
   onContentChange: (content: string) => void;
   onFormatChange: (format: 'json' | 'yaml') => void;
+  onJsonErrorChange: (error: JsonError | null) => void;
 }
 
-function UploadStep({ content, format, onContentChange, onFormatChange }: UploadStepProps) {
+function UploadStep({ content, format, onContentChange, onFormatChange, onJsonErrorChange }: UploadStepProps) {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -362,12 +369,22 @@ function UploadStep({ content, format, onContentChange, onFormatChange }: Upload
 
       <div>
         <label className="block text-sm font-medium mb-2">Or paste content</label>
-        <textarea
-          value={content}
-          onChange={(e) => onContentChange(e.target.value)}
-          placeholder={format === 'json' ? '{ "application": { ... } }' : 'application:\n  name: My App\n  ...'}
-          className="w-full h-64 px-3 py-2 border rounded-md bg-background text-sm font-mono"
-        />
+        {format === 'json' ? (
+          <JsonEditor
+            value={content}
+            onChange={onContentChange}
+            onValidationChange={onJsonErrorChange}
+            placeholder={'{\n  "application": {\n    "name": "My App",\n    "components": []\n  }\n}'}
+            height="350px"
+          />
+        ) : (
+          <textarea
+            value={content}
+            onChange={(e) => onContentChange(e.target.value)}
+            placeholder={'application:\n  name: My App\n  components:\n    - name: component1\n      ...'}
+            className="w-full h-64 px-3 py-2 border rounded-md bg-background text-sm font-mono"
+          />
+        )}
       </div>
     </div>
   );
