@@ -395,6 +395,115 @@ pub async fn correlate(
     }
 
     // -----------------------------------------------------------------------
+    // Add "client services" - processes that don't listen but have significant
+    // outbound connections to known services (e.g., xcruntime → RabbitMQ)
+    // -----------------------------------------------------------------------
+    let mut client_services_added: std::collections::HashSet<(Uuid, String)> =
+        std::collections::HashSet::new();
+
+    for (agent_id, hostname, report) in &reports {
+        if let Some(connections) = report.get("connections").and_then(|c| c.as_array()) {
+            // Group connections by process name
+            let mut proc_connections: std::collections::HashMap<String, Vec<&Value>> =
+                std::collections::HashMap::new();
+            for conn in connections {
+                let proc_name = conn
+                    .get("process_name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if !proc_name.is_empty() {
+                    proc_connections.entry(proc_name).or_default().push(conn);
+                }
+            }
+
+            // Build a PID→process data lookup
+            let processes = report
+                .get("processes")
+                .and_then(|p| p.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let pid_to_process: std::collections::HashMap<u64, &Value> = processes
+                .iter()
+                .filter_map(|p| {
+                    let pid = p.get("pid").and_then(|v| v.as_u64())?;
+                    Some((pid, p))
+                })
+                .collect();
+
+            for (proc_name, conns) in &proc_connections {
+                // Skip if already a listening service
+                if services.iter().any(|s| {
+                    s.get("agent_id").and_then(|a| a.as_str()) == Some(&agent_id.to_string())
+                        && s.get("process_name").and_then(|n| n.as_str()) == Some(proc_name)
+                }) {
+                    continue;
+                }
+
+                // Check if this process has connections to known services
+                let connects_to_service = conns.iter().any(|conn| {
+                    let remote_addr = conn.get("remote_addr").and_then(|a| a.as_str()).unwrap_or("");
+                    let remote_port = conn.get("remote_port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
+                    listen_index.contains_key(&(remote_addr.to_string(), remote_port))
+                });
+
+                if !connects_to_service {
+                    continue;
+                }
+
+                // Skip if already added
+                if !client_services_added.insert((*agent_id, proc_name.clone())) {
+                    continue;
+                }
+
+                // Find the process data for enrichment
+                let first_pid = conns.iter()
+                    .filter_map(|c| c.get("pid").and_then(|v| v.as_u64()))
+                    .next();
+                let process_data = first_pid.and_then(|pid| pid_to_process.get(&pid));
+
+                // Extract service name from cmdline (for XComponent)
+                let cmdline = process_data
+                    .and_then(|p| p.get("cmdline"))
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("");
+                let xc_service_name = extract_xcproperties_name(cmdline);
+
+                let display_name = if let Some(ref xc_name) = xc_service_name {
+                    format!("{}@{}", xc_name, hostname)
+                } else {
+                    format!("{}@{}", proc_name, hostname)
+                };
+
+                let command_suggestion = process_data
+                    .and_then(|p| p.get("command_suggestion"))
+                    .cloned();
+                let technology_hint = process_data
+                    .and_then(|p| p.get("technology_hint"))
+                    .cloned();
+
+                let empty_ports: Vec<u16> = Vec::new();
+                let empty_details: Vec<Value> = Vec::new();
+                services.push(json!({
+                    "agent_id": agent_id,
+                    "hostname": hostname,
+                    "process_name": proc_name,
+                    "ports": empty_ports,
+                    "port_details": empty_details,
+                    "suggested_name": display_name,
+                    "component_type": "backend",
+                    "command_suggestion": command_suggestion,
+                    "config_files": [],
+                    "log_files": [],
+                    "matched_service": xc_service_name,
+                    "technology_hint": technology_hint,
+                    "is_client_service": true,
+                }));
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Build connections: match outbound connections to services
     // -----------------------------------------------------------------------
     let mut resolved_deps: Vec<Value> = Vec::new();
@@ -583,6 +692,30 @@ fn find_service_index(services: &[Value], agent_id: &Uuid, proc_name: &str) -> O
                 .map(|n| n == proc_name)
                 .unwrap_or(false)
     })
+}
+
+/// Extract XComponent service name from command line.
+/// Looks for patterns like "lynx-microservice1.xcproperties" and extracts "lynx-microservice".
+fn extract_xcproperties_name(cmdline: &str) -> Option<String> {
+    // Look for .xcproperties pattern
+    if let Some(idx) = cmdline.find(".xcproperties") {
+        let before = &cmdline[..idx];
+        // Find the start of the filename (after \ or / or space)
+        let start = before
+            .rfind(|c: char| c == '\\' || c == '/' || c == ' ')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let name = &before[start..];
+        if !name.is_empty() {
+            // Remove trailing number (e.g., "lynx-microservice1" → "lynx-microservice")
+            let name_cleaned = name.trim_end_matches(|c: char| c.is_ascii_digit());
+            if !name_cleaned.is_empty() {
+                return Some(name_cleaned.to_string());
+            }
+            return Some(name.to_string());
+        }
+    }
+    None
 }
 
 /// Heuristic: guess component type from process name and ports.
