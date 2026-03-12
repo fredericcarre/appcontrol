@@ -8,6 +8,13 @@
 //! `netstat -ano` is available on all Windows versions since XP, runs without
 //! admin rights, and provides PID→port mapping out of the box. It's the most
 //! reliable cross-version approach.
+//!
+//! ## Command line retrieval
+//!
+//! `sysinfo` on Windows often returns empty command lines due to permission
+//! restrictions. We use `wmic process get ProcessId,CommandLine` to get full
+//! command lines, which is essential for identifying Java applications like
+//! Elasticsearch, Tomcat, Kafka, etc.
 
 use std::collections::HashMap;
 use sysinfo::System;
@@ -16,6 +23,67 @@ use appcontrol_common::{
     CommandSuggestion, DiscoveredConnection, DiscoveredFirewallRule, DiscoveredListener,
     DiscoveredScheduledJob, DiscoveredService,
 };
+
+use super::tech_patterns;
+
+// =========================================================================
+// Process Command Line Retrieval
+// =========================================================================
+
+/// Get process command lines via wmic.
+///
+/// sysinfo on Windows often returns empty command lines due to permission
+/// restrictions. This function uses `wmic process get ProcessId,CommandLine`
+/// which works reliably even for services and Java processes.
+///
+/// Returns a HashMap of PID -> command line string.
+pub fn get_process_cmdlines() -> HashMap<u32, String> {
+    use std::process::Command;
+
+    let mut cmdlines = HashMap::new();
+
+    // Use wmic to get ProcessId and CommandLine for all processes
+    // Format: "ProcessId  CommandLine\n1234  java.exe -jar ...\n"
+    let output = Command::new("wmic")
+        .args(["process", "get", "ProcessId,CommandLine", "/format:csv"])
+        .output();
+
+    let output = match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return cmdlines,
+    };
+
+    // CSV format: Node,CommandLine,ProcessId
+    // First line is header, skip it
+    for line in output.lines().skip(1) {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Parse CSV - format is: Node,CommandLine,ProcessId
+        // CommandLine may contain commas, so we parse from the end
+        let parts: Vec<&str> = line.rsplitn(2, ',').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+
+        let pid_str = parts[0].trim();
+        let rest = parts[1]; // Node,CommandLine
+
+        // Now split rest to extract CommandLine (skip Node)
+        if let Some(comma_idx) = rest.find(',') {
+            let cmdline = rest[comma_idx + 1..].trim();
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                if !cmdline.is_empty() {
+                    cmdlines.insert(pid, cmdline.to_string());
+                }
+            }
+        }
+    }
+
+    cmdlines
+}
 
 /// Scan TCP listeners and connections by parsing `netstat -ano` output.
 pub fn scan_network(_sys: &System) -> (Vec<DiscoveredListener>, Vec<DiscoveredConnection>) {
@@ -191,12 +259,24 @@ pub fn scan_services() -> Vec<DiscoveredService> {
 // =========================================================================
 
 /// Cross-reference a process PID with Windows services to generate command suggestions.
+///
+/// Uses the command line to identify specific technologies (Elasticsearch, Tomcat, etc.)
+/// via tech_patterns, then falls back to Windows service matching, then generic commands.
 pub fn suggest_commands(
     pid: u32,
     process_name: &str,
+    cmdline: &str,
     services: &[DiscoveredService],
 ) -> (Option<CommandSuggestion>, Option<String>) {
     let name_lower = process_name.to_lowercase();
+
+    // First, try to identify technology from command line (critical for Java apps)
+    // This is the most accurate way to identify Elasticsearch, Tomcat, Kafka, etc.
+    if let Some((tech_name, suggestion)) =
+        tech_patterns::get_commands_for_technology(process_name, cmdline, &[])
+    {
+        return (Some(suggestion), Some(tech_name));
+    }
 
     // Check if this PID matches a running Windows service
     for svc in services {
@@ -261,16 +341,27 @@ pub fn suggest_commands(
         );
     }
 
-    // ElasticSearch (Java process)
+    // Java process without specific identification - use wmic to check command line
     if name_lower == "java" || name_lower == "java.exe" || name_lower.contains("javaw") {
-        // Note: The actual identification happens in correlate based on port 9200
+        // Build a check command based on the actual cmdline if available
+        let check_cmd = if !cmdline.is_empty() {
+            // Extract a unique pattern from the cmdline for identification
+            let pattern = extract_java_cmdline_pattern(cmdline);
+            format!(
+                r#"wmic Path win32_process Where "CommandLine Like '%{}%' and Caption = 'java.exe'" get caption | findstr java"#,
+                pattern.replace('\'', "''")
+            )
+        } else {
+            format!(
+                "wmic Path win32_process Where \"Caption = '{}'\" get CommandLine | findstr /I java",
+                exe_name
+            )
+        };
+
         return (
             Some(CommandSuggestion {
-                check_cmd: format!(
-                    "wmic Path win32_process Where \"Caption = '{}'\" get CommandLine | findstr /I java",
-                    exe_name
-                ),
-                start_cmd: None, // Need cmdline context
+                check_cmd,
+                start_cmd: None, // Unknown - user must fill in
                 stop_cmd: Some(format!(
                     "wmic Path win32_process Where \"Caption = '{}'\" Call Terminate",
                     exe_name
@@ -323,6 +414,51 @@ pub fn suggest_commands(
         }),
         None,
     )
+}
+
+/// Extract a meaningful pattern from Java command line for process identification.
+///
+/// For Java apps, we look for key identifiers like:
+/// - Main class name (e.g., "org.elasticsearch.bootstrap.Elasticsearch")
+/// - -jar file name (e.g., "myapp.jar")
+/// - Known framework patterns (e.g., "catalina.startup.Bootstrap")
+fn extract_java_cmdline_pattern(cmdline: &str) -> String {
+    // Look for main class patterns
+    let patterns = [
+        "org.elasticsearch.bootstrap.Elasticsearch",
+        "org.apache.catalina.startup.Bootstrap",
+        "kafka.Kafka",
+        "org.apache.activemq",
+        "org.jboss.as.standalone",
+        "weblogic.Server",
+        "com.ibm.ws.runtime.WsServer",
+        "QuorumPeerMain",
+    ];
+
+    for pattern in &patterns {
+        if cmdline.contains(pattern) {
+            return (*pattern).to_string();
+        }
+    }
+
+    // Look for -jar argument
+    if let Some(jar_idx) = cmdline.find("-jar ") {
+        let after_jar = &cmdline[jar_idx + 5..];
+        let jar_name: String = after_jar
+            .chars()
+            .take_while(|c| !c.is_whitespace())
+            .collect();
+        if !jar_name.is_empty() {
+            return jar_name;
+        }
+    }
+
+    // Fallback: use first 50 chars if cmdline is long
+    if cmdline.len() > 50 {
+        cmdline[..50].to_string()
+    } else {
+        cmdline.to_string()
+    }
 }
 
 // =========================================================================

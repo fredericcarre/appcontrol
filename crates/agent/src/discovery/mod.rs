@@ -299,6 +299,10 @@ fn scan_processes(
     listeners: &[DiscoveredListener],
     services: &[DiscoveredService],
 ) -> Vec<DiscoveredProcess> {
+    // On Windows, pre-fetch command lines via wmic (sysinfo often returns empty cmdlines)
+    #[cfg(target_os = "windows")]
+    let wmic_cmdlines = windows::get_process_cmdlines();
+
     sys.processes()
         .iter()
         .filter_map(|(pid, p)| {
@@ -307,6 +311,23 @@ fn scan_processes(
                 return None;
             }
 
+            // Get cmdline from sysinfo first
+            let sysinfo_cmdline = p
+                .cmd()
+                .iter()
+                .map(|s| s.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            // On Windows, prefer wmic cmdline if sysinfo returned empty
+            #[cfg(target_os = "windows")]
+            let cmdline = if sysinfo_cmdline.is_empty() {
+                wmic_cmdlines.get(&pid.as_u32()).cloned().unwrap_or_default()
+            } else {
+                sysinfo_cmdline
+            };
+
+            #[cfg(not(target_os = "windows"))]
             let cmdline = p
                 .cmd()
                 .iter()
@@ -453,8 +474,7 @@ fn suggest_commands(
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = cmdline;
-        windows::suggest_commands(pid, name, services)
+        windows::suggest_commands(pid, name, cmdline, services)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {

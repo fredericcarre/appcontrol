@@ -1036,9 +1036,9 @@ pub fn identify_technology(
     None
 }
 
-/// Get commands for a technology.
+/// Get commands for a technology by ID.
 #[allow(dead_code)]
-pub fn get_commands_for_technology(tech_id: &str) -> Option<CommandSuggestion> {
+pub fn get_commands_by_id(tech_id: &str) -> Option<CommandSuggestion> {
     let pattern = TECH_PATTERNS.iter().find(|p| p.id == tech_id)?;
 
     #[cfg(target_os = "windows")]
@@ -1057,6 +1057,71 @@ pub fn get_commands_for_technology(tech_id: &str) -> Option<CommandSuggestion> {
         confidence: "high".to_string(),
         source: tech_id.to_string(),
     })
+}
+
+/// Identify technology and get commands from process name, cmdline, and ports.
+///
+/// Returns (technology_display_name, commands) if a match is found.
+/// This is the main entry point for Windows discovery to identify Java apps
+/// like Elasticsearch, Tomcat, Kafka, etc. based on their command line.
+pub fn get_commands_for_technology(
+    process_name: &str,
+    cmdline: &str,
+    ports: &[u16],
+) -> Option<(String, CommandSuggestion)> {
+    let name_lower = process_name.to_lowercase();
+    let cmdline_lower = cmdline.to_lowercase();
+
+    for pattern in TECH_PATTERNS {
+        let name_match = pattern
+            .process_names
+            .iter()
+            .any(|p| name_lower == *p || name_lower == format!("{}.exe", p));
+
+        let cmdline_match = pattern
+            .cmdline_patterns
+            .iter()
+            .any(|p| cmdline_lower.contains(&p.to_lowercase()));
+
+        let port_match = !pattern.port_hints.is_empty()
+            && pattern.port_hints.iter().any(|p| ports.contains(p));
+
+        // Require cmdline match for Java processes (name "java" is too generic)
+        // For other processes, name match is sufficient
+        let is_java = name_lower == "java" || name_lower == "java.exe" || name_lower.contains("javaw");
+        let has_match = if is_java {
+            cmdline_match // Java requires cmdline match
+        } else {
+            name_match || cmdline_match
+        };
+
+        if has_match || (port_match && (name_match || cmdline_match)) {
+            // Get platform-specific commands
+            #[cfg(target_os = "windows")]
+            let commands_opt = pattern.windows_commands.as_ref();
+
+            #[cfg(not(target_os = "windows"))]
+            let commands_opt = pattern.linux_commands.as_ref();
+
+            if let Some(commands) = commands_opt {
+                return Some((
+                    pattern.display_name.to_string(),
+                    CommandSuggestion {
+                        check_cmd: commands.check.to_string(),
+                        start_cmd: commands.start.map(|s| s.to_string()),
+                        stop_cmd: commands.stop.map(|s| s.to_string()),
+                        restart_cmd: commands.restart.map(|s| s.to_string()),
+                        logs_cmd: commands.logs.map(|s| s.to_string()),
+                        version_cmd: commands.version.map(|s| s.to_string()),
+                        confidence: if cmdline_match { "high" } else { "medium" }.to_string(),
+                        source: pattern.id.to_string(),
+                    },
+                ));
+            }
+        }
+    }
+
+    None
 }
 
 /// Extract service name from XComponent cmdline.
