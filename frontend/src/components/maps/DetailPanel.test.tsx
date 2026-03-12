@@ -8,6 +8,7 @@ import type { Component } from '@/api/apps';
 vi.mock('@/api/components', () => ({
   useStateTransitions: () => ({ data: undefined }),
   useCommandExecutions: () => ({ data: undefined }),
+  useCheckEvents: () => ({ data: undefined }),
 }));
 
 function createComponent(overrides: Partial<Component> = {}): Component {
