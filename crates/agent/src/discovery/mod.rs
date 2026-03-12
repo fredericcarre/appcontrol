@@ -322,7 +322,10 @@ fn scan_processes(
             // On Windows, prefer wmic cmdline if sysinfo returned empty
             #[cfg(target_os = "windows")]
             let cmdline = if sysinfo_cmdline.is_empty() {
-                wmic_cmdlines.get(&pid.as_u32()).cloned().unwrap_or_default()
+                wmic_cmdlines
+                    .get(&pid.as_u32())
+                    .cloned()
+                    .unwrap_or_default()
             } else {
                 sysinfo_cmdline
             };

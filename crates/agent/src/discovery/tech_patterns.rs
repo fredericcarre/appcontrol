@@ -1014,8 +1014,8 @@ pub fn identify_technology(
             .iter()
             .any(|p| cmdline_lower.contains(&p.to_lowercase()));
 
-        let port_match = !pattern.port_hints.is_empty()
-            && pattern.port_hints.iter().any(|p| ports.contains(p));
+        let port_match =
+            !pattern.port_hints.is_empty() && pattern.port_hints.iter().any(|p| ports.contains(p));
 
         // Require at least one strong signal (name or cmdline)
         if name_match || cmdline_match {
@@ -1083,12 +1083,13 @@ pub fn get_commands_for_technology(
             .iter()
             .any(|p| cmdline_lower.contains(&p.to_lowercase()));
 
-        let port_match = !pattern.port_hints.is_empty()
-            && pattern.port_hints.iter().any(|p| ports.contains(p));
+        let port_match =
+            !pattern.port_hints.is_empty() && pattern.port_hints.iter().any(|p| ports.contains(p));
 
         // Require cmdline match for Java processes (name "java" is too generic)
         // For other processes, name match is sufficient
-        let is_java = name_lower == "java" || name_lower == "java.exe" || name_lower.contains("javaw");
+        let is_java =
+            name_lower == "java" || name_lower == "java.exe" || name_lower.contains("javaw");
         let has_match = if is_java {
             cmdline_match // Java requires cmdline match
         } else {

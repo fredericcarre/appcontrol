@@ -352,19 +352,23 @@ pub async fn correlate(
                 .cloned()
                 .unwrap_or(json!([]));
             let matched_service = process_data.and_then(|p| p.get("matched_service")).cloned();
-            let technology_hint = process_data
-                .and_then(|p| p.get("technology_hint"))
-                .cloned();
+            let technology_hint = process_data.and_then(|p| p.get("technology_hint")).cloned();
 
             // Use technology_hint for display name and component type if available
             let (display_name, component_type) = if let Some(ref tech) = technology_hint {
-                let tech_name = tech.get("display_name").and_then(|n| n.as_str()).unwrap_or(proc_name);
+                let tech_name = tech
+                    .get("display_name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or(proc_name);
                 let tech_layer = tech.get("layer").and_then(|l| l.as_str()).unwrap_or("");
                 let comp_type = layer_to_component_type(tech_layer)
                     .unwrap_or_else(|| guess_component_type(proc_name, &port_list));
                 (format!("{}@{}", tech_name, hostname), comp_type)
             } else {
-                (format!("{}@{}", proc_name, hostname), guess_component_type(proc_name, &port_list))
+                (
+                    format!("{}@{}", proc_name, hostname),
+                    guess_component_type(proc_name, &port_list),
+                )
             };
 
             services.push(json!({
@@ -442,8 +446,14 @@ pub async fn correlate(
 
                 // Check if this process has connections to known services
                 let connects_to_service = conns.iter().any(|conn| {
-                    let remote_addr = conn.get("remote_addr").and_then(|a| a.as_str()).unwrap_or("");
-                    let remote_port = conn.get("remote_port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
+                    let remote_addr = conn
+                        .get("remote_addr")
+                        .and_then(|a| a.as_str())
+                        .unwrap_or("");
+                    let remote_port = conn
+                        .get("remote_port")
+                        .and_then(|p| p.as_u64())
+                        .unwrap_or(0) as u16;
                     listen_index.contains_key(&(remote_addr.to_string(), remote_port))
                 });
 
@@ -457,7 +467,8 @@ pub async fn correlate(
                 }
 
                 // Find the process data for enrichment
-                let first_pid = conns.iter()
+                let first_pid = conns
+                    .iter()
                     .filter_map(|c| c.get("pid").and_then(|v| v.as_u64()))
                     .next();
                 let process_data = first_pid.and_then(|pid| pid_to_process.get(&pid));
@@ -478,9 +489,7 @@ pub async fn correlate(
                 let command_suggestion = process_data
                     .and_then(|p| p.get("command_suggestion"))
                     .cloned();
-                let technology_hint = process_data
-                    .and_then(|p| p.get("technology_hint"))
-                    .cloned();
+                let technology_hint = process_data.and_then(|p| p.get("technology_hint")).cloned();
 
                 let empty_ports: Vec<u16> = Vec::new();
                 let empty_details: Vec<Value> = Vec::new();
@@ -1719,17 +1728,20 @@ pub async fn update_schedule(
     if let Some(enabled) = body.enabled {
         if enabled {
             // Get current frequency to calculate next_run
-            let freq: String = sqlx::query_scalar("SELECT frequency FROM snapshot_schedules WHERE id = $1")
-                .bind(schedule_id)
-                .fetch_one(&state.db)
-                .await?;
+            let freq: String =
+                sqlx::query_scalar("SELECT frequency FROM snapshot_schedules WHERE id = $1")
+                    .bind(schedule_id)
+                    .fetch_one(&state.db)
+                    .await?;
             let next_run = calculate_next_run(&freq);
-            sqlx::query("UPDATE snapshot_schedules SET enabled = $2, next_run_at = $3 WHERE id = $1")
-                .bind(schedule_id)
-                .bind(enabled)
-                .bind(next_run)
-                .execute(&state.db)
-                .await?;
+            sqlx::query(
+                "UPDATE snapshot_schedules SET enabled = $2, next_run_at = $3 WHERE id = $1",
+            )
+            .bind(schedule_id)
+            .bind(enabled)
+            .bind(next_run)
+            .execute(&state.db)
+            .await?;
         } else {
             sqlx::query("UPDATE snapshot_schedules SET enabled = $2 WHERE id = $1")
                 .bind(schedule_id)
@@ -1774,7 +1786,11 @@ fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
         "weekly" => {
             // Next week (Sunday) at midnight
             let days_until_sunday = (7 - now.weekday().num_days_from_sunday()) % 7;
-            let days_until_sunday = if days_until_sunday == 0 { 7 } else { days_until_sunday };
+            let days_until_sunday = if days_until_sunday == 0 {
+                7
+            } else {
+                days_until_sunday
+            };
             now.with_hour(0)
                 .and_then(|t| t.with_minute(0))
                 .and_then(|t| t.with_second(0))
@@ -1784,8 +1800,7 @@ fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
         "monthly" => {
             // First day of next month at midnight
             let next_month = if now.month() == 12 {
-                now.with_year(now.year() + 1)
-                    .and_then(|t| t.with_month(1))
+                now.with_year(now.year() + 1).and_then(|t| t.with_month(1))
             } else {
                 now.with_month(now.month() + 1)
             };
@@ -1820,13 +1835,12 @@ pub async fn delete_schedule(
     )
     .await?;
 
-    let result = sqlx::query(
-        "DELETE FROM snapshot_schedules WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(schedule_id)
-    .bind(user.organization_id)
-    .execute(&state.db)
-    .await?;
+    let result =
+        sqlx::query("DELETE FROM snapshot_schedules WHERE id = $1 AND organization_id = $2")
+            .bind(schedule_id)
+            .bind(user.organization_id)
+            .execute(&state.db)
+            .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound);
@@ -1854,8 +1868,9 @@ pub async fn list_snapshots(
         return Err(ApiError::Forbidden);
     }
 
-    let rows = if let Some(schedule_id) = query.schedule_id {
-        sqlx::query_as::<
+    let rows =
+        if let Some(schedule_id) = query.schedule_id {
+            sqlx::query_as::<
             _,
             (Uuid, Uuid, String, Vec<Uuid>, Vec<Uuid>, chrono::DateTime<chrono::Utc>),
         >(
@@ -1870,8 +1885,8 @@ pub async fn list_snapshots(
         .bind(schedule_id)
         .fetch_all(&state.db)
         .await?
-    } else {
-        sqlx::query_as::<
+        } else {
+            sqlx::query_as::<
             _,
             (Uuid, Uuid, String, Vec<Uuid>, Vec<Uuid>, chrono::DateTime<chrono::Utc>),
         >(
@@ -1885,20 +1900,22 @@ pub async fn list_snapshots(
         .bind(user.organization_id)
         .fetch_all(&state.db)
         .await?
-    };
+        };
 
     let snapshots: Vec<Value> = rows
         .iter()
-        .map(|(id, schedule_id, schedule_name, agent_ids, report_ids, captured_at)| {
-            json!({
-                "id": id,
-                "schedule_id": schedule_id,
-                "schedule_name": schedule_name,
-                "agent_ids": agent_ids,
-                "report_ids": report_ids,
-                "captured_at": captured_at,
-            })
-        })
+        .map(
+            |(id, schedule_id, schedule_name, agent_ids, report_ids, captured_at)| {
+                json!({
+                    "id": id,
+                    "schedule_id": schedule_id,
+                    "schedule_name": schedule_name,
+                    "agent_ids": agent_ids,
+                    "report_ids": report_ids,
+                    "captured_at": captured_at,
+                })
+            },
+        )
         .collect();
 
     Ok(Json(json!({ "snapshots": snapshots })))
@@ -1959,11 +1976,18 @@ pub async fn compare_snapshots(
     // Build keys for comparison: (hostname, process_name, ports)
     fn service_key(svc: &Value) -> String {
         let host = svc.get("hostname").and_then(|h| h.as_str()).unwrap_or("");
-        let proc = svc.get("process_name").and_then(|p| p.as_str()).unwrap_or("");
+        let proc = svc
+            .get("process_name")
+            .and_then(|p| p.as_str())
+            .unwrap_or("");
         let ports: Vec<String> = svc
             .get("ports")
             .and_then(|p| p.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_u64().map(|n| n.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
         format!("{}:{}:{}", host, proc, ports.join(","))
     }

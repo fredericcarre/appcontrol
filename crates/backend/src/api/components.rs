@@ -837,7 +837,13 @@ pub async fn execute_command(
     .await?
     .ok_or_not_found()?;
 
-    let perm = effective_permission(&state.db, user.user_id, comp.application_id, user.is_admin()).await;
+    let perm = effective_permission(
+        &state.db,
+        user.user_id,
+        comp.application_id,
+        user.is_admin(),
+    )
+    .await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
     }
@@ -854,7 +860,8 @@ pub async fn execute_command(
     };
 
     // If it's a built-in command, use it directly; otherwise look up in component_commands
-    let (command_id, command_template): (Option<Uuid>, String) = if let Some(builtin) = builtin_cmd {
+    let (command_id, command_template): (Option<Uuid>, String) = if let Some(builtin) = builtin_cmd
+    {
         (None, builtin)
     } else {
         // Look up the command definition from component_commands

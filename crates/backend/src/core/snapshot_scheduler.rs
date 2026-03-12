@@ -27,22 +27,24 @@ fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
     let now = Utc::now();
 
     match frequency {
-        "hourly" => {
-            now.with_minute(0)
-                .and_then(|t| t.with_second(0))
-                .map(|t| t + Duration::hours(1))
-                .unwrap_or(now + Duration::hours(1))
-        }
-        "daily" => {
-            now.with_hour(0)
-                .and_then(|t| t.with_minute(0))
-                .and_then(|t| t.with_second(0))
-                .map(|t| t + Duration::days(1))
-                .unwrap_or(now + Duration::days(1))
-        }
+        "hourly" => now
+            .with_minute(0)
+            .and_then(|t| t.with_second(0))
+            .map(|t| t + Duration::hours(1))
+            .unwrap_or(now + Duration::hours(1)),
+        "daily" => now
+            .with_hour(0)
+            .and_then(|t| t.with_minute(0))
+            .and_then(|t| t.with_second(0))
+            .map(|t| t + Duration::days(1))
+            .unwrap_or(now + Duration::days(1)),
         "weekly" => {
             let days_until_sunday = (7 - now.weekday().num_days_from_sunday()) % 7;
-            let days_until_sunday = if days_until_sunday == 0 { 7 } else { days_until_sunday };
+            let days_until_sunday = if days_until_sunday == 0 {
+                7
+            } else {
+                days_until_sunday
+            };
             now.with_hour(0)
                 .and_then(|t| t.with_minute(0))
                 .and_then(|t| t.with_second(0))
@@ -51,8 +53,7 @@ fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
         }
         "monthly" => {
             let next_month = if now.month() == 12 {
-                now.with_year(now.year() + 1)
-                    .and_then(|t| t.with_month(1))
+                now.with_year(now.year() + 1).and_then(|t| t.with_month(1))
             } else {
                 now.with_month(now.month() + 1)
             };
@@ -192,8 +193,7 @@ async fn execute_single_schedule(
     };
 
     // Calculate expiration date
-    let expires_at = chrono::Utc::now()
-        + chrono::Duration::days(schedule.retention_days as i64);
+    let expires_at = chrono::Utc::now() + chrono::Duration::days(schedule.retention_days as i64);
 
     // Create the scheduled snapshot record
     let snapshot_id = Uuid::new_v4();
