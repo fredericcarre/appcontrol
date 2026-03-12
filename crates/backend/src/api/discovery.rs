@@ -710,10 +710,7 @@ fn extract_xcproperties_name(cmdline: &str) -> Option<String> {
     if let Some(idx) = cmdline.find(".xcproperties") {
         let before = &cmdline[..idx];
         // Find the start of the filename (after \ or / or space)
-        let start = before
-            .rfind(|c: char| c == '\\' || c == '/' || c == ' ')
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        let start = before.rfind(['\\', '/', ' ']).map(|i| i + 1).unwrap_or(0);
         let name = &before[start..];
         if !name.is_empty() {
             // Remove trailing number (e.g., "lynx-microservice1" → "lynx-microservice")

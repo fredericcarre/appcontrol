@@ -19,6 +19,7 @@ pub struct TechPattern {
     pub process_names: &'static [&'static str],
     pub cmdline_patterns: &'static [&'static str],
     pub port_hints: &'static [u16],
+    #[allow(dead_code)] // Reserved for future Windows-specific command suggestions
     pub windows_commands: Option<TechCommands>,
     pub linux_commands: Option<TechCommands>,
 }
@@ -1064,6 +1065,7 @@ pub fn get_commands_by_id(tech_id: &str) -> Option<CommandSuggestion> {
 /// Returns (technology_display_name, commands) if a match is found.
 /// This is the main entry point for Windows discovery to identify Java apps
 /// like Elasticsearch, Tomcat, Kafka, etc. based on their command line.
+#[allow(dead_code)] // Reserved for future use in command suggestion
 pub fn get_commands_for_technology(
     process_name: &str,
     cmdline: &str,
@@ -1130,10 +1132,7 @@ pub fn get_commands_for_technology(
 pub fn extract_xcomponent_service_name(cmdline: &str) -> Option<String> {
     if let Some(idx) = cmdline.find(".xcproperties") {
         let before = &cmdline[..idx];
-        let start = before
-            .rfind(|c: char| c == '\\' || c == '/' || c == ' ')
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        let start = before.rfind(['\\', '/', ' ']).map(|i| i + 1).unwrap_or(0);
         let name = &before[start..];
         if !name.is_empty() {
             return Some(name.to_string());
