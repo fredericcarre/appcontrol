@@ -11,7 +11,6 @@ import {
   ArrowRight,
   ArrowLeft,
   Sparkles,
-  ChevronRight,
   Server,
   Database,
   Layers,
@@ -147,16 +146,12 @@ export function TriagePhase() {
     bulkSetTriageStatus,
     getTriageCounts,
     getTriageProgress,
-    getUnidentifiedServices,
-    getIdentifiedServices,
     setPhase,
   } = useDiscoveryStore();
 
   const services = correlationResult?.services || [];
   const counts = getTriageCounts();
   const progress = getTriageProgress();
-  const unidentifiedIndices = getUnidentifiedServices();
-  const identifiedIndices = getIdentifiedServices();
 
   // Group services by status
   const { included, ignored, pendingIdentified, pendingUnidentified } = useMemo(() => {

@@ -14,7 +14,6 @@ import {
   FileJson,
   FileText,
   Table,
-  CheckCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDiscoveryStore } from '@/stores/discovery';
