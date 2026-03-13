@@ -104,6 +104,7 @@ interface DiscoveryState {
   clearAISuggestions: () => void;
   getTriageCounts: () => { included: number; ignored: number; pending: number; total: number };
   getTriageProgress: () => number;
+  resetTriageStatus: () => void;
 
   // Identified vs unidentified services
   isServiceIdentified: (index: number) => boolean;
@@ -299,6 +300,11 @@ export const useDiscoveryStore = create<DiscoveryState>()((set, get) => ({
     const { included, ignored, total } = get().getTriageCounts();
     return total > 0 ? Math.round(((included + ignored) / total) * 100) : 0;
   },
+  resetTriageStatus: () =>
+    set({
+      serviceTriageStatus: new Map(),
+      aiSuggestions: new Map(),
+    }),
 
   // Service identification helpers
   isServiceIdentified: (index) => {

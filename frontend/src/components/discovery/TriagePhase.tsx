@@ -21,10 +21,13 @@ import {
   Box,
   Download,
   History,
+  RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDiscoveryStore, type TriageStatus } from '@/stores/discovery';
 import { TECHNOLOGY_ICONS } from '@/lib/colors';
+import { useTriggerAllScans, useCorrelate } from '@/api/discovery';
 import { AIAssistantModal } from './AIAssistantModal';
 import { ExportModal } from './ExportModal';
 import { HistoryModal } from './HistoryModal';
@@ -147,7 +150,13 @@ export function TriagePhase() {
     getTriageCounts,
     getTriageProgress,
     setPhase,
+    selectedAgentIds,
+    setCorrelationResult,
+    resetTriageStatus,
   } = useDiscoveryStore();
+
+  const triggerAll = useTriggerAllScans();
+  const correlate = useCorrelate();
 
   const services = correlationResult?.services || [];
   const counts = getTriageCounts();
@@ -182,6 +191,17 @@ export function TriagePhase() {
     setAiModalOpen(true);
   };
 
+  const handleRescan = async () => {
+    // Trigger new scan on all selected agents
+    await triggerAll.mutateAsync();
+    // Re-correlate
+    const result = await correlate.mutateAsync({ agent_ids: selectedAgentIds });
+    // Update correlation result and reset triage status
+    setCorrelationResult(result);
+    resetTriageStatus();
+  };
+
+  const isRescanning = triggerAll.isPending || correlate.isPending;
   const canProceed = counts.included > 0;
 
   return (
@@ -197,6 +217,20 @@ export function TriagePhase() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRescan}
+            disabled={isRescanning || selectedAgentIds.length === 0}
+            className="gap-1"
+          >
+            {isRescanning ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {isRescanning ? 'Rescanning...' : 'Rescan'}
+          </Button>
           <Button
             variant="outline"
             size="sm"
