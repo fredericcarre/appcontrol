@@ -457,6 +457,32 @@ pub static TECH_PATTERNS: &[TechPattern] = &[
     // =========================================================================
     // MESSAGE QUEUES
     // =========================================================================
+    // Erlang Port Mapper Daemon - infrastructure for Erlang-based apps (RabbitMQ, CouchDB, etc.)
+    TechPattern {
+        id: "erlang-epmd",
+        display_name: "Erlang EPMD",
+        icon: "erlang",
+        layer: "Infrastructure",
+        process_names: &["epmd", "epmd.exe"],
+        cmdline_patterns: &["epmd"],
+        port_hints: &[4369],
+        windows_commands: Some(TechCommands {
+            check: r#"wmic Path win32_process Where "Caption = 'epmd.exe'" get caption | findstr epmd"#,
+            start: Some("epmd -daemon"),
+            stop: Some(r#"wmic Path win32_process Where "Caption = 'epmd.exe'" Call Terminate"#),
+            restart: None,
+            logs: None,
+            version: Some("epmd -names"),
+        }),
+        linux_commands: Some(TechCommands {
+            check: "pgrep -x epmd",
+            start: Some("epmd -daemon"),
+            stop: Some("epmd -kill"),
+            restart: None,
+            logs: None,
+            version: Some("epmd -names"),
+        }),
+    },
     TechPattern {
         id: "rabbitmq",
         display_name: "RabbitMQ",
@@ -1060,11 +1086,116 @@ pub fn get_commands_by_id(tech_id: &str) -> Option<CommandSuggestion> {
     })
 }
 
+/// Extract the installation directory from a command line.
+///
+/// Looks for common patterns like:
+/// - Java: `-Des.path.home=C:\elasticsearch` or `-Dcatalina.home=...`
+/// - Direct exe paths: `C:\Program Files\RabbitMQ\...`
+/// - Working directories from executable path
+fn extract_install_dir(cmdline: &str) -> Option<String> {
+    // Pattern 1: Java system properties like -Des.path.home=... or -Dcatalina.home=...
+    let java_patterns = [
+        "-Des.path.home=",
+        "-Dcatalina.home=",
+        "-Dcatalina.base=",
+        "-Djboss.home.dir=",
+        "-Dactivemq.home=",
+        "-Dkafka.logs.dir=",
+    ];
+    for pattern in java_patterns {
+        if let Some(idx) = cmdline.find(pattern) {
+            let start = idx + pattern.len();
+            let rest = &cmdline[start..];
+            // Extract until space or end, handle quotes
+            let end = rest
+                .find(|c: char| c.is_whitespace() && !rest.starts_with('"'))
+                .unwrap_or(rest.len());
+            let path = rest[..end].trim_matches('"').trim();
+            if !path.is_empty() {
+                return Some(path.to_string());
+            }
+        }
+    }
+
+    // Pattern 2: Extract directory from executable path in cmdline
+    // e.g., "C:\RabbitMQ\rabbitmq_server-3.12\sbin\rabbitmq-server.bat" -> "C:\RabbitMQ\rabbitmq_server-3.12"
+    let first_part = cmdline.split_whitespace().next().unwrap_or("");
+    let first_part = first_part.trim_matches('"');
+
+    // Look for known directory structures
+    if let Some(idx) = first_part.rfind("\\bin\\") {
+        return Some(first_part[..idx].to_string());
+    }
+    if let Some(idx) = first_part.rfind("\\sbin\\") {
+        return Some(first_part[..idx].to_string());
+    }
+    if let Some(idx) = first_part.rfind("/bin/") {
+        return Some(first_part[..idx].to_string());
+    }
+
+    // Pattern 3: Take parent of parent directory of exe
+    // e.g., "C:\elastic\elasticsearch-8.0\jdk\bin\java.exe" -> try to find elasticsearch dir
+    if first_part.contains("elasticsearch") || cmdline.contains("elasticsearch") {
+        // Find the elasticsearch directory
+        let lower = cmdline.to_lowercase();
+        if let Some(idx) = lower.find("elasticsearch") {
+            // Find the start of the path
+            let before = &cmdline[..idx + "elasticsearch".len()];
+            if let Some(path_start) = before.rfind(['"', ' ']) {
+                let path = &cmdline[path_start + 1..];
+                // Find the elasticsearch base dir
+                if let Some(next_sep) = path.find(['\\', '/']) {
+                    let base_end = idx + "elasticsearch".len() + next_sep - (path_start + 1);
+                    if base_end <= cmdline.len() {
+                        // Try to get just up to elasticsearch-x.x.x
+                        let candidate = &cmdline[path_start + 1..];
+                        if let Some(end) = candidate.find(['\\', '/']) {
+                            let dir = &candidate[..end];
+                            if dir.to_lowercase().contains("elasticsearch") {
+                                // Go back to find full path
+                                if let Some(start) =
+                                    cmdline[..path_start + 1 + end].rfind([' ', '"'])
+                                {
+                                    return Some(
+                                        cmdline[start + 1..path_start + 1 + end]
+                                            .trim_matches('"')
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Replace placeholders in a command string.
+fn replace_placeholders(
+    cmd: &str,
+    install_dir: Option<&str>,
+    service_name: Option<&str>,
+) -> String {
+    let mut result = cmd.to_string();
+    if let Some(dir) = install_dir {
+        result = result.replace("{INSTALL_DIR}", dir);
+    }
+    if let Some(name) = service_name {
+        result = result.replace("{SERVICE_NAME}", name);
+    }
+    result
+}
+
 /// Identify technology and get commands from process name, cmdline, and ports.
 ///
 /// Returns (technology_display_name, commands) if a match is found.
 /// This is the main entry point for Windows discovery to identify Java apps
 /// like Elasticsearch, Tomcat, Kafka, etc. based on their command line.
+///
+/// Placeholders like {INSTALL_DIR} are replaced with paths extracted from cmdline.
 #[allow(dead_code)] // Reserved for future use in command suggestion
 pub fn get_commands_for_technology(
     process_name: &str,
@@ -1107,15 +1238,33 @@ pub fn get_commands_for_technology(
             let commands_opt = pattern.linux_commands.as_ref();
 
             if let Some(commands) = commands_opt {
+                // Extract install directory and service name for placeholder replacement
+                let install_dir = extract_install_dir(cmdline);
+                let service_name = extract_xcomponent_service_name(cmdline);
+
                 return Some((
                     pattern.display_name.to_string(),
                     CommandSuggestion {
-                        check_cmd: commands.check.to_string(),
-                        start_cmd: commands.start.map(|s| s.to_string()),
-                        stop_cmd: commands.stop.map(|s| s.to_string()),
-                        restart_cmd: commands.restart.map(|s| s.to_string()),
-                        logs_cmd: commands.logs.map(|s| s.to_string()),
-                        version_cmd: commands.version.map(|s| s.to_string()),
+                        check_cmd: replace_placeholders(
+                            commands.check,
+                            install_dir.as_deref(),
+                            service_name.as_deref(),
+                        ),
+                        start_cmd: commands.start.map(|s| {
+                            replace_placeholders(s, install_dir.as_deref(), service_name.as_deref())
+                        }),
+                        stop_cmd: commands.stop.map(|s| {
+                            replace_placeholders(s, install_dir.as_deref(), service_name.as_deref())
+                        }),
+                        restart_cmd: commands.restart.map(|s| {
+                            replace_placeholders(s, install_dir.as_deref(), service_name.as_deref())
+                        }),
+                        logs_cmd: commands.logs.map(|s| {
+                            replace_placeholders(s, install_dir.as_deref(), service_name.as_deref())
+                        }),
+                        version_cmd: commands.version.map(|s| {
+                            replace_placeholders(s, install_dir.as_deref(), service_name.as_deref())
+                        }),
                         confidence: if cmdline_match { "high" } else { "medium" }.to_string(),
                         source: pattern.id.to_string(),
                     },
@@ -1199,5 +1348,40 @@ mod tests {
     fn test_no_false_positive() {
         let hint = identify_technology("myapp.exe", "myapp --config app.ini", &[9999]);
         assert!(hint.is_none());
+    }
+
+    #[test]
+    fn test_extract_install_dir_java_property() {
+        let cmdline = r#""C:\elastic\jdk\bin\java.exe" -Des.path.home=C:\elastic\elasticsearch-8.0 org.elasticsearch.bootstrap.Elasticsearch"#;
+        let dir = extract_install_dir(cmdline);
+        assert_eq!(dir, Some("C:\\elastic\\elasticsearch-8.0".to_string()));
+    }
+
+    #[test]
+    fn test_extract_install_dir_catalina() {
+        let cmdline = r#"java -Dcatalina.home=D:\Tomcat\apache-tomcat-9.0.50 org.apache.catalina.startup.Bootstrap"#;
+        let dir = extract_install_dir(cmdline);
+        assert_eq!(dir, Some("D:\\Tomcat\\apache-tomcat-9.0.50".to_string()));
+    }
+
+    #[test]
+    fn test_extract_install_dir_from_bin_path() {
+        let cmdline = r#"C:\RabbitMQ\rabbitmq_server-3.12\sbin\rabbitmq-server.bat"#;
+        let dir = extract_install_dir(cmdline);
+        assert_eq!(dir, Some("C:\\RabbitMQ\\rabbitmq_server-3.12".to_string()));
+    }
+
+    #[test]
+    fn test_replace_placeholders() {
+        let cmd = r#"{INSTALL_DIR}\bin\start.bat {SERVICE_NAME}"#;
+        let result = replace_placeholders(cmd, Some("C:\\MyApp"), Some("myservice"));
+        assert_eq!(result, r#"C:\MyApp\bin\start.bat myservice"#);
+    }
+
+    #[test]
+    fn test_identify_epmd() {
+        let hint = identify_technology("epmd.exe", "epmd", &[4369]);
+        assert!(hint.is_some());
+        assert_eq!(hint.unwrap().id, "erlang-epmd");
     }
 }
