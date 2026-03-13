@@ -69,6 +69,8 @@ export interface CommandSuggestion {
   start_cmd?: string;
   stop_cmd?: string;
   restart_cmd?: string;
+  logs_cmd?: string;
+  version_cmd?: string;
   confidence: string;
   source: string;
 }
@@ -445,6 +447,27 @@ export function useCompareSnapshots() {
   }, Error, { snapshot_id_1: string; snapshot_id_2: string }>({
     mutationFn: async (params) => {
       const { data } = await client.post('/discovery/snapshots/compare', params);
+      return data;
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// File Content Reading (for config/log files)
+// ---------------------------------------------------------------------------
+
+export interface FileContentResult {
+  request_id: string;
+  agent_id: string;
+  path: string;
+  command: string;
+  sent: boolean;
+}
+
+export function useReadFileContent() {
+  return useMutation<FileContentResult, Error, { agent_id: string; path: string; tail_lines?: number }>({
+    mutationFn: async (params) => {
+      const { data } = await client.post('/discovery/file-content', params);
       return data;
     },
   });

@@ -358,10 +358,17 @@ pub fn suggest_commands(
             )
         };
 
+        // Use captured cmdline as start command if available
+        let start_cmd = if !cmdline.is_empty() {
+            Some(format!("{} >NUL 2>&1", cmdline))
+        } else {
+            None
+        };
+
         return (
             Some(CommandSuggestion {
                 check_cmd,
-                start_cmd: None, // Unknown - user must fill in
+                start_cmd,
                 stop_cmd: Some(format!(
                     "wmic Path win32_process Where \"Caption = '{}'\" Call Terminate",
                     exe_name
@@ -394,6 +401,13 @@ pub fn suggest_commands(
     }
 
     // Generic .NET / custom EXE fallback with wmic-based stop
+    // Use captured cmdline as start command if available
+    let start_cmd = if !cmdline.is_empty() {
+        Some(format!("{} >NUL 2>&1", cmdline))
+    } else {
+        None
+    };
+
     (
         Some(CommandSuggestion {
             check_cmd: format!(
@@ -401,7 +415,7 @@ pub fn suggest_commands(
                 exe_name,
                 process_name.split('.').next().unwrap_or(process_name)
             ),
-            start_cmd: None, // Unknown - user must fill in
+            start_cmd,
             stop_cmd: Some(format!(
                 "wmic Path win32_process Where \"Caption = '{}'\" Call Terminate",
                 exe_name
@@ -768,7 +782,7 @@ mod tests {
             status: "running".to_string(),
             pid: Some(5678),
         }];
-        let (suggestion, matched) = suggest_commands(5678, "myservice.exe", &services);
+        let (suggestion, matched) = suggest_commands(5678, "myservice.exe", "", &services);
         assert!(suggestion.is_some());
         let s = suggestion.unwrap();
         assert_eq!(s.confidence, "high");
@@ -780,7 +794,7 @@ mod tests {
     #[test]
     fn test_suggest_commands_fallback() {
         let services = vec![];
-        let (suggestion, matched) = suggest_commands(9999, "java", &services);
+        let (suggestion, matched) = suggest_commands(9999, "java", "", &services);
         assert!(suggestion.is_some());
         let s = suggestion.unwrap();
         assert_eq!(s.confidence, "low");
@@ -792,12 +806,26 @@ mod tests {
     #[test]
     fn test_suggest_commands_generic_fallback() {
         let services = vec![];
-        let (suggestion, matched) = suggest_commands(9999, "myapp.exe", &services);
+        let (suggestion, matched) = suggest_commands(9999, "myapp.exe", "", &services);
         assert!(suggestion.is_some());
         let s = suggestion.unwrap();
         assert_eq!(s.confidence, "low");
         assert_eq!(s.source, "process");
         assert!(s.check_cmd.contains("wmic"));
         assert_eq!(matched, None);
+    }
+
+    #[test]
+    fn test_suggest_commands_with_cmdline_sets_start_cmd() {
+        let services = vec![];
+        let cmdline = r#"F:\LynxApp\Runtime\xcruntime.exe --config lynx.xcproperties"#;
+        let (suggestion, _) = suggest_commands(1234, "xcruntime.exe", cmdline, &services);
+        assert!(suggestion.is_some());
+        let s = suggestion.unwrap();
+        // start_cmd should be cmdline + >NUL 2>&1
+        assert!(s.start_cmd.is_some());
+        let start = s.start_cmd.unwrap();
+        assert!(start.contains("xcruntime.exe"));
+        assert!(start.ends_with(">NUL 2>&1"));
     }
 }

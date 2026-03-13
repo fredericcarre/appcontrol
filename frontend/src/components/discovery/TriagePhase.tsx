@@ -23,6 +23,9 @@ import {
   History,
   RefreshCw,
   Loader2,
+  GitBranch,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDiscoveryStore, type TriageStatus } from '@/stores/discovery';
@@ -31,6 +34,7 @@ import { useTriggerAllScans, useCorrelate } from '@/api/discovery';
 import { AIAssistantModal } from './AIAssistantModal';
 import { ExportModal } from './ExportModal';
 import { HistoryModal } from './HistoryModal';
+import { ServiceDetailPanel } from './ServiceDetailPanel';
 
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   Database, Layers, Server, Globe, Cog, Search, Calendar, Box,
@@ -39,10 +43,12 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
 interface ServiceCardProps {
   index: number;
   onMove: (status: TriageStatus) => void;
+  onSelect: (index: number) => void;
   compact?: boolean;
+  selected?: boolean;
 }
 
-function ServiceCard({ index, onMove, compact }: ServiceCardProps) {
+function ServiceCard({ index, onMove, onSelect, compact, selected }: ServiceCardProps) {
   const correlationResult = useDiscoveryStore((s) => s.correlationResult);
   const serviceTriageStatus = useDiscoveryStore((s) => s.serviceTriageStatus);
   const isServiceIdentified = useDiscoveryStore((s) => s.isServiceIdentified);
@@ -62,12 +68,14 @@ function ServiceCard({ index, onMove, compact }: ServiceCardProps) {
 
   return (
     <div
+      onClick={() => onSelect(index)}
       className={cn(
         'p-3 rounded-lg border bg-card hover:shadow-md transition-all cursor-pointer group',
         status === 'include' && 'border-emerald-300 bg-emerald-50/50',
         status === 'ignore' && 'border-slate-300 bg-slate-50/50 opacity-60',
         status === 'pending' && !identified && 'border-amber-300 bg-amber-50/50',
         status === 'pending' && identified && 'border-blue-300 bg-blue-50/50',
+        selected && 'ring-2 ring-primary ring-offset-1',
       )}
     >
       <div className="flex items-start gap-3">
@@ -100,9 +108,26 @@ function ServiceCard({ index, onMove, compact }: ServiceCardProps) {
             )}
           </div>
           {!compact && (
-            <Badge variant="secondary" className="text-[10px] mt-1 h-4">
-              {layer}
-            </Badge>
+            <>
+              <Badge variant="secondary" className="text-[10px] mt-1 h-4">
+                {layer}
+              </Badge>
+              {/* Show command hints if available */}
+              {service.command_suggestion && (
+                <div className="mt-1.5 space-y-0.5">
+                  {service.command_suggestion.check_cmd && (
+                    <div className="text-[10px] text-muted-foreground font-mono truncate" title={service.command_suggestion.check_cmd}>
+                      <span className="text-emerald-600">check:</span> {service.command_suggestion.check_cmd}
+                    </div>
+                  )}
+                  {service.command_suggestion.start_cmd && (
+                    <div className="text-[10px] text-muted-foreground font-mono truncate" title={service.command_suggestion.start_cmd}>
+                      <span className="text-blue-600">start:</span> {service.command_suggestion.start_cmd}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -153,6 +178,8 @@ export function TriagePhase() {
     selectedAgentIds,
     setCorrelationResult,
     resetTriageStatus,
+    selectedServiceIndex,
+    setSelectedServiceIndex,
   } = useDiscoveryStore();
 
   const triggerAll = useTriggerAllScans();
@@ -204,8 +231,34 @@ export function TriagePhase() {
   const isRescanning = triggerAll.isPending || correlate.isPending;
   const canProceed = counts.included > 0;
 
+  // State for dependency preview expansion
+  const [depsExpanded, setDepsExpanded] = useState(true);
+
+  // Compute dependencies between included services
+  const includedDependencies = useMemo(() => {
+    const dependencies = correlationResult?.dependencies || [];
+    const includedSet = new Set(included);
+
+    return dependencies.filter(
+      (d) =>
+        d.from_service_index !== null &&
+        d.from_service_index !== undefined &&
+        includedSet.has(d.from_service_index) &&
+        includedSet.has(d.to_service_index)
+    );
+  }, [correlationResult?.dependencies, included]);
+
+  // Get service name by index
+  const getServiceName = (index: number) => {
+    const svc = services[index];
+    if (!svc) return `Service ${index}`;
+    return svc.technology_hint?.display_name || svc.process_name;
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="flex h-full">
+      {/* Main content */}
+      <div className="flex-1 space-y-6 overflow-auto p-0">
       {/* Header with progress */}
       <div className="flex items-center justify-between">
         <div>
@@ -296,6 +349,65 @@ export function TriagePhase() {
         </CardContent>
       </Card>
 
+      {/* Dependency Preview */}
+      {included.length > 0 && (
+        <Card className="border-violet-200">
+          <CardHeader className="pb-2 cursor-pointer" onClick={() => setDepsExpanded(!depsExpanded)}>
+            <CardTitle className="text-base flex items-center justify-between">
+              <span className="flex items-center gap-2 text-violet-700">
+                <GitBranch className="h-4 w-4" />
+                Dependency Preview ({includedDependencies.length})
+              </span>
+              <div className="flex items-center gap-2">
+                {includedDependencies.length === 0 && (
+                  <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">
+                    No dependencies detected
+                  </Badge>
+                )}
+                {depsExpanded ? (
+                  <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                )}
+              </div>
+            </CardTitle>
+          </CardHeader>
+          {depsExpanded && (
+            <CardContent className="pt-0">
+              {includedDependencies.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-2">
+                  No dependencies detected between included services.
+                  Dependencies are inferred from network connections (TCP) between services.
+                  You can add manual dependencies in the topology view.
+                </p>
+              ) : (
+                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                  {includedDependencies.map((dep, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 text-sm p-2 rounded-md bg-violet-50/50"
+                    >
+                      <span className="font-medium text-violet-800 truncate max-w-[200px]" title={getServiceName(dep.from_service_index!)}>
+                        {getServiceName(dep.from_service_index!)}
+                      </span>
+                      <ArrowRight className="h-3 w-3 text-violet-500 flex-shrink-0" />
+                      <span className="font-medium text-violet-800 truncate max-w-[200px]" title={getServiceName(dep.to_service_index)}>
+                        {getServiceName(dep.to_service_index)}
+                      </span>
+                      {dep.inferred_via && (
+                        <Badge variant="secondary" className="text-[9px] h-4 ml-auto">
+                          {dep.inferred_via}
+                        </Badge>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          )}
+        </Card>
+      )}
+
       {/* Three-column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Column 1: To Include */}
@@ -323,6 +435,8 @@ export function TriagePhase() {
                       key={i}
                       index={i}
                       onMove={(status) => setServiceTriageStatus(i, status)}
+                      onSelect={setSelectedServiceIndex}
+                      selected={selectedServiceIndex === i}
                       compact
                     />
                   ))
@@ -379,6 +493,8 @@ export function TriagePhase() {
                         key={i}
                         index={i}
                         onMove={(status) => setServiceTriageStatus(i, status)}
+                        onSelect={setSelectedServiceIndex}
+                        selected={selectedServiceIndex === i}
                       />
                     ))}
                   </div>
@@ -396,6 +512,8 @@ export function TriagePhase() {
                         key={i}
                         index={i}
                         onMove={(status) => setServiceTriageStatus(i, status)}
+                        onSelect={setSelectedServiceIndex}
+                        selected={selectedServiceIndex === i}
                       />
                     ))}
                   </div>
@@ -436,6 +554,8 @@ export function TriagePhase() {
                       key={i}
                       index={i}
                       onMove={(status) => setServiceTriageStatus(i, status)}
+                      onSelect={setSelectedServiceIndex}
+                      selected={selectedServiceIndex === i}
                       compact
                     />
                   ))
@@ -464,6 +584,12 @@ export function TriagePhase() {
         open={historyModalOpen}
         onClose={() => setHistoryModalOpen(false)}
       />
+      </div>
+
+      {/* Service Detail Panel */}
+      {selectedServiceIndex !== null && (
+        <ServiceDetailPanel />
+      )}
     </div>
   );
 }

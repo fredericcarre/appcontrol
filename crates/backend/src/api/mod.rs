@@ -497,6 +497,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/discovery/snapshots/compare",
             post(discovery::compare_snapshots),
         )
+        .route(
+            "/discovery/file-content",
+            post(discovery::read_file_content),
+        )
         // Air-gap agent update
         .route(
             "/admin/agent-binaries",

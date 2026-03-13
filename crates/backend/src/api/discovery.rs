@@ -520,6 +520,18 @@ pub async fn correlate(
     let mut seen_deps: std::collections::HashSet<(usize, usize, String)> =
         std::collections::HashSet::new();
 
+    // Build port-only index for fallback matching (when only one service listens on a port)
+    let mut port_to_services: std::collections::HashMap<u16, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (key, &idx) in &listen_index {
+        port_to_services.entry(key.1).or_default().push(idx);
+    }
+    // Deduplicate service indices per port
+    for indices in port_to_services.values_mut() {
+        indices.sort();
+        indices.dedup();
+    }
+
     for (agent_id, hostname, report) in &reports {
         // TCP connection-based dependencies
         if let Some(connections) = report.get("connections").and_then(|c| c.as_array()) {
@@ -541,10 +553,16 @@ pub async fn correlate(
                     continue;
                 }
 
-                // Find target service
-                let target_idx = listen_index.get(&(remote_addr.to_string(), remote_port));
+                // Try to find target service with multiple strategies
+                let target_idx = find_target_service(
+                    &listen_index,
+                    &port_to_services,
+                    remote_addr,
+                    remote_port,
+                    &agent_hostnames,
+                );
 
-                if let Some(&to_idx) = target_idx {
+                if let Some(to_idx) = target_idx {
                     let from_idx = find_service_index(&services, agent_id, conn_proc);
 
                     if let Some(from_idx) = from_idx {
@@ -701,6 +719,81 @@ fn find_service_index(services: &[Value], agent_id: &Uuid, proc_name: &str) -> O
                 .map(|n| n == proc_name)
                 .unwrap_or(false)
     })
+}
+
+/// Find target service using multiple matching strategies.
+///
+/// Strategies in order:
+/// 1. Exact IP:port match in listen_index
+/// 2. Lowercase hostname:port match
+/// 3. Port-only match if only one service listens on that port
+/// 4. Hostname prefix match (e.g., "server1" matches "server1.domain.com")
+fn find_target_service(
+    listen_index: &std::collections::HashMap<(String, u16), usize>,
+    port_to_services: &std::collections::HashMap<u16, Vec<usize>>,
+    remote_addr: &str,
+    remote_port: u16,
+    agent_hostnames: &std::collections::HashMap<Uuid, String>,
+) -> Option<usize> {
+    // Strategy 1: Exact match
+    if let Some(&idx) = listen_index.get(&(remote_addr.to_string(), remote_port)) {
+        return Some(idx);
+    }
+
+    // Strategy 2: Lowercase match
+    let lower_addr = remote_addr.to_lowercase();
+    if let Some(&idx) = listen_index.get(&(lower_addr.clone(), remote_port)) {
+        return Some(idx);
+    }
+
+    // Strategy 3: Port-only match if unique
+    // Only use this for well-known service ports to avoid false positives
+    let well_known_ports: &[u16] = &[
+        5432,  // PostgreSQL
+        3306,  // MySQL
+        1521,  // Oracle
+        1433,  // SQL Server
+        27017, // MongoDB
+        6379,  // Redis
+        5672,  // RabbitMQ AMQP
+        15672, // RabbitMQ Management
+        9200,  // Elasticsearch
+        9092,  // Kafka
+        2181,  // ZooKeeper
+        8080,  // Common app server
+        8443,  // HTTPS app server
+    ];
+
+    if well_known_ports.contains(&remote_port) {
+        if let Some(indices) = port_to_services.get(&remote_port) {
+            if indices.len() == 1 {
+                return Some(indices[0]);
+            }
+        }
+    }
+
+    // Strategy 4: Hostname prefix match
+    // If remote_addr looks like a hostname (no dots or has letters), try matching
+    // against known agent hostnames
+    if !remote_addr.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        for hostname in agent_hostnames.values() {
+            let hostname_lower = hostname.to_lowercase();
+            // Check if remote_addr is a prefix of the hostname
+            if hostname_lower.starts_with(&lower_addr) {
+                if let Some(&idx) = listen_index.get(&(hostname_lower.clone(), remote_port)) {
+                    return Some(idx);
+                }
+            }
+            // Check if hostname is a prefix of remote_addr
+            if lower_addr.starts_with(&hostname_lower) {
+                if let Some(&idx) = listen_index.get(&(hostname_lower, remote_port)) {
+                    return Some(idx);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Extract XComponent service name from command line.
@@ -2044,5 +2137,108 @@ pub async fn compare_snapshots(
             "removed_count": removed.len(),
             "modified_count": modified.len(),
         }
+    })))
+}
+
+// ===========================================================================
+// File Content Reading — read config/log files from agents
+// ===========================================================================
+
+/// Request to read file content from an agent.
+#[derive(Debug, Deserialize)]
+pub struct ReadFileContentRequest {
+    pub agent_id: Uuid,
+    pub path: String,
+    /// For log files: read only the last N lines (default: 100)
+    #[serde(default = "default_tail_lines")]
+    pub tail_lines: Option<u32>,
+}
+
+fn default_tail_lines() -> Option<u32> {
+    Some(100)
+}
+
+/// Read file content from an agent.
+///
+/// This sends a command to the agent to read the file and returns the content.
+/// For log files, use tail_lines to get only the last N lines.
+/// For config files, the full content is returned (up to 64KB).
+pub async fn read_file_content(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<ReadFileContentRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Validate agent exists and belongs to org
+    let agent_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1 AND organization_id = $2)",
+    )
+    .bind(body.agent_id)
+    .bind(user.organization_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    if !agent_exists {
+        return Err(ApiError::NotFound);
+    }
+
+    let request_id = Uuid::new_v4();
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "discovery_read_file",
+        "agent",
+        body.agent_id,
+        json!({ "path": &body.path, "tail_lines": body.tail_lines }),
+    )
+    .await?;
+
+    // Build the read command based on OS detection
+    // We use cross-platform commands that work on both Windows and Unix
+    let command = if let Some(tail_lines) = body.tail_lines {
+        // Log file: use tail (Unix) or PowerShell Get-Content -Tail (Windows)
+        // The agent will detect OS and use appropriate command
+        format!(
+            r#"powershell -Command "Get-Content -Path '{}' -Tail {} -ErrorAction Stop""#,
+            body.path.replace('\'', "''"),
+            tail_lines
+        )
+    } else {
+        // Config file: read full content (up to reasonable size)
+        format!(
+            r#"powershell -Command "Get-Content -Path '{}' -Raw -ErrorAction Stop""#,
+            body.path.replace('\'', "''")
+        )
+    };
+
+    // Send command to agent
+    let msg = appcontrol_common::BackendMessage::ExecuteCommand {
+        request_id,
+        component_id: Uuid::nil(), // No component context for discovery
+        command: command.clone(),
+        timeout_seconds: 30,
+        exec_mode: "sync".to_string(),
+    };
+
+    let sent = state.ws_hub.send_to_agent(body.agent_id, msg);
+
+    if !sent {
+        return Err(ApiError::Conflict(
+            "Agent is not connected".to_string(),
+        ));
+    }
+
+    // Return the request_id so frontend can poll for result
+    // The actual content will come back via CommandResult WebSocket event
+    Ok(Json(json!({
+        "request_id": request_id,
+        "agent_id": body.agent_id,
+        "path": body.path,
+        "command": command,
+        "sent": true,
     })))
 }

@@ -84,6 +84,8 @@ export interface ServiceEdits {
   startCmd?: string;
   stopCmd?: string;
   restartCmd?: string;
+  logsCmd?: string;
+  versionCmd?: string;
 }
 
 export { type CorrelationResult, type CorrelatedService, type CommandSuggestion, type DiscoveredConfigFile, type DiscoveredLogFile };
