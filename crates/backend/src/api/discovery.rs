@@ -2227,9 +2227,7 @@ pub async fn read_file_content(
     let sent = state.ws_hub.send_to_agent(body.agent_id, msg);
 
     if !sent {
-        return Err(ApiError::Conflict(
-            "Agent is not connected".to_string(),
-        ));
+        return Err(ApiError::Conflict("Agent is not connected".to_string()));
     }
 
     // Return the request_id so frontend can poll for result
