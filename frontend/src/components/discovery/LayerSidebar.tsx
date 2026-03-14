@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
   Server, Cog, Cloud, Clock, ChevronDown, ChevronRight, Search,
-  PanelLeftClose, PanelLeft, Box, ArrowRight, Settings2, Plus, Check,
+  PanelLeftClose, PanelLeft, Box, Settings2, Plus, Check,
   ExternalLink,
 } from 'lucide-react';
 import { COMPONENT_TYPE_ICONS, type ComponentType } from '@/lib/colors';

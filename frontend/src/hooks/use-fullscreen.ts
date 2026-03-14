@@ -1,17 +1,30 @@
 import { useState, useCallback, useEffect, RefObject } from 'react';
 
+// Vendor-prefixed fullscreen API types
+interface FullscreenElement extends HTMLElement {
+  webkitRequestFullscreen?: () => Promise<void>;
+  msRequestFullscreen?: () => Promise<void>;
+}
+
+interface FullscreenDocument extends Document {
+  webkitExitFullscreen?: () => Promise<void>;
+  msExitFullscreen?: () => Promise<void>;
+  webkitFullscreenElement?: Element;
+  msFullscreenElement?: Element;
+}
+
 export function useFullscreen(elementRef?: RefObject<HTMLElement | null>) {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const enterFullscreen = useCallback(async () => {
     try {
-      const element = elementRef?.current || document.documentElement;
+      const element = (elementRef?.current || document.documentElement) as FullscreenElement;
       if (element.requestFullscreen) {
         await element.requestFullscreen();
-      } else if ((element as any).webkitRequestFullscreen) {
-        await (element as any).webkitRequestFullscreen();
-      } else if ((element as any).msRequestFullscreen) {
-        await (element as any).msRequestFullscreen();
+      } else if (element.webkitRequestFullscreen) {
+        await element.webkitRequestFullscreen();
+      } else if (element.msRequestFullscreen) {
+        await element.msRequestFullscreen();
       }
     } catch (error) {
       console.error('Failed to enter fullscreen:', error);
@@ -20,12 +33,13 @@ export function useFullscreen(elementRef?: RefObject<HTMLElement | null>) {
 
   const exitFullscreen = useCallback(async () => {
     try {
-      if (document.exitFullscreen) {
-        await document.exitFullscreen();
-      } else if ((document as any).webkitExitFullscreen) {
-        await (document as any).webkitExitFullscreen();
-      } else if ((document as any).msExitFullscreen) {
-        await (document as any).msExitFullscreen();
+      const doc = document as FullscreenDocument;
+      if (doc.exitFullscreen) {
+        await doc.exitFullscreen();
+      } else if (doc.webkitExitFullscreen) {
+        await doc.webkitExitFullscreen();
+      } else if (doc.msExitFullscreen) {
+        await doc.msExitFullscreen();
       }
     } catch (error) {
       console.error('Failed to exit fullscreen:', error);
@@ -42,11 +56,12 @@ export function useFullscreen(elementRef?: RefObject<HTMLElement | null>) {
 
   useEffect(() => {
     const handleFullscreenChange = () => {
+      const doc = document as FullscreenDocument;
       setIsFullscreen(
         !!(
-          document.fullscreenElement ||
-          (document as any).webkitFullscreenElement ||
-          (document as any).msFullscreenElement
+          doc.fullscreenElement ||
+          doc.webkitFullscreenElement ||
+          doc.msFullscreenElement
         )
       );
     };

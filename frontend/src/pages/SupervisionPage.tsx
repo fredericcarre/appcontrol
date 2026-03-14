@@ -68,7 +68,6 @@ export function SupervisionPage() {
     currentIndex,
     toggleAppSelection,
     setIntervalSeconds,
-    play,
     pause,
     togglePlay,
     next,
