@@ -733,10 +733,7 @@ pub async fn correlate(
                     obj.insert("agent_id".to_string(), json!(agent_id));
 
                     // Generate command suggestions for service management
-                    let svc_name = svc
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("");
+                    let svc_name = svc.get("name").and_then(|n| n.as_str()).unwrap_or("");
 
                     // Detect OS from report or use heuristics
                     let is_windows = report
