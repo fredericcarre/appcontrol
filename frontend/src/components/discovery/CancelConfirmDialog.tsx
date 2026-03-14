@@ -22,7 +22,7 @@ export function CancelConfirmDialog() {
   };
 
   const getMessage = () => {
-    if (phase === 'topology') {
+    if (phase === 'map') {
       return 'This will discard all topology selections, edits, and dependencies. You will return to the agent selection phase.';
     }
     return 'This will reset the discovery process. You can start again at any time.';

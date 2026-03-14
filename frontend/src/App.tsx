@@ -19,6 +19,7 @@ import { ShareLinkPage } from '@/pages/ShareLinkPage';
 import { ApiKeysPage } from '@/pages/ApiKeysPage';
 import { DiscoveryPage } from '@/pages/DiscoveryPage';
 import { UsersPage } from '@/pages/UsersPage';
+import { SupervisionPage } from '@/pages/SupervisionPage';
 import { useUiStore } from '@/stores/ui';
 import { cn } from '@/lib/utils';
 
@@ -75,6 +76,7 @@ export default function App() {
       <Route path="/enrollment" element={<AuthLayout><EnrollmentTokensPage /></AuthLayout>} />
       <Route path="/settings/api-keys" element={<AuthLayout><ApiKeysPage /></AuthLayout>} />
       <Route path="/share/:token" element={<ShareLinkPage />} />
+      <Route path="/supervision" element={<SupervisionPage />} />
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

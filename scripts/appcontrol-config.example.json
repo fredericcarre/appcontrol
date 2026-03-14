@@ -1,0 +1,36 @@
+{
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "name": "appcontrol",
+    "user": "appcontrol",
+    "password": "CHANGE_THIS_PASSWORD"
+  },
+  "backend": {
+    "port": 3000,
+    "jwt_secret": "GENERATE_A_RANDOM_SECRET"
+  },
+  "frontend": {
+    "port": 8080
+  },
+  "gateways": [
+    {
+      "name": "production-paris",
+      "zone": "production",
+      "port": 8443,
+      "backend_url": "ws://localhost:3000/ws/gateway"
+    },
+    {
+      "name": "dr-london",
+      "zone": "disaster-recovery",
+      "port": 8444,
+      "backend_url": "ws://localhost:3000/ws/gateway"
+    }
+  ],
+  "images": {
+    "backend": "ghcr.io/fredericcarre/appcontrol-backend:latest",
+    "frontend": "ghcr.io/fredericcarre/appcontrol-frontend:latest",
+    "gateway": "ghcr.io/fredericcarre/appcontrol-gateway:latest",
+    "postgres": "postgres:16-alpine"
+  }
+}

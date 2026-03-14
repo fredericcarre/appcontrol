@@ -507,6 +507,17 @@ pub async fn activate_gateway(
     .await?
     .ok_or_not_found()?;
 
+    // Send ClearBlocklist to the gateway so all agents can reconnect
+    // This fixes the bug where agents remain blocked after gateway activation
+    let clear_msg = appcontrol_common::GatewayEnvelope::ClearBlocklist;
+    if let Ok(json) = serde_json::to_string(&clear_msg) {
+        state.ws_hub.send_to_gateway(gateway_id, &json);
+        tracing::info!(
+            gateway_id = %gateway_id,
+            "Sent ClearBlocklist to gateway after activation"
+        );
+    }
+
     Ok(Json(json!(gw)))
 }
 

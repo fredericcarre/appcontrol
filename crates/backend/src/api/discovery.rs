@@ -354,6 +354,16 @@ pub async fn correlate(
             let matched_service = process_data.and_then(|p| p.get("matched_service")).cloned();
             let technology_hint = process_data.and_then(|p| p.get("technology_hint")).cloned();
 
+            // Extract user and env_vars from the process
+            let user = process_data
+                .and_then(|p| p.get("user"))
+                .and_then(|u| u.as_str())
+                .map(|s| s.to_string());
+            let env_vars = process_data
+                .and_then(|p| p.get("env_vars"))
+                .cloned()
+                .unwrap_or(json!({}));
+
             // Use technology_hint for display name and component type if available
             let (display_name, component_type) = if let Some(ref tech) = technology_hint {
                 let tech_name = tech
@@ -384,6 +394,8 @@ pub async fn correlate(
                 "log_files": log_files,
                 "matched_service": matched_service,
                 "technology_hint": technology_hint,
+                "user": user,
+                "env_vars": env_vars,
             }));
 
             // Index by all reachable addresses
@@ -491,6 +503,16 @@ pub async fn correlate(
                     .cloned();
                 let technology_hint = process_data.and_then(|p| p.get("technology_hint")).cloned();
 
+                // Extract user and env_vars for client services too
+                let user = process_data
+                    .and_then(|p| p.get("user"))
+                    .and_then(|u| u.as_str())
+                    .map(|s| s.to_string());
+                let env_vars = process_data
+                    .and_then(|p| p.get("env_vars"))
+                    .cloned()
+                    .unwrap_or(json!({}));
+
                 let empty_ports: Vec<u16> = Vec::new();
                 let empty_details: Vec<Value> = Vec::new();
                 services.push(json!({
@@ -507,6 +529,8 @@ pub async fn correlate(
                     "matched_service": xc_service_name,
                     "technology_hint": technology_hint,
                     "is_client_service": true,
+                    "user": user,
+                    "env_vars": env_vars,
                 }));
             }
         }
@@ -695,12 +719,79 @@ pub async fn correlate(
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Collect system services (Windows Services / systemd units) from all reports
+    // These can be added as components with sc/systemctl commands
+    // -----------------------------------------------------------------------
+    let mut system_services: Vec<Value> = Vec::new();
+    for (agent_id, hostname, report) in &reports {
+        if let Some(svcs) = report.get("services").and_then(|s| s.as_array()) {
+            for svc in svcs {
+                let mut svc_with_host = svc.clone();
+                if let Some(obj) = svc_with_host.as_object_mut() {
+                    obj.insert("hostname".to_string(), json!(hostname));
+                    obj.insert("agent_id".to_string(), json!(agent_id));
+
+                    // Generate command suggestions for service management
+                    let svc_name = svc
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("");
+
+                    // Detect OS from report or use heuristics
+                    let is_windows = report
+                        .get("os_type")
+                        .and_then(|o| o.as_str())
+                        .map(|o| o.to_lowercase().contains("windows"))
+                        .unwrap_or_else(|| {
+                            // Heuristic: Windows services have display_name with spaces
+                            svc.get("display_name")
+                                .and_then(|d| d.as_str())
+                                .map(|d| d.contains(' '))
+                                .unwrap_or(false)
+                        });
+
+                    if is_windows {
+                        obj.insert(
+                            "check_cmd".to_string(),
+                            json!(format!("sc query {} | findstr RUNNING", svc_name)),
+                        );
+                        obj.insert(
+                            "start_cmd".to_string(),
+                            json!(format!("net start {}", svc_name)),
+                        );
+                        obj.insert(
+                            "stop_cmd".to_string(),
+                            json!(format!("net stop {}", svc_name)),
+                        );
+                    } else {
+                        // Linux/systemd
+                        obj.insert(
+                            "check_cmd".to_string(),
+                            json!(format!("systemctl is-active {}", svc_name)),
+                        );
+                        obj.insert(
+                            "start_cmd".to_string(),
+                            json!(format!("systemctl start {}", svc_name)),
+                        );
+                        obj.insert(
+                            "stop_cmd".to_string(),
+                            json!(format!("systemctl stop {}", svc_name)),
+                        );
+                    }
+                }
+                system_services.push(svc_with_host);
+            }
+        }
+    }
+
     Ok(Json(json!({
         "agents_analyzed": reports.len(),
         "services": services,
         "dependencies": resolved_deps,
         "unresolved_connections": unresolved_conns,
         "scheduled_jobs": scheduled_jobs,
+        "system_services": system_services,
     })))
 }
 

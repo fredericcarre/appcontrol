@@ -299,6 +299,21 @@ impl Hub {
         self.agent_to_gateway.len()
     }
 
+    /// Send a message to a specific gateway.
+    /// Returns true if the message was sent, false if the gateway is not connected.
+    pub fn send_to_gateway(&self, gateway_id: Uuid, message: &str) -> bool {
+        if let Some(gw) = self.gateways.get(&gateway_id) {
+            let _ = gw.sender.send(message.to_string());
+            true
+        } else {
+            tracing::warn!(
+                gateway_id = %gateway_id,
+                "Cannot send message to gateway: not connected"
+            );
+            false
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Security disconnect methods
     // -----------------------------------------------------------------------

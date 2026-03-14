@@ -12,6 +12,7 @@ import {
   type NodeTypes,
   type EdgeTypes,
   type Node,
+  type Connection,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Loader2 } from 'lucide-react';
@@ -49,8 +50,9 @@ function TopologyMapInner() {
   const {
     correlationResult,
     enabledServiceIndices,
-    showUnresolved,
-    showBatchJobs,
+    enabledBatchJobIndices,
+    enabledExternalIndices,
+    ignoredDependencies,
     getEffectiveName,
     getEffectiveType,
     highlightedServiceIndex,
@@ -89,8 +91,9 @@ function TopologyMapInner() {
   const { nodes: layoutNodes, edges: layoutEdges, isLayouting } = useTopologyLayout({
     correlationResult,
     enabledIndices: enabledServiceIndices,
-    showUnresolved,
-    showBatchJobs,
+    enabledBatchJobIndices,
+    enabledExternalIndices,
+    ignoredDependencies,
     getEffectiveName,
     getEffectiveType,
     highlightedServiceIndex,
@@ -172,6 +175,28 @@ function TopologyMapInner() {
     setSelectedServiceIndex(null);
   }, [dependencyMode, setPendingDependency, setSelectedServiceIndex]);
 
+  // Handle drag-and-drop connection between nodes
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      if (!connection.source || !connection.target) return;
+
+      // Extract service indices from node IDs (format: "svc-{index}")
+      const sourceMatch = connection.source.match(/^svc-(\d+)$/);
+      const targetMatch = connection.target.match(/^svc-(\d+)$/);
+
+      if (sourceMatch && targetMatch) {
+        const fromIndex = parseInt(sourceMatch[1], 10);
+        const toIndex = parseInt(targetMatch[1], 10);
+
+        // Don't allow self-connections
+        if (fromIndex !== toIndex) {
+          addManualDependency(fromIndex, toIndex);
+        }
+      }
+    },
+    [addManualDependency]
+  );
+
   const miniMapNodeColor = useMemo(
     () => (node: Node) => {
       if (node.type === 'hostGroup') return '#e2e8f0';
@@ -200,6 +225,7 @@ function TopologyMapInner() {
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
@@ -209,6 +235,7 @@ function TopologyMapInner() {
         minZoom={0.1}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
+        connectionLineStyle={{ stroke: '#10b981', strokeWidth: 2 }}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#e2e8f0" />
         <Controls showInteractive={false} className="!bg-card !border-border !shadow-md" />

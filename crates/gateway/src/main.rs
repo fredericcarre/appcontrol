@@ -1310,6 +1310,18 @@ fn handle_backend_message(state: &Arc<GatewayState>, text: &str) {
                 }
             }
         }
+        Ok(GatewayEnvelope::ClearBlocklist) => {
+            let count = {
+                let mut blocklist = state.blocked_agents.write().unwrap();
+                let count = blocklist.len();
+                blocklist.clear();
+                count
+            };
+            tracing::info!(
+                cleared_count = count,
+                "Backend ordered blocklist clear — all agents can now reconnect"
+            );
+        }
         Ok(GatewayEnvelope::ForwardToAgent {
             target_agent_id,
             message,

@@ -1,11 +1,15 @@
 import { useState } from 'react';
-import { X, FileText, ScrollText, Terminal, Eye, Copy, Check, ExternalLink, Loader2, ArrowRight } from 'lucide-react';
+import { X, FileText, ScrollText, Terminal, Eye, Copy, Check, ExternalLink, Loader2, ArrowRight, User, Trash2, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useDiscoveryStore } from '@/stores/discovery';
 import { useReadFileContent } from '@/api/discovery';
+import { EnvVarsDisplay } from './EnvVarsDisplay';
+import { CustomActionEditor } from './CustomActionEditor';
+import { BatchJobLinker } from './BatchJobLinker';
+import { classifyConfidence, getConfidenceInfo } from './confidence';
 
 // Common port to technology mapping
 const PORT_HINTS: Record<number, string> = {
@@ -111,6 +115,11 @@ export function ServiceDetailPanel() {
     correlationResult,
     selectedServiceIndex,
     setSelectedServiceIndex,
+    ignoreDependency,
+    restoreDependency,
+    isDependencyIgnored,
+    removeManualDependency,
+    manualDependencies,
   } = useDiscoveryStore();
 
   const [fileDialog, setFileDialog] = useState<{ path: string; title: string; isLog: boolean } | null>(null);
@@ -121,10 +130,17 @@ export function ServiceDetailPanel() {
   if (!service) return null;
 
   const cmdSuggestion = service.command_suggestion;
+  const confidence = classifyConfidence(service);
+  const confidenceInfo = getConfidenceInfo(confidence);
 
   // Find connections from this service
   const outgoingDeps = correlationResult.dependencies.filter(
     (d) => d.from_service_index === selectedServiceIndex
+  );
+
+  // Find connections TO this service
+  const incomingDeps = correlationResult.dependencies.filter(
+    (d) => d.to_service_index === selectedServiceIndex
   );
 
   const getServiceName = (idx: number) => {
@@ -136,9 +152,17 @@ export function ServiceDetailPanel() {
     <div className="w-[380px] border-l border-border bg-card h-full flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between p-3 border-b border-border bg-muted/30">
-        <span className="font-semibold text-sm truncate">
-          {service.technology_hint?.display_name || service.process_name}
-        </span>
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <span className="font-semibold text-sm truncate">
+            {service.technology_hint?.display_name || service.process_name}
+          </span>
+          <Badge
+            variant="outline"
+            className={`text-[9px] h-4 px-1 ${confidenceInfo.color} ${confidenceInfo.borderColor}`}
+          >
+            {confidenceInfo.label}
+          </Badge>
+        </div>
         <button
           onClick={() => setSelectedServiceIndex(null)}
           className="p-1 rounded hover:bg-accent"
@@ -149,21 +173,35 @@ export function ServiceDetailPanel() {
 
       <ScrollArea className="flex-1">
         <div className="p-3 space-y-4">
-          {/* Basic Info Section */}
-          <div className="space-y-1.5 text-xs">
-            <div className="flex">
-              <span className="text-muted-foreground w-16">Process:</span>
-              <span className="font-mono">{service.process_name}</span>
+          {/* Identity Section */}
+          <div>
+            <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
+              IDENTITY
             </div>
-            <div className="flex">
-              <span className="text-muted-foreground w-16">Host:</span>
-              <span className="font-medium">{service.hostname}</span>
-            </div>
-            <div className="flex">
-              <span className="text-muted-foreground w-16">Ports:</span>
-              <span className="font-mono">
-                {service.ports.length > 0 ? service.ports.map(p => `:${p}`).join(', ') : '-'}
-              </span>
+            <div className="space-y-1.5 text-xs pl-2 border-l-2 border-border">
+              <div className="flex">
+                <span className="text-muted-foreground w-16">Process:</span>
+                <span className="font-mono">{service.process_name}</span>
+              </div>
+              <div className="flex">
+                <span className="text-muted-foreground w-16">Host:</span>
+                <span className="font-medium">{service.hostname}</span>
+              </div>
+              {service.user && (
+                <div className="flex items-center">
+                  <span className="text-muted-foreground w-16">User:</span>
+                  <span className="font-mono flex items-center gap-1">
+                    <User className="h-3 w-3 text-muted-foreground" />
+                    {service.user}
+                  </span>
+                </div>
+              )}
+              <div className="flex">
+                <span className="text-muted-foreground w-16">Ports:</span>
+                <span className="font-mono">
+                  {service.ports.length > 0 ? service.ports.map(p => `:${p}`).join(', ') : '-'}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -258,33 +296,184 @@ export function ServiceDetailPanel() {
             </div>
           )}
 
-          {/* Connections Section */}
+          {/* Custom Actions Section */}
+          <CustomActionEditor serviceIndex={selectedServiceIndex} />
+
+          {/* Env Vars Section */}
+          {service.env_vars && Object.keys(service.env_vars).length > 0 && (
+            <EnvVarsDisplay envVars={service.env_vars} />
+          )}
+
+          {/* Batch Jobs Section */}
+          <BatchJobLinker serviceIndex={selectedServiceIndex} />
+
+          {/* Connections Section - Outgoing */}
           {outgoingDeps.length > 0 && (
             <div>
               <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
                 <ExternalLink className="h-3 w-3" />
-                CONNECTIONS ({outgoingDeps.length})
+                OUTGOING ({outgoingDeps.length})
               </div>
               <div className="space-y-1 pl-2 border-l-2 border-border">
-                {outgoingDeps.map((dep, i) => (
-                  <div key={i} className="flex items-center gap-1 text-[11px]">
-                    <ArrowRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                    <span className="font-mono">
-                      {dep.remote_addr}:{dep.remote_port}
-                    </span>
-                    {PORT_HINTS[dep.remote_port] && (
-                      <Badge variant="secondary" className="text-[9px] h-4 px-1">
-                        {PORT_HINTS[dep.remote_port]}
-                      </Badge>
-                    )}
-                    <span className="text-muted-foreground truncate">
-                      {getServiceName(dep.to_service_index)}
-                    </span>
-                  </div>
-                ))}
+                {outgoingDeps.map((dep, i) => {
+                  const isIgnored = dep.from_service_index !== null && isDependencyIgnored(dep.from_service_index, dep.to_service_index);
+                  return (
+                    <div key={i} className={`flex items-center gap-1 text-[11px] ${isIgnored ? 'opacity-50' : ''}`}>
+                      <ArrowRight className="h-3 w-3 text-emerald-500 flex-shrink-0" />
+                      <span className="text-muted-foreground truncate flex-1">
+                        {getServiceName(dep.to_service_index)}
+                      </span>
+                      {PORT_HINTS[dep.remote_port] && (
+                        <Badge variant="secondary" className="text-[9px] h-4 px-1">
+                          {PORT_HINTS[dep.remote_port]}
+                        </Badge>
+                      )}
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        :{dep.remote_port}
+                      </span>
+                      {dep.from_service_index !== null && (
+                        isIgnored ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-5 w-5 text-muted-foreground hover:text-emerald-500"
+                            onClick={() => restoreDependency(dep.from_service_index!, dep.to_service_index)}
+                            title="Restore dependency"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                          </Button>
+                        ) : (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-5 w-5 text-muted-foreground hover:text-red-500"
+                            onClick={() => ignoreDependency(dep.from_service_index!, dep.to_service_index)}
+                            title="Ignore dependency"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        )
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
+
+          {/* Connections Section - Incoming */}
+          {incomingDeps.length > 0 && (
+            <div>
+              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
+                <ArrowRight className="h-3 w-3 rotate-180" />
+                INCOMING ({incomingDeps.length})
+              </div>
+              <div className="space-y-1 pl-2 border-l-2 border-border">
+                {incomingDeps.map((dep, i) => {
+                  const isIgnored = dep.from_service_index !== null && isDependencyIgnored(dep.from_service_index, dep.to_service_index);
+                  return (
+                    <div key={i} className={`flex items-center gap-1 text-[11px] ${isIgnored ? 'opacity-50' : ''}`}>
+                      <ArrowRight className="h-3 w-3 text-blue-500 rotate-180 flex-shrink-0" />
+                      <span className="text-muted-foreground truncate flex-1">
+                        {dep.from_service_index !== null ? getServiceName(dep.from_service_index) : dep.from_process}
+                      </span>
+                      {PORT_HINTS[dep.remote_port] && (
+                        <Badge variant="secondary" className="text-[9px] h-4 px-1">
+                          {PORT_HINTS[dep.remote_port]}
+                        </Badge>
+                      )}
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        :{dep.remote_port}
+                      </span>
+                      {dep.from_service_index !== null && (
+                        isIgnored ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-5 w-5 text-muted-foreground hover:text-emerald-500"
+                            onClick={() => restoreDependency(dep.from_service_index!, dep.to_service_index)}
+                            title="Restore dependency"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                          </Button>
+                        ) : (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-5 w-5 text-muted-foreground hover:text-red-500"
+                            onClick={() => ignoreDependency(dep.from_service_index!, dep.to_service_index)}
+                            title="Ignore dependency"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        )
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Manual Dependencies for this service */}
+          {(() => {
+            const outgoingManual = manualDependencies.filter((d) => d.from === selectedServiceIndex);
+            const incomingManual = manualDependencies.filter((d) => d.to === selectedServiceIndex);
+            const hasManual = outgoingManual.length > 0 || incomingManual.length > 0;
+
+            if (!hasManual) return null;
+
+            return (
+              <div>
+                <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
+                  <ExternalLink className="h-3 w-3 text-emerald-500" />
+                  MANUAL LINKS ({outgoingManual.length + incomingManual.length})
+                </div>
+                <div className="space-y-1 pl-2 border-l-2 border-emerald-300">
+                  {outgoingManual.map((md, i) => (
+                    <div key={`out-${i}`} className="flex items-center gap-1 text-[11px]">
+                      <ArrowRight className="h-3 w-3 text-emerald-500 flex-shrink-0" />
+                      <span className="text-muted-foreground truncate flex-1">
+                        {getServiceName(md.to)}
+                      </span>
+                      <Badge variant="outline" className="text-[9px] h-4 px-1 border-emerald-300 text-emerald-600">
+                        manual
+                      </Badge>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-5 w-5 text-muted-foreground hover:text-red-500"
+                        onClick={() => removeManualDependency(md.from, md.to)}
+                        title="Remove manual dependency"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                  {incomingManual.map((md, i) => (
+                    <div key={`in-${i}`} className="flex items-center gap-1 text-[11px]">
+                      <ArrowRight className="h-3 w-3 text-emerald-500 rotate-180 flex-shrink-0" />
+                      <span className="text-muted-foreground truncate flex-1">
+                        {getServiceName(md.from)}
+                      </span>
+                      <Badge variant="outline" className="text-[9px] h-4 px-1 border-emerald-300 text-emerald-600">
+                        manual
+                      </Badge>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-5 w-5 text-muted-foreground hover:text-red-500"
+                        onClick={() => removeManualDependency(md.from, md.to)}
+                        title="Remove manual dependency"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </ScrollArea>
 

@@ -7,10 +7,17 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '@/components/ui/select';
 import {
-  Loader2, CheckSquare, Square, Rocket, X, Check, MapPin,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import {
+  Loader2, CheckSquare, Square, Rocket, X, MapPin, ArrowLeft, Plus,
 } from 'lucide-react';
 import { useDiscoveryStore } from '@/stores/discovery';
 import { useCreateDraft, useApplyDraft } from '@/api/discovery';
@@ -18,7 +25,7 @@ import { useSites } from '@/api/sites';
 import type { CorrelatedService } from '@/api/discovery';
 import type { ServiceEdits } from './TopologyMap.types';
 import { CancelConfirmDialog } from './CancelConfirmDialog';
-import { DependencyModeToggle } from './DependencyModeToggle';
+import { ConfidenceFilterBar } from './ConfidenceFilterBar';
 
 export function TopologyToolbar() {
   const {
@@ -37,12 +44,17 @@ export function TopologyToolbar() {
     manualDependencies,
     selectedSiteId,
     setSelectedSiteId,
+    addManualComponent,
   } = useDiscoveryStore();
 
   const createDraft = useCreateDraft();
   const applyDraft = useApplyDraft();
   const { data: sites } = useSites();
   const [creating, setCreating] = useState(false);
+  const [addComponentOpen, setAddComponentOpen] = useState(false);
+  const [newComponentName, setNewComponentName] = useState('');
+  const [newComponentHost, setNewComponentHost] = useState('');
+  const [newComponentType, setNewComponentType] = useState('service');
 
   const services = correlationResult?.services || [];
   const dependencies = correlationResult?.dependencies || [];
@@ -134,21 +146,27 @@ export function TopologyToolbar() {
 
   return (
     <>
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10">
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex flex-col gap-2">
+        {/* Top row: Confidence filters */}
+        <div className="flex justify-center">
+          <div className="bg-card/95 backdrop-blur-sm border border-border rounded-lg shadow-lg px-3 py-1.5">
+            <ConfidenceFilterBar />
+          </div>
+        </div>
+
+        {/* Bottom row: Actions */}
         <div className="flex items-center gap-2 bg-card/95 backdrop-blur-sm border border-border rounded-lg shadow-lg px-3 py-2">
-          {/* Mini step indicator */}
-          <div className="flex items-center gap-1 pr-2 border-r border-border">
-            <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center" title="Selection complete">
-              <Check className="h-3 w-3 text-white" />
-            </div>
-            <div className="w-4 h-0.5 bg-emerald-500" />
-            <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center" title="Current: Topology">
-              <span className="text-[10px] font-bold text-primary-foreground">2</span>
-            </div>
-            <div className="w-4 h-0.5 bg-muted-foreground/20" />
-            <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center" title="Creation">
-              <span className="text-[10px] font-bold text-muted-foreground">3</span>
-            </div>
+          {/* Back to scan */}
+          <div className="pr-2 border-r border-border">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground"
+              onClick={() => setPhase('scan')}
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Back
+            </Button>
           </div>
 
           {/* Cancel button */}
@@ -177,9 +195,17 @@ export function TopologyToolbar() {
             </Badge>
           </div>
 
-          {/* Dependency creation mode toggle */}
+          {/* Add component manually */}
           <div className="pr-2 border-r border-border">
-            <DependencyModeToggle />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1.5"
+              onClick={() => setAddComponentOpen(true)}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add
+            </Button>
           </div>
 
           {/* Site selector */}
@@ -191,7 +217,11 @@ export function TopologyToolbar() {
               <SelectTrigger className="h-7 w-36 text-xs">
                 <div className="flex items-center gap-1.5">
                   <MapPin className="h-3 w-3 text-muted-foreground" />
-                  <SelectValue placeholder="Select site..." />
+                  {selectedSiteId ? (
+                    <span>{sites?.find(s => s.id === selectedSiteId)?.name || 'Site'}</span>
+                  ) : (
+                    <span className="text-muted-foreground">Select site...</span>
+                  )}
                 </div>
               </SelectTrigger>
               <SelectContent>
@@ -235,6 +265,76 @@ export function TopologyToolbar() {
         </div>
       </div>
       <CancelConfirmDialog />
+
+      {/* Add Component Dialog */}
+      <Dialog open={addComponentOpen} onOpenChange={setAddComponentOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Component</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="component-name">Name</Label>
+              <Input
+                id="component-name"
+                placeholder="e.g. MyDatabase"
+                value={newComponentName}
+                onChange={(e) => setNewComponentName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="component-host">Hostname</Label>
+              <Input
+                id="component-host"
+                placeholder="e.g. server01"
+                value={newComponentHost}
+                onChange={(e) => setNewComponentHost(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="component-type">Type</Label>
+              <Select value={newComponentType} onValueChange={setNewComponentType}>
+                <SelectTrigger>
+                  {newComponentType || 'Select type...'}
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="database">Database</SelectItem>
+                  <SelectItem value="middleware">Middleware</SelectItem>
+                  <SelectItem value="appserver">App Server</SelectItem>
+                  <SelectItem value="webfront">Web Frontend</SelectItem>
+                  <SelectItem value="service">Service</SelectItem>
+                  <SelectItem value="batch">Batch Job</SelectItem>
+                  <SelectItem value="cache">Cache</SelectItem>
+                  <SelectItem value="loadbalancer">Load Balancer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddComponentOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (newComponentName.trim()) {
+                  addManualComponent(
+                    newComponentName.trim(),
+                    newComponentHost.trim() || 'manual',
+                    newComponentType
+                  );
+                  setNewComponentName('');
+                  setNewComponentHost('');
+                  setNewComponentType('service');
+                  setAddComponentOpen(false);
+                }
+              }}
+              disabled={!newComponentName.trim()}
+            >
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

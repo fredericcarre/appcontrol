@@ -29,30 +29,28 @@ import { TopologyToolbar } from '@/components/discovery/TopologyToolbar';
 import { DiscoveryStepper } from '@/components/discovery/DiscoveryStepper';
 import { AgentManagementPanel } from '@/components/discovery/AgentManagementPanel';
 import { MatrixRain } from '@/components/discovery/MatrixRain';
-import { TriagePhase } from '@/components/discovery/TriagePhase';
+import { classifyConfidence } from '@/components/discovery/confidence';
+// StagingArea removed - services are in the sidebar
 
 // ---------------------------------------------------------------------------
-// Main Page — 3-phase flow
+// Main Page — 3-phase flow (Scan → Map → Done)
 // ---------------------------------------------------------------------------
 
 export function DiscoveryPage() {
   const phase = useDiscoveryStore((s) => s.phase);
-  const getTriageProgress = useDiscoveryStore((s) => s.getTriageProgress);
-  const triageProgress = getTriageProgress();
 
   return (
     <div className="flex flex-col h-full">
-      {/* Stepper - hidden in topology phase for more space */}
-      {phase !== 'topology' && (
+      {/* Stepper - hidden in map phase for more space */}
+      {phase !== 'map' && (
         <div className="mb-6 py-4 border-b border-border">
-          <DiscoveryStepper currentPhase={phase} triageProgress={triageProgress} />
+          <DiscoveryStepper currentPhase={phase} />
         </div>
       )}
 
       {/* Phase content */}
       {phase === 'scan' && <ScanPhase />}
-      {phase === 'triage' && <TriagePhase />}
-      {phase === 'topology' && <TopologyPhase />}
+      {phase === 'map' && <MapPhase />}
       {phase === 'done' && <DonePhase />}
     </div>
   );
@@ -108,7 +106,23 @@ function ScanPhase() {
     if (selectedAgentIds.length === 0) return;
     const result = await correlate.mutateAsync({ agent_ids: selectedAgentIds });
     setCorrelationResult(result);
-    setPhase('triage');
+
+    // Auto-enable services with high confidence (recognized or likely)
+    // The store's setCorrelationResult already enables all, but we want to
+    // selectively disable low-confidence ones for the map-first UX
+    const enabled = new Set<number>();
+    result.services.forEach((svc, i) => {
+      const confidence = classifyConfidence(svc);
+      // Auto-include recognized and likely services
+      if (confidence === 'recognized' || confidence === 'likely') {
+        enabled.add(i);
+      }
+    });
+    // Update store with filtered enabled set
+    useDiscoveryStore.setState({ enabledServiceIndices: enabled });
+
+    // Go directly to map phase (skip triage)
+    setPhase('map');
   };
 
   const isScanning = triggerAll.isPending || correlate.isPending;
@@ -312,10 +326,10 @@ function ScanPhase() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2: Topology — Full-screen interactive map
+// Phase 2: Map — Full-screen interactive topology map with inline refinement
 // ---------------------------------------------------------------------------
 
-function TopologyPhase() {
+function MapPhase() {
   const selectedServiceIndex = useDiscoveryStore((s) => s.selectedServiceIndex);
 
   return (

@@ -1153,6 +1153,29 @@ async fn process_agent_message(
                     // Then trigger immediate health checks to restore component states
                     send_run_checks_now(state, agent_id);
                 }
+
+                // Also restore gateway_id in database if it was cleared (e.g., after gateway block/unblock).
+                // This fixes the case where an agent's gateway_id is NULL but it's actively sending heartbeats.
+                let db = state.db.clone();
+                tokio::spawn(async move {
+                    let result = sqlx::query(
+                        "UPDATE agents SET gateway_id = $2 WHERE id = $1 AND gateway_id IS NULL",
+                    )
+                    .bind(agent_id)
+                    .bind(gw_id)
+                    .execute(&db)
+                    .await;
+
+                    if let Ok(res) = result {
+                        if res.rows_affected() > 0 {
+                            tracing::info!(
+                                agent_id = %agent_id,
+                                gateway_id = %gw_id,
+                                "Restored agent gateway_id from heartbeat (was NULL)"
+                            );
+                        }
+                    }
+                });
             }
 
             // Batch heartbeat update — flushed every 5s instead of 1 SQL per heartbeat.

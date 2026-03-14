@@ -430,6 +430,9 @@ pub enum GatewayEnvelope {
     /// Unblock a previously blocked agent.
     /// The gateway should remove the agent from the blocklist.
     UnblockAgent { agent_id: Uuid },
+    /// Clear the entire agent blocklist.
+    /// Used when a gateway is activated/unblocked to allow all agents to reconnect.
+    ClearBlocklist,
 }
 
 /// Messages sent from Gateway to Backend.

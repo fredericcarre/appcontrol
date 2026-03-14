@@ -1,4 +1,4 @@
-import { Database, Layers, Server, Globe, Cog, Clock, Box, GripVertical } from 'lucide-react';
+import { Database, Layers, Server, Globe, Cog, Clock, Box, GripVertical, Folder } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export interface ComponentTypeDefinition {
@@ -66,6 +66,14 @@ export const COMPONENT_TYPES: ComponentTypeDefinition[] = [
     iconName: 'box',
     color: '#455A64',
     description: 'Other component types',
+  },
+  {
+    type: 'application',
+    label: 'Application',
+    icon: Folder,
+    iconName: 'folder',
+    color: '#3B82F6',
+    description: 'Reference to another app (synthetic)',
   },
 ];
 

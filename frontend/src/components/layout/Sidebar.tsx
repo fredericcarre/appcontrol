@@ -16,10 +16,12 @@ import {
   Upload,
   KeyRound,
   Radar,
+  Monitor,
 } from 'lucide-react';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/supervision', icon: Monitor, label: 'Supervision' },
   { to: '/discovery', icon: Radar, label: 'Discovery' },
   { to: '/teams', icon: Users, label: 'Teams' },
   { to: '/users', icon: UserCog, label: 'Users', adminOnly: true },

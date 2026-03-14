@@ -6,9 +6,10 @@ import { COMPONENT_TYPE_ICONS, TECHNOLOGY_ICONS, type ComponentType } from '@/li
 import {
   Database, Layers, Server, Globe, Cog, Clock, Box,
   Search, Calendar, ArrowLeftRight, Shield, Network,
-  Workflow, Zap, Container, Folder, Puzzle,
+  Workflow, Zap, Container, Folder, Puzzle, ShieldCheck, HelpCircle, Settings2,
 } from 'lucide-react';
 import type { ServiceNodeData } from './TopologyMap.types';
+import { classifyConfidence } from './confidence';
 
 const iconMap: Record<string, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
   Database, Layers, Server, Globe, Cog, Clock, Box,
@@ -22,6 +23,14 @@ const CONFIDENCE_COLORS: Record<string, string> = {
   low: 'bg-slate-300',
 };
 
+// Confidence indicator styles
+const CONFIDENCE_INDICATOR: Record<string, { icon: React.ComponentType<{ className?: string }>; color: string; bg: string }> = {
+  recognized: { icon: ShieldCheck, color: 'text-emerald-600', bg: 'bg-emerald-100' },
+  likely: { icon: Cog, color: 'text-amber-600', bg: 'bg-amber-100' },
+  unknown: { icon: HelpCircle, color: 'text-slate-500', bg: 'bg-slate-100' },
+  system: { icon: Settings2, color: 'text-slate-400', bg: 'bg-slate-50' },
+};
+
 function ServiceNodeInner({ data, selected }: NodeProps & { data: ServiceNodeData }) {
   // Use technology_hint if available, otherwise fall back to componentType
   const techHint = data.service?.technology_hint;
@@ -32,6 +41,11 @@ function ServiceNodeInner({ data, selected }: NodeProps & { data: ServiceNodeDat
 
   // Use technology display name if available
   const displayLabel = techHint?.display_name || data.label;
+
+  // Get service confidence level
+  const confidence = data.service ? classifyConfidence(data.service) : 'unknown';
+  const confidenceStyle = CONFIDENCE_INDICATOR[confidence];
+  const ConfidenceIcon = confidenceStyle.icon;
 
   // Track if node is newly rendered for entrance animation
   const [isEntering, setIsEntering] = useState(true);
@@ -68,10 +82,14 @@ function ServiceNodeInner({ data, selected }: NodeProps & { data: ServiceNodeDat
         animationDelay: isEntering ? `${data.serviceIndex * 50}ms` : undefined,
       }}
     >
-      <Handle type="target" position={Position.Top} className="!bg-slate-400 !w-2 !h-2" />
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="!bg-blue-400 !border-2 !border-blue-600 !w-3 !h-3 hover:!w-4 hover:!h-4 hover:!bg-blue-500 transition-all cursor-crosshair"
+      />
 
       <div className="p-2.5">
-        {/* Top row: checkbox + name + confidence */}
+        {/* Top row: checkbox + name + confidence indicators */}
         <div className="flex items-center gap-1.5 mb-1">
           <input
             type="checkbox"
@@ -84,8 +102,16 @@ function ServiceNodeInner({ data, selected }: NodeProps & { data: ServiceNodeDat
           <span className="font-semibold text-xs truncate flex-1" title={displayLabel}>
             {displayLabel}
           </span>
+          {/* Confidence indicator */}
           <div
-            className={cn('w-2.5 h-2.5 rounded-full flex-shrink-0', confColor)}
+            className={cn('w-4 h-4 rounded flex items-center justify-center flex-shrink-0', confidenceStyle.bg)}
+            title={`Confidence: ${confidence}`}
+          >
+            <ConfidenceIcon className={cn('h-2.5 w-2.5', confidenceStyle.color)} />
+          </div>
+          {/* Command confidence dot */}
+          <div
+            className={cn('w-2 h-2 rounded-full flex-shrink-0', confColor)}
             title={`Command confidence: ${data.commandConfidence}`}
           />
         </div>
@@ -111,7 +137,11 @@ function ServiceNodeInner({ data, selected }: NodeProps & { data: ServiceNodeDat
         )}
       </div>
 
-      <Handle type="source" position={Position.Bottom} className="!bg-slate-400 !w-2 !h-2" />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="!bg-emerald-400 !border-2 !border-emerald-600 !w-3 !h-3 hover:!w-4 hover:!h-4 hover:!bg-emerald-500 transition-all cursor-crosshair"
+      />
     </div>
   );
 }

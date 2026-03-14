@@ -296,6 +296,9 @@ function buildNodes(
         state: (c.current_state || 'UNKNOWN') as ComponentState,
         componentType: (c.component_type || 'service') as ComponentType,
         host: c.host,
+        // Cluster configuration
+        clusterSize: c.cluster_size,
+        clusterNodes: c.cluster_nodes,
         // Connectivity status
         connectivityStatus: c.connectivity_status,
         agentHostname: c.agent_hostname,

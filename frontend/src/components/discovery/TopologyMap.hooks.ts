@@ -6,8 +6,9 @@ import type { CorrelationResult } from '@/api/discovery';
 interface UseTopologyLayoutInput {
   correlationResult: CorrelationResult | null;
   enabledIndices: Set<number>;
-  showUnresolved: boolean;
-  showBatchJobs: boolean;
+  enabledBatchJobIndices: Set<number>;
+  enabledExternalIndices: Set<number>;
+  ignoredDependencies: Set<string>;
   getEffectiveName: (index: number) => string;
   getEffectiveType: (index: number) => string;
   highlightedServiceIndex: number | null;
@@ -33,8 +34,9 @@ export function useTopologyLayout(input: UseTopologyLayoutInput): UseTopologyLay
   const {
     correlationResult,
     enabledIndices,
-    showUnresolved,
-    showBatchJobs,
+    enabledBatchJobIndices,
+    enabledExternalIndices,
+    ignoredDependencies,
     getEffectiveName,
     getEffectiveType,
     highlightedServiceIndex,
@@ -58,8 +60,9 @@ export function useTopologyLayout(input: UseTopologyLayoutInput): UseTopologyLay
       const result = await computeElkLayout({
         correlationResult,
         enabledIndices,
-        showUnresolved,
-        showBatchJobs,
+        enabledBatchJobIndices,
+        enabledExternalIndices,
+        ignoredDependencies,
         getEffectiveName,
         getEffectiveType,
         highlightedServiceIndex,
@@ -81,7 +84,7 @@ export function useTopologyLayout(input: UseTopologyLayoutInput): UseTopologyLay
         setIsLayouting(false);
       }
     }
-  }, [correlationResult, enabledIndices, showUnresolved, showBatchJobs, getEffectiveName, getEffectiveType, highlightedServiceIndex, onToggle, onSelect, agentInfoMap, manualDependencies]);
+  }, [correlationResult, enabledIndices, enabledBatchJobIndices, enabledExternalIndices, ignoredDependencies, getEffectiveName, getEffectiveType, highlightedServiceIndex, onToggle, onSelect, agentInfoMap, manualDependencies]);
 
   // Run layout on correlation result change or filter change
   useEffect(() => {

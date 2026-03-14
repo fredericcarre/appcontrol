@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Component, useComponentGroups } from '@/api/apps';
+import { useState, useMemo, useEffect } from 'react';
+import { Component, useComponentGroups, useApps } from '@/api/apps';
 import { useAgents } from '@/api/reports';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,9 +20,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { COMPONENT_TYPES } from './ComponentPalette';
-import { Database, Layers, Server, Globe, Cog, Clock, Box } from 'lucide-react';
+import { Database, Layers, Server, Globe, Cog, Clock, Box, Folder, AlertCircle } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 const ICONS: Record<string, React.ElementType> = {
   database: Database,
@@ -32,6 +34,7 @@ const ICONS: Record<string, React.ElementType> = {
   cog: Cog,
   clock: Clock,
   box: Box,
+  folder: Folder,
 };
 
 export interface ComponentFormData {
@@ -45,6 +48,11 @@ export interface ComponentFormData {
   check_cmd: string;
   start_cmd: string;
   stop_cmd: string;
+  // For application-type components (referencing another app)
+  referenced_app_id?: string | null;
+  // Cluster configuration
+  cluster_size?: number | null;
+  cluster_nodes?: string[];
 }
 
 interface ComponentEditorProps {
@@ -68,6 +76,13 @@ export function ComponentEditor({
 }: ComponentEditorProps) {
   const { data: groups } = useComponentGroups(appId);
   const { data: agents } = useAgents();
+  const { data: existingApps } = useApps();
+
+  // Filter out the current app from the list (can't reference itself)
+  const availableApps = useMemo(
+    () => existingApps?.filter((app) => app.id !== appId) || [],
+    [existingApps, appId]
+  );
 
   // Compute initial form data based on component or initialType
   const initialFormData = useMemo((): ComponentFormData => {
@@ -83,6 +98,9 @@ export function ComponentEditor({
         check_cmd: component.check_cmd || '',
         start_cmd: component.start_cmd || '',
         stop_cmd: component.stop_cmd || '',
+        referenced_app_id: (component as Component & { referenced_app_id?: string }).referenced_app_id || null,
+        cluster_size: component.cluster_size ?? null,
+        cluster_nodes: component.cluster_nodes ?? [],
       };
     }
     if (initialType) {
@@ -98,6 +116,9 @@ export function ComponentEditor({
         check_cmd: '',
         start_cmd: '',
         stop_cmd: '',
+        referenced_app_id: null,
+        cluster_size: null,
+        cluster_nodes: [],
       };
     }
     return {
@@ -111,6 +132,9 @@ export function ComponentEditor({
       check_cmd: '',
       start_cmd: '',
       stop_cmd: '',
+      referenced_app_id: null,
+      cluster_size: null,
+      cluster_nodes: [],
     };
   }, [component, initialType]);
 
@@ -127,6 +151,34 @@ export function ComponentEditor({
 
   const handleChange = (field: keyof ComponentFormData, value: string | null) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  // When a referenced app is selected, auto-fill the commands and name
+  const handleReferencedAppChange = (appRefId: string | null) => {
+    const selectedApp = availableApps.find((a) => a.id === appRefId);
+    if (selectedApp) {
+      setFormData((prev) => ({
+        ...prev,
+        referenced_app_id: appRefId,
+        name: prev.name || selectedApp.name.toLowerCase().replace(/\s+/g, '-'),
+        display_name: prev.display_name || selectedApp.name,
+        description: prev.description || `Synthetic view of ${selectedApp.name} application`,
+        icon: 'folder',
+        host: 'aggregate', // No specific host for app references
+        // Internal commands - backend interprets @app: prefix using referenced_app_id
+        check_cmd: '@app:check',
+        start_cmd: '@app:start',
+        stop_cmd: '@app:stop',
+      }));
+    } else {
+      setFormData((prev) => ({
+        ...prev,
+        referenced_app_id: null,
+        check_cmd: '',
+        start_cmd: '',
+        stop_cmd: '',
+      }));
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -199,7 +251,13 @@ export function ComponentEditor({
                   <Label htmlFor="component_type">Type</Label>
                   <Select
                     value={formData.component_type}
-                    onValueChange={(v) => handleChange('component_type', v)}
+                    onValueChange={(v) => {
+                      handleChange('component_type', v);
+                      // Reset referenced app when switching away from application type
+                      if (v !== 'application') {
+                        handleChange('referenced_app_id', null);
+                      }
+                    }}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select type" />
@@ -243,6 +301,44 @@ export function ComponentEditor({
                   </Select>
                 </div>
               </div>
+
+              {/* Application Reference Selector - only show for application type */}
+              {formData.component_type === 'application' && (
+                <div className="space-y-2">
+                  <Label>Referenced Application *</Label>
+                  {availableApps.length === 0 ? (
+                    <Alert>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        No other applications available to reference. Create another application first.
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    <Select
+                      value={formData.referenced_app_id || ''}
+                      onValueChange={(v) => handleReferencedAppChange(v || null)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select an application to reference" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableApps.map((app) => (
+                          <SelectItem key={app.id} value={app.id}>
+                            <div className="flex items-center gap-2">
+                              <Folder className="h-4 w-4 text-blue-500" />
+                              {app.name}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    This component will act as an aggregate view of the selected application.
+                    Start/stop operations will cascade to all components in the referenced app.
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="host">Host</Label>
@@ -343,6 +439,82 @@ export function ComponentEditor({
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              {/* Cluster Section */}
+              <div className="space-y-3 border-t pt-4 mt-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Cluster Mode</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Mark this component as a cluster with multiple nodes
+                    </p>
+                  </div>
+                  <Switch
+                    checked={!!formData.cluster_size && formData.cluster_size >= 2}
+                    onCheckedChange={(checked: boolean) => {
+                      if (!checked) {
+                        setFormData((prev) => ({
+                          ...prev,
+                          cluster_size: null,
+                          cluster_nodes: [],
+                        }));
+                      } else {
+                        setFormData((prev) => ({
+                          ...prev,
+                          cluster_size: 2,
+                          cluster_nodes: prev.cluster_nodes || [],
+                        }));
+                      }
+                    }}
+                  />
+                </div>
+
+                {formData.cluster_size && formData.cluster_size >= 2 && (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="cluster_size">Number of Nodes</Label>
+                      <Input
+                        id="cluster_size"
+                        type="number"
+                        min={2}
+                        max={100}
+                        value={formData.cluster_size}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          setFormData((prev) => ({
+                            ...prev,
+                            cluster_size: isNaN(val) ? 2 : Math.max(2, val),
+                          }));
+                        }}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="cluster_nodes">Server List (optional)</Label>
+                      <Textarea
+                        id="cluster_nodes"
+                        placeholder="srv1.prod&#10;srv2.prod&#10;srv3.prod"
+                        value={(formData.cluster_nodes || []).join('\n')}
+                        onChange={(e) => {
+                          const nodes = e.target.value
+                            .split('\n')
+                            .map((s) => s.trim())
+                            .filter(Boolean);
+                          setFormData((prev) => ({
+                            ...prev,
+                            cluster_nodes: nodes,
+                          }));
+                        }}
+                        rows={3}
+                        className="font-mono text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        One server per line. The first entry is the primary node where commands are executed.
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
 
               <p className="text-sm text-muted-foreground">

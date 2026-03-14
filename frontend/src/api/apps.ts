@@ -50,6 +50,9 @@ export interface Component {
   is_optional: boolean;
   position_x: number | null;
   position_y: number | null;
+  // Cluster fields
+  cluster_size?: number | null;
+  cluster_nodes?: string[] | null;
   created_at: string;
   updated_at: string;
   // Connectivity status (from enriched API response)
@@ -636,6 +639,8 @@ export function useUpdateComponent() {
       check_cmd?: string;
       start_cmd?: string;
       stop_cmd?: string;
+      cluster_size?: number | null;
+      cluster_nodes?: string[] | null;
     }) => {
       const { data } = await client.put(`/components/${payload.id}`, payload);
       return data;

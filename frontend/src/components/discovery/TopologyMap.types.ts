@@ -60,6 +60,9 @@ export interface DependencyEdgeData {
   fromProcess: string;
   toProcess: string;
   remoteAddr: string;
+  fromServiceIndex: number;
+  toServiceIndex: number;
+  onRemove?: (fromIndex: number, toIndex: number) => void;
   [key: string]: unknown;
 }
 
@@ -75,7 +78,18 @@ export interface UnresolvedEdgeData {
 // Store types
 // ---------------------------------------------------------------------------
 
-export type DiscoveryPhase = 'scan' | 'triage' | 'topology' | 'done';
+// Updated phases: scan → map → done (triage removed, topology renamed to map)
+export type DiscoveryPhase = 'scan' | 'map' | 'done';
+
+// Service confidence classification
+export type ServiceConfidence = 'recognized' | 'likely' | 'unknown' | 'system';
+
+// Custom action defined by user
+export interface CustomAction {
+  name: string;
+  command: string;
+  description?: string;
+}
 
 export interface ServiceEdits {
   name?: string;
@@ -86,6 +100,10 @@ export interface ServiceEdits {
   restartCmd?: string;
   logsCmd?: string;
   versionCmd?: string;
+  customActions?: CustomAction[];
+  // For application-type components (referencing another app)
+  referencedAppId?: string;
+  referencedAppName?: string;
 }
 
 export { type CorrelationResult, type CorrelatedService, type CommandSuggestion, type DiscoveredConfigFile, type DiscoveredLogFile };

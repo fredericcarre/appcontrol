@@ -1,6 +1,8 @@
 import { create } from 'zustand';
-import type { CorrelationResult, TechnologyHint } from '@/api/discovery';
-import type { DiscoveryPhase, ServiceEdits } from '@/components/discovery/TopologyMap.types';
+import type { CorrelationResult, TechnologyHint, SystemService, DiscoveredScheduledJob } from '@/api/discovery';
+import type { Application } from '@/api/apps';
+import type { DiscoveryPhase, ServiceEdits, ServiceConfidence } from '@/components/discovery/TopologyMap.types';
+import { classifyConfidence } from '@/components/discovery/confidence';
 
 // Service triage status
 export type TriageStatus = 'pending' | 'include' | 'ignore';
@@ -32,6 +34,15 @@ export interface ManualDependency {
   to: number;
 }
 
+// Key for ignored auto-detected dependencies
+export type IgnoredDepKey = `${number}->${number}`;
+
+// Batch job link (jobIndex -> serviceIndex)
+export interface BatchJobLink {
+  jobIndex: number;
+  serviceIndex: number;
+}
+
 interface DiscoveryState {
   // Phase
   phase: DiscoveryPhase;
@@ -51,14 +62,19 @@ interface DiscoveryState {
   agentDetails: Map<string, EnhancedAgentInfo>;
   setAgentDetails: (details: Map<string, EnhancedAgentInfo>) => void;
 
-  // Dependency creation mode
-  dependencyMode: 'view' | 'create';
-  setDependencyMode: (mode: 'view' | 'create') => void;
+  // Dependency mode: view, create, or delete
+  dependencyMode: 'view' | 'create' | 'delete';
+  setDependencyMode: (mode: 'view' | 'create' | 'delete') => void;
   pendingDependency: { fromIndex: number } | null;
   setPendingDependency: (pending: { fromIndex: number } | null) => void;
   manualDependencies: ManualDependency[];
   addManualDependency: (from: number, to: number) => void;
   removeManualDependency: (from: number, to: number) => void;
+  // Ignored auto-detected dependencies
+  ignoredDependencies: Set<IgnoredDepKey>;
+  ignoreDependency: (from: number, to: number) => void;
+  restoreDependency: (from: number, to: number) => void;
+  isDependencyIgnored: (from: number, to: number) => boolean;
 
   // Site selection for app creation
   selectedSiteId: string | null;
@@ -111,11 +127,41 @@ interface DiscoveryState {
   getUnidentifiedServices: () => number[];
   getIdentifiedServices: () => number[];
 
-  // Filters
-  showUnresolved: boolean;
-  toggleShowUnresolved: () => void;
-  showBatchJobs: boolean;
-  toggleShowBatchJobs: () => void;
+  // Confidence filters (new map-first approach)
+  selectedConfidenceLevels: Set<ServiceConfidence>;
+  toggleConfidenceFilter: (level: ServiceConfidence) => void;
+  setConfidenceFilters: (levels: ServiceConfidence[]) => void;
+  getServiceConfidence: (index: number) => ServiceConfidence;
+  getConfidenceCounts: () => Record<ServiceConfidence, number>;
+
+  // Batch job linking
+  batchJobLinks: Map<number, number>; // jobIndex -> serviceIndex
+  linkBatchJob: (jobIndex: number, serviceIndex: number) => void;
+  unlinkBatchJob: (jobIndex: number) => void;
+  getLinkedBatchJobs: (serviceIndex: number) => number[];
+
+  // System services (Windows Services / systemd)
+  addSystemServiceAsComponent: (service: SystemService) => void;
+
+  // Existing apps as synthetic components
+  addExistingAppAsComponent: (app: Application) => void;
+
+  // Scheduled jobs as batch components
+  addScheduledJobAsComponent: (job: DiscoveredScheduledJob) => void;
+
+  // Manual component creation
+  addManualComponent: (name: string, hostname: string, componentType: string) => void;
+
+  // Filters - individual selection for batch jobs and externals
+  enabledBatchJobIndices: Set<number>;
+  toggleBatchJobEnabled: (index: number) => void;
+  enabledExternalIndices: Set<number>;
+  toggleExternalEnabled: (index: number) => void;
+  // Expand/collapse state for sidebar sections
+  batchJobsExpanded: boolean;
+  setBatchJobsExpanded: (expanded: boolean) => void;
+  externalsExpanded: boolean;
+  setExternalsExpanded: (expanded: boolean) => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
 
@@ -148,8 +194,15 @@ export const useDiscoveryStore = create<DiscoveryState>()((set, get) => ({
       dependencyMode: 'view',
       pendingDependency: null,
       manualDependencies: [],
+      ignoredDependencies: new Set(),
       selectedSiteId: null,
       nodesAnimating: new Set(),
+      selectedConfidenceLevels: new Set<ServiceConfidence>(['recognized', 'likely']),
+      batchJobLinks: new Map(),
+      enabledBatchJobIndices: new Set(),
+      enabledExternalIndices: new Set(),
+      batchJobsExpanded: false,
+      externalsExpanded: false,
       appName: '',
     });
   },
@@ -185,6 +238,25 @@ export const useDiscoveryStore = create<DiscoveryState>()((set, get) => ({
     set((s) => ({
       manualDependencies: s.manualDependencies.filter((d) => !(d.from === from && d.to === to)),
     })),
+
+  // Ignored auto-detected dependencies
+  ignoredDependencies: new Set(),
+  ignoreDependency: (from, to) =>
+    set((s) => {
+      const next = new Set(s.ignoredDependencies);
+      next.add(`${from}->${to}` as IgnoredDepKey);
+      return { ignoredDependencies: next };
+    }),
+  restoreDependency: (from, to) =>
+    set((s) => {
+      const next = new Set(s.ignoredDependencies);
+      next.delete(`${from}->${to}` as IgnoredDepKey);
+      return { ignoredDependencies: next };
+    }),
+  isDependencyIgnored: (from, to) => {
+    const s = get();
+    return s.ignoredDependencies.has(`${from}->${to}` as IgnoredDepKey);
+  },
 
   // Site selection
   selectedSiteId: null,
@@ -329,10 +401,311 @@ export const useDiscoveryStore = create<DiscoveryState>()((set, get) => ({
     return result;
   },
 
-  showUnresolved: true,
-  toggleShowUnresolved: () => set((s) => ({ showUnresolved: !s.showUnresolved })),
-  showBatchJobs: true,
-  toggleShowBatchJobs: () => set((s) => ({ showBatchJobs: !s.showBatchJobs })),
+  // Confidence filters - default to showing recognized and likely, hiding unknown and system
+  selectedConfidenceLevels: new Set<ServiceConfidence>(['recognized', 'likely']),
+  toggleConfidenceFilter: (level) =>
+    set((s) => {
+      const next = new Set(s.selectedConfidenceLevels);
+      if (next.has(level)) next.delete(level);
+      else next.add(level);
+      return { selectedConfidenceLevels: next };
+    }),
+  setConfidenceFilters: (levels) =>
+    set({ selectedConfidenceLevels: new Set(levels) }),
+  getServiceConfidence: (index) => {
+    const s = get();
+    const service = s.correlationResult?.services[index];
+    if (!service) return 'unknown';
+    return classifyConfidence(service);
+  },
+  getConfidenceCounts: () => {
+    const s = get();
+    const counts: Record<ServiceConfidence, number> = {
+      recognized: 0,
+      likely: 0,
+      unknown: 0,
+      system: 0,
+    };
+    s.correlationResult?.services.forEach((svc) => {
+      const confidence = classifyConfidence(svc);
+      counts[confidence]++;
+    });
+    return counts;
+  },
+
+  // Batch job linking
+  batchJobLinks: new Map(),
+  linkBatchJob: (jobIndex, serviceIndex) =>
+    set((s) => {
+      const map = new Map(s.batchJobLinks);
+      map.set(jobIndex, serviceIndex);
+      return { batchJobLinks: map };
+    }),
+  unlinkBatchJob: (jobIndex) =>
+    set((s) => {
+      const map = new Map(s.batchJobLinks);
+      map.delete(jobIndex);
+      return { batchJobLinks: map };
+    }),
+  getLinkedBatchJobs: (serviceIndex) => {
+    const s = get();
+    const linked: number[] = [];
+    s.batchJobLinks.forEach((svcIdx, jobIdx) => {
+      if (svcIdx === serviceIndex) linked.push(jobIdx);
+    });
+    return linked;
+  },
+
+  // Add a system service (Windows Service / systemd unit) as a component
+  addSystemServiceAsComponent: (service) =>
+    set((s) => {
+      if (!s.correlationResult) return s;
+
+      // Create a new correlated service from the system service
+      const newService = {
+        agent_id: service.agent_id,
+        hostname: service.hostname,
+        process_name: service.name,
+        ports: [] as number[],
+        port_details: [] as Array<{ port: number; address: string; pid: number | null }>,
+        suggested_name: `${service.display_name}@${service.hostname}`,
+        component_type: 'service',
+        command_suggestion: {
+          check_cmd: service.check_cmd,
+          start_cmd: service.start_cmd,
+          stop_cmd: service.stop_cmd,
+          confidence: 'high',
+          source: 'system-service',
+        },
+      };
+
+      // Add to services array
+      const newServices = [...s.correlationResult.services, newService];
+      const newIndex = newServices.length - 1;
+
+      // Enable the new service
+      const newEnabled = new Set(s.enabledServiceIndices);
+      newEnabled.add(newIndex);
+
+      // Set service edits with commands pre-filled
+      const newEdits = new Map(s.serviceEdits);
+      newEdits.set(newIndex, {
+        name: service.display_name || service.name,
+        componentType: 'service',
+        checkCmd: service.check_cmd,
+        startCmd: service.start_cmd,
+        stopCmd: service.stop_cmd,
+      });
+
+      return {
+        correlationResult: {
+          ...s.correlationResult,
+          services: newServices,
+        },
+        enabledServiceIndices: newEnabled,
+        serviceEdits: newEdits,
+      };
+    }),
+
+  // Add an existing application as a synthetic component
+  // This creates a "meta-component" that represents another app's aggregate state
+  addExistingAppAsComponent: (app) =>
+    set((s) => {
+      if (!s.correlationResult) return s;
+
+      // Create a new correlated service from the existing app
+      // Component type is 'application' to distinguish it from regular services
+      const newService = {
+        agent_id: '', // No specific agent - this is a synthetic component
+        hostname: 'aggregate',
+        process_name: app.name,
+        ports: [] as number[],
+        port_details: [] as Array<{ port: number; address: string; pid: number | null }>,
+        suggested_name: app.name,
+        component_type: 'application',
+        command_suggestion: {
+          // Internal commands - backend interprets @app: prefix
+          // and executes against the referenced app via API
+          check_cmd: '@app:check',
+          start_cmd: '@app:start',
+          stop_cmd: '@app:stop',
+          confidence: 'high',
+          source: 'existing-app',
+        },
+        // Store the referenced app ID for later resolution
+        technology_hint: {
+          id: 'application',
+          display_name: app.name,
+          icon: 'app',
+          layer: 'Application',
+        },
+        // Additional metadata for the referenced app
+        matched_service: app.id, // Store app ID here for reference
+      };
+
+      // Add to services array
+      const newServices = [...s.correlationResult.services, newService];
+      const newIndex = newServices.length - 1;
+
+      // Enable the new service
+      const newEnabled = new Set(s.enabledServiceIndices);
+      newEnabled.add(newIndex);
+
+      // Set service edits with metadata
+      // Commands use @app: prefix - backend interprets these internally
+      const newEdits = new Map(s.serviceEdits);
+      newEdits.set(newIndex, {
+        name: app.name,
+        componentType: 'application',
+        checkCmd: '@app:check',
+        startCmd: '@app:start',
+        stopCmd: '@app:stop',
+        // Store reference to the app - backend uses this to resolve commands
+        referencedAppId: app.id,
+        referencedAppName: app.name,
+      });
+
+      return {
+        correlationResult: {
+          ...s.correlationResult,
+          services: newServices,
+        },
+        enabledServiceIndices: newEnabled,
+        serviceEdits: newEdits,
+      };
+    }),
+
+  // Add a scheduled job (cron/Task Scheduler) as a batch component
+  addScheduledJobAsComponent: (job) =>
+    set((s) => {
+      if (!s.correlationResult) return s;
+
+      // Detect if Windows (schtasks) or Unix (cron)
+      const isWindows = job.source === 'task-scheduler' || job.source === 'schtasks';
+
+      // Generate commands based on scheduler type
+      const checkCmd = isWindows
+        ? `schtasks /Query /TN "${job.name}" /FO LIST | findstr "Status"`
+        : `systemctl is-active ${job.name}.timer 2>/dev/null || crontab -l | grep -q "${job.name}"`;
+
+      const startCmd = isWindows
+        ? `schtasks /Run /TN "${job.name}"`
+        : undefined; // Cron jobs run on schedule, can't "start" them
+
+      const stopCmd = isWindows
+        ? `schtasks /End /TN "${job.name}"`
+        : undefined;
+
+      const newService = {
+        agent_id: '', // Will need to be set based on hostname
+        hostname: job.hostname || 'unknown',
+        process_name: job.name,
+        ports: [] as number[],
+        port_details: [] as Array<{ port: number; address: string; pid: number | null }>,
+        suggested_name: job.name,
+        component_type: 'batch',
+        command_suggestion: {
+          check_cmd: checkCmd,
+          start_cmd: startCmd,
+          stop_cmd: stopCmd,
+          confidence: 'medium',
+          source: job.source,
+        },
+        technology_hint: {
+          id: 'scheduler',
+          display_name: job.name,
+          icon: 'scheduler',
+          layer: 'Scheduler',
+        },
+      };
+
+      const newServices = [...s.correlationResult.services, newService];
+      const newIndex = newServices.length - 1;
+
+      const newEnabled = new Set(s.enabledServiceIndices);
+      newEnabled.add(newIndex);
+
+      const newEdits = new Map(s.serviceEdits);
+      newEdits.set(newIndex, {
+        name: job.name,
+        componentType: 'batch',
+        checkCmd: checkCmd,
+        startCmd: startCmd,
+        stopCmd: stopCmd,
+      });
+
+      return {
+        correlationResult: {
+          ...s.correlationResult,
+          services: newServices,
+        },
+        enabledServiceIndices: newEnabled,
+        serviceEdits: newEdits,
+      };
+    }),
+
+  // Add a manually created component (not from discovery)
+  addManualComponent: (name, hostname, componentType) =>
+    set((s) => {
+      if (!s.correlationResult) return s;
+
+      // Create a new manual service
+      const newService = {
+        agent_id: '', // Manual - no agent
+        hostname: hostname || 'manual',
+        process_name: name,
+        ports: [] as number[],
+        port_details: [] as Array<{ port: number; address: string; pid: number | null }>,
+        suggested_name: name,
+        component_type: componentType,
+        command_suggestion: undefined,
+        technology_hint: undefined,
+      };
+
+      const newServices = [...s.correlationResult.services, newService];
+      const newIndex = newServices.length - 1;
+
+      const newEnabled = new Set(s.enabledServiceIndices);
+      newEnabled.add(newIndex);
+
+      const newEdits = new Map(s.serviceEdits);
+      newEdits.set(newIndex, {
+        name,
+        componentType,
+      });
+
+      return {
+        correlationResult: {
+          ...s.correlationResult,
+          services: newServices,
+        },
+        enabledServiceIndices: newEnabled,
+        serviceEdits: newEdits,
+      };
+    }),
+
+  // Individual selection for batch jobs and externals (empty by default)
+  enabledBatchJobIndices: new Set(),
+  toggleBatchJobEnabled: (index) =>
+    set((s) => {
+      const next = new Set(s.enabledBatchJobIndices);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return { enabledBatchJobIndices: next };
+    }),
+  enabledExternalIndices: new Set(),
+  toggleExternalEnabled: (index) =>
+    set((s) => {
+      const next = new Set(s.enabledExternalIndices);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return { enabledExternalIndices: next };
+    }),
+  // Expand/collapse state for sidebar sections
+  batchJobsExpanded: false,
+  setBatchJobsExpanded: (expanded) => set({ batchJobsExpanded: expanded }),
+  externalsExpanded: false,
+  setExternalsExpanded: (expanded) => set({ externalsExpanded: expanded }),
   searchQuery: '',
   setSearchQuery: (q) => set({ searchQuery: q }),
 
@@ -350,6 +723,7 @@ export const useDiscoveryStore = create<DiscoveryState>()((set, get) => ({
       dependencyMode: 'view',
       pendingDependency: null,
       manualDependencies: [],
+      ignoredDependencies: new Set(),
       selectedSiteId: null,
       nodesAnimating: new Set(),
       scanProgress: 0,
@@ -360,8 +734,12 @@ export const useDiscoveryStore = create<DiscoveryState>()((set, get) => ({
       highlightedServiceIndex: null,
       serviceTriageStatus: new Map(),
       aiSuggestions: new Map(),
-      showUnresolved: true,
-      showBatchJobs: true,
+      selectedConfidenceLevels: new Set<ServiceConfidence>(['recognized', 'likely']),
+      batchJobLinks: new Map(),
+      enabledBatchJobIndices: new Set(),
+      enabledExternalIndices: new Set(),
+      batchJobsExpanded: false,
+      externalsExpanded: false,
       searchQuery: '',
       appName: '',
       createdAppId: null,

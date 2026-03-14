@@ -49,6 +49,10 @@ pub struct CreateComponentRequest {
     pub position_y: Option<f32>,
     pub env_vars: Option<Value>,
     pub tags: Option<Value>,
+    /// Cluster size: number of nodes (NULL = not a cluster, >= 2 for cluster)
+    pub cluster_size: Option<i32>,
+    /// List of node hostnames/IPs in the cluster
+    pub cluster_nodes: Option<Vec<String>>,
 }
 
 impl CreateComponentRequest {
@@ -91,6 +95,10 @@ pub struct UpdateComponentRequest {
     pub position_y: Option<f32>,
     pub env_vars: Option<Value>,
     pub tags: Option<Value>,
+    /// Cluster size: number of nodes (NULL = not a cluster, >= 2 for cluster)
+    pub cluster_size: Option<i32>,
+    /// List of node hostnames/IPs in the cluster
+    pub cluster_nodes: Option<Vec<String>>,
 }
 
 impl UpdateComponentRequest {
@@ -121,6 +129,8 @@ pub struct ComponentRow {
     pub is_optional: bool,
     pub position_x: Option<f32>,
     pub position_y: Option<f32>,
+    pub cluster_size: Option<i32>,
+    pub cluster_nodes: Option<Value>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -155,7 +165,7 @@ pub async fn list_components(
         SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
                host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, created_at, updated_at
+               position_x, position_y, cluster_size, cluster_nodes, created_at, updated_at
         FROM components WHERE application_id = $1 ORDER BY name
         "#,
     )
@@ -176,7 +186,7 @@ pub async fn get_component(
         SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
                host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, created_at, updated_at
+               position_x, position_y, cluster_size, cluster_nodes, created_at, updated_at
         FROM components WHERE id = $1
         "#,
     )
@@ -234,17 +244,23 @@ pub async fn create_component(
         None
     };
 
+    // Convert cluster_nodes Vec<String> to JSONB Value
+    let cluster_nodes_json = body
+        .cluster_nodes
+        .as_ref()
+        .map(|nodes| serde_json::to_value(nodes).unwrap_or(json!([])));
+
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
         INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id,
                                 host, agent_id, check_cmd, start_cmd, stop_cmd,
                                 check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-                                position_x, position_y, env_vars, tags)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+                                position_x, position_y, env_vars, tags, cluster_size, cluster_nodes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
         RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
                host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, created_at, updated_at
+               position_x, position_y, cluster_size, cluster_nodes, created_at, updated_at
         "#,
     )
     .bind(comp_id)
@@ -268,6 +284,8 @@ pub async fn create_component(
     .bind(body.position_y.unwrap_or(0.0))
     .bind(body.env_vars.as_ref().unwrap_or(&json!({})))
     .bind(body.tags.as_ref().unwrap_or(&json!([])))
+    .bind(body.cluster_size)
+    .bind(&cluster_nodes_json)
     .fetch_one(&state.db)
     .await?;
 
@@ -325,6 +343,12 @@ pub async fn update_component(
         None
     };
 
+    // Convert cluster_nodes Vec<String> to JSONB Value
+    let cluster_nodes_json = body
+        .cluster_nodes
+        .as_ref()
+        .map(|nodes| serde_json::to_value(nodes).unwrap_or(json!([])));
+
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
         UPDATE components SET
@@ -345,12 +369,14 @@ pub async fn update_component(
             is_optional = COALESCE($16, is_optional),
             position_x = COALESCE($17, position_x),
             position_y = COALESCE($18, position_y),
+            cluster_size = COALESCE($19, cluster_size),
+            cluster_nodes = COALESCE($20, cluster_nodes),
             updated_at = now()
         WHERE id = $1
         RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
                host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, created_at, updated_at
+               position_x, position_y, cluster_size, cluster_nodes, created_at, updated_at
         "#,
     )
     .bind(id)
@@ -371,6 +397,8 @@ pub async fn update_component(
     .bind(body.is_optional)
     .bind(body.position_x)
     .bind(body.position_y)
+    .bind(body.cluster_size)
+    .bind(&cluster_nodes_json)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;

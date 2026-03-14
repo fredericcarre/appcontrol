@@ -135,3 +135,56 @@ Use these examples as templates. Key fields for each component:
 | `position` | No | Map canvas position `{x, y}` |
 
 Dependencies use `from` (dependent) → `to` (dependency) with type `strong` or `weak`.
+
+### Application Reference Components (Synthetic Views)
+
+You can create a component that references another application as a "synthetic" aggregate view. This is useful for:
+- Combining multiple applications into a parent "super-application"
+- Creating logical groupings (e.g., "All Production Services")
+- Building tiered architectures where one app depends on another
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Unique name within the application |
+| `component_type` | Yes | Must be `application` |
+| `host` | Yes | Set to `aggregate` (no specific host) |
+| `referenced_app_name` | Yes* | Name of the target application (resolved at import) |
+| `referenced_app_id` | Yes* | UUID of the target application (alternative to name) |
+| `check_cmd` | Yes | `@app:check` (internal command) |
+| `start_cmd` | Yes | `@app:start` (internal command) |
+| `stop_cmd` | Yes | `@app:stop` (internal command) |
+
+*Either `referenced_app_name` or `referenced_app_id` is required. Using the name is recommended as it's more readable and portable across environments.
+
+**Example:**
+
+```json
+{
+  "name": "payment-system",
+  "display_name": "Payment System",
+  "component_type": "application",
+  "host": "aggregate",
+  "referenced_app_name": "Payment Gateway",
+  "description": "Synthetic view of the Payment Gateway application",
+  "check_cmd": "@app:check",
+  "start_cmd": "@app:start",
+  "stop_cmd": "@app:stop",
+  "icon": "folder",
+  "position": { "x": 400, "y": 200 }
+}
+```
+
+**Internal Commands (`@app:` prefix):**
+Commands prefixed with `@app:` are interpreted by the backend, not executed on an agent. The backend uses the `referenced_app_id` (resolved from `referenced_app_name` if needed) to:
+- `@app:check` — Query aggregate state of all components in the referenced app
+- `@app:start` — Trigger sequenced start of the referenced app (respecting DAG)
+- `@app:stop` — Trigger sequenced stop of the referenced app (reverse DAG)
+
+**Behavior:**
+- The component's state reflects the aggregate state of the referenced app
+- Start/stop operations cascade to all components in the referenced app (respecting its DAG)
+- Referenced applications **cannot be deleted** while they are referenced by another app
+- Deleting the referencing component removes the reference and allows deletion
+
+**Deletion Protection:**
+When you try to delete an application that is referenced by another app's component, the deletion will be blocked with an error listing the referencing applications. You must first remove the synthetic component(s) from those applications.

@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useWebSocketStore } from '@/stores/websocket';
 import {
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
@@ -164,6 +165,23 @@ export function DashboardPage() {
   const [operatingAppId, setOperatingAppId] = useState<string | null>(null);
   const [operationType, setOperationType] = useState<'start' | 'stop' | null>(null);
 
+  // Confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+    confirmLabel: string;
+    variant: 'default' | 'destructive' | 'warning';
+    onConfirm: () => void;
+  }>({
+    open: false,
+    title: '',
+    description: '',
+    confirmLabel: 'Confirm',
+    variant: 'default',
+    onConfirm: () => {},
+  });
+
   const stats = useMemo(() => {
     if (!apps) return { total: 0, running: 0, transitioning: 0, degraded: 0, failed: 0 };
     return {
@@ -177,53 +195,68 @@ export function DashboardPage() {
 
   const handleStart = useCallback((e: React.MouseEvent, appId: string, appName: string) => {
     e.stopPropagation();
-    if (window.confirm(`Start all components of "${appName}"?`)) {
-      setOperatingAppId(appId);
-      setOperationType('start');
-      startApp.mutate(appId, {
-        onSettled: () => {
-          // Clear the local operating state - the app's global_state will
-          // indicate the actual transitional state (STARTING/STOPPING)
-          setOperatingAppId(null);
-          setOperationType(null);
-          // Refetch immediately and then again after 1 second
-          refetch();
-          setTimeout(() => refetch(), 1000);
-        },
-      });
-    }
+    setConfirmDialog({
+      open: true,
+      title: 'Start Application',
+      description: `Start all components of "${appName}"?`,
+      confirmLabel: 'Start',
+      variant: 'default',
+      onConfirm: () => {
+        setOperatingAppId(appId);
+        setOperationType('start');
+        startApp.mutate(appId, {
+          onSettled: () => {
+            setOperatingAppId(null);
+            setOperationType(null);
+            refetch();
+            setTimeout(() => refetch(), 1000);
+          },
+        });
+      },
+    });
   }, [startApp, refetch]);
 
   const handleStop = useCallback((e: React.MouseEvent, appId: string, appName: string) => {
     e.stopPropagation();
-    if (window.confirm(`Stop all components of "${appName}"?`)) {
-      setOperatingAppId(appId);
-      setOperationType('stop');
-      stopApp.mutate(appId, {
-        onSettled: () => {
-          // Clear the local operating state - the app's global_state will
-          // indicate the actual transitional state (STARTING/STOPPING)
-          setOperatingAppId(null);
-          setOperationType(null);
-          // Refetch immediately and then again after 1 second
-          refetch();
-          setTimeout(() => refetch(), 1000);
-        },
-      });
-    }
+    setConfirmDialog({
+      open: true,
+      title: 'Stop Application',
+      description: `Stop all components of "${appName}"?`,
+      confirmLabel: 'Stop',
+      variant: 'destructive',
+      onConfirm: () => {
+        setOperatingAppId(appId);
+        setOperationType('stop');
+        stopApp.mutate(appId, {
+          onSettled: () => {
+            setOperatingAppId(null);
+            setOperationType(null);
+            refetch();
+            setTimeout(() => refetch(), 1000);
+          },
+        });
+      },
+    });
   }, [stopApp, refetch]);
 
   const handleCancel = useCallback((e: React.MouseEvent, appId: string) => {
     e.stopPropagation();
-    if (window.confirm('Cancel the current operation and release the lock?')) {
-      cancelOperation.mutate(appId, {
-        onSuccess: () => {
-          setOperatingAppId(null);
-          setOperationType(null);
-          setTimeout(() => refetch(), 500);
-        },
-      });
-    }
+    setConfirmDialog({
+      open: true,
+      title: 'Cancel Operation',
+      description: 'Cancel the current operation and release the lock?',
+      confirmLabel: 'Cancel Operation',
+      variant: 'warning',
+      onConfirm: () => {
+        cancelOperation.mutate(appId, {
+          onSuccess: () => {
+            setOperatingAppId(null);
+            setOperationType(null);
+            setTimeout(() => refetch(), 500);
+          },
+        });
+      },
+    });
   }, [cancelOperation, refetch]);
 
   // Filter out terminal events (not useful in dashboard) and LogEntry (too verbose)
@@ -451,6 +484,16 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onOpenChange={(open) => setConfirmDialog((prev) => ({ ...prev, open }))}
+        title={confirmDialog.title}
+        description={confirmDialog.description}
+        confirmLabel={confirmDialog.confirmLabel}
+        variant={confirmDialog.variant}
+        onConfirm={confirmDialog.onConfirm}
+      />
     </div>
   );
 }

@@ -31,6 +31,9 @@ interface ComponentNodeData {
   isErrorBranch?: boolean;
   highlightType?: 'none' | 'selected' | 'dependency' | 'dependent' | 'impact' | 'edge_endpoint' | 'infra';
   highlightColor?: string;
+  // Cluster configuration
+  clusterSize?: number | null;
+  clusterNodes?: string[] | null;
   // Connectivity status
   connectivityStatus?: 'connected' | 'agent_disconnected' | 'gateway_disconnected' | 'no_agent';
   agentHostname?: string;
@@ -64,6 +67,10 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
   const isTransitioning = data.state === 'STARTING' || data.state === 'STOPPING';
   const displayLabel = data.displayName || data.label;
 
+  // Cluster support
+  const isCluster = data.clusterSize && data.clusterSize >= 2;
+  const stackCount = Math.min(data.clusterSize || 1, 3); // Max 3 visible stacked cards
+
   // Connectivity status
   const isDisconnected = data.connectivityStatus === 'agent_disconnected' ||
                          data.connectivityStatus === 'gateway_disconnected' ||
@@ -89,26 +96,60 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
     bgColor = `${data.highlightColor}15`;
   }
 
+  // Common card styles for main and stacked cards
+  const cardBaseClasses = 'rounded-lg border-2 min-w-[180px]';
+
   return (
-    <div
-      className={cn(
-        'rounded-lg shadow-md border-2 min-w-[180px] transition-all relative',
-        selected && !isHighlighted && 'ring-2 ring-ring ring-offset-2',
-        isTransitioning && 'animate-state-pulse',
-        isImpactHighlight && 'ring-4 ring-offset-2 animate-pulse',
-        isHighlighted && !isImpactHighlight && 'ring-2 ring-offset-1',
+    <div className="relative">
+      {/* Stacked cards behind for cluster effect */}
+      {isCluster && stackCount >= 3 && (
+        <div
+          className={cn(cardBaseClasses, 'absolute inset-0')}
+          style={{
+            backgroundColor: bgColor,
+            borderColor: borderColor,
+            borderStyle: data.state === 'UNKNOWN' ? 'dashed' : 'solid',
+            transform: 'translate(6px, 6px)',
+            opacity: 0.4,
+            zIndex: -2,
+          }}
+        />
       )}
-      style={{
-        backgroundColor: bgColor,
-        borderColor: borderColor,
-        borderStyle: data.state === 'UNKNOWN' ? 'dashed' : 'solid',
-        borderLeftWidth: data.groupColor ? 4 : undefined,
-        borderLeftColor: data.groupColor || undefined,
-        boxShadow: isHighlighted ? `0 0 15px ${data.highlightColor}50` : undefined,
-        // @ts-expect-error CSS variable for ring color
-        '--tw-ring-color': isHighlighted ? data.highlightColor : undefined,
-      }}
-    >
+      {isCluster && stackCount >= 2 && (
+        <div
+          className={cn(cardBaseClasses, 'absolute inset-0')}
+          style={{
+            backgroundColor: bgColor,
+            borderColor: borderColor,
+            borderStyle: data.state === 'UNKNOWN' ? 'dashed' : 'solid',
+            transform: 'translate(3px, 3px)',
+            opacity: 0.6,
+            zIndex: -1,
+          }}
+        />
+      )}
+
+      {/* Main card */}
+      <div
+        className={cn(
+          cardBaseClasses,
+          'shadow-md transition-all relative',
+          selected && !isHighlighted && 'ring-2 ring-ring ring-offset-2',
+          isTransitioning && 'animate-state-pulse',
+          isImpactHighlight && 'ring-4 ring-offset-2 animate-pulse',
+          isHighlighted && !isImpactHighlight && 'ring-2 ring-offset-1',
+        )}
+        style={{
+          backgroundColor: bgColor,
+          borderColor: borderColor,
+          borderStyle: data.state === 'UNKNOWN' ? 'dashed' : 'solid',
+          borderLeftWidth: data.groupColor ? 4 : undefined,
+          borderLeftColor: data.groupColor || undefined,
+          boxShadow: isHighlighted ? `0 0 15px ${data.highlightColor}50` : undefined,
+          // @ts-expect-error CSS variable for ring color
+          '--tw-ring-color': isHighlighted ? data.highlightColor : undefined,
+        }}
+      >
       {/* Source at top: sends edges to bases above */}
       <Handle type="source" position={Position.Top} className="!bg-gray-400 !w-2 !h-2" />
 
@@ -131,9 +172,22 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
       <div className="p-3">
         <div className="flex items-center gap-2 mb-1">
           <IconComponent className="h-4 w-4" style={{ color: typeInfo.color }} />
-          <span className="font-semibold text-sm truncate" title={data.description || undefined}>
+          <span className="font-semibold text-sm truncate flex-1" title={data.description || undefined}>
             {displayLabel}
           </span>
+          {/* Cluster badge */}
+          {isCluster && (
+            <span
+              className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-200 text-slate-700"
+              title={
+                data.clusterNodes && data.clusterNodes.length > 0
+                  ? `Cluster nodes: ${data.clusterNodes.join(', ')}`
+                  : `${data.clusterSize} nodes`
+              }
+            >
+              x{data.clusterSize}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center justify-between">
@@ -242,8 +296,9 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         )}
       </div>
 
-      {/* Target at bottom: receives edges from dependents below */}
-      <Handle type="target" position={Position.Bottom} className="!bg-gray-400 !w-2 !h-2" />
+        {/* Target at bottom: receives edges from dependents below */}
+        <Handle type="target" position={Position.Bottom} className="!bg-gray-400 !w-2 !h-2" />
+      </div>
     </div>
   );
 }

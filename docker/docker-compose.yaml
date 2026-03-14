@@ -26,6 +26,7 @@ services:
       PORT: "3000"
       JWT_SECRET: dev-secret-change-in-production
       RUST_LOG: info,appcontrol_backend=debug
+      LOCAL_AUTH_ENABLED: "true"
       # Certificate export path for nginx TLS
       CERT_EXPORT_PATH: /certs
       # ── Seed configuration ──

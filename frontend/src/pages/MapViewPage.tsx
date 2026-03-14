@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   useApp,
   useStartApp,
@@ -48,8 +49,10 @@ import {
 import {
   Pencil, Download, Save, ArrowLeft, Play, Square, Loader2,
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
-  MoreVertical, Trash2, Pause, PlayCircle,
+  MoreVertical, Trash2, Pause, PlayCircle, Maximize, Minimize,
+  Monitor,
 } from 'lucide-react';
+import { useFullscreen } from '@/hooks/use-fullscreen';
 
 const weatherIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   sunny: Sun,
@@ -116,8 +119,28 @@ export function MapViewPage() {
   // Impact preview state (shared between AppMap and DetailPanel)
   const [impactPreview, setImpactPreview] = useState<ImpactPreview | null>(null);
 
+  // Confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+    confirmLabel: string;
+    variant: 'default' | 'destructive' | 'warning';
+    onConfirm: () => void;
+  }>({
+    open: false,
+    title: '',
+    description: '',
+    confirmLabel: 'Confirm',
+    variant: 'default',
+    onConfirm: () => {},
+  });
+
   // Edge highlight state (when clicking an edge)
   const [edgeHighlight, setEdgeHighlight] = useState<EdgeHighlight | null>(null);
+
+  // Fullscreen state
+  const { isFullscreen, toggleFullscreen } = useFullscreen();
 
   // Subscribe to app events via WebSocket
   useEffect(() => {
@@ -223,14 +246,21 @@ export function MapViewPage() {
 
   const handleCancel = useCallback(() => {
     if (!appId) return;
-    if (window.confirm('Cancel the current operation and release the lock?')) {
-      cancelOperation.mutate(appId, {
-        onSuccess: () => {
-          setIsOperating(false);
-          setOperationType(null);
-        },
-      });
-    }
+    setConfirmDialog({
+      open: true,
+      title: 'Cancel Operation',
+      description: 'Cancel the current operation and release the lock?',
+      confirmLabel: 'Cancel Operation',
+      variant: 'warning',
+      onConfirm: () => {
+        cancelOperation.mutate(appId, {
+          onSuccess: () => {
+            setIsOperating(false);
+            setOperationType(null);
+          },
+        });
+      },
+    });
   }, [appId, cancelOperation]);
 
   const handleRestartErrorBranch = useCallback(() => {
@@ -405,9 +435,16 @@ export function MapViewPage() {
   // Force stop bypasses preview
   const handleForceStopComponent = useCallback((id: string) => {
     const name = getComponentName(id);
-    if (window.confirm(`FORCE KILL "${name}"?\n\nThis will stop ONLY this component, ignoring dependencies.\nUse this only in emergencies.`)) {
-      forceStopComponent.mutate(id);
-    }
+    setConfirmDialog({
+      open: true,
+      title: 'Force Kill Component',
+      description: `FORCE KILL "${name}"?\n\nThis will stop ONLY this component, ignoring dependencies.\nUse this only in emergencies.`,
+      confirmLabel: 'Force Kill',
+      variant: 'destructive',
+      onConfirm: () => {
+        forceStopComponent.mutate(id);
+      },
+    });
   }, [forceStopComponent, getComponentName]);
 
   const handleCommand = useCallback((componentId: string) => {
@@ -461,17 +498,32 @@ export function MapViewPage() {
 
   const handleDeleteEdge = useCallback((edgeId: string) => {
     if (!appId) return;
-    if (window.confirm('Delete this dependency?')) {
-      deleteDependency.mutate({ app_id: appId, dependency_id: edgeId });
-    }
+    setConfirmDialog({
+      open: true,
+      title: 'Delete Dependency',
+      description: 'Delete this dependency?',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+      onConfirm: () => {
+        deleteDependency.mutate({ app_id: appId, dependency_id: edgeId });
+      },
+    });
   }, [appId, deleteDependency]);
 
   const handleDeleteNode = useCallback((nodeId: string) => {
     if (!appId) return;
     const comp = components.find((c) => c.id === nodeId);
-    if (comp && window.confirm(`Delete component "${comp.name}"?`)) {
-      deleteComponent.mutate({ id: nodeId, app_id: appId });
-    }
+    if (!comp) return;
+    setConfirmDialog({
+      open: true,
+      title: 'Delete Component',
+      description: `Delete component "${comp.name}"?`,
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+      onConfirm: () => {
+        deleteComponent.mutate({ id: nodeId, app_id: appId });
+      },
+    });
   }, [appId, components, deleteComponent]);
 
   const handleNodeDoubleClick = useCallback((nodeId: string) => {
@@ -556,16 +608,23 @@ export function MapViewPage() {
     }
   }, [appId, appName, exportApp]);
 
-  const handleDeleteApp = useCallback(async () => {
+  const handleDeleteApp = useCallback(() => {
     if (!appId || !app) return;
-    if (window.confirm(`Are you sure you want to delete "${app.name}"? This action cannot be undone.`)) {
-      try {
-        await deleteApp.mutateAsync(appId);
-        navigate('/apps');
-      } catch (error) {
-        console.error('Delete failed:', error);
-      }
-    }
+    setConfirmDialog({
+      open: true,
+      title: 'Delete Application',
+      description: `Are you sure you want to delete "${app.name}"? This action cannot be undone.`,
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+      onConfirm: async () => {
+        try {
+          await deleteApp.mutateAsync(appId);
+          navigate('/apps');
+        } catch (error) {
+          console.error('Delete failed:', error);
+        }
+      },
+    });
   }, [appId, app, deleteApp, navigate]);
 
   const handleSuspendApp = useCallback(async () => {
@@ -722,6 +781,29 @@ export function MapViewPage() {
               >
                 <Download className="h-4 w-4" />
                 <span className="hidden sm:inline ml-1">Export</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleFullscreen}
+                title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+              >
+                {isFullscreen ? (
+                  <Minimize className="h-4 w-4" />
+                ) : (
+                  <Maximize className="h-4 w-4" />
+                )}
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate('/supervision')}
+                title="Supervision mode (slideshow)"
+              >
+                <Monitor className="h-4 w-4" />
+                <span className="hidden sm:inline ml-1">NOC</span>
               </Button>
 
               {canEdit && (
@@ -904,6 +986,17 @@ export function MapViewPage() {
         action={impactPreview?.action || 'start'}
         componentName={impactPreview?.componentName || ''}
         impactedComponents={impactedComponents}
+      />
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onOpenChange={(open) => setConfirmDialog((prev) => ({ ...prev, open }))}
+        title={confirmDialog.title}
+        description={confirmDialog.description}
+        confirmLabel={confirmDialog.confirmLabel}
+        variant={confirmDialog.variant}
+        onConfirm={confirmDialog.onConfirm}
       />
     </div>
   );

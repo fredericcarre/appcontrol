@@ -39,8 +39,9 @@ export interface ManualDependency {
 interface LayoutInput {
   correlationResult: CorrelationResult;
   enabledIndices: Set<number>;
-  showUnresolved: boolean;
-  showBatchJobs: boolean;
+  enabledBatchJobIndices: Set<number>;
+  enabledExternalIndices: Set<number>;
+  ignoredDependencies: Set<string>;
   getEffectiveName: (index: number) => string;
   getEffectiveType: (index: number) => string;
   highlightedServiceIndex: number | null;
@@ -56,7 +57,7 @@ interface LayoutOutput {
 }
 
 export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput> {
-  const { correlationResult, enabledIndices, showUnresolved, showBatchJobs, getEffectiveName, getEffectiveType, highlightedServiceIndex, onToggle, onSelect, agentInfoMap, manualDependencies = [] } = input;
+  const { correlationResult, enabledIndices, enabledBatchJobIndices, enabledExternalIndices, ignoredDependencies, getEffectiveName, getEffectiveType, highlightedServiceIndex, onToggle, onSelect, agentInfoMap, manualDependencies = [] } = input;
   const { services, dependencies, unresolved_connections, scheduled_jobs } = correlationResult;
 
   // Group services by hostname
@@ -92,37 +93,49 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
     });
   }
 
-  // External nodes for unresolved connections
-  const externalNodes = new Map<string, { addr: string; port: number }>();
-  if (showUnresolved) {
-    for (const conn of unresolved_connections) {
-      const key = `${conn.remote_addr}:${conn.remote_port}`;
-      if (!externalNodes.has(key)) {
-        externalNodes.set(key, { addr: conn.remote_addr, port: conn.remote_port });
-        elkChildren.push({
-          id: `ext-${key}`,
-          width: EXTERNAL_W,
-          height: EXTERNAL_H,
-        });
-      }
+  // External nodes for unresolved connections - only those enabled
+  // Build a deduplicated list with stable indices first
+  const externalTargetsList: Array<{ addr: string; port: number }> = [];
+  const seenExternal = new Set<string>();
+  for (const conn of unresolved_connections) {
+    const key = `${conn.remote_addr}:${conn.remote_port}`;
+    if (!seenExternal.has(key)) {
+      seenExternal.add(key);
+      externalTargetsList.push({ addr: conn.remote_addr, port: conn.remote_port });
     }
   }
 
-  // Batch job nodes
-  if (showBatchJobs && scheduled_jobs.length > 0) {
-    scheduled_jobs.forEach((job, i) => {
+  const externalNodes = new Map<string, { addr: string; port: number; index: number }>();
+  externalTargetsList.forEach((ext, i) => {
+    if (enabledExternalIndices.has(i)) {
+      const key = `${ext.addr}:${ext.port}`;
+      externalNodes.set(key, { addr: ext.addr, port: ext.port, index: i });
+      elkChildren.push({
+        id: `ext-${key}`,
+        width: EXTERNAL_W,
+        height: EXTERNAL_H,
+      });
+    }
+  });
+
+  // Batch job nodes - only those enabled
+  scheduled_jobs.forEach((job, i) => {
+    if (enabledBatchJobIndices.has(i)) {
       elkChildren.push({
         id: `batch-${i}`,
         width: BATCH_W,
         height: BATCH_H,
       });
-    });
-  }
+    }
+  });
 
-  // Dependency edges
+  // Dependency edges (filtered by ignoredDependencies)
   for (let i = 0; i < dependencies.length; i++) {
     const dep = dependencies[i];
     if (dep.from_service_index === null || dep.from_service_index === undefined) continue;
+    // Skip ignored dependencies
+    const depKey = `${dep.from_service_index}->${dep.to_service_index}`;
+    if (ignoredDependencies.has(depKey)) continue;
     elkEdges.push({
       id: `dep-${i}`,
       sources: [`svc-${dep.from_service_index}`],
@@ -130,23 +143,24 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
     });
   }
 
-  // Unresolved connection edges
-  if (showUnresolved) {
-    unresolved_connections.forEach((conn, i) => {
-      // Find service index by process name + hostname
-      const svcIdx = services.findIndex(
-        (s) => s.process_name === conn.from_process && s.hostname === conn.from_hostname
-      );
-      if (svcIdx >= 0) {
-        const key = `${conn.remote_addr}:${conn.remote_port}`;
-        elkEdges.push({
-          id: `unres-${i}`,
-          sources: [`svc-${svcIdx}`],
-          targets: [`ext-${key}`],
-        });
-      }
-    });
-  }
+  // Unresolved connection edges - only for enabled externals
+  unresolved_connections.forEach((conn, i) => {
+    const key = `${conn.remote_addr}:${conn.remote_port}`;
+    // Only add edge if the external target is enabled
+    if (!externalNodes.has(key)) return;
+
+    // Find service index by process name + hostname
+    const svcIdx = services.findIndex(
+      (s) => s.process_name === conn.from_process && s.hostname === conn.from_hostname
+    );
+    if (svcIdx >= 0) {
+      elkEdges.push({
+        id: `unres-${i}`,
+        sources: [`svc-${svcIdx}`],
+        targets: [`ext-${key}`],
+      });
+    }
+  });
 
   // Run ELK layout
   const elkGraph: ElkNode = {
@@ -225,46 +239,46 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
     }
   }
 
-  // External nodes
-  if (showUnresolved) {
-    for (const [key, ext] of externalNodes) {
-      const elkExt = layoutResult.children?.find((c: ElkNode) => c.id === `ext-${key}`);
-      rfNodes.push({
-        id: `ext-${key}`,
-        type: 'external',
-        position: { x: elkExt?.x || 0, y: elkExt?.y || 0 },
-        data: {
-          address: ext.addr,
-          port: ext.port,
-        } satisfies ExternalNodeData,
-      });
-    }
-  }
-
-  // Batch job nodes
-  if (showBatchJobs) {
-    scheduled_jobs.forEach((job, i) => {
-      const elkBatch = layoutResult.children?.find((c: ElkNode) => c.id === `batch-${i}`);
-      rfNodes.push({
-        id: `batch-${i}`,
-        type: 'batch',
-        position: { x: elkBatch?.x || 0, y: elkBatch?.y || 0 },
-        data: {
-          name: job.name,
-          schedule: job.schedule,
-          command: job.command,
-          source: job.source,
-          user: job.user,
-          hostname: job.hostname || 'unknown',
-        } satisfies BatchJobNodeData,
-      });
+  // External nodes - only enabled ones
+  for (const [key, ext] of externalNodes) {
+    const elkExt = layoutResult.children?.find((c: ElkNode) => c.id === `ext-${key}`);
+    rfNodes.push({
+      id: `ext-${key}`,
+      type: 'external',
+      position: { x: elkExt?.x || 0, y: elkExt?.y || 0 },
+      data: {
+        address: ext.addr,
+        port: ext.port,
+      } satisfies ExternalNodeData,
     });
   }
 
-  // Dependency edges
+  // Batch job nodes - only enabled ones
+  scheduled_jobs.forEach((job, i) => {
+    if (!enabledBatchJobIndices.has(i)) return;
+    const elkBatch = layoutResult.children?.find((c: ElkNode) => c.id === `batch-${i}`);
+    rfNodes.push({
+      id: `batch-${i}`,
+      type: 'batch',
+      position: { x: elkBatch?.x || 0, y: elkBatch?.y || 0 },
+      data: {
+        name: job.name,
+        schedule: job.schedule,
+        command: job.command,
+        source: job.source,
+        user: job.user,
+        hostname: job.hostname || 'unknown',
+      } satisfies BatchJobNodeData,
+    });
+  });
+
+  // Dependency edges (filtered by ignoredDependencies)
   for (let i = 0; i < dependencies.length; i++) {
     const dep = dependencies[i];
     if (dep.from_service_index === null || dep.from_service_index === undefined) continue;
+    // Skip ignored dependencies
+    const depKey = `${dep.from_service_index}->${dep.to_service_index}`;
+    if (ignoredDependencies.has(depKey)) continue;
     const tech = dep.technology || 'default';
     rfEdges.push({
       id: `dep-${i}`,
@@ -279,6 +293,8 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
         fromProcess: dep.from_process,
         toProcess: dep.to_process,
         remoteAddr: dep.remote_addr,
+        fromServiceIndex: dep.from_service_index,
+        toServiceIndex: dep.to_service_index,
       } satisfies DependencyEdgeData,
       style: {
         stroke: TECHNOLOGY_COLORS[tech] || TECHNOLOGY_COLORS.default,
@@ -287,34 +303,35 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
     });
   }
 
-  // Unresolved edges
-  if (showUnresolved) {
-    unresolved_connections.forEach((conn, i) => {
-      const svcIdx = services.findIndex(
-        (s) => s.process_name === conn.from_process && s.hostname === conn.from_hostname
-      );
-      if (svcIdx >= 0) {
-        const key = `${conn.remote_addr}:${conn.remote_port}`;
-        rfEdges.push({
-          id: `unres-${i}`,
-          source: `svc-${svcIdx}`,
-          target: `ext-${key}`,
-          type: 'unresolved',
-          data: {
-            fromHostname: conn.from_hostname,
-            fromProcess: conn.from_process,
-            remoteAddr: conn.remote_addr,
-            port: conn.remote_port,
-          } satisfies UnresolvedEdgeData,
-          style: {
-            stroke: '#94a3b8',
-            strokeWidth: 1.5,
-            strokeDasharray: '8 4',
-          },
-        });
-      }
-    });
-  }
+  // Unresolved edges - only for enabled externals
+  unresolved_connections.forEach((conn, i) => {
+    const key = `${conn.remote_addr}:${conn.remote_port}`;
+    // Only add edge if the external target is enabled
+    if (!externalNodes.has(key)) return;
+
+    const svcIdx = services.findIndex(
+      (s) => s.process_name === conn.from_process && s.hostname === conn.from_hostname
+    );
+    if (svcIdx >= 0) {
+      rfEdges.push({
+        id: `unres-${i}`,
+        source: `svc-${svcIdx}`,
+        target: `ext-${key}`,
+        type: 'unresolved',
+        data: {
+          fromHostname: conn.from_hostname,
+          fromProcess: conn.from_process,
+          remoteAddr: conn.remote_addr,
+          port: conn.remote_port,
+        } satisfies UnresolvedEdgeData,
+        style: {
+          stroke: '#94a3b8',
+          strokeWidth: 1.5,
+          strokeDasharray: '8 4',
+        },
+      });
+    }
+  });
 
   // Manual dependency edges (user-created)
   manualDependencies.forEach((md, i) => {
@@ -334,6 +351,8 @@ export async function computeElkLayout(input: LayoutInput): Promise<LayoutOutput
         fromProcess: fromSvc.process_name,
         toProcess: toSvc.process_name,
         remoteAddr: toSvc.hostname,
+        fromServiceIndex: md.from,
+        toServiceIndex: md.to,
       } satisfies DependencyEdgeData,
       style: {
         stroke: '#10b981', // Emerald for manual

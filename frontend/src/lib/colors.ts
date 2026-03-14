@@ -20,7 +20,7 @@ export const COMPONENT_TYPE_ICONS: Record<string, { icon: string; color: string 
   custom: { icon: 'Box', color: '#455A64' },
   // Common aliases (flexible types)
   db: { icon: 'Database', color: '#1565C0' },
-  application: { icon: 'Server', color: '#2E7D32' },
+  application: { icon: 'Folder', color: '#3B82F6' }, // Composite app (reference to another app)
   app: { icon: 'Server', color: '#2E7D32' },
   server: { icon: 'Server', color: '#2E7D32' },
   webserver: { icon: 'Globe', color: '#E65100' },

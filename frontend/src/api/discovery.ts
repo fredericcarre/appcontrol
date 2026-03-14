@@ -109,6 +109,19 @@ export interface DiscoveredService {
   pid: number | null;
 }
 
+// System service with commands (from correlation result)
+export interface SystemService {
+  name: string;
+  display_name: string;
+  status: string;
+  pid: number | null;
+  hostname: string;
+  agent_id: string;
+  check_cmd: string;
+  start_cmd: string;
+  stop_cmd: string;
+}
+
 // --- Correlation result (from POST /correlate) ---
 
 export interface CorrelatedService {
@@ -124,6 +137,9 @@ export interface CorrelatedService {
   log_files?: DiscoveredLogFile[];
   matched_service?: string;
   technology_hint?: TechnologyHint;
+  // New fields for enhanced detail panel
+  user?: string;
+  env_vars?: Record<string, string>;
 }
 
 export interface CorrelatedDependency {
@@ -152,6 +168,7 @@ export interface CorrelationResult {
   dependencies: CorrelatedDependency[];
   unresolved_connections: UnresolvedConnection[];
   scheduled_jobs: DiscoveredScheduledJob[];
+  system_services: SystemService[];
 }
 
 // --- Scheduled Snapshots ---

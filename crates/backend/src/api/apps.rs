@@ -310,6 +310,8 @@ pub async fn get_app(
         current_state: String,
         position_x: Option<f32>,
         position_y: Option<f32>,
+        cluster_size: Option<i32>,
+        cluster_nodes: Option<Value>,
         created_at: chrono::DateTime<chrono::Utc>,
         updated_at: chrono::DateTime<chrono::Utc>,
         // Agent info
@@ -322,7 +324,8 @@ pub async fn get_app(
         r#"SELECT c.id, c.application_id, c.name, c.display_name, c.description, c.icon, c.group_id,
                   c.component_type, c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd,
                   c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
-                  c.is_optional, c.current_state, c.position_x, c.position_y, c.created_at, c.updated_at,
+                  c.is_optional, c.current_state, c.position_x, c.position_y,
+                  c.cluster_size, c.cluster_nodes, c.created_at, c.updated_at,
                   a.hostname as agent_hostname, a.gateway_id, g.name as gateway_name
            FROM components c
            LEFT JOIN agents a ON c.agent_id = a.id
@@ -393,6 +396,8 @@ pub async fn get_app(
                 "current_state": c.current_state,
                 "position_x": c.position_x,
                 "position_y": c.position_y,
+                "cluster_size": c.cluster_size,
+                "cluster_nodes": c.cluster_nodes,
                 "created_at": c.created_at,
                 "updated_at": c.updated_at,
                 // Connectivity info

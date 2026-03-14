@@ -1,134 +1,174 @@
 {
   "name": "Core Banking System",
   "description": "Enterprise banking application with mainframe integration, batch processing, and DR site. Demonstrates scheduler integration (Control-M), multi-site DR switchover, and strict start/stop sequencing.",
-  "tags": { "env": "production", "sector": "finance", "compliance": "DORA", "criticality": "P1" },
+  "tags": {
+    "env": "production",
+    "sector": "finance",
+    "compliance": "DORA",
+    "criticality": "P1"
+  },
   "components": [
     {
       "name": "Oracle RAC Node 1",
       "component_type": "database",
       "host": "oradb-01.bank.internal",
-      "check_cmd": "/opt/oracle/checkInstance.sh BANKDB1",
-      "start_cmd": "/opt/oracle/startInstance.sh BANKDB1",
-      "stop_cmd": "/opt/oracle/stopInstance.sh BANKDB1 immediate",
+      "check_cmd": "test -f /tmp/core_banking_oracle_rac_node_1.flag",
+      "start_cmd": "touch /tmp/core_banking_oracle_rac_node_1.flag",
+      "stop_cmd": "rm -f /tmp/core_banking_oracle_rac_node_1.flag",
       "check_interval_secs": 30,
       "start_timeout_secs": 300,
       "stop_timeout_secs": 600,
       "integrity_check_cmd": "/opt/oracle/checkDataGuard.sh",
       "infra_check_cmd": "/opt/oracle/checkASM.sh",
       "rebuild_cmd": "/opt/oracle/rebuildStandby.sh BANKDB1",
-      "protected": true,
-      "position": { "x": 300, "y": 600 }
+      "protected": true
     },
     {
       "name": "Oracle RAC Node 2",
       "component_type": "database",
       "host": "oradb-02.bank.internal",
-      "check_cmd": "/opt/oracle/checkInstance.sh BANKDB2",
-      "start_cmd": "/opt/oracle/startInstance.sh BANKDB2",
-      "stop_cmd": "/opt/oracle/stopInstance.sh BANKDB2 immediate",
+      "check_cmd": "test -f /tmp/core_banking_oracle_rac_node_2.flag",
+      "start_cmd": "touch /tmp/core_banking_oracle_rac_node_2.flag",
+      "stop_cmd": "rm -f /tmp/core_banking_oracle_rac_node_2.flag",
       "check_interval_secs": 30,
       "start_timeout_secs": 300,
-      "stop_timeout_secs": 600,
-      "position": { "x": 500, "y": 600 }
+      "stop_timeout_secs": 600
     },
     {
       "name": "MQ Series Broker",
       "component_type": "middleware",
       "host": "mq-broker.bank.internal",
-      "check_cmd": "dspmq -m BANKQM | grep -q Running",
-      "start_cmd": "strmqm BANKQM",
-      "stop_cmd": "endmqm -w BANKQM",
+      "check_cmd": "test -f /tmp/core_banking_mq_series_broker.flag",
+      "start_cmd": "touch /tmp/core_banking_mq_series_broker.flag",
+      "stop_cmd": "rm -f /tmp/core_banking_mq_series_broker.flag",
       "check_interval_secs": 30,
       "start_timeout_secs": 120,
-      "stop_timeout_secs": 180,
-      "position": { "x": 700, "y": 500 }
+      "stop_timeout_secs": 180
     },
     {
       "name": "WebSphere App Server 1",
       "component_type": "application",
       "host": "was-01.bank.internal",
-      "check_cmd": "/opt/ibm/WebSphere/bin/serverStatus.sh server1 | grep -q STARTED",
-      "start_cmd": "/opt/ibm/WebSphere/bin/startServer.sh server1",
-      "stop_cmd": "/opt/ibm/WebSphere/bin/stopServer.sh server1",
+      "check_cmd": "test -f /tmp/core_banking_websphere_app_server_1.flag",
+      "start_cmd": "touch /tmp/core_banking_websphere_app_server_1.flag",
+      "stop_cmd": "rm -f /tmp/core_banking_websphere_app_server_1.flag",
       "check_interval_secs": 30,
       "start_timeout_secs": 180,
       "stop_timeout_secs": 120,
-      "integrity_check_cmd": "curl -sf https://localhost:9443/health | grep -q UP",
-      "position": { "x": 250, "y": 350 }
+      "integrity_check_cmd": "curl -sf https://localhost:9443/health | grep -q UP"
     },
     {
       "name": "WebSphere App Server 2",
       "component_type": "application",
       "host": "was-02.bank.internal",
-      "check_cmd": "/opt/ibm/WebSphere/bin/serverStatus.sh server1 | grep -q STARTED",
-      "start_cmd": "/opt/ibm/WebSphere/bin/startServer.sh server1",
-      "stop_cmd": "/opt/ibm/WebSphere/bin/stopServer.sh server1",
+      "check_cmd": "test -f /tmp/core_banking_websphere_app_server_2.flag",
+      "start_cmd": "touch /tmp/core_banking_websphere_app_server_2.flag",
+      "stop_cmd": "rm -f /tmp/core_banking_websphere_app_server_2.flag",
       "check_interval_secs": 30,
       "start_timeout_secs": 180,
-      "stop_timeout_secs": 120,
-      "position": { "x": 450, "y": 350 }
+      "stop_timeout_secs": 120
     },
     {
       "name": "Batch Controller (Control-M)",
       "component_type": "batch",
       "host": "batch-01.bank.internal",
-      "check_cmd": "ctmag -selfcheck",
-      "start_cmd": "start_ctm",
-      "stop_cmd": "shut_ctm -graceful",
+      "check_cmd": "test -f /tmp/core_banking_batch_controller_control_m.flag",
+      "start_cmd": "touch /tmp/core_banking_batch_controller_control_m.flag",
+      "stop_cmd": "rm -f /tmp/core_banking_batch_controller_control_m.flag",
       "check_interval_secs": 60,
       "start_timeout_secs": 120,
-      "stop_timeout_secs": 300,
-      "position": { "x": 650, "y": 350 }
+      "stop_timeout_secs": 300
     },
     {
       "name": "Nightly Batch Jobs",
       "component_type": "batch",
       "host": "batch-01.bank.internal",
-      "check_cmd": "/opt/bank/batch/check_batch_status.sh",
-      "start_cmd": "/opt/bank/batch/trigger_nightly.sh",
-      "stop_cmd": "/opt/bank/batch/halt_batch.sh --drain",
+      "check_cmd": "test -f /tmp/core_banking_nightly_batch_jobs.flag",
+      "start_cmd": "touch /tmp/core_banking_nightly_batch_jobs.flag",
+      "stop_cmd": "rm -f /tmp/core_banking_nightly_batch_jobs.flag",
       "check_interval_secs": 300,
       "start_timeout_secs": 3600,
-      "stop_timeout_secs": 1800,
-      "position": { "x": 650, "y": 200 }
+      "stop_timeout_secs": 1800
     },
     {
       "name": "F5 Load Balancer",
       "component_type": "loadbalancer",
       "host": "f5-vip.bank.internal",
-      "check_cmd": "/opt/bank/scripts/check_f5_pool.sh banking-pool",
-      "start_cmd": "/opt/bank/scripts/enable_f5_pool.sh banking-pool",
-      "stop_cmd": "/opt/bank/scripts/disable_f5_pool.sh banking-pool --drain 60",
+      "check_cmd": "test -f /tmp/core_banking_f5_load_balancer.flag",
+      "start_cmd": "touch /tmp/core_banking_f5_load_balancer.flag",
+      "stop_cmd": "rm -f /tmp/core_banking_f5_load_balancer.flag",
       "check_interval_secs": 15,
       "start_timeout_secs": 30,
-      "stop_timeout_secs": 90,
-      "position": { "x": 350, "y": 100 }
+      "stop_timeout_secs": 90
     },
     {
       "name": "Internet Banking Portal",
       "component_type": "webserver",
       "host": "web-portal.bank.internal",
-      "check_cmd": "curl -sf https://localhost:443/health",
-      "start_cmd": "systemctl start httpd",
-      "stop_cmd": "systemctl stop httpd",
+      "check_cmd": "test -f /tmp/core_banking_internet_banking_portal.flag",
+      "start_cmd": "touch /tmp/core_banking_internet_banking_portal.flag",
+      "stop_cmd": "rm -f /tmp/core_banking_internet_banking_portal.flag",
       "check_interval_secs": 15,
       "start_timeout_secs": 15,
-      "stop_timeout_secs": 15,
-      "position": { "x": 350, "y": 200 }
+      "stop_timeout_secs": 15
     }
   ],
   "dependencies": [
-    { "from": "Oracle RAC Node 2", "to": "Oracle RAC Node 1", "type": "strong" },
-    { "from": "WebSphere App Server 1", "to": "Oracle RAC Node 1", "type": "strong" },
-    { "from": "WebSphere App Server 1", "to": "MQ Series Broker", "type": "strong" },
-    { "from": "WebSphere App Server 2", "to": "Oracle RAC Node 1", "type": "strong" },
-    { "from": "WebSphere App Server 2", "to": "MQ Series Broker", "type": "strong" },
-    { "from": "Batch Controller (Control-M)", "to": "Oracle RAC Node 1", "type": "strong" },
-    { "from": "Nightly Batch Jobs", "to": "Batch Controller (Control-M)", "type": "strong" },
-    { "from": "Nightly Batch Jobs", "to": "Oracle RAC Node 1", "type": "strong" },
-    { "from": "Internet Banking Portal", "to": "WebSphere App Server 1", "type": "strong" },
-    { "from": "Internet Banking Portal", "to": "WebSphere App Server 2", "type": "strong" },
-    { "from": "F5 Load Balancer", "to": "Internet Banking Portal", "type": "strong" }
+    {
+      "from": "Oracle RAC Node 2",
+      "to": "Oracle RAC Node 1",
+      "type": "strong"
+    },
+    {
+      "from": "WebSphere App Server 1",
+      "to": "Oracle RAC Node 1",
+      "type": "strong"
+    },
+    {
+      "from": "WebSphere App Server 1",
+      "to": "MQ Series Broker",
+      "type": "strong"
+    },
+    {
+      "from": "WebSphere App Server 2",
+      "to": "Oracle RAC Node 1",
+      "type": "strong"
+    },
+    {
+      "from": "WebSphere App Server 2",
+      "to": "MQ Series Broker",
+      "type": "strong"
+    },
+    {
+      "from": "Batch Controller (Control-M)",
+      "to": "Oracle RAC Node 1",
+      "type": "strong"
+    },
+    {
+      "from": "Nightly Batch Jobs",
+      "to": "Batch Controller (Control-M)",
+      "type": "strong"
+    },
+    {
+      "from": "Nightly Batch Jobs",
+      "to": "Oracle RAC Node 1",
+      "type": "strong"
+    },
+    {
+      "from": "Internet Banking Portal",
+      "to": "WebSphere App Server 1",
+      "type": "strong"
+    },
+    {
+      "from": "Internet Banking Portal",
+      "to": "WebSphere App Server 2",
+      "type": "strong"
+    },
+    {
+      "from": "F5 Load Balancer",
+      "to": "Internet Banking Portal",
+      "type": "strong"
+    }
   ],
   "dr_config": {
     "primary_site": "Paris DC1",
@@ -138,11 +178,21 @@
     "switchover_type": "database_first",
     "site_overrides": {
       "Lyon DC2": {
-        "Oracle RAC Node 1": { "host": "oradb-dr-01.bank-dr.internal" },
-        "Oracle RAC Node 2": { "host": "oradb-dr-02.bank-dr.internal" },
-        "MQ Series Broker": { "host": "mq-broker-dr.bank-dr.internal" },
-        "WebSphere App Server 1": { "host": "was-dr-01.bank-dr.internal" },
-        "WebSphere App Server 2": { "host": "was-dr-02.bank-dr.internal" }
+        "Oracle RAC Node 1": {
+          "host": "oradb-dr-01.bank-dr.internal"
+        },
+        "Oracle RAC Node 2": {
+          "host": "oradb-dr-02.bank-dr.internal"
+        },
+        "MQ Series Broker": {
+          "host": "mq-broker-dr.bank-dr.internal"
+        },
+        "WebSphere App Server 1": {
+          "host": "was-dr-01.bank-dr.internal"
+        },
+        "WebSphere App Server 2": {
+          "host": "was-dr-02.bank-dr.internal"
+        }
       }
     }
   },

@@ -1,0 +1,98 @@
+{
+  "name": "Cluster Demo",
+  "description": "Simple demo application to test cluster feature with file-based commands",
+  "tags": {
+    "env": "demo",
+    "purpose": "cluster-testing"
+  },
+  "components": [
+    {
+      "name": "postgres-cluster",
+      "display_name": "PostgreSQL Cluster",
+      "component_type": "database",
+      "host": "localhost",
+      "cluster_size": 3,
+      "cluster_nodes": ["pg-primary.local", "pg-replica1.local", "pg-replica2.local"],
+      "check_cmd": "test -f /tmp/cluster_demo_postgres.flag",
+      "start_cmd": "touch /tmp/cluster_demo_postgres.flag && echo 'PostgreSQL cluster started'",
+      "stop_cmd": "rm -f /tmp/cluster_demo_postgres.flag && echo 'PostgreSQL cluster stopped'",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 60,
+      "stop_timeout_secs": 30
+    },
+    {
+      "name": "redis-cluster",
+      "display_name": "Redis Cluster",
+      "component_type": "cache",
+      "host": "localhost",
+      "cluster_size": 6,
+      "cluster_nodes": ["redis-1.local", "redis-2.local", "redis-3.local", "redis-4.local", "redis-5.local", "redis-6.local"],
+      "check_cmd": "test -f /tmp/cluster_demo_redis.flag",
+      "start_cmd": "touch /tmp/cluster_demo_redis.flag && echo 'Redis cluster started'",
+      "stop_cmd": "rm -f /tmp/cluster_demo_redis.flag && echo 'Redis cluster stopped'",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 15
+    },
+    {
+      "name": "kafka-cluster",
+      "display_name": "Kafka Brokers",
+      "component_type": "middleware",
+      "host": "localhost",
+      "cluster_size": 3,
+      "cluster_nodes": ["kafka-broker-1.local", "kafka-broker-2.local", "kafka-broker-3.local"],
+      "check_cmd": "test -f /tmp/cluster_demo_kafka.flag",
+      "start_cmd": "touch /tmp/cluster_demo_kafka.flag && echo 'Kafka cluster started'",
+      "stop_cmd": "rm -f /tmp/cluster_demo_kafka.flag && echo 'Kafka cluster stopped'",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 60,
+      "stop_timeout_secs": 30
+    },
+    {
+      "name": "api-gateway",
+      "display_name": "API Gateway",
+      "component_type": "gateway",
+      "host": "localhost",
+      "cluster_size": 2,
+      "cluster_nodes": ["gateway-1.local", "gateway-2.local"],
+      "check_cmd": "test -f /tmp/cluster_demo_gateway.flag",
+      "start_cmd": "touch /tmp/cluster_demo_gateway.flag && echo 'API Gateway started'",
+      "stop_cmd": "rm -f /tmp/cluster_demo_gateway.flag && echo 'API Gateway stopped'",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 15
+    },
+    {
+      "name": "backend-service",
+      "display_name": "Backend API",
+      "component_type": "application",
+      "host": "localhost",
+      "check_cmd": "test -f /tmp/cluster_demo_backend.flag",
+      "start_cmd": "touch /tmp/cluster_demo_backend.flag && echo 'Backend API started'",
+      "stop_cmd": "rm -f /tmp/cluster_demo_backend.flag && echo 'Backend API stopped'",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 15
+    },
+    {
+      "name": "frontend",
+      "display_name": "Frontend App",
+      "component_type": "webfront",
+      "host": "localhost",
+      "check_cmd": "test -f /tmp/cluster_demo_frontend.flag",
+      "start_cmd": "touch /tmp/cluster_demo_frontend.flag && echo 'Frontend started'",
+      "stop_cmd": "rm -f /tmp/cluster_demo_frontend.flag && echo 'Frontend stopped'",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 15
+    }
+  ],
+  "dependencies": [
+    {"from": "redis-cluster", "to": "postgres-cluster"},
+    {"from": "kafka-cluster", "to": "postgres-cluster"},
+    {"from": "backend-service", "to": "redis-cluster"},
+    {"from": "backend-service", "to": "kafka-cluster"},
+    {"from": "api-gateway", "to": "backend-service"},
+    {"from": "frontend", "to": "api-gateway"}
+  ]
+}

@@ -312,7 +312,7 @@ export function TriagePhase() {
             Back
           </Button>
           <Button
-            onClick={() => setPhase('topology')}
+            onClick={() => setPhase('map')}
             disabled={!canProceed}
             className="gap-2"
           >
