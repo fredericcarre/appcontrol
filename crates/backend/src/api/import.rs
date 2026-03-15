@@ -615,6 +615,10 @@ struct V4Component {
     stop_timeout_seconds: i32,
     #[serde(default)]
     is_optional: bool,
+    /// Cluster size (number of nodes, >= 2 for clusters)
+    cluster_size: Option<i32>,
+    /// List of cluster node hostnames/IPs
+    cluster_nodes: Option<Vec<String>>,
 }
 
 fn default_check_interval() -> i32 {
@@ -846,6 +850,12 @@ pub async fn import_json_map(
         let pos_x = comp.position_x.unwrap_or((idx % 5) as f32 * 250.0);
         let pos_y = comp.position_y.unwrap_or((idx / 5) as f32 * 200.0);
 
+        // Convert cluster_nodes to JSONB
+        let cluster_nodes_json: Option<serde_json::Value> = comp
+            .cluster_nodes
+            .as_ref()
+            .map(|nodes| serde_json::json!(nodes));
+
         sqlx::query(
             r#"INSERT INTO components (
                 id, application_id, name, display_name, description, component_type,
@@ -853,9 +863,9 @@ pub async fn import_json_map(
                 integrity_check_cmd, post_start_check_cmd, infra_check_cmd,
                 rebuild_cmd, rebuild_infra_cmd,
                 check_interval_seconds, start_timeout_seconds, stop_timeout_seconds,
-                is_optional, position_x, position_y
+                is_optional, position_x, position_y, cluster_size, cluster_nodes
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
             )"#,
         )
         .bind(comp_id)
@@ -881,6 +891,8 @@ pub async fn import_json_map(
         .bind(comp.is_optional)
         .bind(pos_x)
         .bind(pos_y)
+        .bind(comp.cluster_size)
+        .bind(&cluster_nodes_json)
         .execute(&state.db)
         .await?;
 

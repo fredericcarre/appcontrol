@@ -4,7 +4,47 @@ These example configurations demonstrate how to model real-world IT systems as A
 
 ## Available Examples
 
-### 1. Three-Tier Web Application (`three-tier-webapp.json`)
+### 1. Cluster Demo (`cluster-demo.json`)
+
+Demonstrates the cluster feature with multiple components configured as multi-node clusters.
+
+```
+PostgreSQL Cluster (×3)
+├── Redis Cluster (×6)
+├── Kafka Brokers (×3)
+    └── Backend API
+        └── API Gateway (×2)
+            └── Frontend
+```
+
+**Key concepts demonstrated:**
+- `cluster_size`: Number of nodes in the cluster
+- `cluster_nodes`: List of server hostnames/IPs
+- Visual rendering with stacked cards and node count badge
+- Commands execute on the primary node (first in the list)
+
+### 2. Metrics Demo (`metrics-demo.json`)
+
+Demonstrates check commands that output operational metrics for monitoring and dashboards.
+
+```
+PostgreSQL Database → connections, replication lag, cache hit ratio
+Redis Cache → memory usage, key count, hit rate
+Kafka Broker (×3) → topics, partitions, consumer lag
+API Gateway (×2) → requests/min, error rate, p99 latency
+Backend API → active users, orders, response time
+Background Workers → queue depth, jobs completed, failures
+Frontend → requests/sec, bandwidth, cache ratio
+```
+
+**Key concepts demonstrated:**
+- Pure JSON output (entire stdout is JSON)
+- Mixed output (logs + JSON on last line)
+- METRICS marker format (`---METRICS---` followed by JSON)
+- Business metrics (active users, orders)
+- Infrastructure metrics (connections, memory, latency)
+
+### 3. Three-Tier Web Application (`three-tier-webapp.json`)
 
 Classic architecture with load balancer, application servers, and database cluster.
 
@@ -188,3 +228,107 @@ Commands prefixed with `@app:` are interpreted by the backend, not executed on a
 
 **Deletion Protection:**
 When you try to delete an application that is referenced by another app's component, the deletion will be blocked with an error listing the referencing applications. You must first remove the synthetic component(s) from those applications.
+
+### Cluster Components
+
+Mark a component as a multi-node cluster for visual representation and documentation:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `cluster_size` | No | Number of nodes (minimum 2) |
+| `cluster_nodes` | No | Array of server hostnames/IPs |
+
+**Example:**
+
+```json
+{
+  "name": "postgres-cluster",
+  "display_name": "PostgreSQL Cluster",
+  "component_type": "database",
+  "host": "pg-primary.prod",
+  "cluster_size": 3,
+  "cluster_nodes": ["pg-primary.prod", "pg-replica1.prod", "pg-replica2.prod"],
+  "check_cmd": "pg_isready -h pg-primary.prod",
+  "start_cmd": "systemctl start postgresql",
+  "stop_cmd": "systemctl stop postgresql"
+}
+```
+
+**Behavior:**
+- Visual rendering shows stacked cards with a `×N` badge
+- Commands execute on the `host` specified (typically the primary node)
+- The first entry in `cluster_nodes` is considered the primary
+- Future: Health aggregation across all nodes
+
+### Metrics Output from Check Commands
+
+Check commands can output JSON to provide operational metrics displayed in the UI and stored for time-series analysis.
+
+**Supported Formats:**
+
+1. **Pure JSON** — Entire stdout is valid JSON
+   ```bash
+   echo '{"connections": 42, "lag_ms": 150}'
+   ```
+
+2. **Mixed Output** — JSON on the last line, logs before
+   ```bash
+   echo "PostgreSQL is healthy"
+   echo "Checking replication..."
+   echo '{"connections": 42, "lag_ms": 150}'
+   ```
+
+3. **METRICS Marker** — JSON after `---METRICS---`
+   ```bash
+   echo "Running health check..."
+   echo "All systems operational"
+   echo "---METRICS---"
+   echo '{"connections": 42, "lag_ms": 150}'
+   ```
+
+4. **Legacy Tags** — JSON wrapped in `<appcontrol>` tags
+   ```bash
+   echo "<appcontrol>{\"connections\": 42}</appcontrol>"
+   ```
+
+**Metric Types:**
+
+| Type | Examples |
+|------|----------|
+| **Infrastructure** | `connections`, `memory_mb`, `cpu_pct`, `disk_used_gb` |
+| **Performance** | `latency_ms`, `p99_latency_ms`, `requests_per_sec` |
+| **Queue/Batch** | `queue_depth`, `consumer_lag`, `jobs_pending` |
+| **Business** | `active_users`, `orders_today`, `transactions` |
+| **Health** | `error_rate`, `cache_hit_ratio`, `replication_lag_ms` |
+
+**API Access:**
+```bash
+# Latest metrics
+GET /api/v1/components/:id/metrics
+
+# Historical data (last 100 check events)
+GET /api/v1/components/:id/metrics/history
+```
+
+**Real-World Example (PostgreSQL):**
+
+```bash
+#!/bin/bash
+# check_postgres.sh - Level 1 health check with metrics
+
+# Check if PostgreSQL is accepting connections
+if ! pg_isready -h localhost -p 5432 > /dev/null 2>&1; then
+    echo "PostgreSQL is not responding"
+    exit 1
+fi
+
+# Gather metrics
+CONNECTIONS=$(psql -t -c "SELECT count(*) FROM pg_stat_activity" | tr -d ' ')
+LAG_BYTES=$(psql -t -c "SELECT COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0) FROM pg_stat_replication LIMIT 1" | tr -d ' ')
+CACHE_HIT=$(psql -t -c "SELECT ROUND(sum(heap_blks_hit) / NULLIF(sum(heap_blks_hit) + sum(heap_blks_read), 0), 3) FROM pg_statio_user_tables" | tr -d ' ')
+
+# Output status and metrics
+echo "PostgreSQL is healthy"
+echo "{\"connections\": $CONNECTIONS, \"replication_lag_bytes\": ${LAG_BYTES:-0}, \"cache_hit_ratio\": ${CACHE_HIT:-0}}"
+exit 0
+```
