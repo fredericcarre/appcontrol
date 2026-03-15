@@ -339,6 +339,15 @@ function BarWidget({ label, value, max = 100 }: { label: string; value: number; 
   );
 }
 
+function TextWidget({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-muted/30 rounded-lg p-3">
+      <div className="text-xs text-muted-foreground mb-1">{label}</div>
+      <div className="text-sm whitespace-pre-wrap">{value}</div>
+    </div>
+  );
+}
+
 // ============================================================================
 // Main Component
 // ============================================================================
@@ -377,6 +386,8 @@ export function MetricsWidgets({ metrics, className }: MetricsWidgetsProps) {
         result.push(<ListWidget key={key} label={label} items={value as string[]} />);
       } else if (widgetType === 'bar') {
         result.push(<BarWidget key={key} label={label} value={value as number} />);
+      } else if (widgetType === 'text') {
+        result.push(<TextWidget key={key} label={label} value={String(value)} />);
       } else if (typeof value === 'number') {
         result.push(<NumberWidget key={key} label={label} value={value} unit={unit} icon={Icon} />);
       } else if (typeof value === 'string' && !isNaN(Number(value))) {
