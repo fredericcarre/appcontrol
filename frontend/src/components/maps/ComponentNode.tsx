@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { Handle, Position, NodeProps } from '@xyflow/react';
 import { cn } from '@/lib/utils';
 import { STATE_COLORS, COMPONENT_TYPE_ICONS, ComponentState, ComponentType } from '@/lib/colors';
@@ -10,6 +10,7 @@ import {
   BarChart3,
 } from 'lucide-react';
 import { MetricsDisplay, MetricWidget } from './MetricsDisplay';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const iconMap: Record<string, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
   Database, Layers, Server, Globe, Cog, Clock, Box,
@@ -199,14 +200,24 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
               x{data.clusterSize}
             </span>
           )}
-          {/* Metrics indicator badge */}
-          {hasMetrics && !selected && (
-            <span
-              className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1 py-0.5 rounded bg-indigo-100 text-indigo-700"
-              title={`${metricsCount} metrics available`}
-            >
-              <BarChart3 className="h-2.5 w-2.5" />
-            </span>
+          {/* Metrics indicator badge - always visible when metrics exist */}
+          {hasMetrics && (
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <span
+                  className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-indigo-500 text-white shadow-sm cursor-help"
+                >
+                  <BarChart3 className="h-3 w-3" />
+                  <span>{metricsCount}</span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="max-w-[280px] p-0">
+                <div className="p-2 space-y-2">
+                  <div className="text-xs font-semibold border-b pb-1">Metrics Preview</div>
+                  <MetricsTooltipContent metrics={data.metrics!} />
+                </div>
+              </TooltipContent>
+            </Tooltip>
           )}
         </div>
 
@@ -330,6 +341,47 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         {/* Target at bottom: receives edges from dependents below */}
         <Handle type="target" position={Position.Bottom} className="!bg-gray-400 !w-2 !h-2" />
       </div>
+    </div>
+  );
+}
+
+// Compact metrics preview for tooltip
+function MetricsTooltipContent({ metrics }: { metrics: Record<string, unknown> }) {
+  // Filter out widget hints and get first 6 key metrics
+  const entries = Object.entries(metrics)
+    .filter(([k]) => !k.endsWith('_widget'))
+    .slice(0, 6);
+
+  if (entries.length === 0) return <div className="text-xs text-muted-foreground">No metrics</div>;
+
+  return (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+      {entries.map(([key, value]) => {
+        const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        let displayValue: string;
+
+        if (typeof value === 'number') {
+          displayValue = value >= 1000 ? `${(value / 1000).toFixed(1)}K` : String(value);
+        } else if (Array.isArray(value)) {
+          displayValue = `[${value.length} items]`;
+        } else if (typeof value === 'object' && value !== null) {
+          displayValue = `{${Object.keys(value).length} keys}`;
+        } else {
+          displayValue = String(value).slice(0, 20);
+        }
+
+        return (
+          <div key={key} className="flex justify-between gap-2">
+            <span className="text-muted-foreground truncate">{label}:</span>
+            <span className="font-medium">{displayValue}</span>
+          </div>
+        );
+      })}
+      {Object.keys(metrics).filter(k => !k.endsWith('_widget')).length > 6 && (
+        <div className="col-span-2 text-muted-foreground text-center mt-1">
+          +{Object.keys(metrics).filter(k => !k.endsWith('_widget')).length - 6} more...
+        </div>
+      )}
     </div>
   );
 }

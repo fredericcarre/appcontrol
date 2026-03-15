@@ -4,6 +4,7 @@ import { useWebSocket } from '@/hooks/use-websocket';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { MapViewPage } from '@/pages/MapViewPage';
 import { TeamsPage } from '@/pages/TeamsPage';
@@ -52,33 +53,37 @@ export default function App() {
 
   if (!user) {
     return (
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/share/:token" element={<ShareLinkPage />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+      <TooltipProvider delayDuration={300}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/share/:token" element={<ShareLinkPage />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </TooltipProvider>
     );
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<AuthLayout><DashboardPage /></AuthLayout>} />
-      <Route path="/discovery" element={<AuthLayout><DiscoveryPage /></AuthLayout>} />
-      <Route path="/apps/:appId" element={<AuthLayout><MapViewPage /></AuthLayout>} />
-      <Route path="/teams" element={<AuthLayout><TeamsPage /></AuthLayout>} />
-      <Route path="/users" element={<AuthLayout><UsersPage /></AuthLayout>} />
-      <Route path="/gateways" element={<AuthLayout><GatewaysPage /></AuthLayout>} />
-      <Route path="/agents" element={<AuthLayout><AgentsPage /></AuthLayout>} />
-      <Route path="/reports" element={<AuthLayout><ReportsPage /></AuthLayout>} />
-      <Route path="/settings" element={<AuthLayout><SettingsPage /></AuthLayout>} />
-      <Route path="/onboarding" element={<AuthLayout><OnboardingPage /></AuthLayout>} />
-      <Route path="/import" element={<AuthLayout><ImportPage /></AuthLayout>} />
-      <Route path="/enrollment" element={<AuthLayout><EnrollmentTokensPage /></AuthLayout>} />
-      <Route path="/settings/api-keys" element={<AuthLayout><ApiKeysPage /></AuthLayout>} />
-      <Route path="/share/:token" element={<ShareLinkPage />} />
-      <Route path="/supervision" element={<SupervisionPage />} />
-      <Route path="/login" element={<Navigate to="/" replace />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <TooltipProvider delayDuration={300}>
+      <Routes>
+        <Route path="/" element={<AuthLayout><DashboardPage /></AuthLayout>} />
+        <Route path="/discovery" element={<AuthLayout><DiscoveryPage /></AuthLayout>} />
+        <Route path="/apps/:appId" element={<AuthLayout><MapViewPage /></AuthLayout>} />
+        <Route path="/teams" element={<AuthLayout><TeamsPage /></AuthLayout>} />
+        <Route path="/users" element={<AuthLayout><UsersPage /></AuthLayout>} />
+        <Route path="/gateways" element={<AuthLayout><GatewaysPage /></AuthLayout>} />
+        <Route path="/agents" element={<AuthLayout><AgentsPage /></AuthLayout>} />
+        <Route path="/reports" element={<AuthLayout><ReportsPage /></AuthLayout>} />
+        <Route path="/settings" element={<AuthLayout><SettingsPage /></AuthLayout>} />
+        <Route path="/onboarding" element={<AuthLayout><OnboardingPage /></AuthLayout>} />
+        <Route path="/import" element={<AuthLayout><ImportPage /></AuthLayout>} />
+        <Route path="/enrollment" element={<AuthLayout><EnrollmentTokensPage /></AuthLayout>} />
+        <Route path="/settings/api-keys" element={<AuthLayout><ApiKeysPage /></AuthLayout>} />
+        <Route path="/share/:token" element={<ShareLinkPage />} />
+        <Route path="/supervision" element={<SupervisionPage />} />
+        <Route path="/login" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </TooltipProvider>
   );
 }
