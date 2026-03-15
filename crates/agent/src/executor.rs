@@ -121,36 +121,33 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
 ///
 /// Prevents runaway commands from exhausting host resources.
 /// These limits are inherited by exec'd processes.
+///
+/// Note: We avoid setting RLIMIT_AS (virtual memory) as it's problematic on macOS
+/// where even simple shell commands require substantial virtual address space.
 #[cfg(unix)]
+#[allow(dead_code)]
 fn apply_resource_limits() {
     unsafe {
-        // CPU time limit: 30 seconds soft, 120 seconds hard
+        // CPU time limit: 300 seconds soft, 600 seconds hard (5-10 minutes)
+        // Allows longer-running commands while preventing infinite loops
         let cpu_limit = libc::rlimit {
-            rlim_cur: 30,
-            rlim_max: 120,
+            rlim_cur: 300,
+            rlim_max: 600,
         };
         libc::setrlimit(libc::RLIMIT_CPU, &cpu_limit);
 
-        // Virtual memory limit: 512 MB soft, 1 GB hard
-        let mem_limit = libc::rlimit {
-            rlim_cur: 512 * 1024 * 1024,
-            rlim_max: 1024 * 1024 * 1024,
-        };
-        libc::setrlimit(libc::RLIMIT_AS, &mem_limit);
+        // Skip RLIMIT_AS (virtual memory) - it causes issues on macOS
+        // where shell commands need large virtual address space mappings
 
-        // File descriptor limit: 512 soft, 1024 hard
+        // File descriptor limit: 1024 soft, 4096 hard
         let fd_limit = libc::rlimit {
-            rlim_cur: 512,
-            rlim_max: 1024,
+            rlim_cur: 1024,
+            rlim_max: 4096,
         };
         libc::setrlimit(libc::RLIMIT_NOFILE, &fd_limit);
 
-        // Child process limit: 64 soft, 128 hard
-        let nproc_limit = libc::rlimit {
-            rlim_cur: 64,
-            rlim_max: 128,
-        };
-        libc::setrlimit(libc::RLIMIT_NPROC, &nproc_limit);
+        // Skip RLIMIT_NPROC - it's per-user on macOS, not per-process
+        // Setting it low can prevent legitimate process creation
     }
 }
 
@@ -415,12 +412,16 @@ pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
                         }
                     }
 
-                    // Apply resource limits before exec
+                    // Apply resource limits (relaxed for macOS compatibility)
                     apply_resource_limits();
 
-                    // Exec the command
-                    let err = exec::execvp("sh", &["sh", "-c", command]);
-                    eprintln!("exec failed: {:?}", err);
+                    // Use absolute path to sh for reliability
+                    let err = exec::execvp("/bin/sh", &["/bin/sh", "-c", command]);
+                    // If exec failed, write error to a debug file
+                    if let Ok(mut f) = std::fs::File::create("/tmp/detached_exec_error.log") {
+                        use std::io::Write;
+                        let _ = writeln!(f, "exec failed: {:?}", err);
+                    }
                     std::process::exit(127);
                 }
                 Err(_) => {
@@ -592,6 +593,30 @@ mod tests {
             nix::unistd::Pid::from_raw(pid as i32),
             nix::sys::signal::Signal::SIGTERM,
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_execute_async_detached_creates_file() {
+        let test_file = "/tmp/test_detached_file_creation.flag";
+        // Clean up from previous runs
+        let _ = std::fs::remove_file(test_file);
+
+        let cmd = format!("touch {} && echo 'created'", test_file);
+        let pid = execute_async_detached(&cmd).unwrap();
+        assert!(pid > 0, "Should return a valid PID");
+
+        // Wait for the command to complete
+        std::thread::sleep(Duration::from_secs(2));
+
+        // Verify the file was created
+        assert!(
+            std::path::Path::new(test_file).exists(),
+            "Detached process should create the file"
+        );
+
+        // Clean up
+        let _ = std::fs::remove_file(test_file);
     }
 
     #[test]
