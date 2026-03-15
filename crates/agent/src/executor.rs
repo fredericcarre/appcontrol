@@ -117,39 +117,6 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
     }
 }
 
-/// Apply resource limits to the current process (called in child before exec).
-///
-/// Prevents runaway commands from exhausting host resources.
-/// These limits are inherited by exec'd processes.
-///
-/// Note: We avoid setting RLIMIT_AS (virtual memory) as it's problematic on macOS
-/// where even simple shell commands require substantial virtual address space.
-#[cfg(unix)]
-#[allow(dead_code)]
-fn apply_resource_limits() {
-    unsafe {
-        // CPU time limit: 300 seconds soft, 600 seconds hard (5-10 minutes)
-        // Allows longer-running commands while preventing infinite loops
-        let cpu_limit = libc::rlimit {
-            rlim_cur: 300,
-            rlim_max: 600,
-        };
-        libc::setrlimit(libc::RLIMIT_CPU, &cpu_limit);
-
-        // Skip RLIMIT_AS (virtual memory) - it causes issues on macOS
-        // where shell commands need large virtual address space mappings
-
-        // File descriptor limit: 1024 soft, 4096 hard
-        let fd_limit = libc::rlimit {
-            rlim_cur: 1024,
-            rlim_max: 4096,
-        };
-        libc::setrlimit(libc::RLIMIT_NOFILE, &fd_limit);
-
-        // Skip RLIMIT_NPROC - it's per-user on macOS, not per-process
-        // Setting it low can prevent legitimate process creation
-    }
-}
 
 /// Execute a command synchronously with streaming output chunks.
 ///
@@ -412,8 +379,12 @@ pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
                         }
                     }
 
-                    // Apply resource limits (relaxed for macOS compatibility)
-                    apply_resource_limits();
+                    // NOTE: We intentionally do NOT apply resource limits to detached processes.
+                    // These are async commands (start/stop/restart) that can run for hours
+                    // (database backups, deployments, rebuilds). The agent returns immediately
+                    // and doesn't wait for them, so limiting CPU time or memory would just
+                    // cause arbitrary failures. Let the OS and the commands themselves
+                    // manage their resources.
 
                     // Use absolute path to sh for reliability
                     let err = exec::execvp("/bin/sh", &["/bin/sh", "-c", command]);
