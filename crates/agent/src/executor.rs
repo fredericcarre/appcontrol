@@ -117,7 +117,6 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
     }
 }
 
-
 /// Execute a command synchronously with streaming output chunks.
 ///
 /// Similar to `execute_sync`, but sends stdout/stderr chunks via a callback
