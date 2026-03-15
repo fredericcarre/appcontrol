@@ -315,6 +315,8 @@ function buildNodes(
         editable,
         highlightType,
         highlightColor,
+        // Metrics from latest check
+        metrics: c.last_check_metrics,
       },
     };
   });
@@ -511,6 +513,17 @@ function AppMapInner({
   useEffect(() => {
     setEdges(initialEdges);
   }, [initialEdges, setEdges]);
+
+  // Fit view when components change (e.g., switching apps in supervision mode)
+  useEffect(() => {
+    if (components.length > 0) {
+      // Small delay to ensure nodes are rendered before fitting
+      const timer = setTimeout(() => {
+        fitView({ padding: 0.2 });
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [components, fitView]);
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {

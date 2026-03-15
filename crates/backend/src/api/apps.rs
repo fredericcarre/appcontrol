@@ -318,6 +318,8 @@ pub async fn get_app(
         agent_hostname: Option<String>,
         gateway_id: Option<Uuid>,
         gateway_name: Option<String>,
+        // Latest metrics from check
+        last_check_metrics: Option<Value>,
     }
 
     let components = sqlx::query_as::<_, ComponentWithAgent>(
@@ -326,7 +328,10 @@ pub async fn get_app(
                   c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
                   c.is_optional, c.current_state, c.position_x, c.position_y,
                   c.cluster_size, c.cluster_nodes, c.created_at, c.updated_at,
-                  a.hostname as agent_hostname, a.gateway_id, g.name as gateway_name
+                  a.hostname as agent_hostname, a.gateway_id, g.name as gateway_name,
+                  (SELECT ce.metrics FROM check_events ce
+                   WHERE ce.component_id = c.id AND ce.metrics IS NOT NULL
+                   ORDER BY ce.created_at DESC LIMIT 1) as last_check_metrics
            FROM components c
            LEFT JOIN agents a ON c.agent_id = a.id
            LEFT JOIN gateways g ON a.gateway_id = g.id
@@ -407,6 +412,8 @@ pub async fn get_app(
                 "gateway_name": c.gateway_name,
                 "gateway_connected": gateway_connected,
                 "connectivity_status": connectivity_status,
+                // Latest metrics from check command
+                "last_check_metrics": c.last_check_metrics,
             })
         })
         .collect();

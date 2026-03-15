@@ -190,6 +190,7 @@ export function SupervisionPage() {
       <div className="absolute inset-0">
         {currentApp && (
           <AppMap
+            key={currentApp.id} // Force re-mount to trigger fitView on app change
             components={components}
             dependencies={dependencies}
             selectedComponentId={null}

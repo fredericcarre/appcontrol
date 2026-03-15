@@ -62,6 +62,8 @@ export interface Component {
   gateway_name?: string | null;
   gateway_connected?: boolean;
   connectivity_status?: 'connected' | 'agent_disconnected' | 'gateway_disconnected' | 'no_agent';
+  // Latest metrics from check command
+  last_check_metrics?: Record<string, unknown> | null;
 }
 
 export interface ComponentGroup {
