@@ -342,6 +342,61 @@ pub async fn get_app(
     .fetch_all(&state.db)
     .await?;
 
+    // Collect referenced app IDs to compute their statuses (for application-type components)
+    let referenced_app_ids: Vec<Uuid> = components
+        .iter()
+        .filter_map(|c| c.referenced_app_id)
+        .collect();
+
+    // Fetch status counts for referenced apps
+    let mut referenced_app_statuses: std::collections::HashMap<Uuid, String> =
+        std::collections::HashMap::new();
+
+    if !referenced_app_ids.is_empty() {
+        #[derive(sqlx::FromRow)]
+        struct AppStatusCounts {
+            app_id: Uuid,
+            running_count: Option<i64>,
+            starting_count: Option<i64>,
+            stopping_count: Option<i64>,
+            stopped_count: Option<i64>,
+            failed_count: Option<i64>,
+            component_count: Option<i64>,
+        }
+
+        let status_rows = sqlx::query_as::<_, AppStatusCounts>(
+            r#"
+            SELECT
+                a.id as app_id,
+                COUNT(c.id) as component_count,
+                COUNT(c.id) FILTER (WHERE c.current_state = 'RUNNING') as running_count,
+                COUNT(c.id) FILTER (WHERE c.current_state = 'STARTING') as starting_count,
+                COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPING') as stopping_count,
+                COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPED') as stopped_count,
+                COUNT(c.id) FILTER (WHERE c.current_state = 'FAILED') as failed_count
+            FROM applications a
+            LEFT JOIN components c ON c.application_id = a.id
+            WHERE a.id = ANY($1)
+            GROUP BY a.id
+            "#,
+        )
+        .bind(&referenced_app_ids)
+        .fetch_all(&state.db)
+        .await?;
+
+        for row in status_rows {
+            let (state, _) = compute_app_status(
+                row.running_count.unwrap_or(0),
+                row.stopped_count.unwrap_or(0),
+                row.failed_count.unwrap_or(0),
+                row.starting_count.unwrap_or(0),
+                row.stopping_count.unwrap_or(0),
+                row.component_count.unwrap_or(0),
+            );
+            referenced_app_statuses.insert(row.app_id, state);
+        }
+    }
+
     // Fetch dependencies
     let dependencies = sqlx::query_as::<_, DependencyRow>(
         "SELECT id, from_component_id, to_component_id FROM dependencies \
@@ -399,7 +454,10 @@ pub async fn get_app(
                 "start_timeout_seconds": c.start_timeout_seconds,
                 "stop_timeout_seconds": c.stop_timeout_seconds,
                 "is_optional": c.is_optional,
-                "current_state": c.current_state,
+                // For application-type components, derive state from referenced app
+                "current_state": c.referenced_app_id
+                    .and_then(|ref_id| referenced_app_statuses.get(&ref_id).cloned())
+                    .unwrap_or_else(|| c.current_state.clone()),
                 "position_x": c.position_x,
                 "position_y": c.position_y,
                 "cluster_size": c.cluster_size,
