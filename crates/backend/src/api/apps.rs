@@ -348,14 +348,17 @@ pub async fn get_app(
         .filter_map(|c| c.referenced_app_id)
         .collect();
 
-    // Fetch status counts for referenced apps
+    // Fetch status counts and names for referenced apps
     let mut referenced_app_statuses: std::collections::HashMap<Uuid, String> =
+        std::collections::HashMap::new();
+    let mut referenced_app_names: std::collections::HashMap<Uuid, String> =
         std::collections::HashMap::new();
 
     if !referenced_app_ids.is_empty() {
         #[derive(sqlx::FromRow)]
         struct AppStatusCounts {
             app_id: Uuid,
+            app_name: String,
             running_count: Option<i64>,
             starting_count: Option<i64>,
             stopping_count: Option<i64>,
@@ -368,6 +371,7 @@ pub async fn get_app(
             r#"
             SELECT
                 a.id as app_id,
+                a.name as app_name,
                 COUNT(c.id) as component_count,
                 COUNT(c.id) FILTER (WHERE c.current_state = 'RUNNING') as running_count,
                 COUNT(c.id) FILTER (WHERE c.current_state = 'STARTING') as starting_count,
@@ -377,7 +381,7 @@ pub async fn get_app(
             FROM applications a
             LEFT JOIN components c ON c.application_id = a.id
             WHERE a.id = ANY($1)
-            GROUP BY a.id
+            GROUP BY a.id, a.name
             "#,
         )
         .bind(&referenced_app_ids)
@@ -385,6 +389,7 @@ pub async fn get_app(
         .await?;
 
         for row in status_rows {
+            referenced_app_names.insert(row.app_id, row.app_name);
             let (state, _) = compute_app_status(
                 row.running_count.unwrap_or(0),
                 row.stopped_count.unwrap_or(0),
@@ -463,6 +468,7 @@ pub async fn get_app(
                 "cluster_size": c.cluster_size,
                 "cluster_nodes": c.cluster_nodes,
                 "referenced_app_id": c.referenced_app_id,
+                "referenced_app_name": c.referenced_app_id.and_then(|ref_id| referenced_app_names.get(&ref_id).cloned()),
                 "created_at": c.created_at,
                 "updated_at": c.updated_at,
                 // Connectivity info

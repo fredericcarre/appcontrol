@@ -575,14 +575,22 @@ pub async fn start_component(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_not_found()?;
+    // Get component info including referenced_app_id
+    #[derive(sqlx::FromRow)]
+    struct ComponentInfo {
+        application_id: Uuid,
+        referenced_app_id: Option<Uuid>,
+    }
 
-    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    let comp_info = sqlx::query_as::<_, ComponentInfo>(
+        "SELECT application_id, referenced_app_id FROM components WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, comp_info.application_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
     }
@@ -593,9 +601,27 @@ pub async fn start_component(
         "start_component",
         "component",
         id,
-        json!({}),
+        json!({"referenced_app_id": comp_info.referenced_app_id}),
     )
     .await?;
+
+    // For application-type components, start the referenced app instead
+    if let Some(ref_app_id) = comp_info.referenced_app_id {
+        // Check permission on referenced app as well
+        let ref_perm = effective_permission(&state.db, user.user_id, ref_app_id, user.is_admin()).await;
+        if ref_perm < PermissionLevel::Operate {
+            return Err(ApiError::Forbidden);
+        }
+
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::core::sequencer::execute_start(&state_clone, ref_app_id).await {
+                tracing::error!("Start referenced app {} failed: {}", ref_app_id, e);
+            }
+        });
+
+        return Ok(Json(json!({ "status": "starting", "propagated_to_app": ref_app_id })));
+    }
 
     // Start the component: transition to Starting, dispatch start_cmd to agent
     let state_clone = state.clone();
@@ -613,14 +639,22 @@ pub async fn stop_component(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_not_found()?;
+    // Get component info including referenced_app_id
+    #[derive(sqlx::FromRow)]
+    struct ComponentInfo {
+        application_id: Uuid,
+        referenced_app_id: Option<Uuid>,
+    }
 
-    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    let comp_info = sqlx::query_as::<_, ComponentInfo>(
+        "SELECT application_id, referenced_app_id FROM components WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, comp_info.application_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
     }
@@ -631,9 +665,27 @@ pub async fn stop_component(
         "stop_component",
         "component",
         id,
-        json!({}),
+        json!({"referenced_app_id": comp_info.referenced_app_id}),
     )
     .await?;
+
+    // For application-type components, stop the referenced app instead
+    if let Some(ref_app_id) = comp_info.referenced_app_id {
+        // Check permission on referenced app as well
+        let ref_perm = effective_permission(&state.db, user.user_id, ref_app_id, user.is_admin()).await;
+        if ref_perm < PermissionLevel::Operate {
+            return Err(ApiError::Forbidden);
+        }
+
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::core::sequencer::execute_stop(&state_clone, ref_app_id).await {
+                tracing::error!("Stop referenced app {} failed: {}", ref_app_id, e);
+            }
+        });
+
+        return Ok(Json(json!({ "status": "stopping", "propagated_to_app": ref_app_id })));
+    }
 
     // Stop the component and all its dependents in reverse DAG order
     let state_clone = state.clone();

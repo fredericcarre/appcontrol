@@ -42,6 +42,9 @@ interface ComponentNodeData {
   agentHostname?: string;
   agentId?: string;
   gatewayId?: string;
+  // Application reference (for application-type components)
+  referencedAppId?: string | null;
+  referencedAppName?: string | null;
   // Metrics from check command output
   metrics?: Record<string, unknown> | null;
   metricsWidgets?: MetricWidget[];
@@ -222,11 +225,20 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         </div>
 
         <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground truncate max-w-[100px]" title={data.host}>
-            {data.agentHostname || data.host}
-          </span>
+          {/* For application-type: show referenced app name; for others: show host */}
+          {data.componentType === 'application' ? (
+            <span className="text-xs text-blue-600 truncate max-w-[100px] flex items-center gap-1" title={data.referencedAppName || 'Referenced app'}>
+              <ExternalLink className="h-3 w-3" />
+              {data.referencedAppName || 'App ref'}
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground truncate max-w-[100px]" title={data.host}>
+              {data.agentHostname || data.host}
+            </span>
+          )}
           <div className="flex items-center gap-1">
-            {isDisconnected && (
+            {/* Hide connectivity status for application-type components */}
+            {isDisconnected && data.componentType !== 'application' && (
               <span
                 className="inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded bg-red-100 text-red-700"
                 title={
@@ -264,8 +276,8 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
 
         {selected && (
           <>
-            {/* Infrastructure info */}
-            {(data.agentHostname || data.gatewayId) && (
+            {/* Infrastructure info - hide for application-type components */}
+            {data.componentType !== 'application' && (data.agentHostname || data.gatewayId) && (
               <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-gray-200">
                 {data.agentHostname && (
                   <span

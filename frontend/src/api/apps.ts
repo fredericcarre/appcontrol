@@ -55,6 +55,7 @@ export interface Component {
   cluster_nodes?: string[] | null;
   // Application reference (for app-type synthetic components)
   referenced_app_id?: string | null;
+  referenced_app_name?: string | null;
   created_at: string;
   updated_at: string;
   // Connectivity status (from enriched API response)
