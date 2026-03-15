@@ -145,7 +145,7 @@ describe('DetailPanel', () => {
     expect(onStop).toHaveBeenCalled();
   });
 
-  it('should show info tab by default with component details', () => {
+  it('should show info tab content when Info tab is clicked', () => {
     renderWithProviders(
       <DetailPanel
         component={createComponent({ check_interval_seconds: 30, is_optional: true })}
@@ -153,17 +153,22 @@ describe('DetailPanel', () => {
       />,
     );
 
+    // Click on Info tab (default is now Metrics)
+    fireEvent.click(screen.getByText('Info'));
+
     expect(screen.getByText('30s')).toBeInTheDocument();
     expect(screen.getByText('Yes')).toBeInTheDocument();
   });
 
-  it('should show "No" for non-optional components', () => {
+  it('should show "No" for non-optional components in info tab', () => {
     renderWithProviders(
       <DetailPanel
         component={createComponent({ is_optional: false })}
         onClose={vi.fn()}
       />,
     );
+
+    fireEvent.click(screen.getByText('Info'));
 
     expect(screen.getByText('No')).toBeInTheDocument();
   });
@@ -176,6 +181,8 @@ describe('DetailPanel', () => {
       />,
     );
 
+    fireEvent.click(screen.getByText('Info'));
+
     expect(screen.getByText('/bin/health_check')).toBeInTheDocument();
   });
 
@@ -187,6 +194,8 @@ describe('DetailPanel', () => {
       />,
     );
 
+    fireEvent.click(screen.getByText('Info'));
+
     expect(screen.getByText('/bin/start_service')).toBeInTheDocument();
   });
 
@@ -197,6 +206,8 @@ describe('DetailPanel', () => {
         onClose={vi.fn()}
       />,
     );
+
+    fireEvent.click(screen.getByText('Info'));
 
     expect(screen.getByText('/bin/stop_service')).toBeInTheDocument();
   });
