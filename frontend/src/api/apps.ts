@@ -660,3 +660,35 @@ export function useDeleteComponent() {
     onSuccess: (_, vars) => qc.invalidateQueries({ queryKey: ['apps', vars.app_id] }),
   });
 }
+
+// ── Component Metrics ──────────────────────────────────────────
+
+export interface ComponentMetrics {
+  component_id: string;
+  metrics: Record<string, unknown> | null;
+  exit_code: number;
+  at: string;
+}
+
+export function useComponentMetrics(componentId: string | null) {
+  return useQuery({
+    queryKey: ['components', componentId, 'metrics'],
+    queryFn: async () => {
+      const { data } = await client.get<ComponentMetrics>(`/components/${componentId}/metrics`);
+      return data;
+    },
+    enabled: !!componentId,
+    refetchInterval: 30000, // Refetch every 30 seconds
+  });
+}
+
+export function useComponentMetricsHistory(componentId: string | null) {
+  return useQuery({
+    queryKey: ['components', componentId, 'metrics', 'history'],
+    queryFn: async () => {
+      const { data } = await client.get<{ history: ComponentMetrics[] }>(`/components/${componentId}/metrics/history`);
+      return data.history;
+    },
+    enabled: !!componentId,
+  });
+}

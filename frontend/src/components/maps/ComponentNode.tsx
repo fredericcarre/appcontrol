@@ -8,6 +8,7 @@ import {
   Shield, Cloud, HardDrive, Cpu, Network, FileText, Zap,
   ExternalLink, ArrowUp, ArrowDown, WifiOff, Unplug, Radio,
 } from 'lucide-react';
+import { MetricsDisplay, MetricWidget } from './MetricsDisplay';
 
 const iconMap: Record<string, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
   Database, Layers, Server, Globe, Cog, Clock, Box,
@@ -39,6 +40,9 @@ interface ComponentNodeData {
   agentHostname?: string;
   agentId?: string;
   gatewayId?: string;
+  // Metrics from check command output
+  metrics?: Record<string, unknown> | null;
+  metricsWidgets?: MetricWidget[];
   // Callbacks
   onStart?: (id: string) => void;
   onStop?: (id: string) => void;
@@ -219,6 +223,17 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
             </span>
           </div>
         </div>
+
+        {/* Metrics display (compact mode, always visible when available) */}
+        {data.metrics && Object.keys(data.metrics).length > 0 && (
+          <div className="mt-2 pt-2 border-t border-gray-200">
+            <MetricsDisplay
+              metrics={data.metrics}
+              widgets={data.metricsWidgets}
+              compact={true}
+            />
+          </div>
+        )}
 
         {selected && (
           <>

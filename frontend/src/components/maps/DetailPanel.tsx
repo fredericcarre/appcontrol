@@ -1,13 +1,14 @@
 import { useState } from 'react';
-import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch, ArrowRight, Wrench, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react';
+import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch, ArrowRight, Wrench, ChevronDown, ChevronRight, Copy, Check, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { STATE_COLORS, ComponentState } from '@/lib/colors';
-import { Component } from '@/api/apps';
+import { Component, useComponentMetrics } from '@/api/apps';
 import { useStateTransitions, useCommandExecutions, useCheckEvents, CommandExecution, CheckEvent } from '@/api/components';
+import { MetricsWidgets } from './MetricsWidgets';
 
 interface DetailPanelProps {
   component: Component;
@@ -74,6 +75,7 @@ export function DetailPanel({
   const { data: transitions } = useStateTransitions(component.id);
   const { data: executions } = useCommandExecutions(component.id, 10);
   const { data: checkEvents } = useCheckEvents(component.id, 10);
+  const { data: metricsData } = useComponentMetrics(component.id);
 
   return (
     <div className="w-[360px] border-l border-border bg-card h-full flex flex-col">
@@ -131,12 +133,34 @@ export function DetailPanel({
 
       <Separator />
 
-      <Tabs defaultValue="info" className="flex-1 flex flex-col min-h-0">
+      <Tabs defaultValue="metrics" className="flex-1 flex flex-col min-h-0">
         <TabsList className="mx-4 mt-2">
+          <TabsTrigger value="metrics">Metrics</TabsTrigger>
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="commands">Commands</TabsTrigger>
           <TabsTrigger value="events">Events</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="metrics" className="flex-1 overflow-auto p-4">
+          {metricsData?.metrics ? (
+            <MetricsWidgets metrics={metricsData.metrics as Record<string, unknown>} />
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <BarChart3 className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">No metrics available</p>
+              <p className="text-xs mt-1">
+                Metrics are extracted from check command output.
+                <br />
+                Add JSON to your check script output.
+              </p>
+            </div>
+          )}
+          {metricsData?.at && (
+            <div className="mt-4 text-[10px] text-muted-foreground text-center">
+              Last updated: {new Date(metricsData.at).toLocaleString()}
+            </div>
+          )}
+        </TabsContent>
 
         <TabsContent value="info" className="flex-1 overflow-auto p-4 space-y-3">
           <InfoRow icon={Server} label="Host" value={component.host || 'N/A'} />

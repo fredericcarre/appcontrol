@@ -1,105 +1,91 @@
 {
   "name": "Metrics Demo",
-  "description": "Demonstrates check commands that output operational metrics for monitoring and dashboards",
+  "description": "Demonstrates check commands that output operational metrics with widget hints",
   "tags": {
     "env": "demo",
-    "purpose": "metrics-testing"
+    "purpose": "metrics-showcase"
   },
   "components": [
     {
       "name": "postgres-db",
       "display_name": "PostgreSQL Database",
-      "description": "Database with connection count and replication lag metrics",
+      "description": "Database with gauge for cache hit ratio",
       "component_type": "database",
       "host": "localhost",
-      "check_cmd": "test -f /tmp/metrics_demo_postgres.flag && echo '{\"connections\": 42, \"replication_lag_ms\": 150, \"cache_hit_ratio\": 0.98}'",
+      "check_cmd": "test -f /tmp/metrics_demo_postgres.flag && echo '{\"connections\": 42, \"replication_lag_ms\": 150, \"cache_hit_ratio\": 98, \"cache_hit_ratio_widget\": \"gauge\", \"database_size_mb\": 2048}'",
       "start_cmd": "touch /tmp/metrics_demo_postgres.flag",
       "stop_cmd": "rm -f /tmp/metrics_demo_postgres.flag",
-      "check_interval_secs": 10,
-      "start_timeout_secs": 60,
-      "stop_timeout_secs": 30
+      "check_interval_secs": 10
     },
     {
       "name": "redis-cache",
       "display_name": "Redis Cache",
-      "description": "Cache with memory usage and key count metrics (mixed output format)",
+      "description": "Cache with memory gauge and status indicator",
       "component_type": "cache",
       "host": "localhost",
-      "check_cmd": "test -f /tmp/metrics_demo_redis.flag && echo 'Redis is healthy' && echo '{\"memory_mb\": 256, \"keys\": 15420, \"hit_rate\": 0.92, \"evictions\": 0}'",
+      "check_cmd": "test -f /tmp/metrics_demo_redis.flag && echo '{\"memory_percent\": 64, \"memory_percent_widget\": \"gauge\", \"keys\": 15420, \"hit_rate\": 92, \"hit_rate_widget\": \"gauge\", \"evictions\": 0, \"status\": \"ok\", \"status_widget\": \"status\"}'",
       "start_cmd": "touch /tmp/metrics_demo_redis.flag",
       "stop_cmd": "rm -f /tmp/metrics_demo_redis.flag",
-      "check_interval_secs": 10,
-      "start_timeout_secs": 30,
-      "stop_timeout_secs": 15
+      "check_interval_secs": 10
     },
     {
       "name": "kafka-broker",
       "display_name": "Kafka Broker",
-      "description": "Message broker with topic and consumer lag metrics (METRICS marker format)",
+      "description": "Message broker with sparkline for message rate",
       "component_type": "middleware",
       "host": "localhost",
       "cluster_size": 3,
       "cluster_nodes": ["kafka-1.local", "kafka-2.local", "kafka-3.local"],
-      "check_cmd": "test -f /tmp/metrics_demo_kafka.flag && echo 'Kafka broker running' && echo 'Checking partitions...' && echo '---METRICS---' && echo '{\"topics\": 12, \"partitions\": 48, \"consumer_lag\": 1250, \"messages_per_sec\": 5420}'",
+      "check_cmd": "test -f /tmp/metrics_demo_kafka.flag && echo '{\"topics\": 12, \"partitions\": 48, \"consumer_lag\": 1250, \"messages_per_sec\": [5420, 5380, 5510, 5440, 5490, 5520], \"messages_per_sec_widget\": \"sparkline\", \"broker_status\": \"ok\", \"broker_status_widget\": \"status\"}'",
       "start_cmd": "touch /tmp/metrics_demo_kafka.flag",
       "stop_cmd": "rm -f /tmp/metrics_demo_kafka.flag",
-      "check_interval_secs": 10,
-      "start_timeout_secs": 60,
-      "stop_timeout_secs": 30
+      "check_interval_secs": 10
     },
     {
       "name": "api-gateway",
       "display_name": "API Gateway",
-      "description": "Gateway with request rate and error metrics (pure JSON output)",
+      "description": "Gateway with request rate trend and latency bar",
       "component_type": "gateway",
       "host": "localhost",
       "cluster_size": 2,
       "cluster_nodes": ["gateway-1.local", "gateway-2.local"],
-      "check_cmd": "test -f /tmp/metrics_demo_gateway.flag && cat <<'EOF'\n{\"requests_per_min\": 12500, \"error_rate\": 0.002, \"p99_latency_ms\": 45, \"active_connections\": 320}\nEOF",
+      "check_cmd": "test -f /tmp/metrics_demo_gateway.flag && echo '{\"requests_per_min\": 12500, \"error_rate\": 0.2, \"error_rate_widget\": \"gauge\", \"p99_latency_ms\": 45, \"active_connections\": 320, \"backends\": {\"api\": 95, \"auth\": 100, \"static\": 100}, \"backends_widget\": \"bars\"}'",
       "start_cmd": "touch /tmp/metrics_demo_gateway.flag",
       "stop_cmd": "rm -f /tmp/metrics_demo_gateway.flag",
-      "check_interval_secs": 10,
-      "start_timeout_secs": 30,
-      "stop_timeout_secs": 15
+      "check_interval_secs": 10
     },
     {
       "name": "backend-api",
       "display_name": "Backend API",
-      "description": "Application server with business metrics",
+      "description": "Application server with business metrics and pie chart",
       "component_type": "application",
       "host": "localhost",
-      "check_cmd": "test -f /tmp/metrics_demo_backend.flag && echo '{\"active_users\": 145, \"orders_today\": 523, \"avg_response_ms\": 28, \"threads_active\": 12}'",
+      "check_cmd": "test -f /tmp/metrics_demo_backend.flag && echo '{\"active_users\": 145, \"orders_today\": 523, \"avg_response_ms\": 28, \"threads\": {\"active\": 12, \"idle\": 38, \"blocked\": 2}, \"threads_widget\": \"pie\", \"heap_percent\": 65, \"heap_percent_widget\": \"gauge\"}'",
       "start_cmd": "touch /tmp/metrics_demo_backend.flag",
       "stop_cmd": "rm -f /tmp/metrics_demo_backend.flag",
-      "check_interval_secs": 10,
-      "start_timeout_secs": 30,
-      "stop_timeout_secs": 15
+      "check_interval_secs": 10
     },
     {
       "name": "worker-pool",
       "display_name": "Background Workers",
-      "description": "Job processing workers with queue depth metrics",
+      "description": "Job processing with queue depth bar",
       "component_type": "batch",
       "host": "localhost",
-      "check_cmd": "test -f /tmp/metrics_demo_workers.flag && echo '{\"workers_active\": 8, \"queue_depth\": 42, \"jobs_completed_last_hour\": 1520, \"failed_jobs\": 3}'",
+      "check_cmd": "test -f /tmp/metrics_demo_workers.flag && echo '{\"workers_active\": 8, \"workers_active_widget\": \"number\", \"queue_depth\": 42, \"queue_depth_widget\": \"bar\", \"jobs_last_hour\": [150, 142, 168, 155, 149, 160], \"jobs_last_hour_widget\": \"sparkline\", \"failed_jobs\": 3, \"job_status\": \"warning\", \"job_status_widget\": \"status\"}'",
       "start_cmd": "touch /tmp/metrics_demo_workers.flag",
       "stop_cmd": "rm -f /tmp/metrics_demo_workers.flag",
-      "check_interval_secs": 10,
-      "start_timeout_secs": 30,
-      "stop_timeout_secs": 15
+      "check_interval_secs": 10
     },
     {
       "name": "frontend",
       "display_name": "Frontend App",
-      "description": "Static assets served by nginx with request metrics",
+      "description": "Static assets with table of top pages",
       "component_type": "webfront",
       "host": "localhost",
-      "check_cmd": "test -f /tmp/metrics_demo_frontend.flag && echo '{\"requests_per_sec\": 850, \"bandwidth_mbps\": 12.5, \"cache_hit_ratio\": 0.95}'",
+      "check_cmd": "test -f /tmp/metrics_demo_frontend.flag && echo '{\"requests_per_sec\": 850, \"bandwidth_mbps\": 12.5, \"cache_hit_ratio\": 95, \"cache_hit_ratio_widget\": \"gauge\", \"top_pages\": [{\"path\": \"/\", \"hits\": 1200}, {\"path\": \"/products\", \"hits\": 890}, {\"path\": \"/cart\", \"hits\": 450}], \"top_pages_widget\": \"table\"}'",
       "start_cmd": "touch /tmp/metrics_demo_frontend.flag",
       "stop_cmd": "rm -f /tmp/metrics_demo_frontend.flag",
-      "check_interval_secs": 10,
-      "start_timeout_secs": 30,
-      "stop_timeout_secs": 15
+      "check_interval_secs": 10
     }
   ],
   "dependencies": [
