@@ -590,7 +590,13 @@ pub async fn start_component(
     .await?
     .ok_or_not_found()?;
 
-    let perm = effective_permission(&state.db, user.user_id, comp_info.application_id, user.is_admin()).await;
+    let perm = effective_permission(
+        &state.db,
+        user.user_id,
+        comp_info.application_id,
+        user.is_admin(),
+    )
+    .await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
     }
@@ -608,7 +614,8 @@ pub async fn start_component(
     // For application-type components, start the referenced app instead
     if let Some(ref_app_id) = comp_info.referenced_app_id {
         // Check permission on referenced app as well
-        let ref_perm = effective_permission(&state.db, user.user_id, ref_app_id, user.is_admin()).await;
+        let ref_perm =
+            effective_permission(&state.db, user.user_id, ref_app_id, user.is_admin()).await;
         if ref_perm < PermissionLevel::Operate {
             return Err(ApiError::Forbidden);
         }
@@ -620,7 +627,9 @@ pub async fn start_component(
             }
         });
 
-        return Ok(Json(json!({ "status": "starting", "propagated_to_app": ref_app_id })));
+        return Ok(Json(
+            json!({ "status": "starting", "propagated_to_app": ref_app_id }),
+        ));
     }
 
     // Start the component: transition to Starting, dispatch start_cmd to agent
@@ -654,7 +663,13 @@ pub async fn stop_component(
     .await?
     .ok_or_not_found()?;
 
-    let perm = effective_permission(&state.db, user.user_id, comp_info.application_id, user.is_admin()).await;
+    let perm = effective_permission(
+        &state.db,
+        user.user_id,
+        comp_info.application_id,
+        user.is_admin(),
+    )
+    .await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
     }
@@ -672,7 +687,8 @@ pub async fn stop_component(
     // For application-type components, stop the referenced app instead
     if let Some(ref_app_id) = comp_info.referenced_app_id {
         // Check permission on referenced app as well
-        let ref_perm = effective_permission(&state.db, user.user_id, ref_app_id, user.is_admin()).await;
+        let ref_perm =
+            effective_permission(&state.db, user.user_id, ref_app_id, user.is_admin()).await;
         if ref_perm < PermissionLevel::Operate {
             return Err(ApiError::Forbidden);
         }
@@ -684,7 +700,9 @@ pub async fn stop_component(
             }
         });
 
-        return Ok(Json(json!({ "status": "stopping", "propagated_to_app": ref_app_id })));
+        return Ok(Json(
+            json!({ "status": "stopping", "propagated_to_app": ref_app_id }),
+        ));
     }
 
     // Stop the component and all its dependents in reverse DAG order
