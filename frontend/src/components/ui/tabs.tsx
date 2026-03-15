@@ -30,6 +30,7 @@ export function TabsTrigger({ value, className, ...props }: { value: string } & 
   const ctx = useContext(TabsContext);
   return (
     <button
+      type="button"
       className={cn(
         'inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium transition-all',
         ctx.value === value ? 'bg-background text-foreground shadow-sm' : 'hover:bg-background/50',
