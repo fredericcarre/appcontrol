@@ -319,7 +319,17 @@ export function ComponentEditor({
                       onValueChange={(v) => handleReferencedAppChange(v === '_none' ? null : v)}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Select an application to reference" />
+                        <SelectValue>
+                          {formData.referenced_app_id ? (
+                            <div className="flex items-center gap-2">
+                              <Folder className="h-4 w-4 text-blue-500" />
+                              {availableApps.find((a) => a.id === formData.referenced_app_id)?.name ||
+                                'Loading...'}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">Select an application...</span>
+                          )}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="_none">
@@ -343,85 +353,107 @@ export function ComponentEditor({
                 </div>
               )}
 
-              <div className="space-y-2">
-                <Label htmlFor="host">Host</Label>
-                <Select
-                  value={formData.host || '_manual'}
-                  onValueChange={(v) => {
-                    if (v === '_manual') {
-                      handleChange('host', '');
-                    } else {
-                      handleChange('host', v);
-                    }
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select agent host" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_manual">Enter manually...</SelectItem>
-                    {agents?.map((a) => (
-                      <SelectItem key={a.id} value={a.hostname}>
-                        <div className="flex items-center gap-2">
-                          <div
-                            className={`w-2 h-2 rounded-full ${a.status === 'active' ? 'bg-green-500' : 'bg-gray-400'}`}
-                          />
-                          {a.hostname}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {(formData.host === '' || !agents?.find((a) => a.hostname === formData.host)) && (
-                  <Input
-                    value={formData.host}
-                    onChange={(e) => handleChange('host', e.target.value)}
-                    placeholder="hostname or IP address"
-                    className="mt-2"
-                  />
-                )}
-              </div>
+              {/* Host selection - not shown for application type (status is derived from referenced app) */}
+              {formData.component_type !== 'application' && (
+                <div className="space-y-2">
+                  <Label htmlFor="host">Host</Label>
+                  <Select
+                    value={formData.host || '_manual'}
+                    onValueChange={(v) => {
+                      if (v === '_manual') {
+                        handleChange('host', '');
+                      } else {
+                        handleChange('host', v);
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select agent host" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_manual">Enter manually...</SelectItem>
+                      {agents?.map((a) => (
+                        <SelectItem key={a.id} value={a.hostname}>
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={`w-2 h-2 rounded-full ${a.status === 'active' ? 'bg-green-500' : 'bg-gray-400'}`}
+                            />
+                            {a.hostname}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {(formData.host === '' || !agents?.find((a) => a.hostname === formData.host)) && (
+                    <Input
+                      value={formData.host}
+                      onChange={(e) => handleChange('host', e.target.value)}
+                      placeholder="hostname or IP address"
+                      className="mt-2"
+                    />
+                  )}
+                </div>
+              )}
             </TabsContent>
 
             <TabsContent value="commands" className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <Label htmlFor="check_cmd">Check Command</Label>
-                <Textarea
-                  id="check_cmd"
-                  value={formData.check_cmd}
-                  onChange={(e) => handleChange('check_cmd', e.target.value)}
-                  placeholder="pgrep -f myapp || exit 1"
-                  rows={2}
-                  className="font-mono text-sm"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Exit 0 = running, non-zero = stopped/failed
-                </p>
-              </div>
+              {formData.component_type === 'application' ? (
+                <Alert>
+                  <Folder className="h-4 w-4" />
+                  <AlertDescription>
+                    <p className="font-medium mb-2">Application Reference</p>
+                    <p className="text-sm text-muted-foreground">
+                      Commands are automatically derived from the referenced application:
+                    </p>
+                    <ul className="text-sm text-muted-foreground mt-2 ml-4 list-disc">
+                      <li><strong>Status:</strong> Aggregated from all components in the referenced app</li>
+                      <li><strong>Start:</strong> Starts the entire referenced application (DAG order)</li>
+                      <li><strong>Stop:</strong> Stops the entire referenced application (reverse DAG order)</li>
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="check_cmd">Check Command</Label>
+                    <Textarea
+                      id="check_cmd"
+                      value={formData.check_cmd}
+                      onChange={(e) => handleChange('check_cmd', e.target.value)}
+                      placeholder="pgrep -f myapp || exit 1"
+                      rows={2}
+                      className="font-mono text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Exit 0 = running, non-zero = stopped/failed
+                    </p>
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="start_cmd">Start Command</Label>
-                <Textarea
-                  id="start_cmd"
-                  value={formData.start_cmd}
-                  onChange={(e) => handleChange('start_cmd', e.target.value)}
-                  placeholder="systemctl start myapp"
-                  rows={2}
-                  className="font-mono text-sm"
-                />
-              </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="start_cmd">Start Command</Label>
+                    <Textarea
+                      id="start_cmd"
+                      value={formData.start_cmd}
+                      onChange={(e) => handleChange('start_cmd', e.target.value)}
+                      placeholder="systemctl start myapp"
+                      rows={2}
+                      className="font-mono text-sm"
+                    />
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="stop_cmd">Stop Command</Label>
-                <Textarea
-                  id="stop_cmd"
-                  value={formData.stop_cmd}
-                  onChange={(e) => handleChange('stop_cmd', e.target.value)}
-                  placeholder="systemctl stop myapp"
-                  rows={2}
-                  className="font-mono text-sm"
-                />
-              </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="stop_cmd">Stop Command</Label>
+                    <Textarea
+                      id="stop_cmd"
+                      value={formData.stop_cmd}
+                      onChange={(e) => handleChange('stop_cmd', e.target.value)}
+                      placeholder="systemctl stop myapp"
+                      rows={2}
+                      className="font-mono text-sm"
+                    />
+                  </div>
+                </>
+              )}
             </TabsContent>
 
             <TabsContent value="advanced" className="space-y-4 mt-4">
