@@ -7,6 +7,7 @@ import {
   Play, Square, RotateCcw, Search, Skull, GitBranch, Wrench,
   Shield, Cloud, HardDrive, Cpu, Network, FileText, Zap,
   ExternalLink, ArrowUp, ArrowDown, WifiOff, Unplug, Radio,
+  BarChart3,
 } from 'lucide-react';
 import { MetricsDisplay, MetricWidget } from './MetricsDisplay';
 
@@ -82,6 +83,12 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
 
   const isHighlighted = data.highlightType && data.highlightType !== 'none';
   const isImpactHighlight = data.highlightType === 'impact';
+
+  // Check if metrics exist (filter out _widget hint keys)
+  const hasMetrics = data.metrics && Object.keys(data.metrics).some(k => !k.endsWith('_widget'));
+  const metricsCount = data.metrics
+    ? Object.keys(data.metrics).filter(k => !k.endsWith('_widget')).length
+    : 0;
 
   // Determine border color (use string to allow dynamic colors)
   let borderColor: string = stateStyle.border;
@@ -190,6 +197,15 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
               }
             >
               x{data.clusterSize}
+            </span>
+          )}
+          {/* Metrics indicator badge */}
+          {hasMetrics && !selected && (
+            <span
+              className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1 py-0.5 rounded bg-indigo-100 text-indigo-700"
+              title={`${metricsCount} metrics available`}
+            >
+              <BarChart3 className="h-2.5 w-2.5" />
             </span>
           )}
         </div>

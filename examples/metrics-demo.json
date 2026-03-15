@@ -9,10 +9,10 @@
     {
       "name": "postgres-db",
       "display_name": "PostgreSQL Database",
-      "description": "Database with gauge for cache hit ratio",
+      "description": "Database with gauge, list of slow queries, and version text",
       "component_type": "database",
       "host": "localhost",
-      "check_cmd": "test -f /tmp/metrics_demo_postgres.flag && echo '{\"connections\": 42, \"replication_lag_ms\": 150, \"cache_hit_ratio\": 98, \"cache_hit_ratio_widget\": \"gauge\", \"database_size_mb\": 2048}'",
+      "check_cmd": "test -f /tmp/metrics_demo_postgres.flag && echo '{\"connections\": 42, \"replication_lag_ms\": 150, \"cache_hit_ratio\": 98, \"cache_hit_ratio_widget\": \"gauge\", \"database_size_mb\": 2048, \"slow_queries\": [\"SELECT * FROM orders WHERE...\", \"UPDATE inventory SET...\", \"JOIN products ON...\"], \"slow_queries_widget\": \"list\", \"version\": \"PostgreSQL 16.2 on x86_64-pc-linux-gnu\", \"version_widget\": \"text\"}'",
       "start_cmd": "touch /tmp/metrics_demo_postgres.flag",
       "stop_cmd": "rm -f /tmp/metrics_demo_postgres.flag",
       "check_interval_secs": 10
@@ -57,10 +57,10 @@
     {
       "name": "backend-api",
       "display_name": "Backend API",
-      "description": "Application server with business metrics and pie chart",
+      "description": "Application server with connected users list and business metrics",
       "component_type": "application",
       "host": "localhost",
-      "check_cmd": "test -f /tmp/metrics_demo_backend.flag && echo '{\"active_users\": 145, \"orders_today\": 523, \"avg_response_ms\": 28, \"threads\": {\"active\": 12, \"idle\": 38, \"blocked\": 2}, \"threads_widget\": \"pie\", \"heap_percent\": 65, \"heap_percent_widget\": \"gauge\"}'",
+      "check_cmd": "test -f /tmp/metrics_demo_backend.flag && echo '{\"active_users\": 145, \"orders_today\": 523, \"avg_response_ms\": 28, \"threads\": {\"active\": 12, \"idle\": 38, \"blocked\": 2}, \"threads_widget\": \"pie\", \"heap_percent\": 65, \"heap_percent_widget\": \"gauge\", \"connected_users\": [{\"user\": \"alice@acme.com\", \"session\": \"web\", \"since\": \"2m\"}, {\"user\": \"bob@acme.com\", \"session\": \"api\", \"since\": \"15m\"}, {\"user\": \"charlie@acme.com\", \"session\": \"mobile\", \"since\": \"1h\"}, {\"user\": \"diana@acme.com\", \"session\": \"web\", \"since\": \"5m\"}], \"connected_users_widget\": \"table\"}'",
       "start_cmd": "touch /tmp/metrics_demo_backend.flag",
       "stop_cmd": "rm -f /tmp/metrics_demo_backend.flag",
       "check_interval_secs": 10
