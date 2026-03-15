@@ -573,6 +573,11 @@ export function MapViewPage() {
         stop_cmd: data.stop_cmd || undefined,
         position_x: newComponentPosition.x,
         position_y: newComponentPosition.y,
+        // Application reference (for app-type components)
+        referenced_app_id: data.referenced_app_id || undefined,
+        // Cluster configuration
+        cluster_size: data.cluster_size ?? undefined,
+        cluster_nodes: data.cluster_nodes?.length ? data.cluster_nodes : undefined,
       });
     }
 

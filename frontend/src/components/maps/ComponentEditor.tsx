@@ -315,13 +315,16 @@ export function ComponentEditor({
                     </Alert>
                   ) : (
                     <Select
-                      value={formData.referenced_app_id || ''}
-                      onValueChange={(v) => handleReferencedAppChange(v || null)}
+                      value={formData.referenced_app_id || '_none'}
+                      onValueChange={(v) => handleReferencedAppChange(v === '_none' ? null : v)}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select an application to reference" />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="_none">
+                          <span className="text-muted-foreground">Select an application...</span>
+                        </SelectItem>
                         {availableApps.map((app) => (
                           <SelectItem key={app.id} value={app.id}>
                             <div className="flex items-center gap-2">

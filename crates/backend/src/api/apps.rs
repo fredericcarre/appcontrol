@@ -312,6 +312,7 @@ pub async fn get_app(
         position_y: Option<f32>,
         cluster_size: Option<i32>,
         cluster_nodes: Option<Value>,
+        referenced_app_id: Option<Uuid>,
         created_at: chrono::DateTime<chrono::Utc>,
         updated_at: chrono::DateTime<chrono::Utc>,
         // Agent info
@@ -327,7 +328,7 @@ pub async fn get_app(
                   c.component_type, c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd,
                   c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
                   c.is_optional, c.current_state, c.position_x, c.position_y,
-                  c.cluster_size, c.cluster_nodes, c.created_at, c.updated_at,
+                  c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at,
                   a.hostname as agent_hostname, a.gateway_id, g.name as gateway_name,
                   (SELECT ce.metrics FROM check_events ce
                    WHERE ce.component_id = c.id AND ce.metrics IS NOT NULL
@@ -403,6 +404,7 @@ pub async fn get_app(
                 "position_y": c.position_y,
                 "cluster_size": c.cluster_size,
                 "cluster_nodes": c.cluster_nodes,
+                "referenced_app_id": c.referenced_app_id,
                 "created_at": c.created_at,
                 "updated_at": c.updated_at,
                 // Connectivity info

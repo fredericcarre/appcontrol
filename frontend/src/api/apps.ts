@@ -53,6 +53,8 @@ export interface Component {
   // Cluster fields
   cluster_size?: number | null;
   cluster_nodes?: string[] | null;
+  // Application reference (for app-type synthetic components)
+  referenced_app_id?: string | null;
   created_at: string;
   updated_at: string;
   // Connectivity status (from enriched API response)

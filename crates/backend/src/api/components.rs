@@ -53,6 +53,8 @@ pub struct CreateComponentRequest {
     pub cluster_size: Option<i32>,
     /// List of node hostnames/IPs in the cluster
     pub cluster_nodes: Option<Vec<String>>,
+    /// Reference to another application (for app-type synthetic components)
+    pub referenced_app_id: Option<Uuid>,
 }
 
 impl CreateComponentRequest {
@@ -99,6 +101,8 @@ pub struct UpdateComponentRequest {
     pub cluster_size: Option<i32>,
     /// List of node hostnames/IPs in the cluster
     pub cluster_nodes: Option<Vec<String>>,
+    /// Reference to another application (for app-type synthetic components)
+    pub referenced_app_id: Option<Uuid>,
 }
 
 impl UpdateComponentRequest {
@@ -131,6 +135,7 @@ pub struct ComponentRow {
     pub position_y: Option<f32>,
     pub cluster_size: Option<i32>,
     pub cluster_nodes: Option<Value>,
+    pub referenced_app_id: Option<Uuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -165,7 +170,7 @@ pub async fn list_components(
         SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
                host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, created_at, updated_at
+               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
         FROM components WHERE application_id = $1 ORDER BY name
         "#,
     )
@@ -186,7 +191,7 @@ pub async fn get_component(
         SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
                host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, created_at, updated_at
+               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
         FROM components WHERE id = $1
         "#,
     )
@@ -255,12 +260,12 @@ pub async fn create_component(
         INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id,
                                 host, agent_id, check_cmd, start_cmd, stop_cmd,
                                 check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-                                position_x, position_y, env_vars, tags, cluster_size, cluster_nodes)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+                                position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
         RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
                host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, created_at, updated_at
+               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
         "#,
     )
     .bind(comp_id)
@@ -286,6 +291,7 @@ pub async fn create_component(
     .bind(body.tags.as_ref().unwrap_or(&json!([])))
     .bind(body.cluster_size)
     .bind(&cluster_nodes_json)
+    .bind(body.referenced_app_id)
     .fetch_one(&state.db)
     .await?;
 
@@ -371,12 +377,13 @@ pub async fn update_component(
             position_y = COALESCE($18, position_y),
             cluster_size = COALESCE($19, cluster_size),
             cluster_nodes = COALESCE($20, cluster_nodes),
+            referenced_app_id = COALESCE($21, referenced_app_id),
             updated_at = now()
         WHERE id = $1
         RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
                host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, created_at, updated_at
+               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
         "#,
     )
     .bind(id)
@@ -399,6 +406,7 @@ pub async fn update_component(
     .bind(body.position_y)
     .bind(body.cluster_size)
     .bind(&cluster_nodes_json)
+    .bind(body.referenced_app_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
