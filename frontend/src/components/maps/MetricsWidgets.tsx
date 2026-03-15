@@ -199,7 +199,7 @@ function SparklineWidget({ label, values }: { label: string; values: number[] })
 
 function BarsWidget({ label, data }: { label: string; data: Record<string, number> }) {
   const entries = Object.entries(data);
-  const max = Math.max(...entries.map(([_, v]) => v), 1);
+  const max = Math.max(...entries.map(([, v]) => v), 1);
 
   return (
     <div className="bg-muted/30 rounded-lg p-3">
@@ -226,7 +226,7 @@ function BarsWidget({ label, data }: { label: string; data: Record<string, numbe
 
 function PieWidget({ label, data }: { label: string; data: Record<string, number> }) {
   const entries = Object.entries(data);
-  const total = entries.reduce((sum, [_, v]) => sum + v, 0) || 1;
+  const total = entries.reduce((sum, [, v]) => sum + v, 0) || 1;
   const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
   let currentAngle = 0;

@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, createElement } from 'react';
 import { cn } from '@/lib/utils';
-import { TrendingUp, TrendingDown, Minus, Users, Database, Clock, Gauge, Activity, Layers, AlertTriangle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Users, Database, Clock, Gauge, Activity, Layers, AlertTriangle, type LucideIcon } from 'lucide-react';
 
 /**
  * Widget types for metric display:
@@ -79,7 +79,7 @@ function inferUnit(key: string): string | undefined {
 }
 
 // Get icon for metric
-function getMetricIcon(key: string): React.ComponentType<{ className?: string }> {
+function getMetricIcon(key: string): LucideIcon {
   const keyLower = key.toLowerCase();
   if (keyLower.includes('user') || keyLower.includes('connection') || keyLower.includes('active')) return Users;
   if (keyLower.includes('queue') || keyLower.includes('depth') || keyLower.includes('pending')) return Layers;
@@ -130,7 +130,8 @@ function MetricWidget({
     : widget.type;
   const unit = widget?.unit || inferUnit(metricKey);
   const label = widget?.label || metricKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  const Icon = getMetricIcon(metricKey);
+  const IconComponent = getMetricIcon(metricKey);
+  const renderIcon = (className: string) => createElement(IconComponent, { className });
 
   const numValue = typeof value === 'number' ? value : parseFloat(String(value));
   const isValidNumber = !isNaN(numValue);
@@ -158,7 +159,7 @@ function MetricWidget({
 
     return (
       <div className="flex items-center gap-1 text-[10px]">
-        <Icon className="h-2.5 w-2.5 text-muted-foreground" />
+        {renderIcon("h-2.5 w-2.5 text-muted-foreground")}
         <span className={cn('font-medium', valueColor)}>
           {displayValue}
         </span>
@@ -217,12 +218,12 @@ function MetricWidget({
         </div>
       );
 
-    case 'trend':
+    case 'trend': {
       // Simulate trend (in real app, compare with previous value)
       const trend = numValue > 50 ? 'up' : numValue < 30 ? 'down' : 'stable';
       return (
         <div className="flex items-center gap-1.5">
-          <Icon className="h-3 w-3 text-muted-foreground" />
+          {renderIcon("h-3 w-3 text-muted-foreground")}
           <span className={cn('text-sm font-medium', valueColor)}>
             {formatNumber(numValue)}
           </span>
@@ -232,8 +233,9 @@ function MetricWidget({
           {trend === 'stable' && <Minus className="h-3 w-3 text-muted-foreground" />}
         </div>
       );
+    }
 
-    case 'list':
+    case 'list': {
       const items = Array.isArray(value) ? value : Object.entries(value as object);
       return (
         <div className="space-y-0.5">
@@ -250,8 +252,9 @@ function MetricWidget({
           </div>
         </div>
       );
+    }
 
-    case 'status':
+    case 'status': {
       const status = numValue === 0 ? 'ok' : numValue < (widget?.thresholds?.warning ?? 1) ? 'warning' : 'critical';
       return (
         <div className="flex items-center gap-1.5">
@@ -264,11 +267,12 @@ function MetricWidget({
           <span className="text-[10px]">{label}</span>
         </div>
       );
+    }
 
     default: // 'number'
       return (
         <div className="flex items-center gap-1.5">
-          <Icon className="h-3 w-3 text-muted-foreground" />
+          {renderIcon("h-3 w-3 text-muted-foreground")}
           <div className="flex flex-col">
             <span className={cn('text-sm font-medium leading-none', valueColor)}>
               {isValidNumber ? formatNumber(numValue) : String(value)}
