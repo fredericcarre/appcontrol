@@ -144,11 +144,23 @@ function MetricWidget({
 
   if (compact) {
     // Compact mode: single line with icon, value, and unit
+    // Handle complex types (objects, arrays) specially
+    let displayValue: string;
+    if (isValidNumber) {
+      displayValue = formatNumber(numValue);
+    } else if (Array.isArray(value)) {
+      displayValue = `[${value.length}]`;
+    } else if (typeof value === 'object' && value !== null) {
+      displayValue = `{${Object.keys(value).length}}`;
+    } else {
+      displayValue = String(value).slice(0, 12);
+    }
+
     return (
       <div className="flex items-center gap-1 text-[10px]">
         <Icon className="h-2.5 w-2.5 text-muted-foreground" />
         <span className={cn('font-medium', valueColor)}>
-          {isValidNumber ? formatNumber(numValue) : String(value)}
+          {displayValue}
         </span>
         {unit && <span className="text-muted-foreground">{unit}</span>}
       </div>
@@ -281,9 +293,9 @@ export function MetricsDisplay({ metrics, widgets, compact = false, className }:
         .map(w => ({ key: w.key, value: metrics[w.key], widget: w }));
     }
 
-    // Otherwise, auto-discover all metrics
+    // Otherwise, auto-discover all metrics (excluding _widget hint keys)
     return Object.entries(metrics)
-      .filter(([_, v]) => v !== null && v !== undefined)
+      .filter(([k, v]) => v !== null && v !== undefined && !k.endsWith('_widget'))
       .slice(0, compact ? 3 : 6) // Limit display
       .map(([key, value]) => ({ key, value, widget: undefined }));
   }, [metrics, widgets, compact]);
