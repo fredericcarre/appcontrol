@@ -1,0 +1,276 @@
+{
+  "_comment": "Example multi-site banking application with DR site overrides",
+  "_usage": [
+    "1. Import the app:  curl -X POST https://<backend>/api/v1/import/json -H 'Authorization: Bearer <token>' -d @multi-site-banking-app.json",
+    "2. Create DR site:  curl -X POST https://<backend>/api/v1/sites -d '{\"name\":\"DR Paris\",\"code\":\"PAR-DR\",\"site_type\":\"dr\"}'",
+    "3. Add site overrides per component via POST /api/v1/apps/:id/site-overrides (see below)"
+  ],
+  "json": {
+    "format_version": "4",
+    "application": {
+      "name": "Core Banking System",
+      "description": "Multi-site banking application with primary (Lyon) and DR (Paris) sites",
+      "tags": ["banking", "multi-site", "dr"],
+      "variables": [
+        { "name": "DB_HOST_PRIMARY", "value": "db-lyon-01.bank.internal", "description": "Primary DB host" },
+        { "name": "DB_HOST_DR", "value": "db-paris-01.bank.internal", "description": "DR DB host" },
+        { "name": "APP_PORT", "value": "8443", "description": "Application HTTPS port" }
+      ],
+      "groups": [
+        { "name": "Database Layer", "description": "PostgreSQL cluster", "color": "#1565C0", "display_order": 1 },
+        { "name": "Middleware", "description": "Message queues and caches", "color": "#6A1B9A", "display_order": 2 },
+        { "name": "Application", "description": "Core banking services", "color": "#2E7D32", "display_order": 3 },
+        { "name": "Access Points", "description": "Load balancers and web frontends", "color": "#E65100", "display_order": 4 }
+      ],
+      "components": [
+        {
+          "name": "postgresql-primary",
+          "display_name": "PostgreSQL Primary",
+          "description": "PostgreSQL 16 primary database with streaming replication",
+          "type": "database",
+          "icon": "Database",
+          "group": "Database Layer",
+          "host": "db-lyon-01.bank.internal",
+          "commands": {
+            "check": { "cmd": "/opt/appcontrol/checks/pg_check.sh --port 5432", "timeout_seconds": 10 },
+            "start": { "cmd": "systemctl start postgresql-16", "timeout_seconds": 60 },
+            "stop": { "cmd": "systemctl stop postgresql-16", "timeout_seconds": 30 },
+            "integrity_check": { "cmd": "/opt/appcontrol/checks/pg_integrity.sh --replication-lag-warn 30", "timeout_seconds": 30 },
+            "infra_check": { "cmd": "/opt/appcontrol/checks/disk_space.sh /var/lib/postgresql --warn-pct 85", "timeout_seconds": 10 }
+          },
+          "custom_commands": [],
+          "links": [
+            { "label": "PgAdmin", "url": "https://pgadmin.bank.internal/browser/", "link_type": "monitoring" }
+          ],
+          "check_interval_seconds": 30,
+          "start_timeout_seconds": 120,
+          "stop_timeout_seconds": 60,
+          "is_optional": false,
+          "position_x": null,
+          "position_y": null
+        },
+        {
+          "name": "redis-cache",
+          "display_name": "Redis Cache",
+          "description": "Redis 7 session cache with Sentinel HA",
+          "type": "redis",
+          "icon": "Zap",
+          "group": "Middleware",
+          "host": "cache-lyon-01.bank.internal",
+          "commands": {
+            "check": { "cmd": "redis-cli -h localhost ping | grep -q PONG", "timeout_seconds": 5 },
+            "start": { "cmd": "systemctl start redis-sentinel && systemctl start redis", "timeout_seconds": 30 },
+            "stop": { "cmd": "systemctl stop redis && systemctl stop redis-sentinel", "timeout_seconds": 15 }
+          },
+          "custom_commands": [],
+          "links": [],
+          "check_interval_seconds": 15,
+          "start_timeout_seconds": 30,
+          "stop_timeout_seconds": 15,
+          "is_optional": false,
+          "position_x": null,
+          "position_y": null
+        },
+        {
+          "name": "ibmmq-broker",
+          "display_name": "IBM MQ Broker",
+          "description": "IBM MQ for inter-service messaging",
+          "type": "mq",
+          "icon": "Layers",
+          "group": "Middleware",
+          "host": "mq-lyon-01.bank.internal",
+          "commands": {
+            "check": { "cmd": "/opt/mqm/bin/dspmq -m BANKQM | grep -q Running", "timeout_seconds": 10 },
+            "start": { "cmd": "/opt/mqm/bin/strmqm BANKQM", "timeout_seconds": 120 },
+            "stop": { "cmd": "/opt/mqm/bin/endmqm -w BANKQM", "timeout_seconds": 60 }
+          },
+          "custom_commands": [],
+          "links": [
+            { "label": "MQ Console", "url": "https://mq-lyon-01.bank.internal:9443/ibmmq/console/", "link_type": "admin" }
+          ],
+          "check_interval_seconds": 30,
+          "start_timeout_seconds": 180,
+          "stop_timeout_seconds": 90,
+          "is_optional": false,
+          "position_x": null,
+          "position_y": null
+        },
+        {
+          "name": "core-banking-api",
+          "display_name": "Core Banking API",
+          "description": "Main banking REST API (Spring Boot)",
+          "type": "appserver",
+          "icon": "Server",
+          "group": "Application",
+          "host": "app-lyon-01.bank.internal",
+          "commands": {
+            "check": { "cmd": "curl -sf https://localhost:${APP_PORT}/actuator/health | jq -e '.status==\"UP\"'", "timeout_seconds": 10 },
+            "start": { "cmd": "systemctl start core-banking", "timeout_seconds": 120 },
+            "stop": { "cmd": "systemctl stop core-banking", "timeout_seconds": 30 }
+          },
+          "custom_commands": [
+            {
+              "name": "thread-dump",
+              "command": "jcmd $(pgrep -f core-banking) Thread.print",
+              "description": "Capture JVM thread dump",
+              "requires_confirmation": false,
+              "parameters": []
+            }
+          ],
+          "links": [
+            { "label": "Swagger", "url": "https://app-lyon-01.bank.internal:8443/swagger-ui/", "link_type": "api" },
+            { "label": "Grafana", "url": "https://monitoring.bank.internal/d/core-banking", "link_type": "monitoring" }
+          ],
+          "check_interval_seconds": 30,
+          "start_timeout_seconds": 180,
+          "stop_timeout_seconds": 60,
+          "is_optional": false,
+          "position_x": null,
+          "position_y": null
+        },
+        {
+          "name": "payment-gateway",
+          "display_name": "Payment Gateway",
+          "description": "Payment processing service (SEPA/SWIFT)",
+          "type": "service",
+          "icon": "Shield",
+          "group": "Application",
+          "host": "app-lyon-02.bank.internal",
+          "commands": {
+            "check": { "cmd": "curl -sf https://localhost:8444/health | jq -e '.status==\"UP\"'", "timeout_seconds": 10 },
+            "start": { "cmd": "systemctl start payment-gateway", "timeout_seconds": 90 },
+            "stop": { "cmd": "systemctl stop payment-gateway", "timeout_seconds": 30 }
+          },
+          "custom_commands": [],
+          "links": [],
+          "check_interval_seconds": 30,
+          "start_timeout_seconds": 120,
+          "stop_timeout_seconds": 30,
+          "is_optional": false,
+          "position_x": null,
+          "position_y": null
+        },
+        {
+          "name": "batch-eod",
+          "display_name": "End-of-Day Batch",
+          "description": "End-of-day accounting batch (Control-M triggered)",
+          "type": "batch",
+          "icon": "Clock",
+          "group": "Application",
+          "host": "batch-lyon-01.bank.internal",
+          "commands": {
+            "check": { "cmd": "/opt/appcontrol/checks/batch_status.sh --job EOD", "timeout_seconds": 10 },
+            "start": { "cmd": "/opt/appcontrol/scripts/start_eod_batch.sh", "timeout_seconds": 600 },
+            "stop": { "cmd": "/opt/appcontrol/scripts/stop_eod_batch.sh", "timeout_seconds": 120 }
+          },
+          "custom_commands": [],
+          "links": [],
+          "check_interval_seconds": 60,
+          "start_timeout_seconds": 600,
+          "stop_timeout_seconds": 120,
+          "is_optional": true,
+          "position_x": null,
+          "position_y": null
+        },
+        {
+          "name": "haproxy-lb",
+          "display_name": "HAProxy LB",
+          "description": "HAProxy load balancer for external traffic",
+          "type": "loadbalancer",
+          "icon": "Network",
+          "group": "Access Points",
+          "host": "lb-lyon-01.bank.internal",
+          "commands": {
+            "check": { "cmd": "curl -sf http://localhost:8404/stats | grep -q 'UP'", "timeout_seconds": 5 },
+            "start": { "cmd": "systemctl start haproxy", "timeout_seconds": 15 },
+            "stop": { "cmd": "systemctl stop haproxy", "timeout_seconds": 10 }
+          },
+          "custom_commands": [],
+          "links": [
+            { "label": "HAProxy Stats", "url": "http://lb-lyon-01.bank.internal:8404/stats", "link_type": "monitoring" }
+          ],
+          "check_interval_seconds": 15,
+          "start_timeout_seconds": 15,
+          "stop_timeout_seconds": 10,
+          "is_optional": false,
+          "position_x": null,
+          "position_y": null
+        }
+      ],
+      "dependencies": [
+        { "from": "redis-cache", "to": "postgresql-primary" },
+        { "from": "ibmmq-broker", "to": "postgresql-primary" },
+        { "from": "core-banking-api", "to": "postgresql-primary" },
+        { "from": "core-banking-api", "to": "redis-cache" },
+        { "from": "core-banking-api", "to": "ibmmq-broker" },
+        { "from": "payment-gateway", "to": "core-banking-api" },
+        { "from": "payment-gateway", "to": "ibmmq-broker" },
+        { "from": "batch-eod", "to": "core-banking-api" },
+        { "from": "haproxy-lb", "to": "core-banking-api" },
+        { "from": "haproxy-lb", "to": "payment-gateway" }
+      ]
+    }
+  },
+  "site_id": "<<PRIMARY_SITE_UUID>>",
+
+  "_site_overrides_setup": {
+    "_comment": "After import, create site overrides for DR site (Paris) via API calls:",
+    "_example_curl": [
+      "# Create DR site",
+      "curl -X POST /api/v1/sites -d '{\"name\":\"DR Paris\",\"code\":\"PAR-DR\",\"site_type\":\"dr\",\"location\":\"Paris, France\"}'",
+      "",
+      "# Add site overrides for each component (adjust agent_id and commands for DR hosts)",
+      "# The split-node visualization on the map will show both sites side by side"
+    ],
+    "overrides": [
+      {
+        "_component": "postgresql-primary",
+        "agent_id_override": "<<DR_AGENT_UUID>>",
+        "check_cmd_override": "/opt/appcontrol/checks/pg_check.sh --port 5432 --standby",
+        "start_cmd_override": "pg_ctl promote -D /var/lib/postgresql/16/main",
+        "stop_cmd_override": "systemctl stop postgresql-16",
+        "env_vars_override": { "DB_HOST": "db-paris-01.bank.internal" }
+      },
+      {
+        "_component": "redis-cache",
+        "agent_id_override": "<<DR_AGENT_UUID>>",
+        "check_cmd_override": "redis-cli -h localhost ping | grep -q PONG",
+        "start_cmd_override": "systemctl start redis-sentinel && systemctl start redis",
+        "stop_cmd_override": "systemctl stop redis && systemctl stop redis-sentinel"
+      },
+      {
+        "_component": "ibmmq-broker",
+        "agent_id_override": "<<DR_AGENT_UUID>>",
+        "check_cmd_override": "/opt/mqm/bin/dspmq -m BANKQM_DR | grep -q Running",
+        "start_cmd_override": "/opt/mqm/bin/strmqm BANKQM_DR",
+        "stop_cmd_override": "/opt/mqm/bin/endmqm -w BANKQM_DR"
+      },
+      {
+        "_component": "core-banking-api",
+        "agent_id_override": "<<DR_AGENT_UUID>>",
+        "start_cmd_override": "systemctl start core-banking",
+        "stop_cmd_override": "systemctl stop core-banking",
+        "env_vars_override": { "SPRING_PROFILES_ACTIVE": "dr", "DB_HOST": "db-paris-01.bank.internal" }
+      },
+      {
+        "_component": "payment-gateway",
+        "agent_id_override": "<<DR_AGENT_UUID>>",
+        "start_cmd_override": "systemctl start payment-gateway",
+        "stop_cmd_override": "systemctl stop payment-gateway"
+      },
+      {
+        "_component": "batch-eod",
+        "agent_id_override": "<<DR_AGENT_UUID>>",
+        "start_cmd_override": "/opt/appcontrol/scripts/start_eod_batch.sh --site=dr",
+        "stop_cmd_override": "/opt/appcontrol/scripts/stop_eod_batch.sh"
+      },
+      {
+        "_component": "haproxy-lb",
+        "agent_id_override": "<<DR_AGENT_UUID>>",
+        "check_cmd_override": "curl -sf http://localhost:8404/stats | grep -q 'UP'",
+        "start_cmd_override": "systemctl start haproxy",
+        "stop_cmd_override": "systemctl stop haproxy"
+      }
+    ]
+  }
+}

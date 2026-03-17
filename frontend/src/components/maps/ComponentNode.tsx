@@ -7,7 +7,7 @@ import {
   Play, Square, RotateCcw, Search, Skull, GitBranch, Wrench,
   Shield, Cloud, HardDrive, Cpu, Network, FileText, Zap,
   ExternalLink, ArrowUp, ArrowDown, WifiOff, Unplug, Radio,
-  BarChart3,
+  BarChart3, MapPin,
 } from 'lucide-react';
 import { MetricsDisplay, MetricWidget } from './MetricsDisplay';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -48,6 +48,16 @@ interface ComponentNodeData {
   // Metrics from check command output
   metrics?: Record<string, unknown> | null;
   metricsWidgets?: MetricWidget[];
+  // Multi-site overrides (for split-panel rendering)
+  primarySite?: { id: string; name: string; code: string; site_type: string } | null;
+  siteOverrides?: Array<{
+    site_id: string;
+    site_name: string;
+    site_code: string;
+    site_type: string;
+    site_is_active: boolean;
+    override_agent_hostname: string | null;
+  }>;
   // Callbacks
   onStart?: (id: string) => void;
   onStop?: (id: string) => void;
@@ -274,6 +284,16 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
           </div>
         )}
 
+        {/* Multi-site split panel */}
+        {data.siteOverrides && data.siteOverrides.length > 0 && (
+          <SitePanels
+            primarySite={data.primarySite || null}
+            siteOverrides={data.siteOverrides}
+            currentState={data.state}
+            agentHostname={data.agentHostname}
+          />
+        )}
+
         {selected && (
           <>
             {/* Infrastructure info - hide for application-type components */}
@@ -352,6 +372,111 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
 
         {/* Target at bottom: receives edges from dependents below */}
         <Handle type="target" position={Position.Bottom} className="!bg-gray-400 !w-2 !h-2" />
+      </div>
+    </div>
+  );
+}
+
+// ── Site type visual config ──────────────────────────────
+const SITE_TYPE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  primary: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'PROD' },
+  dr:      { bg: 'bg-orange-100',  text: 'text-orange-700',  label: 'DR' },
+  staging: { bg: 'bg-sky-100',     text: 'text-sky-700',     label: 'STG' },
+  development: { bg: 'bg-violet-100', text: 'text-violet-700', label: 'DEV' },
+};
+
+function getSiteStyle(siteType: string) {
+  return SITE_TYPE_STYLES[siteType] || { bg: 'bg-gray-100', text: 'text-gray-600', label: siteType.toUpperCase().slice(0, 4) };
+}
+
+/**
+ * Split-panel showing the component on each configured site.
+ * Primary site shows current state; DR/other sites show standby + override agent.
+ */
+function SitePanels({
+  primarySite,
+  siteOverrides,
+  currentState,
+  agentHostname,
+}: {
+  primarySite: { id: string; name: string; code: string; site_type: string } | null;
+  siteOverrides: Array<{
+    site_id: string;
+    site_name: string;
+    site_code: string;
+    site_type: string;
+    site_is_active: boolean;
+    override_agent_hostname: string | null;
+  }>;
+  currentState: ComponentState;
+  agentHostname?: string;
+}) {
+  const primaryStyle = primarySite ? getSiteStyle(primarySite.site_type) : getSiteStyle('primary');
+  const primaryStateStyle = STATE_COLORS[currentState] || STATE_COLORS.UNKNOWN;
+
+  return (
+    <div className="mt-2 pt-2 border-t border-gray-200">
+      <div className="flex items-center gap-1 mb-1.5">
+        <MapPin className="h-3 w-3 text-muted-foreground" />
+        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Sites</span>
+      </div>
+      <div className="flex gap-1.5">
+        {/* Primary site panel */}
+        {primarySite && (
+          <div className="flex-1 rounded border border-gray-200 p-1.5 min-w-0">
+            <div className="flex items-center gap-1 mb-0.5">
+              <span className={cn('text-[9px] font-bold px-1 py-0.5 rounded', primaryStyle.bg, primaryStyle.text)}>
+                {primarySite.code}
+              </span>
+              <div
+                className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: primaryStateStyle.border }}
+                title={currentState}
+              />
+            </div>
+            {agentHostname && (
+              <div className="flex items-center gap-0.5 mt-0.5">
+                <Server className="h-2.5 w-2.5 text-muted-foreground flex-shrink-0" />
+                <span className="text-[9px] text-muted-foreground truncate">{agentHostname}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Override site panels (DR, staging, etc.) */}
+        {siteOverrides.map((override) => {
+          const style = getSiteStyle(override.site_type);
+          return (
+            <div
+              key={override.site_id}
+              className={cn(
+                'flex-1 rounded border p-1.5 min-w-0',
+                override.site_is_active ? 'border-gray-200' : 'border-dashed border-gray-300 opacity-60',
+              )}
+            >
+              <div className="flex items-center gap-1 mb-0.5">
+                <span className={cn('text-[9px] font-bold px-1 py-0.5 rounded', style.bg, style.text)}>
+                  {override.site_code}
+                </span>
+                <div
+                  className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-gray-300"
+                  title="Standby"
+                />
+              </div>
+              {override.override_agent_hostname && (
+                <div className="flex items-center gap-0.5 mt-0.5">
+                  <Server className="h-2.5 w-2.5 text-muted-foreground flex-shrink-0" />
+                  <span className="text-[9px] text-muted-foreground truncate">{override.override_agent_hostname}</span>
+                </div>
+              )}
+              {!override.override_agent_hostname && (
+                <div className="flex items-center gap-0.5 mt-0.5">
+                  <span className="text-[9px] text-muted-foreground italic">no agent</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
