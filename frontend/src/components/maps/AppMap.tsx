@@ -24,6 +24,7 @@ import { ComponentNode } from './ComponentNode';
 import { MapToolbar } from './MapToolbar';
 import { InfrastructureSummary } from './InfrastructureSummary';
 import { Component, Dependency, ComponentGroup } from '@/api/apps';
+import { SiteOverride, SiteInfo, groupOverridesByComponent } from '@/api/site-overrides';
 import { ComponentState, ComponentType, STATE_COLORS } from '@/lib/colors';
 
 const nodeTypes: NodeTypes = {
@@ -90,6 +91,9 @@ interface AppMapProps {
   // Layout saving
   onSaveLayout?: (positions: Array<{ id: string; x: number; y: number }>) => void;
   isSavingLayout?: boolean;
+  // Multi-site data
+  siteOverrides?: SiteOverride[];
+  primarySite?: SiteInfo | null;
 }
 
 /**
@@ -232,6 +236,8 @@ function buildNodes(
   infraHighlight?: Set<string> | null,
   forceAutoLayout?: boolean,
   allowDrag?: boolean,
+  siteOverridesMap?: Map<string, SiteOverride[]>,
+  primarySite?: SiteInfo | null,
 ): Node[] {
   const groupColorMap: Record<string, string> = {};
   if (groups) {
@@ -320,6 +326,16 @@ function buildNodes(
         highlightColor,
         // Metrics from latest check
         metrics: c.last_check_metrics,
+        // Multi-site data
+        primarySite: primarySite || undefined,
+        siteOverrides: siteOverridesMap?.get(c.id)?.map((o) => ({
+          site_id: o.site_id,
+          site_name: o.site_name,
+          site_code: o.site_code,
+          site_type: o.site_type,
+          site_is_active: o.site_is_active,
+          override_agent_hostname: o.override_agent_hostname,
+        })),
       },
     };
   });
@@ -425,6 +441,8 @@ function AppMapInner({
   allowDrag = true, // Default to allowing drag in view mode
   onSaveLayout,
   isSavingLayout,
+  siteOverrides,
+  primarySite,
 }: AppMapProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition, fitView } = useReactFlow();
@@ -478,6 +496,12 @@ function AppMapInner({
     setPendingPositions(new Map());
   }, [pendingPositions, onSaveLayout]);
 
+  // Build site overrides lookup map
+  const siteOverridesMap = useMemo(
+    () => siteOverrides ? groupOverridesByComponent(siteOverrides) : undefined,
+    [siteOverrides],
+  );
+
   const initialNodes = useMemo(
     () => buildNodes(
       components,
@@ -497,8 +521,10 @@ function AppMapInner({
       infraHighlight,
       forceAutoLayout,
       allowDrag,
+      siteOverridesMap,
+      primarySite,
     ),
-    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag],
+    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteOverridesMap, primarySite],
   );
 
   const initialEdges = useMemo(

@@ -142,4 +142,30 @@ test.describe('Documentation Screenshots', () => {
       fullPage: false,
     });
   });
+
+  test('map-view-multi-site', async ({ page }) => {
+    // Navigate to first app to capture multi-site split-node visualization.
+    // When site_overrides are configured, component nodes display split panels
+    // showing primary + DR site status side by side.
+    await page.goto('/');
+    await page.waitForTimeout(1000);
+
+    const appCard = page.locator('[data-testid="app-card"]').first();
+    if (await appCard.isVisible()) {
+      await appCard.click();
+      await page.waitForTimeout(2000);
+    } else {
+      await page.goto('/apps/demo');
+      await page.waitForTimeout(1500);
+    }
+
+    // Look for multi-site panels (Sites label appears when overrides exist)
+    const sitePanels = page.locator('text=Sites').first();
+    if (await sitePanels.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await page.screenshot({
+        path: path.join(SCREENSHOT_DIR, 'map-view-multi-site.png'),
+        fullPage: false,
+      });
+    }
+  });
 });

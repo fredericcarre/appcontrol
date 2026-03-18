@@ -21,6 +21,7 @@ import {
 import { useStartComponent, useStopComponent, useForceStopComponent, useStartWithDeps, useRestartWithDependents } from '@/api/components';
 import { usePermission } from '@/hooks/use-permission';
 import { useWebSocket } from '@/hooks/use-websocket';
+import { useSiteOverrides } from '@/api/site-overrides';
 import {
   AppMap,
   ImpactPreview,
@@ -99,6 +100,7 @@ export function MapViewPage() {
   const suspendApp = useSuspendApp();
   const resumeApp = useResumeApp();
   const { subscribe } = useWebSocket();
+  const { data: siteOverridesData } = useSiteOverrides(appId || '');
 
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
@@ -929,6 +931,9 @@ export function MapViewPage() {
           // Layout saving (view mode)
           onSaveLayout={canEdit ? handleSaveLayoutPositions : undefined}
           isSavingLayout={updatePositions.isPending}
+          // Multi-site data
+          siteOverrides={siteOverridesData?.overrides}
+          primarySite={siteOverridesData?.primary_site}
         />
       </div>
 

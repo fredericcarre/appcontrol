@@ -57,6 +57,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/apps/:id/cancel", post(apps::cancel_operation))
         .route("/apps/:id/suspend", put(apps::suspend_application))
         .route("/apps/:id/resume", put(apps::resume_application))
+        .route(
+            "/apps/:app_id/site-overrides",
+            get(apps::get_site_overrides),
+        )
         // Components
         .route(
             "/apps/:app_id/components",

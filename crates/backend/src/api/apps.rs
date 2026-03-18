@@ -1146,3 +1146,121 @@ pub async fn resume_application(
         "message": "Application resumed. Agent will restart health checks for all components."
     })))
 }
+
+/// GET /api/v1/apps/:app_id/site-overrides
+///
+/// Returns all site overrides for components in the given application,
+/// enriched with site and agent information for multi-site visualization.
+pub async fn get_site_overrides(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(app_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Verify app belongs to org
+    let _app = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(app_id)
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    // Fetch site overrides joined with site and agent info
+    #[derive(Debug, sqlx::FromRow)]
+    struct SiteOverrideRow {
+        id: Uuid,
+        component_id: Uuid,
+        site_id: Uuid,
+        agent_id_override: Option<Uuid>,
+        check_cmd_override: Option<String>,
+        start_cmd_override: Option<String>,
+        stop_cmd_override: Option<String>,
+        rebuild_cmd_override: Option<String>,
+        env_vars_override: Option<Value>,
+        // Joined site info
+        site_name: Option<String>,
+        site_code: Option<String>,
+        site_type: Option<String>,
+        site_is_active: Option<bool>,
+        // Joined agent info for override agent
+        override_agent_hostname: Option<String>,
+    }
+
+    let overrides = sqlx::query_as::<_, SiteOverrideRow>(
+        r#"
+        SELECT
+            so.id, so.component_id, so.site_id,
+            so.agent_id_override, so.check_cmd_override, so.start_cmd_override,
+            so.stop_cmd_override, so.rebuild_cmd_override, so.env_vars_override,
+            s.name as site_name, s.code as site_code, s.site_type, s.is_active as site_is_active,
+            a.hostname as override_agent_hostname
+        FROM site_overrides so
+        JOIN sites s ON so.site_id = s.id
+        LEFT JOIN agents a ON so.agent_id_override = a.id
+        WHERE so.component_id IN (SELECT id FROM components WHERE application_id = $1)
+        ORDER BY so.component_id, s.site_type, s.name
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Also fetch the application's primary site info
+    #[derive(Debug, sqlx::FromRow)]
+    struct AppSiteInfo {
+        site_id: Uuid,
+        site_name: String,
+        site_code: String,
+        site_type: String,
+    }
+
+    let primary_site = sqlx::query_as::<_, AppSiteInfo>(
+        r#"
+        SELECT a.site_id, s.name as site_name, s.code as site_code, s.site_type
+        FROM applications a
+        JOIN sites s ON a.site_id = s.id
+        WHERE a.id = $1
+        "#,
+    )
+    .bind(app_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let overrides_json: Vec<Value> = overrides
+        .into_iter()
+        .map(|o| {
+            json!({
+                "id": o.id,
+                "component_id": o.component_id,
+                "site_id": o.site_id,
+                "site_name": o.site_name,
+                "site_code": o.site_code,
+                "site_type": o.site_type,
+                "site_is_active": o.site_is_active,
+                "agent_id_override": o.agent_id_override,
+                "override_agent_hostname": o.override_agent_hostname,
+                "check_cmd_override": o.check_cmd_override,
+                "start_cmd_override": o.start_cmd_override,
+                "stop_cmd_override": o.stop_cmd_override,
+                "rebuild_cmd_override": o.rebuild_cmd_override,
+                "env_vars_override": o.env_vars_override,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "overrides": overrides_json,
+        "primary_site": primary_site.map(|s| json!({
+            "id": s.site_id,
+            "name": s.site_name,
+            "code": s.site_code,
+            "site_type": s.site_type,
+        })),
+    })))
+}
