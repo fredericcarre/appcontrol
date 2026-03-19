@@ -181,7 +181,9 @@ impl TestContext {
             config,
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
-            operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(pool.clone()),
+            operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(
+                pool.clone(),
+            ),
             terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
             log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),
         });
@@ -353,7 +355,9 @@ impl TestContext {
             config,
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
-            operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(pool.clone()),
+            operation_lock: appcontrol_backend::core::operation_lock::OperationLock::new(
+                pool.clone(),
+            ),
             terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
             log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),
         });

@@ -235,11 +235,26 @@ pub async fn app_history(
     .await?;
 
     // 6. Calculate snapshots at each resolution interval
-    let snapshots =
-        calculate_snapshots(&components, &initial_states, &transitions, from, to, resolution);
+    let snapshots = calculate_snapshots(
+        &components,
+        &initial_states,
+        &transitions,
+        from,
+        to,
+        resolution,
+    );
 
     // 7. Get all events (transitions + actions + commands)
-    let events = get_events(&state.db, app_id, &component_ids, &component_names, from, to, event_limit).await?;
+    let events = get_events(
+        &state.db,
+        app_id,
+        &component_ids,
+        &component_names,
+        from,
+        to,
+        event_limit,
+    )
+    .await?;
 
     Ok(Json(HistoryResponse {
         snapshots,
@@ -389,7 +404,17 @@ async fn get_events(
     }
 
     // User actions on the app
-    let app_actions = sqlx::query_as::<_, (String, String, Value, DateTime<Utc>, Option<String>, Option<String>)>(
+    let app_actions = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Value,
+            DateTime<Utc>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
         r#"
         SELECT COALESCE(u.email, al.user_id::text), al.action, al.details, al.created_at,
                al.status, al.error_message
@@ -422,7 +447,19 @@ async fn get_events(
     }
 
     // User actions on components
-    let component_actions = sqlx::query_as::<_, (String, String, Uuid, String, Value, DateTime<Utc>, Option<String>, Option<String>)>(
+    let component_actions = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Uuid,
+            String,
+            Value,
+            DateTime<Utc>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
         r#"
         SELECT COALESCE(u.email, al.user_id::text), al.action, al.resource_id,
                COALESCE(c.name, al.resource_id::text), al.details, al.created_at,
@@ -444,7 +481,8 @@ async fn get_events(
     .fetch_all(db)
     .await?;
 
-    for (user, action, comp_id, comp_name, details, at, status, error_message) in component_actions {
+    for (user, action, comp_id, comp_name, details, at, status, error_message) in component_actions
+    {
         events.push(HistoryEvent {
             at,
             event_type: "action".to_string(),
@@ -461,7 +499,18 @@ async fn get_events(
     }
 
     // Command executions
-    let commands = sqlx::query_as::<_, (Uuid, Uuid, String, Option<i16>, Option<i32>, DateTime<Utc>, Option<DateTime<Utc>>)>(
+    let commands = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            Option<i16>,
+            Option<i32>,
+            DateTime<Utc>,
+            Option<DateTime<Utc>>,
+        ),
+    >(
         r#"
         SELECT ce.request_id, ce.component_id, ce.command_type,
                ce.exit_code, ce.duration_ms, ce.dispatched_at, ce.completed_at
@@ -478,7 +527,9 @@ async fn get_events(
     .fetch_all(db)
     .await?;
 
-    for (request_id, comp_id, cmd_type, exit_code, duration_ms, dispatched_at, completed_at) in commands {
+    for (request_id, comp_id, cmd_type, exit_code, duration_ms, dispatched_at, completed_at) in
+        commands
+    {
         events.push(HistoryEvent {
             at: completed_at.unwrap_or(dispatched_at),
             event_type: "command".to_string(),

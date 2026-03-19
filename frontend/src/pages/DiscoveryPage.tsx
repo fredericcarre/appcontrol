@@ -3,14 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
-} from '@/components/ui/dropdown-menu';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -41,7 +34,6 @@ import {
   Calendar,
   FileJson,
   GitCompare,
-  MoreVertical,
   Plus,
   Trash2,
   Clock,
@@ -57,9 +49,6 @@ import {
   useCreateSchedule,
   useDeleteSchedule,
   useCompareSnapshots,
-  type SnapshotSchedule,
-  type ScheduledSnapshot,
-  type DiscoveryReportDetail,
 } from '@/api/discovery';
 import { useAgents, type Agent } from '@/api/reports';
 import { useDiscoveryStore } from '@/stores/discovery';

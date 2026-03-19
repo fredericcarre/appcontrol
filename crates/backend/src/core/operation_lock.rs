@@ -138,7 +138,17 @@ impl OperationLock {
 
     /// Get information about an active operation on an application.
     pub async fn get_active(&self, app_id: Uuid) -> Result<Option<ActiveOperation>, LockError> {
-        let row = sqlx::query_as::<_, (String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, Uuid, String, Option<String>)>(
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                chrono::DateTime<chrono::Utc>,
+                chrono::DateTime<chrono::Utc>,
+                Uuid,
+                String,
+                Option<String>,
+            ),
+        >(
             r#"
             SELECT operation, started_at, last_heartbeat, user_id, status, backend_instance
             FROM operation_locks
@@ -150,16 +160,18 @@ impl OperationLock {
         .await
         .map_err(|e| LockError::Database(e.to_string()))?;
 
-        Ok(row.map(|(operation, started_at, last_heartbeat, user_id, status, backend_instance)| {
-            ActiveOperation {
-                operation,
-                started_at,
-                last_heartbeat,
-                user_id,
-                status,
-                backend_instance,
-            }
-        }))
+        Ok(row.map(
+            |(operation, started_at, last_heartbeat, user_id, status, backend_instance)| {
+                ActiveOperation {
+                    operation,
+                    started_at,
+                    last_heartbeat,
+                    user_id,
+                    status,
+                    backend_instance,
+                }
+            },
+        ))
     }
 
     /// Check if an operation on an application has been cancelled.
@@ -171,16 +183,14 @@ impl OperationLock {
 
         // Use try_send to avoid blocking - if we can't check, assume not cancelled
         let handle = tokio::task::spawn(async move {
-            sqlx::query_scalar::<_, String>(
-                "SELECT status FROM operation_locks WHERE app_id = $1",
-            )
-            .bind(app_id)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten()
-            .map(|s| s == "cancelling" || s == "cancelled")
-            .unwrap_or(false)
+            sqlx::query_scalar::<_, String>("SELECT status FROM operation_locks WHERE app_id = $1")
+                .bind(app_id)
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten()
+                .map(|s| s == "cancelling" || s == "cancelled")
+                .unwrap_or(false)
         });
 
         // Try to get result with a short timeout
@@ -191,16 +201,14 @@ impl OperationLock {
 
     /// Check if an operation has been cancelled (async version).
     pub async fn is_cancelled_async(&self, app_id: Uuid) -> bool {
-        sqlx::query_scalar::<_, String>(
-            "SELECT status FROM operation_locks WHERE app_id = $1",
-        )
-        .bind(app_id)
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten()
-        .map(|s| s == "cancelling" || s == "cancelled")
-        .unwrap_or(false)
+        sqlx::query_scalar::<_, String>("SELECT status FROM operation_locks WHERE app_id = $1")
+            .bind(app_id)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s == "cancelling" || s == "cancelled")
+            .unwrap_or(false)
     }
 
     /// Request cancellation of an operation.
@@ -303,7 +311,18 @@ impl OperationLock {
 
     /// List all active operation locks (for admin UI / debugging).
     pub async fn list_all(&self) -> Result<Vec<(Uuid, ActiveOperation)>, LockError> {
-        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, Uuid, String, Option<String>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                String,
+                chrono::DateTime<chrono::Utc>,
+                chrono::DateTime<chrono::Utc>,
+                Uuid,
+                String,
+                Option<String>,
+            ),
+        >(
             r#"
             SELECT app_id, operation, started_at, last_heartbeat, user_id, status, backend_instance
             FROM operation_locks
@@ -316,19 +335,29 @@ impl OperationLock {
 
         Ok(rows
             .into_iter()
-            .map(|(app_id, operation, started_at, last_heartbeat, user_id, status, backend_instance)| {
-                (
+            .map(
+                |(
                     app_id,
-                    ActiveOperation {
-                        operation,
-                        started_at,
-                        last_heartbeat,
-                        user_id,
-                        status,
-                        backend_instance,
-                    },
-                )
-            })
+                    operation,
+                    started_at,
+                    last_heartbeat,
+                    user_id,
+                    status,
+                    backend_instance,
+                )| {
+                    (
+                        app_id,
+                        ActiveOperation {
+                            operation,
+                            started_at,
+                            last_heartbeat,
+                            user_id,
+                            status,
+                            backend_instance,
+                        },
+                    )
+                },
+            )
             .collect())
     }
 }
@@ -416,13 +445,22 @@ mod tests {
 
     #[test]
     fn test_stale_threshold_reasonable() {
-        assert!(STALE_THRESHOLD_SECONDS >= 30, "Stale threshold should be at least 30s");
-        assert!(STALE_THRESHOLD_SECONDS <= 300, "Stale threshold shouldn't be too long");
+        assert!(
+            STALE_THRESHOLD_SECONDS >= 30,
+            "Stale threshold should be at least 30s"
+        );
+        assert!(
+            STALE_THRESHOLD_SECONDS <= 300,
+            "Stale threshold shouldn't be too long"
+        );
     }
 
     #[test]
     fn test_heartbeat_interval_reasonable() {
-        assert!(HEARTBEAT_INTERVAL_SECONDS >= 3, "Heartbeat shouldn't be too frequent");
+        assert!(
+            HEARTBEAT_INTERVAL_SECONDS >= 3,
+            "Heartbeat shouldn't be too frequent"
+        );
         assert!(
             HEARTBEAT_INTERVAL_SECONDS < STALE_THRESHOLD_SECONDS as u64,
             "Heartbeat must be more frequent than stale threshold"

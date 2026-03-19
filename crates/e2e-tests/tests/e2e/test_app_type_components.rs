@@ -48,107 +48,154 @@ mod test_app_type_components {
     /// Returns (metrics_app_id, core_app_id, backend_ref_component_id)
     async fn create_linked_apps(ctx: &TestContext) -> (Uuid, Uuid, Uuid) {
         // Create Core-Backend app first
-        let resp = ctx.post("/api/v1/apps", json!({
-            "name": "Core-Backend",
-            "description": "Core backend services"
-        })).await;
+        let resp = ctx
+            .post(
+                "/api/v1/apps",
+                json!({
+                    "name": "Core-Backend",
+                    "description": "Core backend services"
+                }),
+            )
+            .await;
         let core_app: Value = resp.json().await.unwrap();
         let core_app_id: Uuid = core_app["id"].as_str().unwrap().parse().unwrap();
 
         // Core-DB component
-        let resp = ctx.post(&format!("/api/v1/apps/{core_app_id}/components"), json!({
-            "name": "Core-DB",
-            "component_type": "database",
-            "hostname": "srv-core-db",
-            "check_cmd": "exit 0",
-            "start_cmd": "echo starting",
-            "stop_cmd": "echo stopping",
-            "check_interval_seconds": 5,
-            "start_timeout_seconds": 30,
-            "stop_timeout_seconds": 30,
-        })).await;
+        let resp = ctx
+            .post(
+                &format!("/api/v1/apps/{core_app_id}/components"),
+                json!({
+                    "name": "Core-DB",
+                    "component_type": "database",
+                    "hostname": "srv-core-db",
+                    "check_cmd": "exit 0",
+                    "start_cmd": "echo starting",
+                    "stop_cmd": "echo stopping",
+                    "check_interval_seconds": 5,
+                    "start_timeout_seconds": 30,
+                    "stop_timeout_seconds": 30,
+                }),
+            )
+            .await;
         let core_db: Value = resp.json().await.unwrap();
         let core_db_id: Uuid = core_db["id"].as_str().unwrap().parse().unwrap();
 
         // Core-API component
-        let resp = ctx.post(&format!("/api/v1/apps/{core_app_id}/components"), json!({
-            "name": "Core-API",
-            "component_type": "appserver",
-            "hostname": "srv-core-api",
-            "check_cmd": "exit 0",
-            "start_cmd": "echo starting",
-            "stop_cmd": "echo stopping",
-            "check_interval_seconds": 5,
-            "start_timeout_seconds": 30,
-            "stop_timeout_seconds": 30,
-        })).await;
+        let resp = ctx
+            .post(
+                &format!("/api/v1/apps/{core_app_id}/components"),
+                json!({
+                    "name": "Core-API",
+                    "component_type": "appserver",
+                    "hostname": "srv-core-api",
+                    "check_cmd": "exit 0",
+                    "start_cmd": "echo starting",
+                    "stop_cmd": "echo stopping",
+                    "check_interval_seconds": 5,
+                    "start_timeout_seconds": 30,
+                    "stop_timeout_seconds": 30,
+                }),
+            )
+            .await;
         let core_api: Value = resp.json().await.unwrap();
         let core_api_id: Uuid = core_api["id"].as_str().unwrap().parse().unwrap();
 
         // Core-DB → Core-API dependency
-        ctx.post(&format!("/api/v1/apps/{core_app_id}/dependencies"), json!({
-            "from_component_id": core_db_id,
-            "to_component_id": core_api_id,
-        })).await;
+        ctx.post(
+            &format!("/api/v1/apps/{core_app_id}/dependencies"),
+            json!({
+                "from_component_id": core_db_id,
+                "to_component_id": core_api_id,
+            }),
+        )
+        .await;
 
         // Create Metrics-Dashboard app
-        let resp = ctx.post("/api/v1/apps", json!({
-            "name": "Metrics-Dashboard",
-            "description": "Metrics dashboard"
-        })).await;
+        let resp = ctx
+            .post(
+                "/api/v1/apps",
+                json!({
+                    "name": "Metrics-Dashboard",
+                    "description": "Metrics dashboard"
+                }),
+            )
+            .await;
         let metrics_app: Value = resp.json().await.unwrap();
         let metrics_app_id: Uuid = metrics_app["id"].as_str().unwrap().parse().unwrap();
 
         // Metrics-DB component
-        let resp = ctx.post(&format!("/api/v1/apps/{metrics_app_id}/components"), json!({
-            "name": "Metrics-DB",
-            "component_type": "database",
-            "hostname": "srv-metrics-db",
-            "check_cmd": "exit 0",
-            "start_cmd": "echo starting",
-            "stop_cmd": "echo stopping",
-            "check_interval_seconds": 5,
-            "start_timeout_seconds": 30,
-            "stop_timeout_seconds": 30,
-        })).await;
+        let resp = ctx
+            .post(
+                &format!("/api/v1/apps/{metrics_app_id}/components"),
+                json!({
+                    "name": "Metrics-DB",
+                    "component_type": "database",
+                    "hostname": "srv-metrics-db",
+                    "check_cmd": "exit 0",
+                    "start_cmd": "echo starting",
+                    "stop_cmd": "echo stopping",
+                    "check_interval_seconds": 5,
+                    "start_timeout_seconds": 30,
+                    "stop_timeout_seconds": 30,
+                }),
+            )
+            .await;
         let metrics_db: Value = resp.json().await.unwrap();
         let metrics_db_id: Uuid = metrics_db["id"].as_str().unwrap().parse().unwrap();
 
         // Backend-Ref (app-type component referencing Core-Backend)
-        let resp = ctx.post(&format!("/api/v1/apps/{metrics_app_id}/components"), json!({
-            "name": "Backend-Ref",
-            "component_type": "application",
-            "referenced_app_id": core_app_id,
-            "start_timeout_seconds": 60,
-            "stop_timeout_seconds": 60,
-        })).await;
+        let resp = ctx
+            .post(
+                &format!("/api/v1/apps/{metrics_app_id}/components"),
+                json!({
+                    "name": "Backend-Ref",
+                    "component_type": "application",
+                    "referenced_app_id": core_app_id,
+                    "start_timeout_seconds": 60,
+                    "stop_timeout_seconds": 60,
+                }),
+            )
+            .await;
         let backend_ref: Value = resp.json().await.unwrap();
         let backend_ref_id: Uuid = backend_ref["id"].as_str().unwrap().parse().unwrap();
 
         // Dashboard component
-        let resp = ctx.post(&format!("/api/v1/apps/{metrics_app_id}/components"), json!({
-            "name": "Dashboard",
-            "component_type": "webfront",
-            "hostname": "srv-dashboard",
-            "check_cmd": "exit 0",
-            "start_cmd": "echo starting",
-            "stop_cmd": "echo stopping",
-            "check_interval_seconds": 5,
-            "start_timeout_seconds": 30,
-            "stop_timeout_seconds": 30,
-        })).await;
+        let resp = ctx
+            .post(
+                &format!("/api/v1/apps/{metrics_app_id}/components"),
+                json!({
+                    "name": "Dashboard",
+                    "component_type": "webfront",
+                    "hostname": "srv-dashboard",
+                    "check_cmd": "exit 0",
+                    "start_cmd": "echo starting",
+                    "stop_cmd": "echo stopping",
+                    "check_interval_seconds": 5,
+                    "start_timeout_seconds": 30,
+                    "stop_timeout_seconds": 30,
+                }),
+            )
+            .await;
         let dashboard: Value = resp.json().await.unwrap();
         let dashboard_id: Uuid = dashboard["id"].as_str().unwrap().parse().unwrap();
 
         // Dependencies: Metrics-DB → Backend-Ref → Dashboard
-        ctx.post(&format!("/api/v1/apps/{metrics_app_id}/dependencies"), json!({
-            "from_component_id": metrics_db_id,
-            "to_component_id": backend_ref_id,
-        })).await;
-        ctx.post(&format!("/api/v1/apps/{metrics_app_id}/dependencies"), json!({
-            "from_component_id": backend_ref_id,
-            "to_component_id": dashboard_id,
-        })).await;
+        ctx.post(
+            &format!("/api/v1/apps/{metrics_app_id}/dependencies"),
+            json!({
+                "from_component_id": metrics_db_id,
+                "to_component_id": backend_ref_id,
+            }),
+        )
+        .await;
+        ctx.post(
+            &format!("/api/v1/apps/{metrics_app_id}/dependencies"),
+            json!({
+                "from_component_id": backend_ref_id,
+                "to_component_id": dashboard_id,
+            }),
+        )
+        .await;
 
         (metrics_app_id, core_app_id, backend_ref_id)
     }
@@ -161,22 +208,32 @@ mod test_app_type_components {
         // All components should start as STOPPED
         let metrics_status = ctx.get_app_status(metrics_app_id).await;
         assert!(
-            metrics_status.components.iter().all(|c| c.state == "STOPPED" || c.state == "UNKNOWN"),
+            metrics_status
+                .components
+                .iter()
+                .all(|c| c.state == "STOPPED" || c.state == "UNKNOWN"),
             "Metrics-Dashboard components should be STOPPED"
         );
 
         let core_status = ctx.get_app_status(core_app_id).await;
         assert!(
-            core_status.components.iter().all(|c| c.state == "STOPPED" || c.state == "UNKNOWN"),
+            core_status
+                .components
+                .iter()
+                .all(|c| c.state == "STOPPED" || c.state == "UNKNOWN"),
             "Core-Backend components should be STOPPED"
         );
 
         // Start Metrics-Dashboard (should cascade to Core-Backend)
-        let resp = ctx.post(&format!("/api/v1/apps/{metrics_app_id}/start"), json!({})).await;
+        let resp = ctx
+            .post(&format!("/api/v1/apps/{metrics_app_id}/start"), json!({}))
+            .await;
         assert!(resp.status().is_success(), "Start should succeed");
 
         // Wait for both apps to be running
-        ctx.wait_app_running(metrics_app_id, Duration::from_secs(120)).await.unwrap();
+        ctx.wait_app_running(metrics_app_id, Duration::from_secs(120))
+            .await
+            .unwrap();
 
         // Verify Core-Backend was also started
         let core_status = ctx.get_app_status(core_app_id).await;
@@ -189,11 +246,13 @@ mod test_app_type_components {
         let core_transitions = ctx.get_state_transitions(core_app_id).await;
         let metrics_transitions = ctx.get_state_transitions(metrics_app_id).await;
 
-        let core_api_running = core_transitions.iter()
+        let core_api_running = core_transitions
+            .iter()
             .find(|t| t.component_name == "Core-API" && t.to_state == "RUNNING")
             .expect("Core-API should have transitioned to RUNNING");
 
-        let dashboard_starting = metrics_transitions.iter()
+        let dashboard_starting = metrics_transitions
+            .iter()
             .find(|t| t.component_name == "Dashboard" && t.to_state == "STARTING")
             .expect("Dashboard should have started");
 
@@ -215,11 +274,15 @@ mod test_app_type_components {
         ctx.set_all_running(core_app_id).await;
 
         // Stop Metrics-Dashboard (should cascade to Core-Backend)
-        let resp = ctx.post(&format!("/api/v1/apps/{metrics_app_id}/stop"), json!({})).await;
+        let resp = ctx
+            .post(&format!("/api/v1/apps/{metrics_app_id}/stop"), json!({}))
+            .await;
         assert!(resp.status().is_success(), "Stop should succeed");
 
         // Wait for Metrics-Dashboard to be stopped
-        ctx.wait_app_stopped(metrics_app_id, Duration::from_secs(120)).await.unwrap();
+        ctx.wait_app_stopped(metrics_app_id, Duration::from_secs(120))
+            .await
+            .unwrap();
 
         // Verify Core-Backend was also stopped
         let core_status = ctx.get_app_status(core_app_id).await;
@@ -232,10 +295,12 @@ mod test_app_type_components {
         let core_transitions = ctx.get_state_transitions(core_app_id).await;
         let metrics_transitions = ctx.get_state_transitions(metrics_app_id).await;
 
-        let dashboard_stopped = metrics_transitions.iter()
+        let dashboard_stopped = metrics_transitions
+            .iter()
             .find(|t| t.component_name == "Dashboard" && t.to_state == "STOPPED");
 
-        let core_api_stopping = core_transitions.iter()
+        let core_api_stopping = core_transitions
+            .iter()
             .find(|t| t.component_name == "Core-API" && t.to_state == "STOPPING");
 
         if let (Some(dash), Some(core)) = (dashboard_stopped, core_api_stopping) {
@@ -254,10 +319,13 @@ mod test_app_type_components {
         let (metrics_app_id, core_app_id, _) = create_linked_apps(&ctx).await;
 
         // Configure Core-API to fail during start
-        ctx.set_component_check_will_fail(core_app_id, "Core-API").await;
+        ctx.set_component_check_will_fail(core_app_id, "Core-API")
+            .await;
 
         // Try to start Metrics-Dashboard
-        let resp = ctx.post(&format!("/api/v1/apps/{metrics_app_id}/start"), json!({})).await;
+        let resp = ctx
+            .post(&format!("/api/v1/apps/{metrics_app_id}/start"), json!({}))
+            .await;
         assert!(resp.status().is_success(), "Start should be accepted");
 
         // Wait for failure (should timeout or fail)
@@ -311,15 +379,23 @@ mod test_app_type_components {
         )
         .bind(core_app_id).fetch_one(&ctx.db_pool).await.unwrap();
 
-        let total_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM components WHERE application_id = $1"
-        )
-        .bind(core_app_id).fetch_one(&ctx.db_pool).await.unwrap();
+        let total_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM components WHERE application_id = $1")
+                .bind(core_app_id)
+                .fetch_one(&ctx.db_pool)
+                .await
+                .unwrap();
 
         // All components are either RUNNING or DEGRADED
-        assert_eq!(running_count + degraded_count, total_count,
-            "All components should be RUNNING or DEGRADED");
-        assert!(degraded_count > 0, "At least one component should be DEGRADED");
+        assert_eq!(
+            running_count + degraded_count,
+            total_count,
+            "All components should be RUNNING or DEGRADED"
+        );
+        assert!(
+            degraded_count > 0,
+            "At least one component should be DEGRADED"
+        );
 
         ctx.cleanup().await;
     }
@@ -339,26 +415,38 @@ mod test_app_type_components {
         let app_b_id: Uuid = app_b["id"].as_str().unwrap().parse().unwrap();
 
         // App-A references App-B
-        ctx.post(&format!("/api/v1/apps/{app_a_id}/components"), json!({
-            "name": "Ref-B",
-            "component_type": "application",
-            "referenced_app_id": app_b_id,
-        })).await;
+        ctx.post(
+            &format!("/api/v1/apps/{app_a_id}/components"),
+            json!({
+                "name": "Ref-B",
+                "component_type": "application",
+                "referenced_app_id": app_b_id,
+            }),
+        )
+        .await;
 
         // App-B references App-A (creating a cycle)
-        ctx.post(&format!("/api/v1/apps/{app_b_id}/components"), json!({
-            "name": "Ref-A",
-            "component_type": "application",
-            "referenced_app_id": app_a_id,
-        })).await;
+        ctx.post(
+            &format!("/api/v1/apps/{app_b_id}/components"),
+            json!({
+                "name": "Ref-A",
+                "component_type": "application",
+                "referenced_app_id": app_a_id,
+            }),
+        )
+        .await;
 
         // Starting App-A should not hang or crash (cycle detection should prevent infinite recursion)
-        let resp = ctx.post(&format!("/api/v1/apps/{app_a_id}/start"), json!({})).await;
+        let resp = ctx
+            .post(&format!("/api/v1/apps/{app_a_id}/start"), json!({}))
+            .await;
 
         // The request should complete (not hang)
         // It may fail or succeed depending on how cycles are handled, but it should NOT hang
         assert!(
-            resp.status().is_success() || resp.status().is_client_error() || resp.status().is_server_error(),
+            resp.status().is_success()
+                || resp.status().is_client_error()
+                || resp.status().is_server_error(),
             "Start should complete without hanging"
         );
 
@@ -377,10 +465,12 @@ mod test_app_type_components {
         // But when checking for start/stop, we should use the referenced app's aggregate state
 
         // Verify Backend-Ref stored state could be anything
-        let stored_state: String = sqlx::query_scalar(
-            "SELECT current_state FROM components WHERE id = $1"
-        )
-        .bind(backend_ref_id).fetch_one(&ctx.db_pool).await.unwrap();
+        let stored_state: String =
+            sqlx::query_scalar("SELECT current_state FROM components WHERE id = $1")
+                .bind(backend_ref_id)
+                .fetch_one(&ctx.db_pool)
+                .await
+                .unwrap();
 
         // Verify Core-Backend aggregate is RUNNING
         let running_count: i64 = sqlx::query_scalar(
@@ -388,12 +478,17 @@ mod test_app_type_components {
         )
         .bind(core_app_id).fetch_one(&ctx.db_pool).await.unwrap();
 
-        let total_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM components WHERE application_id = $1"
-        )
-        .bind(core_app_id).fetch_one(&ctx.db_pool).await.unwrap();
+        let total_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM components WHERE application_id = $1")
+                .bind(core_app_id)
+                .fetch_one(&ctx.db_pool)
+                .await
+                .unwrap();
 
-        assert_eq!(running_count, total_count, "All Core-Backend components should be RUNNING");
+        assert_eq!(
+            running_count, total_count,
+            "All Core-Backend components should be RUNNING"
+        );
 
         // The sequencer should use the aggregate state, not the stored state
         // This is verified by the fact that stop would work even if Backend-Ref stored state is "STOPPED"

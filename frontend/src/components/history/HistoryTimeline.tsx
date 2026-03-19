@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { format, formatDistanceToNow, subHours, subDays, startOfHour, startOfDay } from 'date-fns';
+import { format, subHours, subDays } from 'date-fns';
 import {
   Play,
   Pause,
@@ -7,24 +7,12 @@ import {
   SkipForward,
   Clock,
   Calendar,
-  ChevronLeft,
-  ChevronRight,
   Zap,
   User,
-  ArrowRight,
   Terminal,
   AlertCircle,
-  CheckCircle,
-  XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Tooltip,
   TooltipContent,
@@ -51,7 +39,6 @@ export type TimeRangePreset = '1h' | '4h' | '24h' | '7d' | '30d';
 interface HistoryTimelineProps {
   appId: string;
   onSelectTime: (time: Date, snapshot: TimeSnapshot | null) => void;
-  selectedTime: Date | null;
   className?: string;
 }
 
@@ -233,7 +220,6 @@ function TimeAxis({ from, to }: TimeAxisProps) {
 export function HistoryTimeline({
   appId,
   onSelectTime,
-  selectedTime,
   className,
 }: HistoryTimelineProps) {
   // State
@@ -295,7 +281,7 @@ export function HistoryTimeline({
       }
       return closest;
     },
-    [history?.snapshots],
+    [history],
   );
 
   // Handle slider change
@@ -341,7 +327,7 @@ export function HistoryTimeline({
     // Go to start
     setSliderValue([0]);
     onSelectTime(timeRange.from, findSnapshotForTime(timeRange.from));
-  }, [history?.events, sliderValue, getTimeForPosition, handleEventClick, timeRange, findSnapshotForTime, onSelectTime]);
+  }, [history, sliderValue, getTimeForPosition, handleEventClick, timeRange, findSnapshotForTime, onSelectTime]);
 
   const handleSkipForward = useCallback(() => {
     if (!history?.events.length) return;
@@ -357,7 +343,7 @@ export function HistoryTimeline({
     // Go to end
     setSliderValue([100]);
     onSelectTime(timeRange.to, findSnapshotForTime(timeRange.to));
-  }, [history?.events, sliderValue, getTimeForPosition, handleEventClick, timeRange, findSnapshotForTime, onSelectTime]);
+  }, [history, sliderValue, getTimeForPosition, handleEventClick, timeRange, findSnapshotForTime, onSelectTime]);
 
   // Playback effect
   useEffect(() => {
@@ -385,13 +371,14 @@ export function HistoryTimeline({
         clearInterval(playIntervalRef.current);
       }
     };
-  }, [isPlaying, history?.events, getTimeForPosition, findSnapshotForTime, onSelectTime]);
+  }, [isPlaying, history, getTimeForPosition, findSnapshotForTime, onSelectTime]);
 
-  // Reset slider when preset changes
-  useEffect(() => {
+  // Handle preset change - reset slider and stop playback
+  const handlePresetChange = useCallback((newPreset: TimeRangePreset) => {
+    setPreset(newPreset);
     setSliderValue([100]);
     setIsPlaying(false);
-  }, [preset]);
+  }, []);
 
   // Current selected time display
   const currentTime = useMemo(() => getTimeForPosition(sliderValue[0]), [sliderValue, getTimeForPosition]);
@@ -409,7 +396,7 @@ export function HistoryTimeline({
                 variant={preset === p ? 'default' : 'ghost'}
                 size="sm"
                 className="h-7 px-2 text-xs"
-                onClick={() => setPreset(p)}
+                onClick={() => handlePresetChange(p)}
               >
                 {p}
               </Button>

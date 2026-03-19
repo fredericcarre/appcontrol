@@ -149,14 +149,13 @@ async fn execute_start_internal(
         let mut regular_components = Vec::new();
 
         for comp_id in to_start {
-            let ref_app_id: Option<Uuid> = sqlx::query_scalar(
-                "SELECT referenced_app_id FROM components WHERE id = $1",
-            )
-            .bind(comp_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| SequencerError::Database(e.to_string()))?
-            .flatten();
+            let ref_app_id: Option<Uuid> =
+                sqlx::query_scalar("SELECT referenced_app_id FROM components WHERE id = $1")
+                    .bind(comp_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .map_err(|e| SequencerError::Database(e.to_string()))?
+                    .flatten();
 
             if ref_app_id.is_some() {
                 app_type_components.push((comp_id, ref_app_id.unwrap()));
@@ -195,7 +194,8 @@ async fn execute_start_internal(
                 "Waiting for referenced app to start (timeout based on sum of component timeouts)"
             );
 
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
+            let deadline =
+                std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
             loop {
                 // Check aggregate state of referenced app's components
                 #[derive(sqlx::FromRow)]
@@ -217,7 +217,12 @@ async fn execute_start_internal(
                 .bind(ref_app_id)
                 .fetch_one(&state.db)
                 .await
-                .unwrap_or(StateCount { total: 0, running: 0, degraded: 0, failed: 0 });
+                .unwrap_or(StateCount {
+                    total: 0,
+                    running: 0,
+                    degraded: 0,
+                    failed: 0,
+                });
 
                 // Aggregate state logic:
                 // - FAILED if any component is FAILED
@@ -361,14 +366,13 @@ async fn execute_stop_internal(
 
         for &comp_id in level {
             // Check if this is an application-type component
-            let ref_app_id: Option<Uuid> = sqlx::query_scalar(
-                "SELECT referenced_app_id FROM components WHERE id = $1",
-            )
-            .bind(comp_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| SequencerError::Database(e.to_string()))?
-            .flatten();
+            let ref_app_id: Option<Uuid> =
+                sqlx::query_scalar("SELECT referenced_app_id FROM components WHERE id = $1")
+                    .bind(comp_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .map_err(|e| SequencerError::Database(e.to_string()))?
+                    .flatten();
 
             if let Some(ref_id) = ref_app_id {
                 // For app-type components, check if the REFERENCED APP has running components
@@ -476,7 +480,8 @@ async fn execute_stop_internal(
                 "Waiting for referenced app to stop (timeout based on sum of component timeouts)"
             );
 
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
+            let deadline =
+                std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
             loop {
                 // Check aggregate state of referenced app's components
                 // Exclude components without stop_cmd since they can't be stopped
@@ -625,14 +630,13 @@ pub async fn start_single_component(
     );
 
     // Get the app_id for checking cancellation
-    let app_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT application_id FROM components WHERE id = $1",
-    )
-    .bind(component_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
+    let app_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
 
     // Wait for component to reach Running state (agent's health check will confirm)
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
@@ -653,7 +657,10 @@ pub async fn start_single_component(
             ComponentState::Running => return Ok(()),
             ComponentState::Failed => {
                 let name = get_component_name(&state.db, component_id).await;
-                return Err(SequencerError::ComponentFailed { id: component_id, name });
+                return Err(SequencerError::ComponentFailed {
+                    id: component_id,
+                    name,
+                });
             }
             _ => {
                 if std::time::Instant::now() > deadline {
@@ -664,7 +671,10 @@ pub async fn start_single_component(
                     )
                     .await;
                     let name = get_component_name(&state.db, component_id).await;
-                    return Err(SequencerError::ComponentFailed { id: component_id, name });
+                    return Err(SequencerError::ComponentFailed {
+                        id: component_id,
+                        name,
+                    });
                 }
 
                 // Request health check every few seconds to detect start faster
@@ -815,7 +825,10 @@ pub async fn stop_single_component(
             _ => {
                 if std::time::Instant::now() > deadline {
                     let name = get_component_name(&state.db, component_id).await;
-                    return Err(SequencerError::ComponentFailed { id: component_id, name });
+                    return Err(SequencerError::ComponentFailed {
+                        id: component_id,
+                        name,
+                    });
                 }
 
                 // Request health check every few seconds to detect stop faster
@@ -1019,7 +1032,10 @@ async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), 
         Some(id) => id,
         None => {
             let name = get_component_name(&state.db, component_id).await;
-            return Err(SequencerError::NoAgent { id: component_id, name });
+            return Err(SequencerError::NoAgent {
+                id: component_id,
+                name,
+            });
         }
     };
 
@@ -1075,7 +1091,10 @@ async fn wait_for_stopped(
         if std::time::Instant::now() > deadline {
             tracing::warn!(component_id = %component_id, "Timeout waiting for STOPPED");
             let name = get_component_name(&state.db, component_id).await;
-            return Err(SequencerError::ComponentFailed { id: component_id, name });
+            return Err(SequencerError::ComponentFailed {
+                id: component_id,
+                name,
+            });
         }
 
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -1231,7 +1250,10 @@ pub async fn force_stop_single_component(
         Some(id) => id,
         None => {
             let name = get_component_name(&state.db, component_id).await;
-            return Err(SequencerError::NoAgent { id: component_id, name });
+            return Err(SequencerError::NoAgent {
+                id: component_id,
+                name,
+            });
         }
     };
 
@@ -1277,7 +1299,10 @@ pub async fn force_stop_single_component(
                     )
                     .await;
                     let name = get_component_name(&state.db, component_id).await;
-                    return Err(SequencerError::ComponentFailed { id: component_id, name });
+                    return Err(SequencerError::ComponentFailed {
+                        id: component_id,
+                        name,
+                    });
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }

@@ -120,8 +120,7 @@ async fn main() -> anyhow::Result<()> {
     let retention_action_log_days = config.retention_action_log_days;
     let retention_check_events_days = config.retention_check_events_days;
 
-    let operation_lock =
-        appcontrol_backend::core::operation_lock::OperationLock::new(pool.clone());
+    let operation_lock = appcontrol_backend::core::operation_lock::OperationLock::new(pool.clone());
 
     // Cleanup stale operation locks at startup
     if let Err(e) = operation_lock.cleanup_all_stale_locks().await {

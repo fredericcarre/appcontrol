@@ -1074,7 +1074,6 @@ export function MapViewPage() {
           <HistoryTimeline
             appId={appId || ''}
             onSelectTime={handleHistoryTimeSelect}
-            selectedTime={historyTime}
           />
         )}
       </div>
