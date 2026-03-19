@@ -355,29 +355,32 @@ pub async fn update_component(
         .as_ref()
         .map(|nodes| serde_json::to_value(nodes).unwrap_or(json!([])));
 
+    // Note: Fields that can be explicitly cleared (set to NULL) use direct assignment.
+    // Fields that should always have a value use COALESCE to keep existing if not provided.
+    // Special case: host and agent_id use COALESCE to preserve existing if not explicitly provided.
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
         UPDATE components SET
             name = COALESCE($2, name),
             component_type = COALESCE($3, component_type),
-            display_name = COALESCE($4, display_name),
-            description = COALESCE($5, description),
+            display_name = $4,
+            description = $5,
             icon = COALESCE($6, icon),
-            group_id = COALESCE($7, group_id),
+            group_id = $7,
             host = COALESCE($8, host),
             agent_id = COALESCE($9, agent_id),
-            check_cmd = COALESCE($10, check_cmd),
-            start_cmd = COALESCE($11, start_cmd),
-            stop_cmd = COALESCE($12, stop_cmd),
+            check_cmd = $10,
+            start_cmd = $11,
+            stop_cmd = $12,
             check_interval_seconds = COALESCE($13, check_interval_seconds),
             start_timeout_seconds = COALESCE($14, start_timeout_seconds),
             stop_timeout_seconds = COALESCE($15, stop_timeout_seconds),
             is_optional = COALESCE($16, is_optional),
             position_x = COALESCE($17, position_x),
             position_y = COALESCE($18, position_y),
-            cluster_size = COALESCE($19, cluster_size),
-            cluster_nodes = COALESCE($20, cluster_nodes),
-            referenced_app_id = COALESCE($21, referenced_app_id),
+            cluster_size = $19,
+            cluster_nodes = $20,
+            referenced_app_id = $21,
             updated_at = now()
         WHERE id = $1
         RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
@@ -412,7 +415,8 @@ pub async fn update_component(
     .ok_or_not_found()?;
 
     // Push config to affected agent so it picks up the changes
-    let agent_ids = resolved_agent_id.map(|id| vec![id]);
+    // Use the actual agent_id from the updated component (after COALESCE), not the resolved one
+    let agent_ids = component.agent_id.map(|id| vec![id]);
     crate::websocket::push_config_to_affected_agents(
         &state,
         Some(current),

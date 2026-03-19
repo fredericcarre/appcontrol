@@ -322,20 +322,42 @@ function TimelineEvent({
 
   if (event.kind === 'user_action') {
     const actionIcon = getActionIcon(event.action ?? '');
+    const isFailed = event.status === 'failed';
+    const isInProgress = event.status === 'in_progress';
+    const isSuccess = event.status === 'success';
+
     return (
       <div
-        className="group flex gap-3 py-2 px-3 hover:bg-muted/50 rounded-md cursor-pointer transition-colors"
+        className={`group flex gap-3 py-2 px-3 hover:bg-muted/50 rounded-md cursor-pointer transition-colors ${
+          isFailed ? 'bg-red-500/5' : ''
+        }`}
         onClick={handleClick}
       >
         <div className="flex flex-col items-center pt-0.5">
-          <div className="h-5 w-5 rounded-full bg-blue-500/10 flex items-center justify-center">
-            {actionIcon}
+          <div
+            className={`h-5 w-5 rounded-full flex items-center justify-center ${
+              isFailed
+                ? 'bg-red-500/10'
+                : isInProgress
+                  ? 'bg-yellow-500/10'
+                  : isSuccess
+                    ? 'bg-emerald-500/10'
+                    : 'bg-blue-500/10'
+            }`}
+          >
+            {isFailed ? (
+              <XCircle className="h-3 w-3 text-red-500" />
+            ) : isInProgress ? (
+              <Clock className="h-3 w-3 text-yellow-500 animate-spin" />
+            ) : (
+              actionIcon
+            )}
           </div>
           <div className="w-px flex-1 bg-border mt-1" />
         </div>
         <div className="flex-1 min-w-0 space-y-0.5">
           <div className="text-sm">
-            <span className="font-medium text-blue-500 dark:text-blue-400">
+            <span className={`font-medium ${isFailed ? 'text-red-500' : 'text-blue-500 dark:text-blue-400'}`}>
               {event.user?.split('@')[0] ?? 'system'}
             </span>
             <span className="text-muted-foreground"> {formatAction(event.action ?? '')}</span>
@@ -343,6 +365,25 @@ function TimelineEvent({
               <span className="font-medium"> {event.component_name}</span>
             )}
           </div>
+          {/* Status indicator */}
+          {(isFailed || isInProgress) && (
+            <div className="flex items-center gap-1.5 text-xs">
+              {isFailed && (
+                <span className="text-red-500 font-medium">Failed</span>
+              )}
+              {isInProgress && (
+                <span className="text-yellow-500 font-medium flex items-center gap-1">
+                  <Radio className="h-3 w-3 animate-pulse" /> In progress
+                </span>
+              )}
+            </div>
+          )}
+          {/* Error message */}
+          {isFailed && event.error_message && (
+            <div className="text-xs text-red-500/80 bg-red-500/10 rounded px-2 py-1 mt-1">
+              {event.error_message}
+            </div>
+          )}
         </div>
         <span className="text-[10px] text-muted-foreground whitespace-nowrap pt-0.5">
           {timeAgo(event.at)}

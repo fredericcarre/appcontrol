@@ -29,8 +29,8 @@ pub fn is_valid_transition(from: ComponentState, to: ComponentState) -> bool {
         (from, to),
         // Unknown → first check determines state
         (Unknown, Running) | (Unknown, Stopped) | (Unknown, Failed) |
-        // Stopped → Starting
-        (Stopped, Starting) |
+        // Stopped → Starting (explicit start) or Running (check detects external start)
+        (Stopped, Starting) | (Stopped, Running) |
         // Starting → Running or Failed
         (Starting, Running) | (Starting, Failed) |
         // Running → Degraded, Failed, Stopping
@@ -54,9 +54,12 @@ pub fn next_state_from_check(current: ComponentState, exit_code: i32) -> Option<
         (Unknown, 0) => Some(Running),
         (Unknown, _) => Some(Failed),
 
-        // Starting: check OK → Running, check KO → Failed
+        // Starting: check OK → Running, check KO → stay in Starting (wait for timeout)
+        // The start command is async/detached, so the process may take time to start.
+        // Failed health checks during Starting are expected - only the sequencer timeout
+        // should transition to Failed.
         (Starting, 0) => Some(Running),
-        (Starting, _) => Some(Failed),
+        (Starting, _) => None, // Stay in Starting, let sequencer handle timeout
 
         // Running: exit 0 = stay, exit != 0 = Failed
         (Running, 0) => None,
@@ -79,8 +82,9 @@ pub fn next_state_from_check(current: ComponentState, exit_code: i32) -> Option<
         (Unreachable, 0) => Some(Running),
         (Unreachable, _) => Some(Failed),
 
-        // Other states: checks don't trigger transitions
-        _ => None,
+        // Stopped: exit 0 = Running (external start detected), exit != 0 = stay Stopped
+        (Stopped, 0) => Some(Running),
+        (Stopped, _) => None,
     }
 }
 
@@ -198,8 +202,9 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_stopped_to_running() {
-        assert!(!is_valid_transition(Stopped, Running));
+    fn test_stopped_to_running_external_start() {
+        // External start detected via health check
+        assert!(is_valid_transition(Stopped, Running));
     }
 
     #[test]
@@ -248,6 +253,14 @@ mod tests {
     #[test]
     fn test_check_starting_exit_0_running() {
         assert_eq!(next_state_from_check(Starting, 0), Some(Running));
+    }
+
+    #[test]
+    fn test_check_starting_exit_1_no_change() {
+        // During Starting, non-zero exit code should NOT fail immediately.
+        // The start command is async/detached and needs time to start.
+        // Only the sequencer timeout should transition to Failed.
+        assert_eq!(next_state_from_check(Starting, 1), None);
     }
 
     #[test]
@@ -311,7 +324,14 @@ mod tests {
     }
 
     #[test]
-    fn test_check_stopped_no_change() {
-        assert_eq!(next_state_from_check(Stopped, 0), None);
+    fn test_check_stopped_exit_0_running() {
+        // External start detected via health check
+        assert_eq!(next_state_from_check(Stopped, 0), Some(Running));
+    }
+
+    #[test]
+    fn test_check_stopped_exit_1_no_change() {
+        // Check fails, stay stopped
+        assert_eq!(next_state_from_check(Stopped, 1), None);
     }
 }

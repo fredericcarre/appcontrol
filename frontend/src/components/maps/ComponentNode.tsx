@@ -66,6 +66,7 @@ interface ComponentNodeData {
   onForceStop?: (id: string) => void;
   onStartWithDeps?: (id: string) => void;
   onRepair?: (id: string) => void;
+  onNavigateToApp?: (appId: string) => void;
   [key: string]: unknown;
 }
 
@@ -82,6 +83,11 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
   const handleForceStop = useCallback(() => data.onForceStop?.(id), [data, id]);
   const handleStartWithDeps = useCallback(() => data.onStartWithDeps?.(id), [data, id]);
   const handleRepair = useCallback(() => data.onRepair?.(id), [data, id]);
+  const handleNavigateToApp = useCallback(() => {
+    if (data.referencedAppId) {
+      data.onNavigateToApp?.(data.referencedAppId);
+    }
+  }, [data]);
 
   const isTransitioning = data.state === 'STARTING' || data.state === 'STOPPING';
   const displayLabel = data.displayName || data.label;
@@ -349,6 +355,12 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
               <button onClick={handleDiagnose} className="p-1 rounded hover:bg-white/50" title="Diagnose">
                 <Search className="h-3.5 w-3.5 text-purple-600" />
               </button>
+              {/* Navigate to referenced app for application-type components */}
+              {data.componentType === 'application' && data.referencedAppId && (
+                <button onClick={handleNavigateToApp} className="p-1 rounded hover:bg-white/50" title="Open referenced application">
+                  <ExternalLink className="h-3.5 w-3.5 text-blue-600" />
+                </button>
+              )}
             </div>
             {data.links && data.links.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1.5">

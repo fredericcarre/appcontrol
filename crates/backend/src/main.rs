@@ -121,7 +121,12 @@ async fn main() -> anyhow::Result<()> {
     let retention_check_events_days = config.retention_check_events_days;
 
     let operation_lock =
-        appcontrol_backend::core::operation_lock::OperationLock::with_pool(pool.clone());
+        appcontrol_backend::core::operation_lock::OperationLock::new(pool.clone());
+
+    // Cleanup stale operation locks at startup
+    if let Err(e) = operation_lock.cleanup_all_stale_locks().await {
+        tracing::warn!("Failed to cleanup stale operation locks at startup: {}", e);
+    }
 
     let terminal_sessions = terminal::TerminalSessionManager::new();
     let log_subscriptions = websocket::LogSubscriptionManager::new();
@@ -163,6 +168,22 @@ async fn main() -> anyhow::Result<()> {
             std::time::Duration::from_secs(30),
         )
         .await;
+    });
+
+    // Start stale operation lock cleanup task (every 30s)
+    let lock_cleanup_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            if let Err(e) = lock_cleanup_state
+                .operation_lock
+                .cleanup_all_stale_locks()
+                .await
+            {
+                tracing::warn!("Failed to cleanup stale operation locks: {}", e);
+            }
+        }
     });
 
     // Start snapshot scheduler background task (checks every 60s)

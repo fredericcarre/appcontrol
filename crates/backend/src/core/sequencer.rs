@@ -15,10 +15,27 @@ pub enum SequencerError {
     Fsm(#[from] super::fsm::FsmError),
     #[error("Database error: {0}")]
     Database(String),
-    #[error("Component failed: {0}")]
-    ComponentFailed(Uuid),
-    #[error("No agent assigned to component {0}")]
-    NoAgent(Uuid),
+    #[error("Component failed: {name} ({id})")]
+    ComponentFailed { id: Uuid, name: String },
+    #[error("No agent assigned to component {name} ({id})")]
+    NoAgent { id: Uuid, name: String },
+    #[error("Gateway unavailable for agent {agent_id} — cannot send command to {name}")]
+    GatewayUnavailable { agent_id: Uuid, name: String },
+    #[error("Operation cancelled")]
+    Cancelled,
+}
+
+/// Helper to get a component's display name (display_name or name fallback)
+async fn get_component_name(pool: &sqlx::PgPool, component_id: Uuid) -> String {
+    sqlx::query_scalar::<_, String>(
+        "SELECT COALESCE(display_name, name) FROM components WHERE id = $1",
+    )
+    .bind(component_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| component_id.to_string())
 }
 
 /// Build a start plan without executing it (for dry_run and display).
@@ -55,7 +72,34 @@ pub async fn build_start_plan(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Value
 /// - Component FAILED → stop its dependents first (reverse order), then restart the branch
 /// - Component STOPPED/UNKNOWN → start normally
 /// - Components at the same level start in parallel
+/// - For application-type components, starts the referenced app first
 pub async fn execute_start(state: &Arc<AppState>, app_id: Uuid) -> Result<(), SequencerError> {
+    // Use internal function with visited set to prevent infinite recursion on cyclic app references
+    let mut visited = HashSet::new();
+    execute_start_internal(state, app_id, &mut visited).await
+}
+
+/// Internal start function with cycle detection via visited set.
+async fn execute_start_internal(
+    state: &Arc<AppState>,
+    app_id: Uuid,
+    visited: &mut HashSet<Uuid>,
+) -> Result<(), SequencerError> {
+    // Cycle detection: if we've already visited this app, skip it
+    if !visited.insert(app_id) {
+        tracing::warn!(
+            app_id = %app_id,
+            "Skipping already-visited application (cycle detected in app references)"
+        );
+        return Ok(());
+    }
+
+    // NOTE: Referenced apps (application-type components) are started when their turn
+    // comes in the DAG order, not upfront. This ensures proper dependency ordering:
+    // e.g., if backend-api depends on postgres-db, postgres-db starts first, then
+    // when backend-api's turn comes, its referenced app is started.
+
+    // Start regular components in this app following DAG order
     let dag = dag::build_dag(&state.db, app_id).await?;
     let levels = dag.topological_levels()?;
 
@@ -99,31 +143,160 @@ pub async fn execute_start(state: &Arc<AppState>, app_id: Uuid) -> Result<(), Se
             continue;
         }
 
-        tracing::info!(
-            "Starting level {} — {} components in parallel",
-            level_idx,
-            to_start.len()
-        );
+        // Separate application-type components (must be handled sequentially due to recursion)
+        // from regular components (can be parallelized)
+        let mut app_type_components = Vec::new();
+        let mut regular_components = Vec::new();
 
-        // Start all components in this level in parallel
-        let mut handles = Vec::new();
         for comp_id in to_start {
-            let state_clone = state.clone();
-            handles.push(tokio::spawn(async move {
-                start_single_component(&state_clone, comp_id).await
-            }));
+            let ref_app_id: Option<Uuid> = sqlx::query_scalar(
+                "SELECT referenced_app_id FROM components WHERE id = $1",
+            )
+            .bind(comp_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| SequencerError::Database(e.to_string()))?
+            .flatten();
+
+            if ref_app_id.is_some() {
+                app_type_components.push((comp_id, ref_app_id.unwrap()));
+            } else {
+                regular_components.push(comp_id);
+            }
         }
 
-        // Wait for all to complete
-        for handle in handles {
-            match handle.await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    tracing::error!("Component start failed: {}", e);
-                    return Err(e);
+        // First, handle application-type components sequentially (they recursively start other apps)
+        for (comp_id, ref_app_id) in app_type_components {
+            tracing::info!(
+                component_id = %comp_id,
+                referenced_app_id = %ref_app_id,
+                level = level_idx,
+                "Starting referenced application (application-type component)"
+            );
+            // Recursive call - this is in the main async context, not spawned
+            Box::pin(execute_start_internal(state, ref_app_id, visited)).await?;
+
+            // Wait for the referenced app to be fully started
+            // Use the SUM of all start_timeout_seconds from the referenced app's components
+            // (since they start in DAG order, worst case is sequential starting)
+            let timeout_secs: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(start_timeout_seconds), 120) FROM components
+                 WHERE application_id = $1 AND start_cmd IS NOT NULL",
+            )
+            .bind(ref_app_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(120);
+
+            tracing::debug!(
+                component_id = %comp_id,
+                referenced_app_id = %ref_app_id,
+                timeout_secs = timeout_secs,
+                "Waiting for referenced app to start (timeout based on sum of component timeouts)"
+            );
+
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
+            loop {
+                // Check aggregate state of referenced app's components
+                #[derive(sqlx::FromRow)]
+                struct StateCount {
+                    total: i64,
+                    running: i64,
+                    degraded: i64,
+                    failed: i64,
                 }
-                Err(e) => {
-                    tracing::error!("Task join error: {}", e);
+                let counts: StateCount = sqlx::query_as(
+                    "SELECT
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE current_state = 'RUNNING') as running,
+                        COUNT(*) FILTER (WHERE current_state = 'DEGRADED') as degraded,
+                        COUNT(*) FILTER (WHERE current_state = 'FAILED') as failed
+                     FROM components
+                     WHERE application_id = $1",
+                )
+                .bind(ref_app_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or(StateCount { total: 0, running: 0, degraded: 0, failed: 0 });
+
+                // Aggregate state logic:
+                // - FAILED if any component is FAILED
+                // - RUNNING if all components are RUNNING
+                // - DEGRADED if all are RUNNING or DEGRADED (at least one DEGRADED)
+                // - Otherwise still starting
+                if counts.failed > 0 {
+                    let name = get_component_name(&state.db, comp_id).await;
+                    tracing::error!(
+                        component_id = %comp_id,
+                        referenced_app_id = %ref_app_id,
+                        failed_count = counts.failed,
+                        "Referenced app has failed components"
+                    );
+                    return Err(SequencerError::ComponentFailed { id: comp_id, name });
+                }
+
+                if counts.running == counts.total {
+                    tracing::info!(
+                        component_id = %comp_id,
+                        referenced_app_id = %ref_app_id,
+                        "Application-type component: referenced app fully RUNNING"
+                    );
+                    break;
+                }
+
+                if counts.running + counts.degraded == counts.total && counts.degraded > 0 {
+                    tracing::warn!(
+                        component_id = %comp_id,
+                        referenced_app_id = %ref_app_id,
+                        degraded_count = counts.degraded,
+                        "Application-type component: referenced app DEGRADED (proceeding with warning)"
+                    );
+                    break;
+                }
+
+                if std::time::Instant::now() > deadline {
+                    let name = get_component_name(&state.db, comp_id).await;
+                    tracing::error!(
+                        component_id = %comp_id,
+                        referenced_app_id = %ref_app_id,
+                        running = counts.running,
+                        degraded = counts.degraded,
+                        total = counts.total,
+                        "Timeout waiting for referenced app to start"
+                    );
+                    return Err(SequencerError::ComponentFailed { id: comp_id, name });
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
+
+        // Then, start regular components in parallel
+        if !regular_components.is_empty() {
+            tracing::info!(
+                "Starting level {} — {} regular components in parallel",
+                level_idx,
+                regular_components.len()
+            );
+
+            let mut handles = Vec::new();
+            for comp_id in regular_components {
+                let state_clone = state.clone();
+                handles.push(tokio::spawn(async move {
+                    start_single_component(&state_clone, comp_id).await
+                }));
+            }
+
+            // Wait for all to complete
+            for handle in handles {
+                match handle.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        tracing::error!("Component start failed: {}", e);
+                        return Err(e);
+                    }
+                    Err(e) => {
+                        tracing::error!("Task join error: {}", e);
+                    }
                 }
             }
         }
@@ -134,49 +307,211 @@ pub async fn execute_start(state: &Arc<AppState>, app_id: Uuid) -> Result<(), Se
 
 /// Execute a full stop sequence (reverse DAG order).
 /// Only stops components that are RUNNING or DEGRADED.
+/// For application-type components, propagates stop to the referenced app.
 pub async fn execute_stop(state: &Arc<AppState>, app_id: Uuid) -> Result<(), SequencerError> {
+    // Use internal function with visited set to prevent infinite recursion on cyclic app references
+    let mut visited = HashSet::new();
+    execute_stop_internal(state, app_id, &mut visited).await
+}
+
+/// Internal stop function with cycle detection via visited set.
+async fn execute_stop_internal(
+    state: &Arc<AppState>,
+    app_id: Uuid,
+    visited: &mut HashSet<Uuid>,
+) -> Result<(), SequencerError> {
+    // Cycle detection: if we've already visited this app, skip it
+    if !visited.insert(app_id) {
+        tracing::warn!(
+            app_id = %app_id,
+            "Skipping already-visited application (cycle detected in app references)"
+        );
+        return Ok(());
+    }
+
+    // NOTE: Referenced apps (application-type components) are stopped when their turn
+    // comes in the reverse DAG order. This ensures proper dependency ordering:
+    // e.g., stop frontend first, then api-gateway, then when backend-api's turn comes,
+    // its referenced app is stopped.
+
+    // Stop regular components in this app following reverse DAG order
     let dag = dag::build_dag(&state.db, app_id).await?;
     let mut levels = dag.topological_levels()?;
     levels.reverse(); // Stop in reverse order: children first
 
+    tracing::warn!(
+        app_id = %app_id,
+        level_count = levels.len(),
+        "execute_stop_internal: processing {} levels",
+        levels.len()
+    );
+
     for (level_idx, level) in levels.iter().enumerate() {
-        let mut to_stop = Vec::new();
+        tracing::warn!(
+            app_id = %app_id,
+            level_idx = level_idx,
+            component_count = level.len(),
+            "Processing stop level"
+        );
+
+        // Separate application-type components from regular components
+        // and check if they need to be stopped
+        let mut app_type_components = Vec::new();
+        let mut regular_components = Vec::new();
 
         for &comp_id in level {
-            let current = super::fsm::get_current_state(&state.db, comp_id).await?;
-            if matches!(current, ComponentState::Running | ComponentState::Degraded) {
-                to_stop.push(comp_id);
+            // Check if this is an application-type component
+            let ref_app_id: Option<Uuid> = sqlx::query_scalar(
+                "SELECT referenced_app_id FROM components WHERE id = $1",
+            )
+            .bind(comp_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| SequencerError::Database(e.to_string()))?
+            .flatten();
+
+            if let Some(ref_id) = ref_app_id {
+                // For app-type components, check if the REFERENCED APP has running components
+                // (the component's own state may be stale)
+                // Exclude components without stop_cmd since they can't be stopped
+                let running_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM components
+                     WHERE application_id = $1
+                     AND current_state IN ('RUNNING', 'DEGRADED', 'STARTING', 'STOPPING')
+                     AND stop_cmd IS NOT NULL",
+                )
+                .bind(ref_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or(0);
+
+                tracing::warn!(
+                    component_id = %comp_id,
+                    referenced_app_id = %ref_id,
+                    running_count = running_count,
+                    "App-type component check: referenced app has {} running components",
+                    running_count
+                );
+
+                if running_count > 0 {
+                    app_type_components.push((comp_id, ref_id));
+                }
+            } else {
+                // Regular component: check its own state
+                let current = super::fsm::get_current_state(&state.db, comp_id).await?;
+                if matches!(current, ComponentState::Running | ComponentState::Degraded) {
+                    regular_components.push(comp_id);
+                }
             }
         }
 
-        if to_stop.is_empty() {
+        tracing::warn!(
+            level_idx = level_idx,
+            app_type_count = app_type_components.len(),
+            regular_count = regular_components.len(),
+            "Stop level summary"
+        );
+
+        if app_type_components.is_empty() && regular_components.is_empty() {
             continue;
         }
 
-        tracing::info!(
-            "Stopping level {} — {} components in parallel",
-            level_idx,
-            to_stop.len()
-        );
+        // First, stop regular components in parallel
+        if !regular_components.is_empty() {
+            tracing::info!(
+                "Stopping level {} — {} regular components in parallel",
+                level_idx,
+                regular_components.len()
+            );
 
-        let mut handles = Vec::new();
-        for comp_id in to_stop {
-            let state_clone = state.clone();
-            handles.push(tokio::spawn(async move {
-                stop_single_component(&state_clone, comp_id).await
-            }));
+            let mut handles = Vec::new();
+            for comp_id in regular_components {
+                let state_clone = state.clone();
+                handles.push(tokio::spawn(async move {
+                    stop_single_component(&state_clone, comp_id).await
+                }));
+            }
+
+            for handle in handles {
+                match handle.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        tracing::error!("Component stop failed: {}", e);
+                        return Err(e);
+                    }
+                    Err(e) => {
+                        tracing::error!("Task join error: {}", e);
+                    }
+                }
+            }
         }
 
-        for handle in handles {
-            match handle.await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    tracing::error!("Component stop failed: {}", e);
-                    return Err(e);
+        // Then, handle application-type components sequentially (they recursively stop other apps)
+        for (comp_id, ref_app_id) in app_type_components {
+            tracing::info!(
+                component_id = %comp_id,
+                referenced_app_id = %ref_app_id,
+                level = level_idx,
+                "Stopping referenced application (application-type component)"
+            );
+            // Recursive call - this is in the main async context, not spawned
+            Box::pin(execute_stop_internal(state, ref_app_id, visited)).await?;
+
+            // Wait for the referenced app to be fully stopped
+            // Use the SUM of all stop_timeout_seconds from the referenced app's components
+            // (since they stop in DAG order, worst case is sequential stopping)
+            let timeout_secs: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(stop_timeout_seconds), 60) FROM components
+                 WHERE application_id = $1 AND stop_cmd IS NOT NULL",
+            )
+            .bind(ref_app_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(60);
+
+            tracing::debug!(
+                component_id = %comp_id,
+                referenced_app_id = %ref_app_id,
+                timeout_secs = timeout_secs,
+                "Waiting for referenced app to stop (timeout based on sum of component timeouts)"
+            );
+
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
+            loop {
+                // Check aggregate state of referenced app's components
+                // Exclude components without stop_cmd since they can't be stopped
+                let running_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM components
+                     WHERE application_id = $1
+                     AND current_state IN ('RUNNING', 'DEGRADED', 'STARTING', 'STOPPING')
+                     AND stop_cmd IS NOT NULL",
+                )
+                .bind(ref_app_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or(0);
+
+                if running_count == 0 {
+                    tracing::info!(
+                        component_id = %comp_id,
+                        referenced_app_id = %ref_app_id,
+                        "Application-type component: referenced app fully stopped"
+                    );
+                    break;
                 }
-                Err(e) => {
-                    tracing::error!("Task join error: {}", e);
+
+                if std::time::Instant::now() > deadline {
+                    let name = get_component_name(&state.db, comp_id).await;
+                    tracing::error!(
+                        component_id = %comp_id,
+                        referenced_app_id = %ref_app_id,
+                        running_count = running_count,
+                        timeout_secs = timeout_secs,
+                        "Timeout waiting for referenced app to stop"
+                    );
+                    return Err(SequencerError::ComponentFailed { id: comp_id, name });
                 }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }
     }
@@ -185,57 +520,140 @@ pub async fn execute_stop(state: &Arc<AppState>, app_id: Uuid) -> Result<(), Seq
 }
 
 /// Start a single component: transition to Starting, send start_cmd to agent, wait for Running.
+/// For application-type components (with referenced_app_id), they are skipped here because
+/// their status is derived from the referenced app. The actual start of the referenced app
+/// is handled at the API level (components.rs:start_component).
 pub async fn start_single_component(
     state: &Arc<AppState>,
     component_id: Uuid,
 ) -> Result<(), SequencerError> {
-    // Transition to Starting
-    super::fsm::transition_component(state, component_id, ComponentState::Starting).await?;
+    // Get component info: start_cmd, timeout, agent_id, and referenced_app_id
+    #[derive(sqlx::FromRow)]
+    struct ComponentInfo {
+        start_cmd: Option<String>,
+        start_timeout_seconds: i32,
+        agent_id: Option<Uuid>,
+        referenced_app_id: Option<Uuid>,
+    }
 
-    // Get component info: start_cmd, timeout, agent_id
-    let row = sqlx::query_as::<_, (Option<String>, i32, Option<Uuid>)>(
-        "SELECT start_cmd, start_timeout_seconds, agent_id FROM components WHERE id = $1",
+    let info = sqlx::query_as::<_, ComponentInfo>(
+        "SELECT start_cmd, start_timeout_seconds, agent_id, referenced_app_id FROM components WHERE id = $1",
     )
     .bind(component_id)
     .fetch_one(&state.db)
     .await
     .map_err(|e| SequencerError::Database(e.to_string()))?;
 
-    let (start_cmd, timeout_secs, agent_id) = row;
-    let agent_id = agent_id.ok_or(SequencerError::NoAgent(component_id))?;
+    // Application-type components are handled in execute_start_internal directly
+    // (they recursively start their referenced app). Here we just skip them.
+    if info.referenced_app_id.is_some() {
+        tracing::debug!(
+            component_id = %component_id,
+            "Skipping application-type component (handled by execute_start_internal)"
+        );
+        return Ok(());
+    }
+
+    // Components without a start command are skipped - nothing to do
+    let start_cmd = match &info.start_cmd {
+        Some(cmd) if !cmd.trim().is_empty() => cmd.clone(),
+        _ => {
+            tracing::debug!(
+                component_id = %component_id,
+                "Skipping component without start_cmd"
+            );
+            return Ok(());
+        }
+    };
+
+    // Check agent BEFORE transitioning to avoid stuck states
+    let agent_id = match info.agent_id {
+        Some(id) => id,
+        None => {
+            tracing::debug!(
+                component_id = %component_id,
+                "Skipping component without agent_id"
+            );
+            return Ok(());
+        }
+    };
+
+    // Transition to Starting for normal components
+    super::fsm::transition_component(state, component_id, ComponentState::Starting).await?;
+    let timeout_secs = info.start_timeout_seconds;
 
     // Send start command to the specific agent via its gateway
-    if let Some(cmd) = start_cmd {
-        let request_id = Uuid::new_v4();
-        let message = BackendMessage::ExecuteCommand {
-            request_id,
-            component_id,
-            command: cmd,
-            timeout_seconds: timeout_secs as u32,
-            exec_mode: "detached".to_string(),
-        };
+    let request_id = Uuid::new_v4();
+    let message = BackendMessage::ExecuteCommand {
+        request_id,
+        component_id,
+        command: start_cmd,
+        timeout_seconds: timeout_secs as u32,
+        exec_mode: "detached".to_string(),
+    };
 
-        // Record dispatch in command_executions for audit trail
-        record_command_dispatch(&state.db, request_id, component_id, agent_id, "start").await;
+    // Record dispatch in command_executions for audit trail
+    record_command_dispatch(&state.db, request_id, component_id, agent_id, "start").await;
 
-        state.ws_hub.send_to_agent(agent_id, message);
-        tracing::info!(
-            component_id = %component_id,
-            agent_id = %agent_id,
-            request_id = %request_id,
-            "Start command dispatched to agent (detached)"
-        );
+    // Send command to agent - fail explicitly if gateway unavailable
+    if !state.ws_hub.send_to_agent(agent_id, message) {
+        // Revert to previous state since command couldn't be sent
+        let _ = super::fsm::transition_component(state, component_id, ComponentState::Failed).await;
+        let name = get_component_name(&state.db, component_id).await;
+        return Err(SequencerError::GatewayUnavailable { agent_id, name });
     }
+
+    tracing::info!(
+        component_id = %component_id,
+        agent_id = %agent_id,
+        request_id = %request_id,
+        "Start command dispatched to agent (detached)"
+    );
+
+    // Trigger immediate health check so we don't wait for the next scheduled check
+    let check_request_id = Uuid::new_v4();
+    let _ = state.ws_hub.send_to_agent(
+        agent_id,
+        BackendMessage::RunChecksNow {
+            request_id: check_request_id,
+        },
+    ); // Ignore failure for health check trigger - not critical
+    tracing::debug!(
+        agent_id = %agent_id,
+        request_id = %check_request_id,
+        "Triggered immediate health checks after start command"
+    );
+
+    // Get the app_id for checking cancellation
+    let app_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT application_id FROM components WHERE id = $1",
+    )
+    .bind(component_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
 
     // Wait for component to reach Running state (agent's health check will confirm)
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
+    let mut last_check_request = std::time::Instant::now();
+    const CHECK_REQUEST_INTERVAL_SECS: u64 = 3; // Request checks more frequently during start
 
     loop {
+        // Check for cancellation
+        if let Some(aid) = app_id {
+            if state.operation_lock.is_cancelled_async(aid).await {
+                tracing::info!(component_id = %component_id, "Start operation cancelled");
+                return Err(SequencerError::Cancelled);
+            }
+        }
+
         let current = super::fsm::get_current_state(&state.db, component_id).await?;
         match current {
             ComponentState::Running => return Ok(()),
             ComponentState::Failed => {
-                return Err(SequencerError::ComponentFailed(component_id));
+                let name = get_component_name(&state.db, component_id).await;
+                return Err(SequencerError::ComponentFailed { id: component_id, name });
             }
             _ => {
                 if std::time::Instant::now() > deadline {
@@ -245,8 +663,21 @@ pub async fn start_single_component(
                         ComponentState::Failed,
                     )
                     .await;
-                    return Err(SequencerError::ComponentFailed(component_id));
+                    let name = get_component_name(&state.db, component_id).await;
+                    return Err(SequencerError::ComponentFailed { id: component_id, name });
                 }
+
+                // Request health check every few seconds to detect start faster
+                if last_check_request.elapsed().as_secs() >= CHECK_REQUEST_INTERVAL_SECS {
+                    let _ = state.ws_hub.send_to_agent(
+                        agent_id,
+                        BackendMessage::RunChecksNow {
+                            request_id: Uuid::new_v4(),
+                        },
+                    );
+                    last_check_request = std::time::Instant::now();
+                }
+
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }
@@ -254,10 +685,65 @@ pub async fn start_single_component(
 }
 
 /// Stop a single component: transition to Stopping, send stop_cmd to agent, wait for Stopped.
+/// For application-type components (with referenced_app_id), they are skipped here because
+/// their status is derived from the referenced app. The actual stop of the referenced app
+/// is handled at the API level (components.rs:stop_component).
 pub async fn stop_single_component(
     state: &Arc<AppState>,
     component_id: Uuid,
 ) -> Result<(), SequencerError> {
+    // Get component info: stop_cmd, timeout, agent_id, referenced_app_id, and application_id
+    #[derive(sqlx::FromRow)]
+    struct ComponentInfo {
+        stop_cmd: Option<String>,
+        stop_timeout_seconds: i32,
+        agent_id: Option<Uuid>,
+        referenced_app_id: Option<Uuid>,
+        application_id: Uuid,
+    }
+
+    let info = sqlx::query_as::<_, ComponentInfo>(
+        "SELECT stop_cmd, stop_timeout_seconds, agent_id, referenced_app_id, application_id FROM components WHERE id = $1",
+    )
+    .bind(component_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| SequencerError::Database(e.to_string()))?;
+
+    // Application-type components are handled in execute_stop_internal directly
+    // (they recursively stop their referenced app). Here we just skip them.
+    if info.referenced_app_id.is_some() {
+        tracing::debug!(
+            component_id = %component_id,
+            "Skipping application-type component (handled by execute_stop_internal)"
+        );
+        return Ok(());
+    }
+
+    // Components without a stop command are skipped - nothing to do
+    let stop_cmd = match &info.stop_cmd {
+        Some(cmd) if !cmd.trim().is_empty() => cmd.clone(),
+        _ => {
+            tracing::debug!(
+                component_id = %component_id,
+                "Skipping component without stop_cmd"
+            );
+            return Ok(());
+        }
+    };
+
+    // Check agent BEFORE transitioning to avoid stuck states
+    let agent_id = match info.agent_id {
+        Some(id) => id,
+        None => {
+            tracing::debug!(
+                component_id = %component_id,
+                "Skipping component without agent_id"
+            );
+            return Ok(());
+        }
+    };
+
     let current = super::fsm::get_current_state(&state.db, component_id).await?;
 
     // Only stop if running or degraded
@@ -266,52 +752,83 @@ pub async fn stop_single_component(
     }
 
     super::fsm::transition_component(state, component_id, ComponentState::Stopping).await?;
-
-    let row = sqlx::query_as::<_, (Option<String>, i32, Option<Uuid>)>(
-        "SELECT stop_cmd, stop_timeout_seconds, agent_id FROM components WHERE id = $1",
-    )
-    .bind(component_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SequencerError::Database(e.to_string()))?;
-
-    let (stop_cmd, timeout_secs, agent_id) = row;
-    let agent_id = agent_id.ok_or(SequencerError::NoAgent(component_id))?;
+    let timeout_secs = info.stop_timeout_seconds;
 
     // Send stop command to the specific agent via its gateway
-    if let Some(cmd) = stop_cmd {
-        let request_id = Uuid::new_v4();
-        let message = BackendMessage::ExecuteCommand {
-            request_id,
-            component_id,
-            command: cmd,
-            timeout_seconds: timeout_secs as u32,
-            exec_mode: "detached".to_string(),
-        };
+    let request_id = Uuid::new_v4();
+    let message = BackendMessage::ExecuteCommand {
+        request_id,
+        component_id,
+        command: stop_cmd,
+        timeout_seconds: timeout_secs as u32,
+        exec_mode: "detached".to_string(),
+    };
 
-        // Record dispatch in command_executions for audit trail
-        record_command_dispatch(&state.db, request_id, component_id, agent_id, "stop").await;
+    // Record dispatch in command_executions for audit trail
+    record_command_dispatch(&state.db, request_id, component_id, agent_id, "stop").await;
 
-        state.ws_hub.send_to_agent(agent_id, message);
-        tracing::info!(
-            component_id = %component_id,
-            agent_id = %agent_id,
-            request_id = %request_id,
-            "Stop command dispatched to agent"
-        );
+    // Send command to agent - fail explicitly if gateway unavailable
+    if !state.ws_hub.send_to_agent(agent_id, message) {
+        // Revert to previous state since command couldn't be sent
+        let _ = super::fsm::transition_component(state, component_id, ComponentState::Failed).await;
+        let name = get_component_name(&state.db, component_id).await;
+        return Err(SequencerError::GatewayUnavailable { agent_id, name });
     }
+
+    tracing::info!(
+        component_id = %component_id,
+        agent_id = %agent_id,
+        request_id = %request_id,
+        "Stop command dispatched to agent"
+    );
+
+    // Trigger immediate health check so we don't wait for the next scheduled check
+    let check_request_id = Uuid::new_v4();
+    let _ = state.ws_hub.send_to_agent(
+        agent_id,
+        BackendMessage::RunChecksNow {
+            request_id: check_request_id,
+        },
+    ); // Ignore failure for health check trigger - not critical
+    tracing::debug!(
+        agent_id = %agent_id,
+        request_id = %check_request_id,
+        "Triggered immediate health checks after stop command"
+    );
 
     // Wait for Stopped state
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
+    let app_id = info.application_id;
+    let mut last_check_request = std::time::Instant::now();
+    const CHECK_REQUEST_INTERVAL_SECS: u64 = 3; // Request checks more frequently during stop
 
     loop {
+        // Check for cancellation
+        if state.operation_lock.is_cancelled_async(app_id).await {
+            tracing::info!(component_id = %component_id, "Stop operation cancelled");
+            return Err(SequencerError::Cancelled);
+        }
+
         let current = super::fsm::get_current_state(&state.db, component_id).await?;
         match current {
             ComponentState::Stopped => return Ok(()),
             _ => {
                 if std::time::Instant::now() > deadline {
-                    return Err(SequencerError::ComponentFailed(component_id));
+                    let name = get_component_name(&state.db, component_id).await;
+                    return Err(SequencerError::ComponentFailed { id: component_id, name });
                 }
+
+                // Request health check every few seconds to detect stop faster
+                if last_check_request.elapsed().as_secs() >= CHECK_REQUEST_INTERVAL_SECS {
+                    let _ = state.ws_hub.send_to_agent(
+                        agent_id,
+                        BackendMessage::RunChecksNow {
+                            request_id: Uuid::new_v4(),
+                        },
+                    );
+                    last_check_request = std::time::Instant::now();
+                }
+
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }
@@ -498,7 +1015,13 @@ async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), 
     .map_err(|e| SequencerError::Database(e.to_string()))?;
 
     let (stop_cmd, timeout_secs, agent_id) = row;
-    let agent_id = agent_id.ok_or(SequencerError::NoAgent(component_id))?;
+    let agent_id = match agent_id {
+        Some(id) => id,
+        None => {
+            let name = get_component_name(&state.db, component_id).await;
+            return Err(SequencerError::NoAgent { id: component_id, name });
+        }
+    };
 
     if let Some(cmd) = stop_cmd {
         let request_id = Uuid::new_v4();
@@ -511,7 +1034,11 @@ async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), 
         };
 
         record_command_dispatch(&state.db, request_id, component_id, agent_id, "stop").await;
-        state.ws_hub.send_to_agent(agent_id, message);
+
+        if !state.ws_hub.send_to_agent(agent_id, message) {
+            let name = get_component_name(&state.db, component_id).await;
+            return Err(SequencerError::GatewayUnavailable { agent_id, name });
+        }
 
         tracing::info!(
             component_id = %component_id,
@@ -547,7 +1074,8 @@ async fn wait_for_stopped(
 
         if std::time::Instant::now() > deadline {
             tracing::warn!(component_id = %component_id, "Timeout waiting for STOPPED");
-            return Err(SequencerError::ComponentFailed(component_id));
+            let name = get_component_name(&state.db, component_id).await;
+            return Err(SequencerError::ComponentFailed { id: component_id, name });
         }
 
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -699,7 +1227,13 @@ pub async fn force_stop_single_component(
     .map_err(|e| SequencerError::Database(e.to_string()))?;
 
     let (stop_cmd, timeout_secs, agent_id) = row;
-    let agent_id = agent_id.ok_or(SequencerError::NoAgent(component_id))?;
+    let agent_id = match agent_id {
+        Some(id) => id,
+        None => {
+            let name = get_component_name(&state.db, component_id).await;
+            return Err(SequencerError::NoAgent { id: component_id, name });
+        }
+    };
 
     if let Some(cmd) = stop_cmd {
         let request_id = Uuid::new_v4();
@@ -713,7 +1247,11 @@ pub async fn force_stop_single_component(
 
         record_command_dispatch(&state.db, request_id, component_id, agent_id, "force_stop").await;
 
-        state.ws_hub.send_to_agent(agent_id, message);
+        if !state.ws_hub.send_to_agent(agent_id, message) {
+            let name = get_component_name(&state.db, component_id).await;
+            return Err(SequencerError::GatewayUnavailable { agent_id, name });
+        }
+
         tracing::warn!(
             component_id = %component_id,
             agent_id = %agent_id,
@@ -738,7 +1276,8 @@ pub async fn force_stop_single_component(
                         ComponentState::Failed,
                     )
                     .await;
-                    return Err(SequencerError::ComponentFailed(component_id));
+                    let name = get_component_name(&state.db, component_id).await;
+                    return Err(SequencerError::ComponentFailed { id: component_id, name });
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }

@@ -119,6 +119,8 @@ export function useWebSocket() {
 
           // Also invalidate to ensure we get full server state eventually
           queryClient.invalidateQueries({ queryKey: ['apps', appId] });
+          // Invalidate the apps list (dashboard) too for immediate update
+          queryClient.invalidateQueries({ queryKey: ['apps'], exact: true });
         }
       } catch {
         // ignore parse errors

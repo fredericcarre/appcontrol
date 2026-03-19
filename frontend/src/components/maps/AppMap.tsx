@@ -70,6 +70,7 @@ interface AppMapProps {
   onForceStopComponent?: (id: string) => void;
   onStartWithDepsComponent?: (id: string) => void;
   onRepairComponent?: (id: string) => void;
+  onNavigateToApp?: (appId: string) => void;
   canOperate?: boolean;
   // Edit mode props
   editable?: boolean;
@@ -229,6 +230,7 @@ function buildNodes(
   onForceStop?: (id: string) => void,
   onStartWithDeps?: (id: string) => void,
   onRepair?: (id: string) => void,
+  onNavigateToApp?: (appId: string) => void,
   editable?: boolean,
   branchHighlight?: BranchHighlight | null,
   impactPreview?: ImpactPreview | null,
@@ -321,6 +323,7 @@ function buildNodes(
         onForceStop: editable ? undefined : onForceStop,
         onStartWithDeps: editable ? undefined : onStartWithDeps,
         onRepair: editable ? undefined : onRepair,
+        onNavigateToApp: editable ? undefined : onNavigateToApp,
         editable,
         highlightType,
         highlightColor,
@@ -426,6 +429,7 @@ function AppMapInner({
   onForceStopComponent,
   onStartWithDepsComponent,
   onRepairComponent,
+  onNavigateToApp,
   canOperate,
   editable,
   onNodePositionChange,
@@ -514,6 +518,7 @@ function AppMapInner({
       onForceStopComponent,
       onStartWithDepsComponent,
       onRepairComponent,
+      onNavigateToApp,
       editable,
       branchHighlight,
       impactPreview,
@@ -524,7 +529,7 @@ function AppMapInner({
       siteOverridesMap,
       primarySite,
     ),
-    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteOverridesMap, primarySite],
+    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteOverridesMap, primarySite],
   );
 
   const initialEdges = useMemo(

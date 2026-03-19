@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
-use crate::middleware::audit::log_action;
+use crate::middleware::audit::{complete_action_failed, complete_action_success, log_action};
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
 
@@ -441,6 +441,20 @@ pub async fn get_app(
                 "connected"
             };
 
+            // For application-type components, derive state from referenced app
+            // If component_type is 'application' but no referenced_app_id, show UNKNOWN
+            let derived_state = if c.component_type == "application" {
+                match c.referenced_app_id {
+                    Some(ref_id) => referenced_app_statuses
+                        .get(&ref_id)
+                        .cloned()
+                        .unwrap_or_else(|| "UNKNOWN".to_string()),
+                    None => "UNKNOWN".to_string(), // Misconfigured: application type without referenced app
+                }
+            } else {
+                c.current_state.clone()
+            };
+
             json!({
                 "id": c.id,
                 "application_id": c.application_id,
@@ -459,10 +473,7 @@ pub async fn get_app(
                 "start_timeout_seconds": c.start_timeout_seconds,
                 "stop_timeout_seconds": c.stop_timeout_seconds,
                 "is_optional": c.is_optional,
-                // For application-type components, derive state from referenced app
-                "current_state": c.referenced_app_id
-                    .and_then(|ref_id| referenced_app_statuses.get(&ref_id).cloned())
-                    .unwrap_or_else(|| c.current_state.clone()),
+                "current_state": derived_state,
                 "position_x": c.position_x,
                 "position_y": c.position_y,
                 "cluster_size": c.cluster_size,
@@ -681,7 +692,7 @@ pub async fn start_app(
 
     let dry_run = body.and_then(|b| b.dry_run).unwrap_or(false);
 
-    log_action(
+    let action_id = log_action(
         &state.db,
         user.user_id,
         "start_app",
@@ -696,6 +707,8 @@ pub async fn start_app(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if dry_run {
+        // Mark action as success for dry run
+        let _ = complete_action_success(&state.db, action_id).await;
         return Ok(Json(json!({ "dry_run": true, "plan": plan })));
     }
 
@@ -709,8 +722,16 @@ pub async fn start_app(
     let state_clone = state.clone();
     tokio::spawn(async move {
         let _guard = guard; // Hold the lock until the operation completes
-        if let Err(e) = crate::core::sequencer::execute_start(&state_clone, id).await {
-            tracing::error!("Failed to start app {}: {}", id, e);
+        match crate::core::sequencer::execute_start(&state_clone, id).await {
+            Ok(()) => {
+                let _ = complete_action_success(&state_clone.db, action_id).await;
+                tracing::info!("Successfully started app {}", id);
+            }
+            Err(e) => {
+                let error_msg = format!("{}", e);
+                let _ = complete_action_failed(&state_clone.db, action_id, &error_msg).await;
+                tracing::error!("Failed to start app {}: {}", id, e);
+            }
         }
     });
 
@@ -734,7 +755,7 @@ pub async fn stop_app(
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
-    log_action(
+    let action_id = log_action(
         &state.db,
         user.user_id,
         "stop_app",
@@ -747,16 +768,24 @@ pub async fn stop_app(
     let state_clone = state.clone();
     tokio::spawn(async move {
         let _guard = guard; // Hold the lock until the operation completes
-        if let Err(e) = crate::core::sequencer::execute_stop(&state_clone, id).await {
-            tracing::error!("Failed to stop app {}: {}", id, e);
+        match crate::core::sequencer::execute_stop(&state_clone, id).await {
+            Ok(()) => {
+                let _ = complete_action_success(&state_clone.db, action_id).await;
+                tracing::info!("Successfully stopped app {}", id);
+            }
+            Err(e) => {
+                let error_msg = format!("{}", e);
+                let _ = complete_action_failed(&state_clone.db, action_id, &error_msg).await;
+                tracing::error!("Failed to stop app {}: {}", id, e);
+            }
         }
     });
 
     Ok(Json(json!({ "status": "stopping" })))
 }
 
-/// Cancel any running operation on an application and release its lock.
-/// This is a last-resort operation for stuck operations.
+/// Request cancellation of a running operation on an application.
+/// The operation will check for cancellation and stop gracefully.
 pub async fn cancel_operation(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -767,13 +796,74 @@ pub async fn cancel_operation(
         return Err(ApiError::Forbidden);
     }
 
+    // Get current operation info before cancelling
+    let active_op = state
+        .operation_lock
+        .get_active(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
     log_action(
         &state.db,
         user.user_id,
         "cancel_operation",
         "application",
         id,
-        json!({}),
+        json!({ "active_operation": active_op.as_ref().map(|o| &o.operation) }),
+    )
+    .await?;
+
+    let cancelled = state
+        .operation_lock
+        .request_cancel(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    if cancelled {
+        tracing::warn!(
+            app_id = %id,
+            user_id = %user.user_id,
+            "Operation cancellation requested"
+        );
+        Ok(Json(json!({
+            "status": "cancelling",
+            "message": "Cancellation requested. The operation will stop at the next check point."
+        })))
+    } else {
+        Ok(Json(json!({
+            "status": "no_operation",
+            "message": "No active operation to cancel"
+        })))
+    }
+}
+
+/// Force-release an operation lock. Use as last resort when cancel doesn't work.
+/// This immediately removes the lock, potentially leaving the operation orphaned.
+pub async fn force_unlock_operation(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
+    if perm < PermissionLevel::Manage {
+        // Force unlock requires higher privileges
+        return Err(ApiError::Forbidden);
+    }
+
+    // Get current operation info before force-unlocking
+    let active_op = state
+        .operation_lock
+        .get_active(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "force_unlock_operation",
+        "application",
+        id,
+        json!({ "active_operation": active_op.as_ref().map(|o| &o.operation) }),
     )
     .await?;
 
@@ -787,15 +877,17 @@ pub async fn cancel_operation(
         tracing::warn!(
             app_id = %id,
             user_id = %user.user_id,
-            "Operation cancelled and lock force-released"
+            "Operation lock force-released"
         );
-        Ok(Json(
-            json!({ "status": "cancelled", "lock_released": true }),
-        ))
+        Ok(Json(json!({
+            "status": "force_unlocked",
+            "message": "Lock force-released. Any running operation may be orphaned."
+        })))
     } else {
-        Ok(Json(
-            json!({ "status": "no_operation", "lock_released": false }),
-        ))
+        Ok(Json(json!({
+            "status": "no_lock",
+            "message": "No lock to release"
+        })))
     }
 }
 

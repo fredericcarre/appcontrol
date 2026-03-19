@@ -60,14 +60,21 @@ pub fn next_state_from_check(current: ComponentState, exit_code: i32) -> Option<
 
 Valid transitions — implement EXACTLY these:
 - Unknown → Running, Stopped, Failed (first check received)
-- Stopped → Starting (start command)
-- Starting → Running (check OK), Failed (timeout or check KO)
+- Stopped → Starting (start command), Running (external start detected via health check)
+- Starting → Running (check OK), Failed (ONLY via sequencer timeout, NOT from health check)
 - Running → Degraded (exit 1), Failed (exit ≥ 2), Stopping (stop command)
 - Degraded → Running (exit 0), Failed (exit ≥ 2), Stopping (stop command)
-- Stopping → Stopped (stop confirmed)
-- Failed → Starting (retry), Stopping (cleanup)
+- Stopping → Stopped (stop confirmed via health check KO)
+- Failed → Starting (retry), Stopping (cleanup), Running (auto-recovery when check passes)
 - Any → Unreachable (heartbeat timeout)
 - Unreachable → previous state (agent reconnects)
+
+### Critical: STARTING State Behavior
+During STARTING, health check failures (exit_code != 0) do NOT transition to FAILED:
+- Start commands are async/detached — process may need time to start
+- `next_state_from_check(Starting, non_zero_exit)` returns `None` (no state change)
+- Only the sequencer's timeout mechanism should transition STARTING → FAILED
+- This prevents false failures when check_interval is shorter than actual startup time
 
 ### protocol.rs
 ```rust

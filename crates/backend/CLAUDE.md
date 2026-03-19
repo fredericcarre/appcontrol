@@ -92,6 +92,54 @@ backend/src/
 - On component failure: SUSPEND (not cancel), return control to operator
 - Support dry_run mode: validate plan without executing
 
+#### Application-Type Components (referenced_app_id)
+Components with `referenced_app_id` are special: they represent external applications.
+Their state is derived from the aggregate state of the referenced application's components.
+
+**Start sequence:**
+1. When an app-type component's turn comes in DAG order, recursively start the referenced app
+2. Wait for referenced app to be fully RUNNING (all components RUNNING)
+3. DEGRADED is acceptable (all components RUNNING or DEGRADED) — proceed with warning
+4. FAILED (any component FAILED) → fail the sequence
+5. Only then proceed to next DAG level
+
+**Stop sequence:**
+1. Check if referenced app has any running components (not the component's stored state)
+2. If yes, recursively stop the referenced app
+3. Wait until all components of referenced app are stopped
+4. Only then proceed to next DAG level
+
+**State derivation for app-type components:**
+- Do NOT rely on `current_state` column (may be stale)
+- Query aggregate state of referenced app's components directly:
+  ```sql
+  SELECT COUNT(*) FILTER (WHERE current_state = 'RUNNING') as running,
+         COUNT(*) FILTER (WHERE current_state = 'DEGRADED') as degraded,
+         COUNT(*) FILTER (WHERE current_state = 'FAILED') as failed
+  FROM components WHERE application_id = $referenced_app_id
+  ```
+
+#### Health Check Polling During Transitions
+During STARTING/STOPPING states, the sequencer requests frequent health checks:
+- Sends `RunChecksNow` every 3 seconds to the agent
+- This ensures fast detection of state changes
+- Without this, if `check_interval > start_timeout`, component would timeout before health check runs
+
+#### Gateway Availability Check
+Before dispatching commands, verify gateway connectivity:
+```rust
+if !state.ws_hub.send_to_agent(agent_id, message) {
+    // Gateway unavailable — transition to FAILED and return explicit error
+    return Err(SequencerError::GatewayUnavailable { agent_id, name });
+}
+```
+
+#### FSM Behavior During STARTING State
+- Health check exit_code != 0 during STARTING → stay in STARTING (not FAILED)
+- Start commands are async/detached — process may take time to start
+- Only sequencer timeout should transition to FAILED
+- This is handled in `common::fsm::next_state_from_check(Starting, non_zero) → None`
+
 ### Permission Resolution (core/permissions.rs)
 ```rust
 pub async fn effective_permission(pool: &PgPool, user_id: Uuid, app_id: Uuid) -> PermissionLevel {

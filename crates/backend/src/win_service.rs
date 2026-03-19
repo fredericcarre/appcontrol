@@ -146,7 +146,7 @@ fn run_service() -> anyhow::Result<()> {
             appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
 
         let operation_lock =
-            appcontrol_backend::core::operation_lock::OperationLock::with_pool(pool.clone());
+            appcontrol_backend::core::operation_lock::OperationLock::new(pool.clone());
 
         let state = std::sync::Arc::new(appcontrol_backend::AppState {
             db: pool,

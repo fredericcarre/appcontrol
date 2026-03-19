@@ -14,6 +14,7 @@ pub mod export;
 pub mod gateways;
 pub mod groups;
 pub mod health;
+pub mod history;
 pub mod import;
 pub mod import_wizard;
 pub mod links;
@@ -55,6 +56,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/apps/:id/start-branch", post(apps::start_branch))
         .route("/apps/:id/start-to", post(apps::start_to))
         .route("/apps/:id/cancel", post(apps::cancel_operation))
+        .route("/apps/:id/force-unlock", post(apps::force_unlock_operation))
         .route("/apps/:id/suspend", put(apps::suspend_application))
         .route("/apps/:id/resume", put(apps::resume_application))
         .route(
@@ -213,6 +215,8 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/reports/audit", get(reports::global_audit))
         .route("/apps/:app_id/activity", get(reports::activity_feed))
         .route("/apps/:app_id/health-summary", get(reports::health_summary))
+        // History (Time Machine)
+        .route("/apps/:app_id/history", get(history::app_history))
         // Orchestration (scheduler)
         .route(
             "/orchestration/apps/:app_id/start",

@@ -43,3 +43,6 @@ mod test_teams_crud;
 mod test_variables_groups;
 mod test_websocket_events;
 mod test_yaml_import;
+
+// ---- Application-type components (referenced apps) ----
+mod test_app_type_components;

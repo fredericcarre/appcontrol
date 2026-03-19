@@ -123,6 +123,7 @@ export function useApps() {
       const { data } = await client.get<{ apps: Application[]; total: number }>('/apps');
       return data.apps;
     },
+    refetchInterval: 5000, // Refresh every 5 seconds for dashboard status updates
   });
 }
 
@@ -411,6 +412,8 @@ export interface ActivityEvent {
   user?: string;
   action?: string;
   details?: Record<string, unknown>;
+  status?: 'pending' | 'in_progress' | 'success' | 'failed' | 'cancelled' | null;
+  error_message?: string | null;
   // command fields
   request_id?: string;
   command_type?: string;
@@ -635,15 +638,20 @@ export function useUpdateComponent() {
       id: string;
       app_id: string;
       name?: string;
-      display_name?: string;
-      description?: string;
+      display_name?: string | null;
+      description?: string | null;
       component_type?: string;
       icon?: string;
-      host?: string;
+      host?: string | null;
       group_id?: string | null;
-      check_cmd?: string;
-      start_cmd?: string;
-      stop_cmd?: string;
+      check_cmd?: string | null;
+      start_cmd?: string | null;
+      stop_cmd?: string | null;
+      check_interval_seconds?: number;
+      start_timeout_seconds?: number;
+      stop_timeout_seconds?: number;
+      is_optional?: boolean;
+      referenced_app_id?: string | null;
       cluster_size?: number | null;
       cluster_nodes?: string[] | null;
     }) => {
@@ -695,5 +703,86 @@ export function useComponentMetricsHistory(componentId: string | null) {
       return data.history;
     },
     enabled: !!componentId,
+  });
+}
+
+// ── Application History (Time Machine) ─────────────────────────
+
+export type HistoryResolution = 'minute' | 'fiveminutes' | 'hour' | 'day';
+
+export interface ComponentSnapshot {
+  id: string;
+  name: string;
+  state: string;
+}
+
+export interface TimeSnapshot {
+  at: string;
+  components: ComponentSnapshot[];
+}
+
+export interface HistoryEvent {
+  at: string;
+  type: 'state_change' | 'action' | 'command';
+  // state_change fields
+  component_id?: string;
+  component_name?: string;
+  from_state?: string;
+  to_state?: string;
+  trigger?: string;
+  // action fields
+  user?: string;
+  action?: string;
+  details?: Record<string, unknown>;
+  status?: string | null;
+  error_message?: string | null;
+  // command fields
+  request_id?: string;
+  command_type?: string;
+  exit_code?: number | null;
+  duration_ms?: number | null;
+  dispatched_at?: string;
+  completed_at?: string | null;
+}
+
+export interface HistoryResponse {
+  snapshots: TimeSnapshot[];
+  events: HistoryEvent[];
+  time_range: {
+    from: string;
+    to: string;
+    resolution: HistoryResolution;
+  };
+}
+
+export interface HistoryQueryParams {
+  from: Date;
+  to: Date;
+  resolution?: HistoryResolution;
+  eventLimit?: number;
+}
+
+export function useAppHistory(appId: string, params: HistoryQueryParams | null) {
+  return useQuery({
+    queryKey: ['apps', appId, 'history', params?.from?.toISOString(), params?.to?.toISOString(), params?.resolution],
+    queryFn: async () => {
+      if (!params) return null;
+      const searchParams = new URLSearchParams({
+        from: params.from.toISOString(),
+        to: params.to.toISOString(),
+      });
+      if (params.resolution) {
+        searchParams.set('resolution', params.resolution);
+      }
+      if (params.eventLimit) {
+        searchParams.set('event_limit', params.eventLimit.toString());
+      }
+      const { data } = await client.get<HistoryResponse>(
+        `/apps/${appId}/history?${searchParams.toString()}`
+      );
+      return data;
+    },
+    enabled: !!appId && !!params,
+    staleTime: 30_000, // Cache for 30s since historical data doesn't change
   });
 }

@@ -12,6 +12,16 @@ export interface DiscoveryReport {
   scanned_at: string;
 }
 
+export interface DiscoveredFirewallRule {
+  name: string;
+  action: string;
+  direction: string;
+  protocol: string;
+  local_port?: number;
+  remote_port?: number;
+  enabled: boolean;
+}
+
 export interface DiscoveryReportDetail extends DiscoveryReport {
   report: {
     processes?: DiscoveredProcess[];
@@ -19,6 +29,7 @@ export interface DiscoveryReportDetail extends DiscoveryReport {
     connections?: DiscoveredConnection[];
     services?: DiscoveredService[];
     scheduled_jobs?: DiscoveredScheduledJob[];
+    firewall_rules?: DiscoveredFirewallRule[];
   };
 }
 

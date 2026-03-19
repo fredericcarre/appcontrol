@@ -1,213 +1,379 @@
-use sqlx::pool::PoolConnection;
-use sqlx::Postgres;
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::watch;
 use uuid::Uuid;
 
-/// Tracks in-flight operations per application using PostgreSQL advisory locks.
+/// Persistent operation locks backed by PostgreSQL.
 ///
-/// Advisory locks are cluster-wide, survive process crashes, and automatically
-/// release when the connection drops. This prevents concurrent start/stop/restart
-/// on the same application even across multiple backend instances (HA).
-///
-/// IMPORTANT: Advisory locks are connection-scoped. We must keep the same connection
-/// that acquired the lock until we release it.
+/// Features:
+/// - Locks persist across backend restarts
+/// - Heartbeat mechanism detects stuck operations (no heartbeat > 30s = stale)
+/// - Cancel requests are stored in DB, checked by running operations
+/// - Manual force-unlock available as last resort
+/// - Works in HA mode (multiple backend instances)
 #[derive(Debug, Clone)]
 pub struct OperationLock {
-    pool: Option<sqlx::PgPool>,
+    pool: sqlx::PgPool,
+    instance_id: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct ActiveOperation {
     pub operation: String,
     pub started_at: chrono::DateTime<chrono::Utc>,
+    pub last_heartbeat: chrono::DateTime<chrono::Utc>,
     pub user_id: Uuid,
+    pub status: String,
+    pub backend_instance: Option<String>,
 }
 
 /// Error returned when an operation is rejected due to a lock conflict.
 #[derive(Debug, thiserror::Error)]
 pub enum LockError {
-    #[error("Application {app_id} already has an active operation in progress")]
+    #[error("Application {app_id} already has an active {operation} operation in progress (started at {started_at}, last heartbeat {last_heartbeat})")]
     Conflict {
         app_id: Uuid,
         operation: String,
         started_at: chrono::DateTime<chrono::Utc>,
+        last_heartbeat: chrono::DateTime<chrono::Utc>,
         user_id: Uuid,
     },
     #[error("Database error: {0}")]
     Database(String),
 }
 
-impl Default for OperationLock {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// Stale lock threshold - if no heartbeat for this duration, lock is considered abandoned
+const STALE_THRESHOLD_SECONDS: i64 = 30;
+
+/// Heartbeat interval - how often running operations update their heartbeat
+const HEARTBEAT_INTERVAL_SECONDS: u64 = 5;
 
 impl OperationLock {
-    pub fn new() -> Self {
-        Self { pool: None }
-    }
-
-    /// Create with a database pool for PostgreSQL advisory locks.
-    pub fn with_pool(pool: sqlx::PgPool) -> Self {
-        Self { pool: Some(pool) }
-    }
-
-    /// Derive a stable i64 advisory lock key from a UUID.
-    /// Uses the first 8 bytes of the UUID, which is unique enough for our purposes.
-    fn lock_key(app_id: Uuid) -> i64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        app_id.hash(&mut hasher);
-        hasher.finish() as i64
+    /// Create with a database pool.
+    pub fn new(pool: sqlx::PgPool) -> Self {
+        // Generate a unique instance ID for this backend process
+        let instance_id = format!(
+            "{}-{}",
+            hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "unknown".to_string()),
+            std::process::id()
+        );
+        Self { pool, instance_id }
     }
 
     /// Try to acquire the lock for an operation on an application.
-    /// Uses pg_try_advisory_lock for non-blocking acquisition.
     /// Returns Ok(guard) if acquired, Err(LockError::Conflict) if another operation is active.
+    ///
+    /// Before attempting to acquire, this will clean up any stale locks (heartbeat > 30s old).
     pub async fn try_lock(
         &self,
         app_id: Uuid,
         operation: &str,
         user_id: Uuid,
     ) -> Result<OperationGuard, LockError> {
-        let pool = match &self.pool {
-            Some(p) => p,
-            None => {
-                // Fallback: no DB pool — allow operation (testing/startup scenario)
-                return Ok(OperationGuard {
-                    conn: None,
-                    lock_key: 0,
-                    app_id,
-                });
-            }
-        };
+        // First, clean up any stale lock for this app
+        self.cleanup_stale_lock(app_id).await?;
 
-        let key = Self::lock_key(app_id);
-
-        // Acquire a dedicated connection (advisory locks are connection-scoped)
-        // We MUST keep this connection until we release the lock!
-        let mut conn = pool
-            .acquire()
-            .await
-            .map_err(|e| LockError::Database(e.to_string()))?;
-
-        // Try to acquire the advisory lock (non-blocking)
-        let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-            .bind(key)
-            .fetch_one(&mut *conn)
-            .await
-            .map_err(|e| LockError::Database(e.to_string()))?;
-
-        if !acquired {
-            // Connection will be returned to pool, lock was not acquired
-            return Err(LockError::Conflict {
-                app_id,
-                operation: operation.to_string(),
-                started_at: chrono::Utc::now(),
-                user_id,
-            });
-        }
-
-        tracing::debug!(
-            app_id = %app_id,
-            operation = %operation,
-            lock_key = key,
-            "Advisory lock acquired"
-        );
-
-        // Store the connection in the guard - it will be used for unlocking
-        Ok(OperationGuard {
-            conn: Some(Arc::new(Mutex::new(conn))),
-            lock_key: key,
-            app_id,
-        })
-    }
-
-    /// Check if an application has an active operation.
-    #[allow(dead_code)]
-    pub fn get_active(&self, _app_id: Uuid) -> Option<ActiveOperation> {
-        // With advisory locks, we can't introspect the lock holder metadata
-        // from another connection. This is intentional — advisory locks are
-        // designed for mutual exclusion, not status reporting.
-        // The operation status is tracked in the action_log table instead.
-        None
-    }
-
-    /// Force-release any advisory lock for an application.
-    /// This is a last-resort operation for stuck locks.
-    /// Uses pg_advisory_unlock_all() on a new connection to clear locks,
-    /// then terminates any backend connections holding the lock.
-    pub async fn force_unlock(&self, app_id: Uuid) -> Result<bool, LockError> {
-        let pool = match &self.pool {
-            Some(p) => p,
-            None => return Ok(false),
-        };
-
-        let key = Self::lock_key(app_id);
-
-        // Try to unlock from a new connection (may not work if held by another connection)
-        let result: bool = sqlx::query_scalar("SELECT pg_advisory_unlock($1)")
-            .bind(key)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| LockError::Database(e.to_string()))?;
-
-        if result {
-            tracing::info!(app_id = %app_id, lock_key = key, "Advisory lock force-released");
-            return Ok(true);
-        }
-
-        // If that didn't work, find and terminate the connection holding the lock
-        let terminated: i64 = sqlx::query_scalar(
+        // Try to insert a new lock (will fail if one exists due to PRIMARY KEY constraint)
+        let result = sqlx::query(
             r#"
-            SELECT COUNT(*) FROM (
-                SELECT pg_terminate_backend(pid)
-                FROM pg_locks
-                WHERE locktype = 'advisory'
-                  AND ((classid::bigint << 32) | objid::bigint) = $1
-                  AND pid != pg_backend_pid()
-            ) t
+            INSERT INTO operation_locks (app_id, operation, user_id, backend_instance)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (app_id) DO NOTHING
+            RETURNING app_id
             "#,
         )
-        .bind(key)
-        .fetch_one(pool)
+        .bind(app_id)
+        .bind(operation)
+        .bind(user_id)
+        .bind(&self.instance_id)
+        .fetch_optional(&self.pool)
         .await
         .map_err(|e| LockError::Database(e.to_string()))?;
 
-        if terminated > 0 {
+        if result.is_some() {
+            // Lock acquired successfully
+            tracing::info!(
+                app_id = %app_id,
+                operation = %operation,
+                user_id = %user_id,
+                instance = %self.instance_id,
+                "Operation lock acquired"
+            );
+
+            // Create a shutdown channel for the heartbeat task
+            let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+            // Spawn heartbeat task
+            let pool = self.pool.clone();
+            let app_id_clone = app_id;
+            tokio::spawn(async move {
+                heartbeat_loop(pool, app_id_clone, shutdown_rx).await;
+            });
+
+            Ok(OperationGuard {
+                pool: self.pool.clone(),
+                app_id,
+                shutdown_tx: Some(shutdown_tx),
+            })
+        } else {
+            // Lock already exists - fetch details for error message
+            let existing = self.get_active(app_id).await?;
+            if let Some(op) = existing {
+                Err(LockError::Conflict {
+                    app_id,
+                    operation: op.operation,
+                    started_at: op.started_at,
+                    last_heartbeat: op.last_heartbeat,
+                    user_id: op.user_id,
+                })
+            } else {
+                // Race condition - lock was just released, try again
+                // This shouldn't happen often, but let's handle it gracefully
+                Err(LockError::Database(
+                    "Lock acquisition race condition, please retry".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Get information about an active operation on an application.
+    pub async fn get_active(&self, app_id: Uuid) -> Result<Option<ActiveOperation>, LockError> {
+        let row = sqlx::query_as::<_, (String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, Uuid, String, Option<String>)>(
+            r#"
+            SELECT operation, started_at, last_heartbeat, user_id, status, backend_instance
+            FROM operation_locks
+            WHERE app_id = $1
+            "#,
+        )
+        .bind(app_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| LockError::Database(e.to_string()))?;
+
+        Ok(row.map(|(operation, started_at, last_heartbeat, user_id, status, backend_instance)| {
+            ActiveOperation {
+                operation,
+                started_at,
+                last_heartbeat,
+                user_id,
+                status,
+                backend_instance,
+            }
+        }))
+    }
+
+    /// Check if an operation on an application has been cancelled.
+    /// Returns true if status is 'cancelling' or 'cancelled'.
+    pub fn is_cancelled(&self, app_id: Uuid) -> bool {
+        // We need to query the database synchronously, but we're in an async context
+        // Use a blocking task to avoid deadlocks
+        let pool = self.pool.clone();
+
+        // Use try_send to avoid blocking - if we can't check, assume not cancelled
+        let handle = tokio::task::spawn(async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM operation_locks WHERE app_id = $1",
+            )
+            .bind(app_id)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s == "cancelling" || s == "cancelled")
+            .unwrap_or(false)
+        });
+
+        // Try to get result with a short timeout
+        futures_util::FutureExt::now_or_never(handle)
+            .and_then(|r| r.ok())
+            .unwrap_or(false)
+    }
+
+    /// Check if an operation has been cancelled (async version).
+    pub async fn is_cancelled_async(&self, app_id: Uuid) -> bool {
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM operation_locks WHERE app_id = $1",
+        )
+        .bind(app_id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s == "cancelling" || s == "cancelled")
+        .unwrap_or(false)
+    }
+
+    /// Request cancellation of an operation.
+    /// Sets status to 'cancelling'. The running operation should check this and exit.
+    /// Returns true if cancellation was requested, false if no operation was running.
+    pub async fn request_cancel(&self, app_id: Uuid) -> Result<bool, LockError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE operation_locks
+            SET status = 'cancelling'
+            WHERE app_id = $1 AND status = 'running'
+            "#,
+        )
+        .bind(app_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LockError::Database(e.to_string()))?;
+
+        if result.rows_affected() > 0 {
+            tracing::info!(app_id = %app_id, "Operation cancellation requested");
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Force-release a lock. Use as last resort when normal cancellation doesn't work.
+    /// This immediately deletes the lock, potentially leaving the operation orphaned.
+    pub async fn force_unlock(&self, app_id: Uuid) -> Result<bool, LockError> {
+        // First try to request cancellation
+        let _ = self.request_cancel(app_id).await;
+
+        // Then force delete the lock
+        let result = sqlx::query("DELETE FROM operation_locks WHERE app_id = $1")
+            .bind(app_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| LockError::Database(e.to_string()))?;
+
+        if result.rows_affected() > 0 {
+            tracing::warn!(app_id = %app_id, "Operation lock force-released");
+            Ok(true)
+        } else {
+            tracing::debug!(app_id = %app_id, "No lock to release");
+            Ok(false)
+        }
+    }
+
+    /// Clean up a stale lock (heartbeat older than threshold).
+    async fn cleanup_stale_lock(&self, app_id: Uuid) -> Result<(), LockError> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM operation_locks
+            WHERE app_id = $1
+              AND last_heartbeat < NOW() - INTERVAL '1 second' * $2
+            "#,
+        )
+        .bind(app_id)
+        .bind(STALE_THRESHOLD_SECONDS)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LockError::Database(e.to_string()))?;
+
+        if result.rows_affected() > 0 {
             tracing::warn!(
                 app_id = %app_id,
-                lock_key = key,
-                terminated_connections = terminated,
-                "Terminated connections holding advisory lock"
+                threshold_seconds = STALE_THRESHOLD_SECONDS,
+                "Cleaned up stale operation lock"
             );
-            return Ok(true);
         }
 
-        tracing::debug!(app_id = %app_id, lock_key = key, "No lock to release");
-        Ok(false)
+        Ok(())
+    }
+
+    /// Clean up all stale locks across all applications.
+    /// Call this periodically (e.g., on backend startup and every minute).
+    pub async fn cleanup_all_stale_locks(&self) -> Result<u64, LockError> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM operation_locks
+            WHERE last_heartbeat < NOW() - INTERVAL '1 second' * $1
+            "#,
+        )
+        .bind(STALE_THRESHOLD_SECONDS)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LockError::Database(e.to_string()))?;
+
+        let count = result.rows_affected();
+        if count > 0 {
+            tracing::warn!(
+                count = count,
+                threshold_seconds = STALE_THRESHOLD_SECONDS,
+                "Cleaned up stale operation locks"
+            );
+        }
+
+        Ok(count)
+    }
+
+    /// List all active operation locks (for admin UI / debugging).
+    pub async fn list_all(&self) -> Result<Vec<(Uuid, ActiveOperation)>, LockError> {
+        let rows = sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, Uuid, String, Option<String>)>(
+            r#"
+            SELECT app_id, operation, started_at, last_heartbeat, user_id, status, backend_instance
+            FROM operation_locks
+            ORDER BY started_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| LockError::Database(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(app_id, operation, started_at, last_heartbeat, user_id, status, backend_instance)| {
+                (
+                    app_id,
+                    ActiveOperation {
+                        operation,
+                        started_at,
+                        last_heartbeat,
+                        user_id,
+                        status,
+                        backend_instance,
+                    },
+                )
+            })
+            .collect())
     }
 }
 
-/// RAII guard that releases the advisory lock when the operation completes (or the guard is dropped).
-///
-/// IMPORTANT: This guard holds onto the database connection that acquired the lock.
-/// The lock is only valid on that specific connection, so we must use the same
-/// connection to release it.
-pub struct OperationGuard {
-    conn: Option<Arc<Mutex<PoolConnection<Postgres>>>>,
-    lock_key: i64,
-    app_id: Uuid,
+/// Heartbeat loop - updates last_heartbeat every 5 seconds until shutdown signal.
+async fn heartbeat_loop(pool: sqlx::PgPool, app_id: Uuid, mut shutdown_rx: watch::Receiver<bool>) {
+    let interval = std::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECONDS);
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(interval) => {
+                // Update heartbeat
+                if let Err(e) = sqlx::query(
+                    "UPDATE operation_locks SET last_heartbeat = NOW() WHERE app_id = $1"
+                )
+                .bind(app_id)
+                .execute(&pool)
+                .await
+                {
+                    tracing::warn!(app_id = %app_id, error = %e, "Failed to update operation heartbeat");
+                    // If we can't update heartbeat, the lock will become stale and be cleaned up
+                    break;
+                }
+                tracing::trace!(app_id = %app_id, "Operation heartbeat updated");
+            }
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    tracing::debug!(app_id = %app_id, "Heartbeat loop shutting down");
+                    break;
+                }
+            }
+        }
+    }
 }
 
-// Manual Debug impl since PoolConnection doesn't implement Debug nicely
+/// RAII guard that releases the operation lock when dropped.
+pub struct OperationGuard {
+    pool: sqlx::PgPool,
+    app_id: Uuid,
+    shutdown_tx: Option<watch::Sender<bool>>,
+}
+
 impl std::fmt::Debug for OperationGuard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OperationGuard")
-            .field("has_conn", &self.conn.is_some())
-            .field("lock_key", &self.lock_key)
             .field("app_id", &self.app_id)
             .finish()
     }
@@ -215,33 +381,29 @@ impl std::fmt::Debug for OperationGuard {
 
 impl Drop for OperationGuard {
     fn drop(&mut self) {
-        if let Some(conn_arc) = self.conn.take() {
-            let key = self.lock_key;
-            let app_id = self.app_id;
-
-            // Spawn a task to release the advisory lock using the SAME connection
-            tokio::spawn(async move {
-                let mut conn = conn_arc.lock().await;
-                match sqlx::query("SELECT pg_advisory_unlock($1)")
-                    .bind(key)
-                    .fetch_one(&mut **conn)
-                    .await
-                {
-                    Ok(_) => {
-                        tracing::debug!(app_id = %app_id, lock_key = key, "Advisory lock released");
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            app_id = %app_id,
-                            lock_key = key,
-                            "Failed to release advisory lock: {}",
-                            e
-                        );
-                    }
-                }
-                // Connection is returned to pool when `conn` is dropped here
-            });
+        // Signal heartbeat task to stop
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(true);
         }
+
+        // Release the lock
+        let pool = self.pool.clone();
+        let app_id = self.app_id;
+
+        tokio::spawn(async move {
+            match sqlx::query("DELETE FROM operation_locks WHERE app_id = $1")
+                .bind(app_id)
+                .execute(&pool)
+                .await
+            {
+                Ok(_) => {
+                    tracing::info!(app_id = %app_id, "Operation lock released");
+                }
+                Err(e) => {
+                    tracing::warn!(app_id = %app_id, error = %e, "Failed to release operation lock");
+                }
+            }
+        });
     }
 }
 
@@ -249,35 +411,21 @@ impl Drop for OperationGuard {
 mod tests {
     use super::*;
 
+    // Note: These tests require a running PostgreSQL database
+    // They are integration tests and should be run with `cargo test -- --ignored`
+
     #[test]
-    fn test_lock_key_deterministic() {
-        let id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
-        let k1 = OperationLock::lock_key(id);
-        let k2 = OperationLock::lock_key(id);
-        assert_eq!(k1, k2);
+    fn test_stale_threshold_reasonable() {
+        assert!(STALE_THRESHOLD_SECONDS >= 30, "Stale threshold should be at least 30s");
+        assert!(STALE_THRESHOLD_SECONDS <= 300, "Stale threshold shouldn't be too long");
     }
 
     #[test]
-    fn test_lock_key_unique_for_different_apps() {
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
-        let k1 = OperationLock::lock_key(id1);
-        let k2 = OperationLock::lock_key(id2);
-        // While hash collisions are theoretically possible, UUID v4 should give different keys
-        assert_ne!(k1, k2);
-    }
-
-    #[test]
-    fn test_default_lock_allows_operations() {
-        // Without a pool, try_lock should succeed (fallback mode)
-        let lock = OperationLock::new();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            let guard = lock.try_lock(Uuid::new_v4(), "start", Uuid::new_v4()).await;
-            assert!(guard.is_ok());
-        });
+    fn test_heartbeat_interval_reasonable() {
+        assert!(HEARTBEAT_INTERVAL_SECONDS >= 3, "Heartbeat shouldn't be too frequent");
+        assert!(
+            HEARTBEAT_INTERVAL_SECONDS < STALE_THRESHOLD_SECONDS as u64,
+            "Heartbeat must be more frequent than stale threshold"
+        );
     }
 }

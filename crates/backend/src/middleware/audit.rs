@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 /// Log an action to the action_log table BEFORE the action executes.
 /// This is a critical rule: log before execute.
+/// Returns the action_log ID which can be used to update the result later.
 pub async fn log_action(
     pool: &PgPool,
     user_id: Uuid,
@@ -13,8 +14,8 @@ pub async fn log_action(
 ) -> Result<Uuid, sqlx::Error> {
     let row = sqlx::query_scalar::<_, Uuid>(
         r#"
-        INSERT INTO action_log (user_id, action, resource_type, resource_id, details)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO action_log (user_id, action, resource_type, resource_id, details, status)
+        VALUES ($1, $2, $3, $4, $5, 'in_progress')
         RETURNING id
         "#,
     )
@@ -27,4 +28,57 @@ pub async fn log_action(
     .await?;
 
     Ok(row)
+}
+
+/// Mark an action as successfully completed.
+pub async fn complete_action_success(pool: &PgPool, action_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE action_log
+        SET status = 'success', completed_at = now()
+        WHERE id = $1
+        "#,
+    )
+    .bind(action_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Mark an action as failed with an error message.
+pub async fn complete_action_failed(
+    pool: &PgPool,
+    action_id: Uuid,
+    error_message: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE action_log
+        SET status = 'failed', error_message = $2, completed_at = now()
+        WHERE id = $1
+        "#,
+    )
+    .bind(action_id)
+    .bind(error_message)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Mark an action as cancelled.
+pub async fn complete_action_cancelled(pool: &PgPool, action_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE action_log
+        SET status = 'cancelled', completed_at = now()
+        WHERE id = $1
+        "#,
+    )
+    .bind(action_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }

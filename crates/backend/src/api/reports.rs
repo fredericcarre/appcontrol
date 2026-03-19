@@ -550,25 +550,36 @@ pub async fn activity_feed(
     .fetch_all(&state.db)
     .await?;
 
-    // User actions on the app itself
-    let actions =
-        sqlx::query_as::<_, (Uuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
-            r#"
-        SELECT al.user_id, COALESCE(u.email, al.user_id::text), al.action, al.details, al.created_at
+    // User actions on the app itself (include status and error_message)
+    let actions = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Value,
+            chrono::DateTime<chrono::Utc>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
+        r#"
+        SELECT al.user_id, COALESCE(u.email, al.user_id::text), al.action, al.details, al.created_at,
+               al.status, al.error_message
         FROM action_log al
         LEFT JOIN users u ON u.id = al.user_id
         WHERE al.resource_id = $1 AND al.created_at < $2
         ORDER BY al.created_at DESC
         LIMIT $3
         "#,
-        )
-        .bind(app_id)
-        .bind(cursor)
-        .bind(limit)
-        .fetch_all(&state.db)
-        .await?;
+    )
+    .bind(app_id)
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await?;
 
-    // Actions targeting components of this app
+    // Actions targeting components of this app (include status and error_message)
     let component_actions = sqlx::query_as::<
         _,
         (
@@ -578,11 +589,14 @@ pub async fn activity_feed(
             String,
             Value,
             chrono::DateTime<chrono::Utc>,
+            Option<String>,
+            Option<String>,
         ),
     >(
         r#"
         SELECT al.user_id, COALESCE(u.email, al.user_id::text), al.action,
-               COALESCE(c.name, al.resource_id::text), al.details, al.created_at
+               COALESCE(c.name, al.resource_id::text), al.details, al.created_at,
+               al.status, al.error_message
         FROM action_log al
         LEFT JOIN users u ON u.id = al.user_id
         JOIN components c ON c.id = al.resource_id AND c.application_id = $1
@@ -642,17 +656,19 @@ pub async fn activity_feed(
         }));
     }
 
-    for (_uid, email, action, details, at) in &actions {
+    for (_uid, email, action, details, at, status, error_message) in &actions {
         events.push(json!({
             "kind": "user_action",
             "user": email,
             "action": action,
             "details": details,
             "at": at,
+            "status": status,
+            "error_message": error_message,
         }));
     }
 
-    for (_uid, email, action, comp_name, details, at) in &component_actions {
+    for (_uid, email, action, comp_name, details, at, status, error_message) in &component_actions {
         events.push(json!({
             "kind": "user_action",
             "user": email,
@@ -660,6 +676,8 @@ pub async fn activity_feed(
             "component_name": comp_name,
             "details": details,
             "at": at,
+            "status": status,
+            "error_message": error_message,
         }));
     }
 

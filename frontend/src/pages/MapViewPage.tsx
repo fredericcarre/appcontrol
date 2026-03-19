@@ -35,6 +35,8 @@ import { DetailPanel } from '@/components/maps/DetailPanel';
 import { ShareModal } from '@/components/share/ShareModal';
 import { CommandModal } from '@/components/commands/CommandModal';
 import { ActivityPanel } from '@/components/activity/ActivityPanel';
+import { HistoryTimeline } from '@/components/history/HistoryTimeline';
+import { TimeSnapshot } from '@/api/apps';
 import { ComponentPalette } from '@/components/maps/ComponentPalette';
 import { ComponentEditor, ComponentFormData } from '@/components/maps/ComponentEditor';
 import { ImpactPreviewDialog } from '@/components/maps/ImpactPreviewDialog';
@@ -51,7 +53,7 @@ import {
   Pencil, Download, Save, ArrowLeft, Play, Square, Loader2,
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   MoreVertical, Trash2, Pause, PlayCircle, Maximize, Minimize,
-  Monitor,
+  Monitor, History, X,
 } from 'lucide-react';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 
@@ -144,6 +146,11 @@ export function MapViewPage() {
   // Fullscreen state
   const { isFullscreen, toggleFullscreen } = useFullscreen();
 
+  // History mode state
+  const [historyMode, setHistoryMode] = useState(false);
+  const [historyTime, setHistoryTime] = useState<Date | null>(null);
+  const [historySnapshot, setHistorySnapshot] = useState<TimeSnapshot | null>(null);
+
   // Subscribe to app events via WebSocket
   useEffect(() => {
     if (appId) {
@@ -151,33 +158,80 @@ export function MapViewPage() {
     }
   }, [appId, subscribe]);
 
-  const components = useMemo(() => app?.components || [], [app?.components]);
+  const liveComponents = useMemo(() => app?.components || [], [app?.components]);
   const dependencies = useMemo(() => app?.dependencies || [], [app?.dependencies]);
+
+  // In history mode, overlay historical states onto components
+  const components = useMemo(() => {
+    if (!historyMode || !historySnapshot) {
+      return liveComponents;
+    }
+    // Create a map of historical states
+    const historicalStates = new Map<string, string>();
+    for (const snap of historySnapshot.components) {
+      historicalStates.set(snap.id, snap.state);
+    }
+    // Overlay historical states onto live components
+    return liveComponents.map((c) => ({
+      ...c,
+      current_state: historicalStates.get(c.id) ?? c.current_state,
+    }));
+  }, [liveComponents, historyMode, historySnapshot]);
 
   // Compute component state counts
   const componentCounts = useMemo(() => {
-    const counts = { running: 0, stopped: 0, failed: 0, starting: 0, stopping: 0, other: 0 };
+    const counts = {
+      running: 0,
+      degraded: 0,
+      stopped: 0,
+      failed: 0,
+      starting: 0,
+      stopping: 0,
+      unreachable: 0,
+      unknown: 0,
+    };
     for (const c of components) {
-      switch (c.current_state) {
+      switch (c.current_state?.toUpperCase()) {
         case 'RUNNING': counts.running++; break;
+        case 'DEGRADED': counts.degraded++; break;
         case 'STOPPED': counts.stopped++; break;
         case 'FAILED': counts.failed++; break;
         case 'STARTING': counts.starting++; break;
         case 'STOPPING': counts.stopping++; break;
-        default: counts.other++; break;
+        case 'UNREACHABLE': counts.unreachable++; break;
+        default: counts.unknown++; break;
       }
     }
     return counts;
   }, [components]);
 
   // Compute global state (weather) from component states
+  // Priority: TRANSITIONING (any start/stop in progress) > FAILED > DEGRADED > RUNNING > STOPPED > UNKNOWN
   const globalState = useMemo(() => {
     if (components.length === 0) return 'UNKNOWN';
-    if (componentCounts.failed > 0) return 'FAILED';
+
+    // Any operation in progress = TRANSITIONING (highest priority for UI feedback)
     if (componentCounts.starting > 0 || componentCounts.stopping > 0) return 'TRANSITIONING';
-    if (componentCounts.running === components.length) return 'RUNNING';
+
+    // Failures take priority over degraded/running
+    if (componentCounts.failed > 0) return 'FAILED';
+
+    // Unreachable components are also problematic
+    if (componentCounts.unreachable > 0) return 'DEGRADED';
+
+    // Components in DEGRADED state (running but unhealthy)
+    if (componentCounts.degraded > 0) return 'DEGRADED';
+
+    // All running (including optional degraded counted above)
+    const functionallyRunning = componentCounts.running + componentCounts.degraded;
+    if (functionallyRunning === components.length) return 'RUNNING';
+
+    // All stopped
     if (componentCounts.stopped === components.length) return 'STOPPED';
-    if (componentCounts.running > 0 && componentCounts.stopped > 0) return 'DEGRADED';
+
+    // Mix of running and stopped
+    if ((functionallyRunning > 0 || componentCounts.running > 0) && componentCounts.stopped > 0) return 'DEGRADED';
+
     return 'UNKNOWN';
   }, [components.length, componentCounts]);
 
@@ -222,29 +276,47 @@ export function MapViewPage() {
 
   const handleStartAll = useCallback(() => {
     if (!appId) return;
-    setIsOperating(true);
-    setOperationType('start');
-    startApp.mutate(appId, {
-      onSettled: () => {
-        // Clear local state immediately - UI will continue showing transitional
-        // state based on globalState === 'TRANSITIONING' from actual component states
-        setIsOperating(false);
-        setOperationType(null);
+    setConfirmDialog({
+      open: true,
+      title: 'Start All Components',
+      description: `Start all ${components.length} components in "${app?.name || 'this application'}"? This will start components in dependency order.`,
+      confirmLabel: 'Start All',
+      variant: 'default',
+      onConfirm: () => {
+        setIsOperating(true);
+        setOperationType('start');
+        startApp.mutate(appId, {
+          onSettled: () => {
+            // Clear local state immediately - UI will continue showing transitional
+            // state based on globalState === 'TRANSITIONING' from actual component states
+            setIsOperating(false);
+            setOperationType(null);
+          },
+        });
       },
     });
-  }, [appId, startApp]);
+  }, [appId, startApp, components.length, app?.name]);
 
   const handleStopAll = useCallback(() => {
     if (!appId) return;
-    setIsOperating(true);
-    setOperationType('stop');
-    stopApp.mutate(appId, {
-      onSettled: () => {
-        setIsOperating(false);
-        setOperationType(null);
+    setConfirmDialog({
+      open: true,
+      title: 'Stop All Components',
+      description: `Stop all ${components.length} components in "${app?.name || 'this application'}"? This will stop components in reverse dependency order.`,
+      confirmLabel: 'Stop All',
+      variant: 'warning',
+      onConfirm: () => {
+        setIsOperating(true);
+        setOperationType('stop');
+        stopApp.mutate(appId, {
+          onSettled: () => {
+            setIsOperating(false);
+            setOperationType(null);
+          },
+        });
       },
     });
-  }, [appId, stopApp]);
+  }, [appId, stopApp, components.length, app?.name]);
 
   const handleCancel = useCallback(() => {
     if (!appId) return;
@@ -462,6 +534,28 @@ export function MapViewPage() {
     setSelectedComponentId(componentId);
   }, []);
 
+  // Navigate to a referenced app (for application-type components)
+  const handleNavigateToApp = useCallback((targetAppId: string) => {
+    navigate(`/apps/${targetAppId}`);
+  }, [navigate]);
+
+  // History mode handlers
+  const handleToggleHistoryMode = useCallback(() => {
+    setHistoryMode((prev) => {
+      if (prev) {
+        // Exiting history mode - clear historical state
+        setHistoryTime(null);
+        setHistorySnapshot(null);
+      }
+      return !prev;
+    });
+  }, []);
+
+  const handleHistoryTimeSelect = useCallback((time: Date, snapshot: TimeSnapshot | null) => {
+    setHistoryTime(time);
+    setHistorySnapshot(snapshot);
+  }, []);
+
   // Edit mode handlers
   const handleToggleEditMode = useCallback(() => {
     if (editMode && pendingPositions.size > 0) {
@@ -550,15 +644,25 @@ export function MapViewPage() {
         id: editingComponent,
         app_id: appId,
         name: data.name,
-        display_name: data.display_name || undefined,
-        description: data.description || undefined,
+        display_name: data.display_name || null,
+        description: data.description || null,
         component_type: data.component_type,
         icon: data.icon,
-        host: data.host || undefined,
+        host: data.host || null,
         group_id: data.group_id,
-        check_cmd: data.check_cmd || undefined,
-        start_cmd: data.start_cmd || undefined,
-        stop_cmd: data.stop_cmd || undefined,
+        check_cmd: data.check_cmd || null,
+        start_cmd: data.start_cmd || null,
+        stop_cmd: data.stop_cmd || null,
+        // Timeouts and intervals
+        check_interval_seconds: data.check_interval_seconds,
+        start_timeout_seconds: data.start_timeout_seconds,
+        stop_timeout_seconds: data.stop_timeout_seconds,
+        is_optional: data.is_optional,
+        // Application reference
+        referenced_app_id: data.referenced_app_id || null,
+        // Cluster configuration
+        cluster_size: data.cluster_size ?? null,
+        cluster_nodes: data.cluster_nodes?.length ? data.cluster_nodes : null,
       });
     } else if (newComponentType && newComponentPosition) {
       createComponent.mutate({
@@ -575,6 +679,11 @@ export function MapViewPage() {
         stop_cmd: data.stop_cmd || undefined,
         position_x: newComponentPosition.x,
         position_y: newComponentPosition.y,
+        // Timeouts and intervals
+        check_interval_seconds: data.check_interval_seconds,
+        start_timeout_seconds: data.start_timeout_seconds,
+        stop_timeout_seconds: data.stop_timeout_seconds,
+        is_optional: data.is_optional,
         // Application reference (for app-type components)
         referenced_app_id: data.referenced_app_id || undefined,
         // Cluster configuration
@@ -686,6 +795,12 @@ export function MapViewPage() {
                   Edit Mode
                 </span>
               )}
+              {historyMode && (
+                <Badge variant="secondary" className="shrink-0 bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                  <History className="h-3 w-3 mr-1" />
+                  {historyTime ? new Date(historyTime).toLocaleString() : 'Historical View'}
+                </Badge>
+              )}
               {app.is_suspended && (
                 <Badge variant="secondary" className="shrink-0 bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
                   <Pause className="h-3 w-3 mr-1" />
@@ -725,8 +840,8 @@ export function MapViewPage() {
 
             {/* Right: Actions */}
             <div className="flex items-center gap-2 shrink-0">
-              {/* Start/Stop buttons */}
-              {canOperate && !editMode && (
+              {/* Start/Stop buttons - hidden in history mode */}
+              {canOperate && !editMode && !historyMode && (
                 <>
                   {(isOperating || globalState === 'TRANSITIONING') ? (
                     <div className="flex items-center gap-2">
@@ -777,99 +892,113 @@ export function MapViewPage() {
                 </>
               )}
 
-              <div className="h-6 w-px bg-border mx-1" />
+              {/* Edit mode button - always visible when user can edit, hidden in history mode */}
+              {canEdit && !historyMode && (
+                <>
+                  <div className="h-6 w-px bg-border mx-1" />
+                  <Button
+                    variant={editMode ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={handleToggleEditMode}
+                  >
+                    {editMode ? (
+                      <>
+                        <Save className="h-4 w-4" />
+                        <span className="hidden sm:inline ml-1">Done</span>
+                      </>
+                    ) : (
+                      <>
+                        <Pencil className="h-4 w-4" />
+                        <span className="hidden sm:inline ml-1">Edit</span>
+                      </>
+                    )}
+                  </Button>
+                </>
+              )}
 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleExport}
-                disabled={exportApp.isPending}
-                title="Export as JSON"
-              >
-                <Download className="h-4 w-4" />
-                <span className="hidden sm:inline ml-1">Export</span>
-              </Button>
+              {/* History mode toggle */}
+              {!editMode && (
+                <>
+                  <div className="h-6 w-px bg-border mx-1" />
+                  <Button
+                    variant={historyMode ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={handleToggleHistoryMode}
+                    className={historyMode ? 'bg-purple-600 hover:bg-purple-700' : ''}
+                    title={historyMode ? 'Exit History Mode' : 'View History'}
+                  >
+                    {historyMode ? (
+                      <>
+                        <X className="h-4 w-4" />
+                        <span className="hidden sm:inline ml-1">Exit History</span>
+                      </>
+                    ) : (
+                      <>
+                        <History className="h-4 w-4" />
+                        <span className="hidden sm:inline ml-1">History</span>
+                      </>
+                    )}
+                  </Button>
+                </>
+              )}
 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={toggleFullscreen}
-                title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-              >
-                {isFullscreen ? (
-                  <Minimize className="h-4 w-4" />
-                ) : (
-                  <Maximize className="h-4 w-4" />
-                )}
-              </Button>
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate('/supervision')}
-                title="Supervision mode (slideshow)"
-              >
-                <Monitor className="h-4 w-4" />
-                <span className="hidden sm:inline ml-1">NOC</span>
-              </Button>
-
-              {canEdit && (
-                <Button
-                  variant={editMode ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={handleToggleEditMode}
-                >
-                  {editMode ? (
+              {/* More actions dropdown - contains less critical actions */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={handleExport} disabled={exportApp.isPending}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Export as JSON
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={toggleFullscreen}>
+                    {isFullscreen ? (
+                      <Minimize className="h-4 w-4 mr-2" />
+                    ) : (
+                      <Maximize className="h-4 w-4 mr-2" />
+                    )}
+                    {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate('/supervision')}>
+                    <Monitor className="h-4 w-4 mr-2" />
+                    Supervision Mode
+                  </DropdownMenuItem>
+                  {canManage && (
                     <>
-                      <Save className="h-4 w-4" />
-                      <span className="hidden sm:inline ml-1">Done</span>
-                    </>
-                  ) : (
-                    <>
-                      <Pencil className="h-4 w-4" />
-                      <span className="hidden sm:inline ml-1">Edit</span>
+                      <DropdownMenuSeparator />
+                      {app.is_suspended ? (
+                        <DropdownMenuItem
+                          onClick={handleResumeApp}
+                          disabled={resumeApp.isPending}
+                        >
+                          <PlayCircle className="h-4 w-4 mr-2 text-green-600" />
+                          Resume Checks
+                        </DropdownMenuItem>
+                      ) : (
+                        <DropdownMenuItem
+                          onClick={handleSuspendApp}
+                          disabled={suspendApp.isPending}
+                        >
+                          <Pause className="h-4 w-4 mr-2 text-orange-600" />
+                          Suspend Checks
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={handleDeleteApp}
+                        disabled={deleteApp.isPending}
+                        className="text-red-600 focus:text-red-600"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete Application
+                      </DropdownMenuItem>
                     </>
                   )}
-                </Button>
-              )}
-
-              {canManage && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <MoreVertical className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {app.is_suspended ? (
-                      <DropdownMenuItem
-                        onClick={handleResumeApp}
-                        disabled={resumeApp.isPending}
-                      >
-                        <PlayCircle className="h-4 w-4 mr-2 text-green-600" />
-                        Resume Checks
-                      </DropdownMenuItem>
-                    ) : (
-                      <DropdownMenuItem
-                        onClick={handleSuspendApp}
-                        disabled={suspendApp.isPending}
-                      >
-                        <Pause className="h-4 w-4 mr-2 text-orange-600" />
-                        Suspend Checks
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={handleDeleteApp}
-                      disabled={deleteApp.isPending}
-                      className="text-red-600 focus:text-red-600"
-                    >
-                      <Trash2 className="h-4 w-4 mr-2" />
-                      Delete Application
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </div>
@@ -896,60 +1025,73 @@ export function MapViewPage() {
           </div>
         )}
 
-        <AppMap
-          components={components}
-          dependencies={dependencies}
-          selectedComponentId={selectedComponentId}
-          onSelectComponent={handleSelectComponent}
-          onStartAll={handleStartAll}
-          onStopAll={handleStopAll}
-          onRestartErrorBranch={handleRestartErrorBranch}
-          onShare={() => setShareOpen(true)}
-          onToggleActivity={handleToggleActivity}
-          activityOpen={activityOpen}
-          onStartComponent={handleStartWithPreview}
-          onStopComponent={handleStopWithPreview}
-          onRestartComponent={handleStartWithPreview}
-          onDiagnoseComponent={(id) => handleCommand(id)}
-          onForceStopComponent={handleForceStopComponent}
-          onStartWithDepsComponent={handleStartWithDepsPreview}
-          onRepairComponent={handleRestartWithDependentsPreview}
-          canOperate={canOperate}
-          // Edit mode props
-          editable={editMode}
-          onNodePositionChange={handleNodePositionChange}
-          onConnect={handleConnect}
-          onDeleteEdge={handleDeleteEdge}
-          onDeleteNode={handleDeleteNode}
-          onNodeDoubleClick={handleNodeDoubleClick}
-          onDrop={handleDrop}
-          // Highlighting
-          impactPreview={impactPreview}
-          branchHighlight={branchHighlight}
-          edgeHighlight={edgeHighlight}
-          onEdgeClick={handleEdgeClick}
-          // Layout saving (view mode)
-          onSaveLayout={canEdit ? handleSaveLayoutPositions : undefined}
-          isSavingLayout={updatePositions.isPending}
-          // Multi-site data
-          siteOverrides={siteOverridesData?.overrides}
-          primarySite={siteOverridesData?.primary_site}
-        />
+        {/* Map container - shrink when history mode is active */}
+        <div className={historyMode ? 'h-[calc(100%-140px)]' : 'h-full'}>
+          <AppMap
+            components={components}
+            dependencies={dependencies}
+            selectedComponentId={selectedComponentId}
+            onSelectComponent={handleSelectComponent}
+            onStartAll={handleStartAll}
+            onStopAll={handleStopAll}
+            onRestartErrorBranch={handleRestartErrorBranch}
+            onShare={() => setShareOpen(true)}
+            onToggleActivity={handleToggleActivity}
+            activityOpen={activityOpen}
+            onStartComponent={historyMode ? undefined : handleStartWithPreview}
+            onStopComponent={historyMode ? undefined : handleStopWithPreview}
+            onRestartComponent={historyMode ? undefined : handleStartWithPreview}
+            onDiagnoseComponent={historyMode ? undefined : (id) => handleCommand(id)}
+            onForceStopComponent={historyMode ? undefined : handleForceStopComponent}
+            onStartWithDepsComponent={historyMode ? undefined : handleStartWithDepsPreview}
+            onRepairComponent={historyMode ? undefined : handleRestartWithDependentsPreview}
+            onNavigateToApp={handleNavigateToApp}
+            canOperate={canOperate && !historyMode}
+            // Edit mode props
+            editable={editMode}
+            onNodePositionChange={handleNodePositionChange}
+            onConnect={handleConnect}
+            onDeleteEdge={handleDeleteEdge}
+            onDeleteNode={handleDeleteNode}
+            onNodeDoubleClick={handleNodeDoubleClick}
+            onDrop={handleDrop}
+            // Highlighting
+            impactPreview={impactPreview}
+            branchHighlight={branchHighlight}
+            edgeHighlight={edgeHighlight}
+            onEdgeClick={handleEdgeClick}
+            // Layout saving (view mode)
+            onSaveLayout={canEdit ? handleSaveLayoutPositions : undefined}
+            isSavingLayout={updatePositions.isPending}
+            // Multi-site data
+            siteOverrides={siteOverridesData?.overrides}
+            primarySite={siteOverridesData?.primary_site}
+          />
+        </div>
+
+        {/* History Timeline - shown at the bottom when in history mode */}
+        {historyMode && (
+          <HistoryTimeline
+            appId={appId || ''}
+            onSelectTime={handleHistoryTimeSelect}
+            selectedTime={historyTime}
+          />
+        )}
       </div>
 
       {selectedComponent && !editMode && (
         <DetailPanel
           component={selectedComponent}
           onClose={() => setSelectedComponentId(null)}
-          onStart={() => handleStartWithPreview(selectedComponent.id)}
-          onStop={() => handleStopWithPreview(selectedComponent.id)}
-          onRestart={() => handleStartWithPreview(selectedComponent.id)}
-          onCommand={() => handleCommand(selectedComponent.id)}
-          onDiagnose={() => handleCommand(selectedComponent.id)}
-          onForceStop={() => handleForceStopComponent(selectedComponent.id)}
-          onStartWithDeps={() => handleStartWithDepsPreview(selectedComponent.id)}
-          onRepair={() => handleRestartWithDependentsPreview(selectedComponent.id)}
-          canOperate={canOperate}
+          onStart={historyMode ? undefined : () => handleStartWithPreview(selectedComponent.id)}
+          onStop={historyMode ? undefined : () => handleStopWithPreview(selectedComponent.id)}
+          onRestart={historyMode ? undefined : () => handleStartWithPreview(selectedComponent.id)}
+          onCommand={historyMode ? undefined : () => handleCommand(selectedComponent.id)}
+          onDiagnose={historyMode ? undefined : () => handleCommand(selectedComponent.id)}
+          onForceStop={historyMode ? undefined : () => handleForceStopComponent(selectedComponent.id)}
+          onStartWithDeps={historyMode ? undefined : () => handleStartWithDepsPreview(selectedComponent.id)}
+          onRepair={historyMode ? undefined : () => handleRestartWithDependentsPreview(selectedComponent.id)}
+          canOperate={canOperate && !historyMode}
         />
       )}
 

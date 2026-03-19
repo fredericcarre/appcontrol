@@ -48,6 +48,11 @@ export interface ComponentFormData {
   check_cmd: string;
   start_cmd: string;
   stop_cmd: string;
+  // Timeouts and intervals
+  check_interval_seconds: number;
+  start_timeout_seconds: number;
+  stop_timeout_seconds: number;
+  is_optional: boolean;
   // For application-type components (referencing another app)
   referenced_app_id?: string | null;
   // Cluster configuration
@@ -93,11 +98,15 @@ export function ComponentEditor({
         description: component.description || '',
         component_type: component.component_type || 'service',
         icon: component.icon || 'cog',
-        host: component.host || '',
+        host: component.host || component.agent_hostname || '',
         group_id: component.group_id,
         check_cmd: component.check_cmd || '',
         start_cmd: component.start_cmd || '',
         stop_cmd: component.stop_cmd || '',
+        check_interval_seconds: component.check_interval_seconds ?? 30,
+        start_timeout_seconds: component.start_timeout_seconds ?? 120,
+        stop_timeout_seconds: component.stop_timeout_seconds ?? 60,
+        is_optional: component.is_optional ?? false,
         referenced_app_id: (component as Component & { referenced_app_id?: string }).referenced_app_id || null,
         cluster_size: component.cluster_size ?? null,
         cluster_nodes: component.cluster_nodes ?? [],
@@ -116,6 +125,10 @@ export function ComponentEditor({
         check_cmd: '',
         start_cmd: '',
         stop_cmd: '',
+        check_interval_seconds: 30,
+        start_timeout_seconds: 120,
+        stop_timeout_seconds: 60,
+        is_optional: false,
         referenced_app_id: null,
         cluster_size: null,
         cluster_nodes: [],
@@ -132,6 +145,10 @@ export function ComponentEditor({
       check_cmd: '',
       start_cmd: '',
       stop_cmd: '',
+      check_interval_seconds: 30,
+      start_timeout_seconds: 120,
+      stop_timeout_seconds: 60,
+      is_optional: false,
       referenced_app_id: null,
       cluster_size: null,
       cluster_nodes: [],
@@ -153,6 +170,26 @@ export function ComponentEditor({
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
+  // Derive operation mode from current commands (for application-type components)
+  const getAppRefMode = (): string => {
+    const hasStart = formData.start_cmd === '@app:start';
+    const hasStop = formData.stop_cmd === '@app:stop';
+    if (hasStart && hasStop) return 'full';
+    if (hasStart && !hasStop) return 'start-only';
+    if (!hasStart && hasStop) return 'stop-only';
+    return 'check-only';
+  };
+
+  // Handle operation mode change for application-type components
+  const handleAppRefModeChange = (mode: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      check_cmd: '@app:check', // Always have check
+      start_cmd: mode === 'full' || mode === 'start-only' ? '@app:start' : '',
+      stop_cmd: mode === 'full' || mode === 'stop-only' ? '@app:stop' : '',
+    }));
+  };
+
   // When a referenced app is selected, auto-fill the commands and name
   const handleReferencedAppChange = (appRefId: string | null) => {
     const selectedApp = availableApps.find((a) => a.id === appRefId);
@@ -165,7 +202,7 @@ export function ComponentEditor({
         description: prev.description || `Synthetic view of ${selectedApp.name} application`,
         icon: 'folder',
         host: 'aggregate', // No specific host for app references
-        // Internal commands - backend interprets @app: prefix using referenced_app_id
+        // Default to full control - user can change via mode selector
         check_cmd: '@app:check',
         start_cmd: '@app:start',
         stop_cmd: '@app:stop',
@@ -282,7 +319,19 @@ export function ComponentEditor({
                     onValueChange={(v) => handleChange('group_id', v === '_none' ? null : v)}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="No group" />
+                      <SelectValue placeholder="No group">
+                        {formData.group_id ? (
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-3 h-3 rounded-full"
+                              style={{ backgroundColor: groups?.find((g) => g.id === formData.group_id)?.color || '#6366F1' }}
+                            />
+                            {groups?.find((g) => g.id === formData.group_id)?.name || 'Unknown group'}
+                          </div>
+                        ) : (
+                          'No group'
+                        )}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="_none">No group</SelectItem>
@@ -398,20 +447,80 @@ export function ComponentEditor({
 
             <TabsContent value="commands" className="space-y-4 mt-4">
               {formData.component_type === 'application' ? (
-                <Alert>
-                  <Folder className="h-4 w-4" />
-                  <AlertDescription>
-                    <p className="font-medium mb-2">Application Reference</p>
-                    <p className="text-sm text-muted-foreground">
-                      Commands are automatically derived from the referenced application:
+                <div className="space-y-4">
+                  <Alert>
+                    <Folder className="h-4 w-4" />
+                    <AlertDescription>
+                      <p className="font-medium mb-2">Application Reference</p>
+                      <p className="text-sm text-muted-foreground">
+                        This component represents the referenced application. Choose which operations are available:
+                      </p>
+                    </AlertDescription>
+                  </Alert>
+
+                  <div className="space-y-2">
+                    <Label>Operation Mode</Label>
+                    <Select
+                      value={getAppRefMode()}
+                      onValueChange={handleAppRefModeChange}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="full">
+                          <div className="flex flex-col items-start">
+                            <span className="font-medium">Full Control</span>
+                            <span className="text-xs text-muted-foreground">Start, Stop, and Check</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="start-only">
+                          <div className="flex flex-col items-start">
+                            <span className="font-medium">Start + Check</span>
+                            <span className="text-xs text-muted-foreground">Can start and monitor, cannot stop</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="stop-only">
+                          <div className="flex flex-col items-start">
+                            <span className="font-medium">Stop + Check</span>
+                            <span className="text-xs text-muted-foreground">Can stop and monitor, cannot start</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="check-only">
+                          <div className="flex flex-col items-start">
+                            <span className="font-medium">Check Only</span>
+                            <span className="text-xs text-muted-foreground">Monitoring only, no control</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Determines which actions are available for this application reference.
                     </p>
-                    <ul className="text-sm text-muted-foreground mt-2 ml-4 list-disc">
-                      <li><strong>Status:</strong> Aggregated from all components in the referenced app</li>
-                      <li><strong>Start:</strong> Starts the entire referenced application (DAG order)</li>
-                      <li><strong>Stop:</strong> Stops the entire referenced application (reverse DAG order)</li>
+                  </div>
+
+                  <div className="rounded-lg border p-3 bg-muted/50">
+                    <p className="text-sm font-medium mb-2">Selected operations:</p>
+                    <ul className="text-sm text-muted-foreground space-y-1">
+                      <li className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-green-500" />
+                        <strong>Check:</strong> Status aggregated from referenced app
+                      </li>
+                      {formData.start_cmd && (
+                        <li className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-blue-500" />
+                          <strong>Start:</strong> Starts entire app (DAG order)
+                        </li>
+                      )}
+                      {formData.stop_cmd && (
+                        <li className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-orange-500" />
+                          <strong>Stop:</strong> Stops entire app (reverse DAG order)
+                        </li>
+                      )}
                     </ul>
-                  </AlertDescription>
-                </Alert>
+                  </div>
+                </div>
               ) : (
                 <>
                   <div className="space-y-2">
@@ -457,7 +566,94 @@ export function ComponentEditor({
             </TabsContent>
 
             <TabsContent value="advanced" className="space-y-4 mt-4">
-              <div className="space-y-2">
+              {/* Timeouts and Intervals */}
+              <div className="space-y-3">
+                <h4 className="font-medium text-sm">Timing Configuration</h4>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="check_interval_seconds">Check Interval (sec)</Label>
+                    <Input
+                      id="check_interval_seconds"
+                      type="number"
+                      min={5}
+                      max={3600}
+                      value={formData.check_interval_seconds}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setFormData((prev) => ({
+                          ...prev,
+                          check_interval_seconds: isNaN(val) ? 30 : Math.max(5, val),
+                        }));
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Health check frequency
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="start_timeout_seconds">Start Timeout (sec)</Label>
+                    <Input
+                      id="start_timeout_seconds"
+                      type="number"
+                      min={10}
+                      max={3600}
+                      value={formData.start_timeout_seconds}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setFormData((prev) => ({
+                          ...prev,
+                          start_timeout_seconds: isNaN(val) ? 120 : Math.max(10, val),
+                        }));
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Max wait for RUNNING
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="stop_timeout_seconds">Stop Timeout (sec)</Label>
+                    <Input
+                      id="stop_timeout_seconds"
+                      type="number"
+                      min={10}
+                      max={3600}
+                      value={formData.stop_timeout_seconds}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setFormData((prev) => ({
+                          ...prev,
+                          stop_timeout_seconds: isNaN(val) ? 60 : Math.max(10, val),
+                        }));
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Max wait for STOPPED
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Optional flag */}
+              <div className="flex items-center justify-between border-t pt-4">
+                <div>
+                  <Label>Optional Component</Label>
+                  <p className="text-xs text-muted-foreground">
+                    If enabled, failures won't block the application startup
+                  </p>
+                </div>
+                <Switch
+                  checked={formData.is_optional}
+                  onCheckedChange={(checked: boolean) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      is_optional: checked,
+                    }));
+                  }}
+                />
+              </div>
+
+              {/* Icon */}
+              <div className="space-y-2 border-t pt-4">
                 <Label htmlFor="icon">Icon</Label>
                 <Select value={formData.icon} onValueChange={(v) => handleChange('icon', v)}>
                   <SelectTrigger>
@@ -477,7 +673,7 @@ export function ComponentEditor({
               </div>
 
               {/* Cluster Section */}
-              <div className="space-y-3 border-t pt-4 mt-4">
+              <div className="space-y-3 border-t pt-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <Label>Cluster Mode</Label>
@@ -551,11 +747,6 @@ export function ComponentEditor({
                   </>
                 )}
               </div>
-
-              <p className="text-sm text-muted-foreground">
-                Additional options like timeouts, optional flag, and environment variables can be
-                configured after creation in the component details panel.
-              </p>
             </TabsContent>
           </Tabs>
 
