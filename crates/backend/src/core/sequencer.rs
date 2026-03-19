@@ -157,8 +157,8 @@ async fn execute_start_internal(
                     .map_err(|e| SequencerError::Database(e.to_string()))?
                     .flatten();
 
-            if ref_app_id.is_some() {
-                app_type_components.push((comp_id, ref_app_id.unwrap()));
+            if let Some(id) = ref_app_id {
+                app_type_components.push((comp_id, id));
             } else {
                 regular_components.push(comp_id);
             }
