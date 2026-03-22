@@ -48,15 +48,16 @@ interface ComponentNodeData {
   // Metrics from check command output
   metrics?: Record<string, unknown> | null;
   metricsWidgets?: MetricWidget[];
-  // Multi-site overrides (for split-panel rendering)
+  // Multi-site bindings (for split-panel rendering)
   primarySite?: { id: string; name: string; code: string; site_type: string } | null;
-  siteOverrides?: Array<{
+  siteBindings?: Array<{
     site_id: string;
     site_name: string;
     site_code: string;
     site_type: string;
-    site_is_active: boolean;
-    override_agent_hostname: string | null;
+    is_active: boolean;
+    agent_hostname: string;
+    has_command_overrides: boolean;
   }>;
   // Callbacks
   onStart?: (id: string) => void;
@@ -241,8 +242,8 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         </div>
 
         <div className="flex items-center justify-between">
-          {/* For application-type: show referenced app name; for others: show host */}
-          {data.componentType === 'application' ? (
+          {/* For application-type with referenced app: show referenced app name; for others: show host */}
+          {data.componentType === 'application' && data.referencedAppId ? (
             <span className="text-xs text-blue-600 truncate max-w-[100px] flex items-center gap-1" title={data.referencedAppName || 'Referenced app'}>
               <ExternalLink className="h-3 w-3" />
               {data.referencedAppName || 'App ref'}
@@ -291,10 +292,10 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         )}
 
         {/* Multi-site split panel */}
-        {data.siteOverrides && data.siteOverrides.length > 0 && (
+        {data.siteBindings && data.siteBindings.length > 0 && (
           <SitePanels
             primarySite={data.primarySite || null}
-            siteOverrides={data.siteOverrides}
+            siteBindings={data.siteBindings}
             currentState={data.state}
             agentHostname={data.agentHostname}
           />
@@ -403,28 +404,31 @@ function getSiteStyle(siteType: string) {
 
 /**
  * Split-panel showing the component on each configured site.
- * Primary site shows current state; DR/other sites show standby + override agent.
+ * Shows all sites where the component has bindings (from binding profiles).
  */
 function SitePanels({
   primarySite,
-  siteOverrides,
+  siteBindings,
   currentState,
   agentHostname,
 }: {
   primarySite: { id: string; name: string; code: string; site_type: string } | null;
-  siteOverrides: Array<{
+  siteBindings: Array<{
     site_id: string;
     site_name: string;
     site_code: string;
     site_type: string;
-    site_is_active: boolean;
-    override_agent_hostname: string | null;
+    is_active: boolean;
+    agent_hostname: string;
+    has_command_overrides: boolean;
   }>;
   currentState: ComponentState;
   agentHostname?: string;
 }) {
-  const primaryStyle = primarySite ? getSiteStyle(primarySite.site_type) : getSiteStyle('primary');
-  const primaryStateStyle = STATE_COLORS[currentState] || STATE_COLORS.UNKNOWN;
+  // Find the active site binding (the one that's currently active)
+  const activeBinding = siteBindings.find((b) => b.is_active);
+  const activeSiteId = activeBinding?.site_id;
+  const activeStateStyle = STATE_COLORS[currentState] || STATE_COLORS.UNKNOWN;
 
   return (
     <div className="mt-2 pt-2 border-t border-gray-200">
@@ -433,59 +437,37 @@ function SitePanels({
         <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Sites</span>
       </div>
       <div className="flex gap-1.5">
-        {/* Primary site panel */}
-        {primarySite && (
-          <div className="flex-1 rounded border border-gray-200 p-1.5 min-w-0">
-            <div className="flex items-center gap-1 mb-0.5">
-              <span className={cn('text-[9px] font-bold px-1 py-0.5 rounded', primaryStyle.bg, primaryStyle.text)}>
-                {primarySite.code}
-              </span>
-              <div
-                className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: primaryStateStyle.border }}
-                title={currentState}
-              />
-            </div>
-            {agentHostname && (
-              <div className="flex items-center gap-0.5 mt-0.5">
-                <Server className="h-2.5 w-2.5 text-muted-foreground flex-shrink-0" />
-                <span className="text-[9px] text-muted-foreground truncate">{agentHostname}</span>
-              </div>
-            )}
-          </div>
-        )}
+        {siteBindings.map((binding) => {
+          const style = getSiteStyle(binding.site_type);
+          const isActive = binding.site_id === activeSiteId;
 
-        {/* Override site panels (DR, staging, etc.) */}
-        {siteOverrides.map((override) => {
-          const style = getSiteStyle(override.site_type);
           return (
             <div
-              key={override.site_id}
+              key={binding.site_id}
               className={cn(
                 'flex-1 rounded border p-1.5 min-w-0',
-                override.site_is_active ? 'border-gray-200' : 'border-dashed border-gray-300 opacity-60',
+                isActive ? 'border-gray-200' : 'border-dashed border-gray-300 opacity-70',
               )}
             >
               <div className="flex items-center gap-1 mb-0.5">
                 <span className={cn('text-[9px] font-bold px-1 py-0.5 rounded', style.bg, style.text)}>
-                  {override.site_code}
+                  {binding.site_code}
                 </span>
                 <div
-                  className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-gray-300"
-                  title="Standby"
+                  className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', isActive ? '' : 'bg-gray-300')}
+                  style={isActive ? { backgroundColor: activeStateStyle.border } : undefined}
+                  title={isActive ? currentState : 'Standby'}
                 />
+                {binding.has_command_overrides && (
+                  <span className="text-[8px] text-orange-600" title="Custom commands">
+                    ⚙
+                  </span>
+                )}
               </div>
-              {override.override_agent_hostname && (
-                <div className="flex items-center gap-0.5 mt-0.5">
-                  <Server className="h-2.5 w-2.5 text-muted-foreground flex-shrink-0" />
-                  <span className="text-[9px] text-muted-foreground truncate">{override.override_agent_hostname}</span>
-                </div>
-              )}
-              {!override.override_agent_hostname && (
-                <div className="flex items-center gap-0.5 mt-0.5">
-                  <span className="text-[9px] text-muted-foreground italic">no agent</span>
-                </div>
-              )}
+              <div className="flex items-center gap-0.5 mt-0.5">
+                <Server className="h-2.5 w-2.5 text-muted-foreground flex-shrink-0" />
+                <span className="text-[9px] text-muted-foreground truncate">{binding.agent_hostname}</span>
+              </div>
             </div>
           );
         })}

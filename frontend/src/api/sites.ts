@@ -70,3 +70,83 @@ export function useDeleteSite() {
     },
   });
 }
+
+// ============================================================================
+// Site Overrides - Per-component failover configuration
+// ============================================================================
+
+export interface SiteOverride {
+  id: string;
+  component_id: string;
+  site_id: string;
+  site_name?: string;
+  site_code?: string;
+  agent_id_override: string | null;
+  agent_hostname?: string | null;
+  check_cmd_override: string | null;
+  start_cmd_override: string | null;
+  stop_cmd_override: string | null;
+  rebuild_cmd_override: string | null;
+  env_vars_override: Record<string, string> | null;
+  created_at: string;
+}
+
+export interface SiteOverrideInput {
+  site_id: string;
+  agent_id_override?: string | null;
+  check_cmd_override?: string | null;
+  start_cmd_override?: string | null;
+  stop_cmd_override?: string | null;
+  rebuild_cmd_override?: string | null;
+  env_vars_override?: Record<string, string> | null;
+}
+
+/**
+ * Get all site overrides for a component
+ */
+export function useComponentSiteOverrides(componentId: string) {
+  return useQuery({
+    queryKey: ['components', componentId, 'site-overrides'],
+    queryFn: async () => {
+      const { data } = await client.get<{ overrides: SiteOverride[] }>(
+        `/components/${componentId}/site-overrides`
+      );
+      return data.overrides;
+    },
+    enabled: !!componentId,
+  });
+}
+
+/**
+ * Create or update a site override for a component
+ */
+export function useUpsertSiteOverride(componentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: SiteOverrideInput) => {
+      const { data } = await client.put<SiteOverride>(
+        `/components/${componentId}/site-overrides/${payload.site_id}`,
+        payload
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['components', componentId, 'site-overrides'] });
+    },
+  });
+}
+
+/**
+ * Delete a site override for a component
+ */
+export function useDeleteSiteOverride(componentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (siteId: string) => {
+      await client.delete(`/components/${componentId}/site-overrides/${siteId}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['components', componentId, 'site-overrides'] });
+    },
+  });
+}

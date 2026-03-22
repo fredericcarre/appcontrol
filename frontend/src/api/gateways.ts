@@ -13,15 +13,26 @@ export interface Gateway {
   connected: boolean;
   version: string | null;
   last_heartbeat_at: string | null;
+  // Site information
+  site_id: string | null;
+  site_name: string | null;
+  site_code: string | null;
 }
 
-export interface ZoneSummary {
-  zone: string;
+export interface SiteSummary {
+  site_id: string | null;
+  site_name: string;
+  site_code: string;
+  /** @deprecated Legacy zone field, use site_code instead */
+  zone?: string;
   gateway_count: number;
   active_gateway_id: string | null;
   failover_active: boolean;
   gateways: Gateway[];
 }
+
+// Legacy alias for backwards compatibility
+export type ZoneSummary = SiteSummary;
 
 export interface GatewayAgent {
   id: string;
@@ -31,16 +42,20 @@ export interface GatewayAgent {
   connected: boolean;
 }
 
-export function useGatewayZones() {
+export function useGatewaySites() {
   return useQuery({
-    queryKey: ['gateways', 'zones'],
+    queryKey: ['gateways', 'sites'],
     queryFn: async () => {
-      const { data } = await client.get<{ zones: ZoneSummary[] }>('/gateways');
-      return data.zones;
+      // Backend returns { sites: [...] }
+      const { data } = await client.get<{ sites: SiteSummary[] }>('/gateways');
+      return data.sites;
     },
     refetchInterval: 10000, // Refresh every 10s to track connection status
   });
 }
+
+// Legacy alias for backwards compatibility
+export const useGatewayZones = useGatewaySites;
 
 // Legacy hook for backwards compatibility
 export function useGateways() {
@@ -134,6 +149,26 @@ export function useBlockGateway() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['gateways'] });
       qc.invalidateQueries({ queryKey: ['agents'] });
+    },
+  });
+}
+
+export interface UpdateGatewayPayload {
+  name?: string;
+  site_id?: string | null;
+  is_primary?: boolean;
+  priority?: number;
+}
+
+export function useUpdateGateway() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...payload }: UpdateGatewayPayload & { id: string }) => {
+      const { data } = await client.put<Gateway>(`/gateways/${id}`, payload);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['gateways'] });
     },
   });
 }

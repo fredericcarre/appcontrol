@@ -564,6 +564,7 @@ async fn process_gateway_message(
             gateway_id,
             name,
             zone,
+            site_id,
             version,
             enrollment_token,
         } => {
@@ -654,7 +655,8 @@ async fn process_gateway_message(
             tracing::info!(
                 gateway_id = %gateway_id,
                 name = ?name,
-                zone = %zone,
+                zone = ?zone,
+                site_id = ?site_id,
                 version = %version,
                 org_id = %org_id,
                 has_token = enrollment_token.is_some(),
@@ -663,39 +665,61 @@ async fn process_gateway_message(
             // Store the gateway_id for this connection
             *gateway_id_cell.lock().unwrap() = Some(gateway_id);
             // Register in the hub with the sender channel
+            // Use zone for display purposes (legacy), but site_id for grouping
+            let display_zone = zone.clone().unwrap_or_else(|| "default".to_string());
             state
                 .ws_hub
-                .register_gateway(gateway_id, zone.clone(), gw_tx.clone());
+                .register_gateway(gateway_id, display_zone, gw_tx.clone());
 
             // Use the provided name, or generate one from the gateway_id
             let display_name =
                 name.unwrap_or_else(|| format!("Gateway-{}", &gateway_id.to_string()[..8]));
 
+            // Resolve site_id: prefer explicit site_id, fallback to zone lookup
+            let resolved_site_id: Option<uuid::Uuid> = if site_id.is_some() {
+                site_id
+            } else if let Some(ref z) = zone {
+                // Backward compat: look up site by code matching zone
+                sqlx::query_scalar("SELECT id FROM sites WHERE organization_id = $1 AND code = $2")
+                    .bind(org_id)
+                    .bind(z)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+
             // Auto-register/update gateway in database (upsert)
             // This ensures the gateway appears in the UI even if not pre-created
             // Note: We only update last_heartbeat_at, NOT is_active (admin controls that)
             //
-            // For new gateways: auto-assign is_primary and priority based on zone:
-            // - First gateway in a zone becomes primary (is_primary=true, priority=0)
+            // For new gateways: auto-assign is_primary and priority based on site_id:
+            // - First gateway in a site becomes primary (is_primary=true, priority=0)
             // - Subsequent gateways are standby (is_primary=false, priority=N)
+            // - Gateways without site_id are assigned priority 0 and not primary
             if let Err(e) = sqlx::query(
                 r#"
-                WITH zone_info AS (
+                WITH site_info AS (
                     SELECT
                         COALESCE(MAX(priority), -1) + 1 AS next_priority,
-                        COUNT(*) = 0 AS is_first_in_zone
+                        COUNT(*) = 0 AS is_first_in_site
                     FROM gateways
-                    WHERE organization_id = $2 AND zone = $4 AND id != $1
+                    WHERE organization_id = $2
+                      AND (($5::uuid IS NOT NULL AND site_id = $5) OR ($5::uuid IS NULL AND site_id IS NULL))
+                      AND id != $1
                 )
-                INSERT INTO gateways (id, organization_id, name, zone, is_active, is_primary, priority, last_heartbeat_at)
-                SELECT $1, $2, $3, $4, true,
-                       zi.is_first_in_zone,
-                       zi.next_priority,
+                INSERT INTO gateways (id, organization_id, name, zone, site_id, is_active, is_primary, priority, last_heartbeat_at)
+                SELECT $1, $2, $3, $4, $5, true,
+                       CASE WHEN $5::uuid IS NOT NULL THEN si.is_first_in_site ELSE false END,
+                       si.next_priority,
                        now()
-                FROM zone_info zi
+                FROM site_info si
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
-                    zone = EXCLUDED.zone,
+                    zone = COALESCE(EXCLUDED.zone, gateways.zone),
+                    site_id = COALESCE(EXCLUDED.site_id, gateways.site_id),
                     last_heartbeat_at = now()
                 "#,
             )
@@ -703,6 +727,7 @@ async fn process_gateway_message(
             .bind(org_id)
             .bind(&display_name)
             .bind(&zone)
+            .bind(resolved_site_id)
             .execute(&state.db)
             .await
             {

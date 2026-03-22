@@ -21,7 +21,7 @@ import {
 import { useStartComponent, useStopComponent, useForceStopComponent, useStartWithDeps, useRestartWithDependents } from '@/api/components';
 import { usePermission } from '@/hooks/use-permission';
 import { useWebSocket } from '@/hooks/use-websocket';
-import { useSiteOverrides } from '@/api/site-overrides';
+import { useSiteBindings } from '@/api/site-overrides';
 import {
   AppMap,
   ImpactPreview,
@@ -40,6 +40,7 @@ import { TimeSnapshot } from '@/api/apps';
 import { ComponentPalette } from '@/components/maps/ComponentPalette';
 import { ComponentEditor, ComponentFormData } from '@/components/maps/ComponentEditor';
 import { ImpactPreviewDialog } from '@/components/maps/ImpactPreviewDialog';
+import { SwitchoverPanel } from '@/components/maps/SwitchoverPanel';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -102,13 +103,14 @@ export function MapViewPage() {
   const suspendApp = useSuspendApp();
   const resumeApp = useResumeApp();
   const { subscribe } = useWebSocket();
-  const { data: siteOverridesData } = useSiteOverrides(appId || '');
+  const { data: siteBindingsData } = useSiteBindings(appId || '');
 
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandComponentId, setCommandComponentId] = useState<string | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [switchoverOpen, setSwitchoverOpen] = useState(false);
   const [isOperating, setIsOperating] = useState(false);
   const [operationType, setOperationType] = useState<'start' | 'stop' | null>(null);
 
@@ -528,6 +530,10 @@ export function MapViewPage() {
 
   const handleToggleActivity = useCallback(() => {
     setActivityOpen((prev) => !prev);
+  }, []);
+
+  const handleSwitchover = useCallback(() => {
+    setSwitchoverOpen(true);
   }, []);
 
   const handleActivitySelectComponent = useCallback((componentId: string) => {
@@ -1038,6 +1044,8 @@ export function MapViewPage() {
             onShare={() => setShareOpen(true)}
             onToggleActivity={handleToggleActivity}
             activityOpen={activityOpen}
+            onSwitchover={handleSwitchover}
+            canManage={canManage}
             onStartComponent={historyMode ? undefined : handleStartWithPreview}
             onStopComponent={historyMode ? undefined : handleStopWithPreview}
             onRestartComponent={historyMode ? undefined : handleStartWithPreview}
@@ -1064,8 +1072,8 @@ export function MapViewPage() {
             onSaveLayout={canEdit ? handleSaveLayoutPositions : undefined}
             isSavingLayout={updatePositions.isPending}
             // Multi-site data
-            siteOverrides={siteOverridesData?.overrides}
-            primarySite={siteOverridesData?.primary_site}
+            componentBindings={siteBindingsData?.component_bindings}
+            primarySite={siteBindingsData?.primary_site}
           />
         </div>
 
@@ -1127,6 +1135,19 @@ export function MapViewPage() {
         onSave={handleEditorSave}
         isCreating={!editingComponent}
         initialType={newComponentType || undefined}
+      />
+
+      {/* Switchover Panel */}
+      <SwitchoverPanel
+        appId={appId || ''}
+        currentSiteId={app.site_id}
+        open={switchoverOpen}
+        onClose={() => setSwitchoverOpen(false)}
+        components={components.map(c => ({
+          id: c.id,
+          name: c.display_name || c.name,
+          current_state: c.current_state || 'UNKNOWN',
+        }))}
       />
 
       {/* Impact Preview Dialog */}

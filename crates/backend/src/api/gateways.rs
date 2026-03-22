@@ -31,7 +31,8 @@ pub struct GatewayRow {
     pub id: Uuid,
     pub organization_id: Uuid,
     pub name: String,
-    pub zone: String,
+    /// DEPRECATED: Legacy zone field, now nullable. Use site_id instead.
+    pub zone: Option<String>,
     pub hostname: Option<String>,
     pub port: Option<i32>,
     pub site_id: Option<Uuid>,
@@ -58,12 +59,21 @@ pub struct GatewayListItem {
     pub connected: bool,
     pub version: Option<String>,
     pub last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
+    // Site information
+    pub site_id: Option<Uuid>,
+    pub site_name: Option<String>,
+    pub site_code: Option<String>,
 }
 
-/// Zone summary for grouping gateways
+/// Site summary for grouping gateways
 #[derive(Debug, Serialize)]
-pub struct ZoneSummary {
-    pub zone: String,
+pub struct SiteSummary {
+    pub site_id: Option<Uuid>,
+    pub site_name: String,
+    pub site_code: String,
+    /// DEPRECATED: Legacy zone field for backward compatibility. Same as site_code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone: Option<String>,
     pub gateway_count: i64,
     pub active_gateway_id: Option<Uuid>,
     pub failover_active: bool,
@@ -80,13 +90,16 @@ pub async fn list_gateways(
         (
             Uuid,
             String,
-            String,
+            Option<String>,
             bool,
             bool,
             i32,
             Option<String>,
             Option<chrono::DateTime<chrono::Utc>>,
             i64,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
         ),
     >(
         r#"SELECT
@@ -98,10 +111,14 @@ pub async fn list_gateways(
                COALESCE(g.priority, 0) as priority,
                g.version,
                g.last_heartbeat_at,
-               COALESCE((SELECT COUNT(*) FROM agents a WHERE a.gateway_id = g.id), 0) as agent_count
+               COALESCE((SELECT COUNT(*) FROM agents a WHERE a.gateway_id = g.id), 0) as agent_count,
+               g.site_id,
+               s.name as site_name,
+               s.code as site_code
            FROM gateways g
+           LEFT JOIN sites s ON s.id = g.site_id
            WHERE g.organization_id = $1
-           ORDER BY g.zone, g.priority, g.name"#,
+           ORDER BY COALESCE(s.name, 'zzz'), g.priority, g.name"#,
     )
     .bind(user.organization_id)
     .fetch_all(&state.db)
@@ -111,12 +128,27 @@ pub async fn list_gateways(
     let connected_ids: std::collections::HashSet<Uuid> =
         state.ws_hub.connected_gateway_ids().into_iter().collect();
 
-    // Group by zone and compute failover status
-    let mut zones_map: std::collections::HashMap<String, Vec<GatewayListItem>> =
-        std::collections::HashMap::new();
+    // Group by site_id and compute failover status
+    // Key is (site_id, site_name, site_code)
+    let mut sites_map: std::collections::HashMap<
+        (Option<Uuid>, String, String),
+        Vec<GatewayListItem>,
+    > = std::collections::HashMap::new();
 
-    for (id, name, zone, is_active, is_primary, priority, version, last_heartbeat, agent_count) in
-        gateways
+    for (
+        id,
+        name,
+        zone,
+        is_active,
+        is_primary,
+        priority,
+        version,
+        last_heartbeat,
+        agent_count,
+        site_id,
+        site_name,
+        site_code,
+    ) in gateways
     {
         // Connection status is determined by actual WebSocket connection in the hub
         let connected = is_active && connected_ids.contains(&id);
@@ -141,7 +173,7 @@ pub async fn list_gateways(
         let item = GatewayListItem {
             id,
             name,
-            zone: zone.clone(),
+            zone: zone.clone().unwrap_or_default(),
             status,
             role,
             is_primary,
@@ -150,16 +182,25 @@ pub async fn list_gateways(
             connected,
             version,
             last_heartbeat_at: last_heartbeat,
+            site_id,
+            site_name: site_name.clone(),
+            site_code: site_code.clone(),
         };
 
-        zones_map.entry(zone).or_default().push(item);
+        // Group by site - use "Unassigned" for gateways without a site
+        let key = (
+            site_id,
+            site_name.unwrap_or_else(|| "Unassigned".to_string()),
+            site_code.unwrap_or_else(|| "N/A".to_string()),
+        );
+        sites_map.entry(key).or_default().push(item);
     }
 
-    // Build zone summaries
-    let mut zones: Vec<ZoneSummary> = zones_map
+    // Build site summaries
+    let mut sites: Vec<SiteSummary> = sites_map
         .into_iter()
-        .map(|(zone, mut gateways)| {
-            // Sort by priority within zone
+        .map(|((site_id, site_name, site_code), mut gateways)| {
+            // Sort by priority within site
             gateways.sort_by_key(|g| g.priority);
 
             // Check if primary is offline → failover active
@@ -178,8 +219,12 @@ pub async fn list_gateways(
                 }
             }
 
-            ZoneSummary {
-                zone,
+            SiteSummary {
+                site_id,
+                site_name: site_name.clone(),
+                site_code: site_code.clone(),
+                // Include zone for backward compat with old frontend
+                zone: Some(site_code),
                 gateway_count: gateways.len() as i64,
                 active_gateway_id: active_id,
                 failover_active,
@@ -188,9 +233,15 @@ pub async fn list_gateways(
         })
         .collect();
 
-    zones.sort_by(|a, b| a.zone.cmp(&b.zone));
+    // Sort: assigned sites by name first, then unassigned
+    sites.sort_by(|a, b| match (a.site_id.is_some(), b.site_id.is_some()) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.site_name.cmp(&b.site_name),
+    });
 
-    Ok(Json(json!({ "zones": zones })))
+    // Return as "sites" - frontend should use this instead of legacy "zones"
+    Ok(Json(json!({ "sites": sites })))
 }
 
 pub async fn get_gateway(
@@ -247,24 +298,38 @@ pub async fn update_gateway(
         }
     }
 
-    // If setting as primary, first unset any existing primary in the same zone
+    // If setting as primary, first unset any existing primary in the same site
     if req.is_primary == Some(true) {
-        let zone: Option<String> =
-            sqlx::query_scalar("SELECT zone FROM gateways WHERE id = $1 AND organization_id = $2")
-                .bind(id)
-                .bind(user.organization_id)
-                .fetch_optional(&state.db)
-                .await?;
+        let gw_info: Option<(Option<Uuid>, String)> = sqlx::query_as(
+            "SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2",
+        )
+        .bind(id)
+        .bind(user.organization_id)
+        .fetch_optional(&state.db)
+        .await?;
 
-        if let Some(zone) = zone {
-            sqlx::query(
-                "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND id != $3",
-            )
-            .bind(user.organization_id)
-            .bind(&zone)
-            .bind(id)
-            .execute(&state.db)
-            .await?;
+        if let Some((site_id, zone)) = gw_info {
+            if let Some(sid) = site_id {
+                // Unset primary within same site
+                sqlx::query(
+                    "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND site_id = $2 AND id != $3",
+                )
+                .bind(user.organization_id)
+                .bind(sid)
+                .bind(id)
+                .execute(&state.db)
+                .await?;
+            } else {
+                // Fallback: use zone for gateways without site assignment
+                sqlx::query(
+                    "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND site_id IS NULL AND id != $3",
+                )
+                .bind(user.organization_id)
+                .bind(&zone)
+                .bind(id)
+                .execute(&state.db)
+                .await?;
+            }
         }
     }
 
@@ -296,7 +361,7 @@ pub async fn update_gateway(
                      certificate_fingerprint, is_active,
                      COALESCE(is_primary, false) as is_primary,
                      COALESCE(priority, 0) as priority,
-                     last_heartbeat_at, created_at"#,
+                     version, last_heartbeat_at, created_at"#,
     )
     .bind(id)
     .bind(user.organization_id)
@@ -312,7 +377,7 @@ pub async fn update_gateway(
     Ok(Json(json!(gw)))
 }
 
-/// POST /api/v1/gateways/:id/set-primary — Set this gateway as primary for its zone
+/// POST /api/v1/gateways/:id/set-primary — Set this gateway as primary for its site
 pub async fn set_gateway_primary(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -322,16 +387,16 @@ pub async fn set_gateway_primary(
         return Err(ApiError::Forbidden);
     }
 
-    // Get the gateway's zone
-    let gw: Option<(String,)> =
-        sqlx::query_as("SELECT zone FROM gateways WHERE id = $1 AND organization_id = $2")
+    // Get the gateway's site_id
+    let gw: Option<(Option<Uuid>, String)> =
+        sqlx::query_as("SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2")
             .bind(gateway_id)
             .bind(user.organization_id)
             .fetch_optional(&state.db)
             .await?;
 
-    let zone = match gw {
-        Some((z,)) => z,
+    let (site_id, zone) = match gw {
+        Some((s, z)) => (s, z),
         None => return Err(ApiError::NotFound),
     };
 
@@ -341,19 +406,30 @@ pub async fn set_gateway_primary(
         "set_gateway_primary",
         "gateway",
         gateway_id,
-        json!({ "zone": &zone }),
+        json!({ "site_id": site_id, "zone": &zone }),
     )
     .await
     .ok();
 
     let mut tx = state.db.begin().await?;
 
-    // Unset existing primary in the zone
-    sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2")
-        .bind(user.organization_id)
-        .bind(&zone)
-        .execute(&mut *tx)
-        .await?;
+    // Unset existing primary in the same site (or same zone if no site assigned)
+    if let Some(sid) = site_id {
+        sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND site_id = $2 AND id != $3")
+            .bind(user.organization_id)
+            .bind(sid)
+            .bind(gateway_id)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        // Fallback: use zone for gateways without site assignment
+        sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND site_id IS NULL AND id != $3")
+            .bind(user.organization_id)
+            .bind(&zone)
+            .bind(gateway_id)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     // Set this gateway as primary
     sqlx::query("UPDATE gateways SET is_primary = true WHERE id = $1")
@@ -377,7 +453,7 @@ pub async fn set_gateway_primary(
     Ok(Json(json!({
         "status": "ok",
         "gateway_id": gateway_id,
-        "zone": zone,
+        "site_id": site_id,
     })))
 }
 
@@ -460,7 +536,7 @@ pub async fn suspend_gateway(
                      certificate_fingerprint, is_active,
                      COALESCE(is_primary, false) as is_primary,
                      COALESCE(priority, 0) as priority,
-                     last_heartbeat_at, created_at"#,
+                     version, last_heartbeat_at, created_at"#,
     )
     .bind(gateway_id)
     .bind(user.organization_id)
@@ -499,7 +575,7 @@ pub async fn activate_gateway(
                      certificate_fingerprint, is_active,
                      COALESCE(is_primary, false) as is_primary,
                      COALESCE(priority, 0) as priority,
-                     last_heartbeat_at, created_at"#,
+                     version, last_heartbeat_at, created_at"#,
     )
     .bind(gateway_id)
     .bind(user.organization_id)

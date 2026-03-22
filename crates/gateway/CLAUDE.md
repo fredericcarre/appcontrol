@@ -28,7 +28,8 @@ gateway/src/
 ```yaml
 gateway:
   id: gateway-prd-01
-  zone: PRD
+  # site_id is optional - gateways without a site appear as "Unassigned" in UI
+  # site_id: 11111111-1111-1111-1111-111111111111
   listen_addr: 0.0.0.0
   listen_port: 443
 backend:
@@ -48,6 +49,8 @@ backend_tls:                                  # Backend-facing TLS (client)
 ### Environment Variables
 | Variable | Description |
 |----------|-------------|
+| `GATEWAY_SITE_ID` | UUID of the site this gateway belongs to (optional, assign via UI if empty) |
+| `GATEWAY_ZONE` | **Deprecated.** Legacy zone string. Use `GATEWAY_SITE_ID` instead. |
 | `BACKEND_URL` | WebSocket URL to backend (`wss://` in production) |
 | `BACKEND_TLS_CA_FILE` | CA certificate to verify backend (internal PKI) |
 | `BACKEND_TLS_CERT_FILE` | Client certificate for mTLS to backend |

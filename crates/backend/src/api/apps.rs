@@ -1377,7 +1377,7 @@ pub async fn get_site_overrides(
     for binding in &bindings {
         let cmd_override = cmd_override_map.get(&(binding.component_id, binding.site_id));
 
-        let has_overrides = cmd_override.map_or(false, |o| {
+        let has_overrides = cmd_override.is_some_and(|o| {
             o.check_cmd_override.is_some()
                 || o.start_cmd_override.is_some()
                 || o.stop_cmd_override.is_some()

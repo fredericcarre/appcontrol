@@ -75,7 +75,8 @@ export BACKEND_URL="wss://appcontrol-api-user-dev.apps.sandbox.openshiftapps.com
 export RESOURCE_GROUP="appcontrol-rg"
 export LOCATION="westeurope"
 export GATEWAY_ID="azure-gateway-01"
-export GATEWAY_ZONE="azure-westeurope"
+# GATEWAY_SITE_ID is optional - leave empty for "Unassigned", assign via UI later
+# export GATEWAY_SITE_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 export VM_RESOURCE_GROUP="my-vms-rg"
 
 ./deploy.sh
@@ -198,7 +199,7 @@ az vm list -g <resource-group> --show-details \
 | `CONTAINER_NAME` | `appcontrol-gateway` | ACI container name |
 | `IDENTITY_NAME` | `appcontrol-identity` | Managed Identity name |
 | `GATEWAY_ID` | `azure-gateway-01` | Gateway identifier |
-| `GATEWAY_ZONE` | `azure` | Gateway zone label |
+| `GATEWAY_SITE_ID` | (none) | Site UUID (optional, assign via UI if empty) |
 | `VM_RESOURCE_GROUP` | same as `RESOURCE_GROUP` | Resource group for VM role assignment |
 | `IMAGE` | `ghcr.io/fredericcarre/appcontrol-azure-gateway:latest` | Docker image |
 | `ACR_NAME` | (empty) | Azure Container Registry name (for `--build`) |
@@ -245,7 +246,7 @@ BACKEND_URL="wss://..." \
 ./deploy.sh --build
 ```
 
-## Advanced: Multiple Zones
+## Advanced: Multiple Sites
 
 Deploy multiple gateways for different Azure regions or environments:
 
@@ -254,7 +255,6 @@ Deploy multiple gateways for different Azure regions or environments:
 RESOURCE_GROUP=appcontrol-prod-we \
 LOCATION=westeurope \
 GATEWAY_ID=azure-we-01 \
-GATEWAY_ZONE=azure-westeurope \
 VM_RESOURCE_GROUP=prod-vms-we \
 BACKEND_URL="wss://..." \
 ./deploy.sh
@@ -263,13 +263,12 @@ BACKEND_URL="wss://..." \
 RESOURCE_GROUP=appcontrol-prod-eus \
 LOCATION=eastus \
 GATEWAY_ID=azure-eus-01 \
-GATEWAY_ZONE=azure-eastus \
 VM_RESOURCE_GROUP=prod-vms-eus \
 BACKEND_URL="wss://..." \
 ./deploy.sh
 ```
 
-Each gateway registers with a different zone, and the AppControl backend sees all of them.
+Each gateway registers and appears in the AppControl UI. You can then assign them to sites (e.g., "Azure West Europe", "Azure East US") via the Sites page.
 
 ## Troubleshooting
 

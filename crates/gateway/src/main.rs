@@ -91,7 +91,12 @@ struct GatewaySection {
     /// Human-readable name displayed in the UI.
     #[serde(default)]
     name: Option<String>,
-    zone: String,
+    /// DEPRECATED: Legacy zone string. Use site_id instead.
+    #[serde(default)]
+    zone: Option<String>,
+    /// Site ID this gateway belongs to (UUID).
+    #[serde(default)]
+    site_id: Option<uuid::Uuid>,
     listen_addr: String,
     listen_port: u16,
 }
@@ -140,7 +145,8 @@ impl GatewayConfig {
                 gateway: GatewaySection {
                     id: "gateway-01".to_string(),
                     name: None,
-                    zone: "default".to_string(),
+                    zone: None,
+                    site_id: None,
                     listen_addr: "0.0.0.0".to_string(),
                     listen_port: 4443,
                 },
@@ -160,8 +166,35 @@ impl GatewayConfig {
         if let Ok(v) = std::env::var("GATEWAY_NAME") {
             config.gateway.name = Some(v);
         }
+        // GATEWAY_SITE_ID takes precedence over GATEWAY_ZONE
+        if let Ok(v) = std::env::var("GATEWAY_SITE_ID") {
+            if !v.is_empty() {
+                match uuid::Uuid::parse_str(&v) {
+                    Ok(site_id) => {
+                        config.gateway.site_id = Some(site_id);
+                    }
+                    Err(e) => {
+                        tracing::error!("Invalid GATEWAY_SITE_ID UUID '{}': {}", v, e);
+                    }
+                }
+            }
+        }
+        // GATEWAY_ZONE is deprecated but still supported for backward compatibility
         if let Ok(v) = std::env::var("GATEWAY_ZONE") {
-            config.gateway.zone = v;
+            if !v.is_empty() {
+                if config.gateway.site_id.is_some() {
+                    tracing::warn!(
+                        "Both GATEWAY_SITE_ID and GATEWAY_ZONE are set. \
+                         GATEWAY_SITE_ID takes precedence. GATEWAY_ZONE is deprecated."
+                    );
+                } else {
+                    tracing::warn!(
+                        "GATEWAY_ZONE is deprecated. Use GATEWAY_SITE_ID instead. \
+                         The gateway will be assigned to a site via the UI."
+                    );
+                }
+                config.gateway.zone = Some(v);
+            }
         }
         if let Ok(v) = std::env::var("LISTEN_ADDR") {
             config.gateway.listen_addr = v;
@@ -362,22 +395,31 @@ async fn main() -> anyhow::Result<()> {
         config.gateway.listen_addr, config.gateway.listen_port
     );
 
+    // Log site/zone info for the gateway
+    let site_info = if let Some(sid) = config.gateway.site_id {
+        format!("site_id={}", sid)
+    } else if let Some(ref zone) = config.gateway.zone {
+        format!("zone={} (deprecated)", zone)
+    } else {
+        "unassigned".to_string()
+    };
+
     // Always use TLS — either configured certificates or self-signed for dev
     let rustls_config = if let Some(ref tls) = config.tls {
         if tls.enabled {
             tracing::info!(
-                "Gateway {} ({}) listening with TLS on {} [id={}]",
+                "Gateway {} [{}] listening with TLS on {} [id={}]",
                 config.gateway.id,
-                config.gateway.zone,
+                site_info,
                 addr,
                 gateway_id
             );
             build_server_tls_config(tls)?
         } else {
             tracing::info!(
-                "Gateway {} ({}) listening with self-signed TLS on {} [id={}] (TLS disabled in config, using dev cert)",
+                "Gateway {} [{}] listening with self-signed TLS on {} [id={}] (TLS disabled in config, using dev cert)",
                 config.gateway.id,
-                config.gateway.zone,
+                site_info,
                 addr,
                 gateway_id
             );
@@ -385,9 +427,9 @@ async fn main() -> anyhow::Result<()> {
         }
     } else {
         tracing::info!(
-            "Gateway {} ({}) listening with self-signed TLS on {} [id={}] (no TLS config, using dev cert)",
+            "Gateway {} [{}] listening with self-signed TLS on {} [id={}] (no TLS config, using dev cert)",
             config.gateway.id,
-            config.gateway.zone,
+            site_info,
             addr,
             gateway_id
         );
@@ -825,6 +867,7 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
         gateway_id: state.gateway_id,
         name: state.config.gateway.name.clone(),
         zone: state.config.gateway.zone.clone(),
+        site_id: state.config.gateway.site_id,
         version: env!("CARGO_PKG_VERSION").to_string(),
         enrollment_token: state.config.backend.enrollment_token.clone(),
     };

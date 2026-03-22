@@ -64,8 +64,10 @@ pub struct ImportPreviewResponse {
     pub all_resolved: bool,
     /// Resolution status per component
     pub components: Vec<ComponentResolution>,
-    /// All available agents for manual selection
+    /// All available agents for manual selection (primary site)
     pub available_agents: Vec<AvailableAgent>,
+    /// Available agents on DR site (if dr_gateway_ids provided)
+    pub dr_available_agents: Option<Vec<AvailableAgent>>,
     /// DR suggestions (if dr_gateway_ids provided)
     pub dr_suggestions: Option<Vec<DrSuggestion>>,
     /// Warnings during parsing
@@ -334,6 +336,21 @@ pub async fn preview_import(
         None
     };
 
+    // List DR available agents if DR gateways specified
+    let dr_available_agents = if let Some(ref dr_gw_ids) = body.dr_gateway_ids {
+        if !dr_gw_ids.is_empty() {
+            Some(
+                list_available_agents(&state.db, dr_gw_ids, user.organization_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(format!("Failed to list DR agents: {}", e)))?,
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let response = ImportPreviewResponse {
         valid: true,
         application_name: app_name,
@@ -341,6 +358,7 @@ pub async fn preview_import(
         all_resolved,
         components,
         available_agents,
+        dr_available_agents,
         dr_suggestions,
         warnings,
         existing_application,
@@ -844,6 +862,89 @@ pub async fn execute_import(
             .execute(&state.db)
             .await?;
         }
+
+        // Import site overrides for this component
+        for override_data in &comp.site_overrides {
+            // Look up site_id by site_code
+            let site_row: Option<(Uuid,)> =
+                sqlx::query_as("SELECT id FROM sites WHERE organization_id = $1 AND code = $2")
+                    .bind(user.organization_id)
+                    .bind(&override_data.site_code)
+                    .fetch_optional(&state.db)
+                    .await?;
+
+            let override_site_id = match site_row {
+                Some((id,)) => id,
+                None => {
+                    warnings.push(format!(
+                        "Component '{}': site override for code '{}' skipped - site not found",
+                        comp_name, override_data.site_code
+                    ));
+                    continue;
+                }
+            };
+
+            // Resolve agent_id from host_override if provided
+            let agent_id_override: Option<Uuid> = if let Some(ref host) =
+                override_data.host_override
+            {
+                // Look up agent by hostname or IP at this site's gateway
+                let agent_row: Option<(Uuid,)> = sqlx::query_as(
+                    r#"SELECT a.id FROM agents a
+                       JOIN gateways g ON a.gateway_id = g.id
+                       WHERE a.organization_id = $1
+                         AND g.site_id = $2
+                         AND (a.hostname ILIKE $3 OR EXISTS (
+                           SELECT 1 FROM jsonb_array_elements_text(a.ip_addresses) ip
+                           WHERE ip = $3
+                         ))
+                       LIMIT 1"#,
+                )
+                .bind(user.organization_id)
+                .bind(override_site_id)
+                .bind(host)
+                .fetch_optional(&state.db)
+                .await?;
+
+                match agent_row {
+                    Some((id,)) => Some(id),
+                    None => {
+                        warnings.push(format!(
+                            "Component '{}': site '{}' host_override '{}' could not be resolved to an agent",
+                            comp_name, override_data.site_code, host
+                        ));
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            // Insert site override
+            sqlx::query(
+                r#"INSERT INTO site_overrides (component_id, site_id, agent_id_override,
+                    check_cmd_override, start_cmd_override, stop_cmd_override,
+                    rebuild_cmd_override, env_vars_override)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (component_id, site_id) DO UPDATE SET
+                    agent_id_override = EXCLUDED.agent_id_override,
+                    check_cmd_override = EXCLUDED.check_cmd_override,
+                    start_cmd_override = EXCLUDED.start_cmd_override,
+                    stop_cmd_override = EXCLUDED.stop_cmd_override,
+                    rebuild_cmd_override = EXCLUDED.rebuild_cmd_override,
+                    env_vars_override = EXCLUDED.env_vars_override"#,
+            )
+            .bind(comp_id)
+            .bind(override_site_id)
+            .bind(agent_id_override)
+            .bind(&override_data.check_cmd_override)
+            .bind(&override_data.start_cmd_override)
+            .bind(&override_data.stop_cmd_override)
+            .bind(&override_data.rebuild_cmd_override)
+            .bind(&override_data.env_vars_override)
+            .execute(&state.db)
+            .await?;
+        }
     }
 
     // Import dependencies
@@ -932,19 +1033,8 @@ pub async fn execute_import(
 
     // Create DR profile if specified
     if let Some(ref dr_profile) = body.dr_profile {
-        // Validate DR profile has all component mappings
-        for name in &component_names {
-            if !dr_profile
-                .mappings
-                .iter()
-                .any(|m| &m.component_name == name)
-            {
-                return Err(ApiError::Validation(format!(
-                    "DR profile missing mapping for component '{}'",
-                    name
-                )));
-            }
-        }
+        // Note: DR profiles can have partial mappings - components not mapped
+        // are intentionally disabled on the DR site (not replicated)
 
         let dr_profile_id = Uuid::new_v4();
         sqlx::query(
@@ -1133,9 +1223,31 @@ struct ComponentData {
     cluster_size: Option<i32>,
     /// List of cluster node hostnames/IPs
     cluster_nodes: Option<Vec<String>>,
+    /// Site-specific overrides for failover (keyed by site code)
+    #[serde(default)]
+    site_overrides: Vec<SiteOverrideData>,
     // Ignore extra fields
     #[serde(flatten)]
     _extra: Option<serde_json::Value>,
+}
+
+/// Site-specific command overrides for DR/failover
+#[derive(Debug, Deserialize)]
+struct SiteOverrideData {
+    /// Site code (e.g., "DR", "BENCH") - matched to sites.code
+    site_code: String,
+    /// Override host for this site (mapped to agent during resolution)
+    host_override: Option<String>,
+    /// Override check command for this site
+    check_cmd_override: Option<String>,
+    /// Override start command for this site
+    start_cmd_override: Option<String>,
+    /// Override stop command for this site
+    stop_cmd_override: Option<String>,
+    /// Override rebuild command for this site
+    rebuild_cmd_override: Option<String>,
+    /// Override environment variables for this site (JSON object)
+    env_vars_override: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]

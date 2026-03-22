@@ -1134,7 +1134,7 @@ pub async fn mttr(
     let median_mttr = if !recovery_times.is_empty() {
         let mut sorted = recovery_times.clone();
         sorted.sort();
-        if sorted.len() % 2 == 0 {
+        if sorted.len().is_multiple_of(2) {
             (sorted[sorted.len() / 2 - 1] + sorted[sorted.len() / 2]) as f64 / 2.0
         } else {
             sorted[sorted.len() / 2] as f64

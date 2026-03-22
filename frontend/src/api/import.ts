@@ -64,6 +64,7 @@ export interface ImportPreviewResponse {
   all_resolved: boolean;
   components: ComponentResolution[];
   available_agents: AvailableAgent[];
+  dr_available_agents: AvailableAgent[] | null;
   dr_suggestions: DrSuggestion[] | null;
   warnings: string[];
   existing_application: ExistingApplicationInfo | null;
@@ -73,6 +74,17 @@ export interface MappingConfig {
   component_name: string;
   agent_id: string;
   resolved_via: string;
+}
+
+// Site override for DR/failover configuration
+export interface SiteOverrideConfig {
+  site_code: string;
+  host_override?: string;
+  check_cmd_override?: string;
+  start_cmd_override?: string;
+  stop_cmd_override?: string;
+  rebuild_cmd_override?: string;
+  env_vars_override?: Record<string, string>;
 }
 
 export interface ProfileConfig {

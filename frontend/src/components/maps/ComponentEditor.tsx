@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Component, useComponentGroups, useApps } from '@/api/apps';
 import { useAgents } from '@/api/reports';
+import { useSites, useComponentSiteOverrides, useUpsertSiteOverride, useDeleteSiteOverride, SiteOverride, SiteOverrideInput } from '@/api/sites';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -23,7 +24,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { COMPONENT_TYPES } from './ComponentPalette';
-import { Database, Layers, Server, Globe, Cog, Clock, Box, Folder, AlertCircle } from 'lucide-react';
+import { Database, Layers, Server, Globe, Cog, Clock, Box, Folder, AlertCircle, Shield, Trash2, Plus, MapPin } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
 const ICONS: Record<string, React.ElementType> = {
@@ -82,6 +83,20 @@ export function ComponentEditor({
   const { data: groups } = useComponentGroups(appId);
   const { data: agents } = useAgents();
   const { data: existingApps } = useApps();
+  const { data: sites } = useSites();
+  const { data: siteOverrides, refetch: refetchOverrides } = useComponentSiteOverrides(component?.id || '');
+  const upsertOverride = useUpsertSiteOverride(component?.id || '');
+  const deleteOverride = useDeleteSiteOverride(component?.id || '');
+
+  // State for editing a site override
+  const [editingOverride, setEditingOverride] = useState<{
+    siteId: string;
+    agentId: string | null;
+    checkCmd: string;
+    startCmd: string;
+    stopCmd: string;
+    rebuildCmd: string;
+  } | null>(null);
 
   // Filter out the current app from the list (can't reference itself)
   const availableApps = useMemo(
@@ -239,9 +254,13 @@ export function ComponentEditor({
 
         <form onSubmit={handleSubmit}>
           <Tabs defaultValue="general" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="commands">Commands</TabsTrigger>
+              <TabsTrigger value="failover" disabled={isCreating}>
+                <Shield className="h-3 w-3 mr-1" />
+                Failover
+              </TabsTrigger>
               <TabsTrigger value="advanced">Advanced</TabsTrigger>
             </TabsList>
 
@@ -563,6 +582,322 @@ export function ComponentEditor({
                   </div>
                 </>
               )}
+            </TabsContent>
+
+            <TabsContent value="failover" className="space-y-4 mt-4">
+              {/* Failover / DR Site Configuration */}
+              <Alert>
+                <Shield className="h-4 w-4" />
+                <AlertDescription>
+                  <p className="font-medium mb-1">Site Overrides (DR Failover)</p>
+                  <p className="text-sm text-muted-foreground">
+                    Configure alternate agents and commands for each site. When the application runs on a different site (e.g., DR), these overrides are used instead of the default configuration.
+                  </p>
+                </AlertDescription>
+              </Alert>
+
+              {/* Current host info */}
+              <div className="rounded-lg border p-3 bg-muted/30">
+                <div className="flex items-center gap-2 mb-2">
+                  <MapPin className="h-4 w-4 text-blue-500" />
+                  <span className="font-medium text-sm">Default Configuration</span>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  <span className="font-mono">{formData.host || 'No host assigned'}</span>
+                  <span className="mx-2">•</span>
+                  <span>Used when running on the primary site</span>
+                </div>
+              </div>
+
+              {/* Site overrides list */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium text-sm">Site Overrides</h4>
+                  {!isCreating && sites && sites.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        // Find first site that doesn't have an override yet
+                        const configuredSiteIds = siteOverrides?.map(o => o.site_id) || [];
+                        const availableSite = sites.find(s => !configuredSiteIds.includes(s.id));
+                        if (availableSite) {
+                          setEditingOverride({
+                            siteId: availableSite.id,
+                            agentId: null,
+                            checkCmd: '',
+                            startCmd: '',
+                            stopCmd: '',
+                            rebuildCmd: '',
+                          });
+                        }
+                      }}
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      Add Override
+                    </Button>
+                  )}
+                </div>
+
+                {isCreating ? (
+                  <p className="text-sm text-muted-foreground italic">
+                    Save the component first to configure site overrides.
+                  </p>
+                ) : !siteOverrides || siteOverrides.length === 0 ? (
+                  <p className="text-sm text-muted-foreground italic">
+                    No site overrides configured. Add an override to enable DR failover for this component.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {siteOverrides.map((override) => (
+                      <div
+                        key={override.id}
+                        className="rounded-lg border p-3 bg-background"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full ${
+                              sites?.find(s => s.id === override.site_id)?.site_type === 'dr'
+                                ? 'bg-orange-500'
+                                : 'bg-blue-500'
+                            }`} />
+                            <span className="font-medium text-sm">
+                              {override.site_name || 'Unknown Site'}
+                            </span>
+                            <span className="text-xs text-muted-foreground px-1.5 py-0.5 bg-muted rounded">
+                              {override.site_code}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setEditingOverride({
+                                siteId: override.site_id,
+                                agentId: override.agent_id_override,
+                                checkCmd: override.check_cmd_override || '',
+                                startCmd: override.start_cmd_override || '',
+                                stopCmd: override.stop_cmd_override || '',
+                                rebuildCmd: override.rebuild_cmd_override || '',
+                              })}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => {
+                                if (confirm('Remove this site override?')) {
+                                  deleteOverride.mutate(override.site_id);
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">Agent: </span>
+                            <span className="font-mono">
+                              {override.agent_hostname || 'Same as default'}
+                            </span>
+                          </div>
+                          {override.check_cmd_override && (
+                            <div className="col-span-2">
+                              <span className="text-muted-foreground">Check: </span>
+                              <span className="font-mono text-xs">{override.check_cmd_override}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Edit override dialog inline */}
+                {editingOverride && (
+                  <div className="rounded-lg border-2 border-primary p-4 space-y-3 bg-muted/20">
+                    <h5 className="font-medium text-sm">
+                      {siteOverrides?.find(o => o.site_id === editingOverride.siteId)
+                        ? 'Edit Override'
+                        : 'New Override'}
+                    </h5>
+
+                    <div className="space-y-2">
+                      <Label>Site</Label>
+                      <Select
+                        value={editingOverride.siteId}
+                        onValueChange={(v) => setEditingOverride(prev => prev ? { ...prev, siteId: v } : null)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue>
+                            {(() => {
+                              const site = sites?.find(s => s.id === editingOverride.siteId);
+                              if (!site) return 'Select site...';
+                              return (
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-2 h-2 rounded-full ${
+                                    site.site_type === 'dr' ? 'bg-orange-500' :
+                                    site.site_type === 'primary' ? 'bg-green-500' : 'bg-blue-500'
+                                  }`} />
+                                  {site.name} ({site.code})
+                                </div>
+                              );
+                            })()}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {sites?.map((site) => (
+                            <SelectItem key={site.id} value={site.id}>
+                              <div className="flex items-center gap-2">
+                                <div className={`w-2 h-2 rounded-full ${
+                                  site.site_type === 'dr' ? 'bg-orange-500' :
+                                  site.site_type === 'primary' ? 'bg-green-500' : 'bg-blue-500'
+                                }`} />
+                                {site.name} ({site.code}) - {site.site_type.toUpperCase()}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Override Agent</Label>
+                      <Select
+                        value={editingOverride.agentId || '_same'}
+                        onValueChange={(v) => setEditingOverride(prev =>
+                          prev ? { ...prev, agentId: v === '_same' ? null : v } : null
+                        )}
+                      >
+                        <SelectTrigger>
+                          <SelectValue>
+                            {(() => {
+                              if (!editingOverride.agentId) return <span className="text-muted-foreground">Use same agent as default</span>;
+                              const agent = agents?.find(a => a.id === editingOverride.agentId);
+                              if (!agent) return 'Select agent...';
+                              return (
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-2 h-2 rounded-full ${
+                                    agent.status === 'active' ? 'bg-green-500' : 'bg-gray-400'
+                                  }`} />
+                                  {agent.hostname}
+                                </div>
+                              );
+                            })()}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_same">
+                            <span className="text-muted-foreground">Use same agent as default</span>
+                          </SelectItem>
+                          {agents?.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              <div className="flex items-center gap-2">
+                                <div className={`w-2 h-2 rounded-full ${
+                                  a.status === 'active' ? 'bg-green-500' : 'bg-gray-400'
+                                }`} />
+                                {a.hostname}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Agent to use when running on this site (typically the DR server)
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Check Command Override (optional)</Label>
+                      <Input
+                        value={editingOverride.checkCmd}
+                        onChange={(e) => setEditingOverride(prev =>
+                          prev ? { ...prev, checkCmd: e.target.value } : null
+                        )}
+                        placeholder="Leave empty to use default"
+                        className="font-mono text-sm"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Start Command Override (optional)</Label>
+                      <Input
+                        value={editingOverride.startCmd}
+                        onChange={(e) => setEditingOverride(prev =>
+                          prev ? { ...prev, startCmd: e.target.value } : null
+                        )}
+                        placeholder="Leave empty to use default"
+                        className="font-mono text-sm"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Stop Command Override (optional)</Label>
+                      <Input
+                        value={editingOverride.stopCmd}
+                        onChange={(e) => setEditingOverride(prev =>
+                          prev ? { ...prev, stopCmd: e.target.value } : null
+                        )}
+                        placeholder="Leave empty to use default"
+                        className="font-mono text-sm"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Rebuild Command Override (optional)</Label>
+                      <Input
+                        value={editingOverride.rebuildCmd}
+                        onChange={(e) => setEditingOverride(prev =>
+                          prev ? { ...prev, rebuildCmd: e.target.value } : null
+                        )}
+                        placeholder="Leave empty to use default"
+                        className="font-mono text-sm"
+                      />
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setEditingOverride(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => {
+                          if (editingOverride) {
+                            upsertOverride.mutate({
+                              site_id: editingOverride.siteId,
+                              agent_id_override: editingOverride.agentId,
+                              check_cmd_override: editingOverride.checkCmd || null,
+                              start_cmd_override: editingOverride.startCmd || null,
+                              stop_cmd_override: editingOverride.stopCmd || null,
+                              rebuild_cmd_override: editingOverride.rebuildCmd || null,
+                            }, {
+                              onSuccess: () => {
+                                setEditingOverride(null);
+                                refetchOverrides();
+                              },
+                            });
+                          }
+                        }}
+                        disabled={upsertOverride.isPending}
+                      >
+                        {upsertOverride.isPending ? 'Saving...' : 'Save Override'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </TabsContent>
 
             <TabsContent value="advanced" className="space-y-4 mt-4">

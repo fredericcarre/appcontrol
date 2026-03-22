@@ -70,7 +70,9 @@ services:
     environment:
       # Gateway identity
       GATEWAY_NAME: "gateway-default"
-      GATEWAY_ZONE: "default"
+      # GATEWAY_SITE_ID: Leave empty for "Unassigned" - assign to a site via UI
+      # Or set to a UUID to pre-assign: GATEWAY_SITE_ID: "11111111-1111-1111-1111-111111111111"
+      # GATEWAY_ZONE is deprecated, use GATEWAY_SITE_ID instead
       # Network
       LISTEN_ADDR: "0.0.0.0"
       LISTEN_PORT: "4443"

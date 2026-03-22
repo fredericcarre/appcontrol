@@ -440,7 +440,8 @@ Environment variables take precedence over YAML values.
 | Variable | YAML Path | Default | Description |
 |----------|-----------|---------|-------------|
 | `GATEWAY_ID` | `gateway.id` | `gateway-01` | Unique identifier. Used to generate a deterministic UUID v5. |
-| `GATEWAY_ZONE` | `gateway.zone` | `default` | Network zone label (for display and filtering). |
+| `GATEWAY_SITE_ID` | `gateway.site_id` | (none) | UUID of the site this gateway belongs to. Optional: gateways without a site appear as "Unassigned" in the UI. |
+| `GATEWAY_ZONE` | `gateway.zone` | (deprecated) | **Deprecated.** Legacy zone label. Use `GATEWAY_SITE_ID` instead. |
 | `LISTEN_ADDR` | `gateway.listen_addr` | `0.0.0.0` | Bind address |
 | `LISTEN_PORT` | `gateway.listen_port` | `4443` | Listen port for agent WebSocket connections |
 | `BACKEND_URL` | `backend.url` | `ws://localhost:3000/ws/gateway` | Backend WebSocket URL. **Must** end with `/ws/gateway`. |

@@ -446,7 +446,14 @@ pub enum GatewayMessage {
         /// Human-readable name for this gateway (e.g., "gateway-prd-01").
         #[serde(default)]
         name: Option<String>,
-        zone: String,
+        /// DEPRECATED: Legacy zone string. Use site_id instead.
+        /// Kept for backward compatibility with older gateways.
+        #[serde(default)]
+        zone: Option<String>,
+        /// Site ID this gateway belongs to. Gateways in the same site share failover.
+        /// If not provided, gateway will be "Unassigned" until assigned via UI.
+        #[serde(default)]
+        site_id: Option<Uuid>,
         version: String,
         /// Enrollment token for authentication and organization binding.
         /// Required in production; optional in dev mode for backward compatibility.
@@ -831,10 +838,12 @@ mod tests {
     #[test]
     fn test_gateway_message_register_roundtrip() {
         let gw_id = Uuid::new_v4();
+        let site_id = Uuid::new_v4();
         let msg = super::GatewayMessage::Register {
             gateway_id: gw_id,
             name: Some("gateway-prd-01".to_string()),
-            zone: "PRD".to_string(),
+            zone: Some("PRD".to_string()),
+            site_id: Some(site_id),
             version: "0.1.0".to_string(),
             enrollment_token: Some("ac_enroll_test123".to_string()),
         };
@@ -845,11 +854,41 @@ mod tests {
                 gateway_id,
                 name,
                 zone,
+                site_id: sid,
                 ..
             } => {
                 assert_eq!(gateway_id, gw_id);
                 assert_eq!(name, Some("gateway-prd-01".to_string()));
-                assert_eq!(zone, "PRD");
+                assert_eq!(zone, Some("PRD".to_string()));
+                assert_eq!(sid, Some(site_id));
+            }
+            _ => panic!("Expected Register"),
+        }
+    }
+
+    #[test]
+    fn test_gateway_message_register_backward_compat_zone_only() {
+        // Old gateways may send zone as required string without site_id
+        let json = r#"{"type":"Register","payload":{"gateway_id":"550e8400-e29b-41d4-a716-446655440000","zone":"PRD","version":"0.1.0"}}"#;
+        let msg: super::GatewayMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            super::GatewayMessage::Register { zone, site_id, .. } => {
+                assert_eq!(zone, Some("PRD".to_string()));
+                assert_eq!(site_id, None);
+            }
+            _ => panic!("Expected Register"),
+        }
+    }
+
+    #[test]
+    fn test_gateway_message_register_site_id_only() {
+        // New gateways can send site_id without zone
+        let json = r#"{"type":"Register","payload":{"gateway_id":"550e8400-e29b-41d4-a716-446655440000","site_id":"660e8400-e29b-41d4-a716-446655440001","version":"0.1.0"}}"#;
+        let msg: super::GatewayMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            super::GatewayMessage::Register { zone, site_id, .. } => {
+                assert_eq!(zone, None);
+                assert!(site_id.is_some());
             }
             _ => panic!("Expected Register"),
         }

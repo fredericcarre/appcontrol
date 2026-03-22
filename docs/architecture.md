@@ -148,7 +148,8 @@ Agent ---WSS (mTLS)---> gateway:4443/ws
 | `LISTEN_PORT` | `4443` | Bind port for agent connections |
 | `BACKEND_URL` | `ws://localhost:3000/ws` | Backend WebSocket URL |
 | `GATEWAY_ID` | `gateway-01` | Gateway identifier |
-| `GATEWAY_ZONE` | `default` | Zone label (PRD, DR, etc.) |
+| `GATEWAY_SITE_ID` | (none) | UUID of the site this gateway belongs to. Optional: gateways without a site appear as "Unassigned" in the UI and can be assigned later. |
+| `GATEWAY_ZONE` | (deprecated) | Legacy zone label. Use `GATEWAY_SITE_ID` instead. |
 | `BACKEND_RECONNECT_SECS` | `5` | Reconnect interval to backend |
 
 ### Agent

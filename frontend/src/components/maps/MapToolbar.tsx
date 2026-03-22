@@ -3,24 +3,26 @@ import { useReactFlow } from '@xyflow/react';
 import { Button } from '@/components/ui/button';
 import {
   ZoomIn, ZoomOut, Maximize, Play, Square,
-  GitBranch, Share2, Activity, LayoutGrid, Save, Loader2,
+  GitBranch, Share2, Activity, LayoutGrid, Save, Loader2, ArrowRightLeft,
 } from 'lucide-react';
 
 interface MapToolbarProps {
   onStartAll?: () => void;
   onStopAll?: () => void;
   onRestartErrorBranch?: () => void;
+  onSwitchover?: () => void;
   onShare?: () => void;
   onToggleActivity?: () => void;
   activityOpen?: boolean;
   canOperate?: boolean;
+  canManage?: boolean;
   onAutoLayout?: () => void;
   onSaveLayout?: () => void;
   hasUnsavedPositions?: boolean;
   isSavingLayout?: boolean;
 }
 
-export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShare, onToggleActivity, activityOpen, canOperate, onAutoLayout, onSaveLayout, hasUnsavedPositions, isSavingLayout }: MapToolbarProps) {
+export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onSwitchover, onShare, onToggleActivity, activityOpen, canOperate, canManage, onAutoLayout, onSaveLayout, hasUnsavedPositions, isSavingLayout }: MapToolbarProps) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
 
   const handleFit = useCallback(() => fitView({ padding: 0.2 }), [fitView]);
@@ -67,6 +69,11 @@ export function MapToolbar({ onStartAll, onStopAll, onRestartErrorBranch, onShar
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onRestartErrorBranch} title="Restart Error Branch">
             <GitBranch className="h-4 w-4 text-orange-600" />
           </Button>
+          {canManage && (
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onSwitchover} title="Site Switchover (DR Failover)">
+              <ArrowRightLeft className="h-4 w-4 text-purple-600" />
+            </Button>
+          )}
         </div>
       )}
 

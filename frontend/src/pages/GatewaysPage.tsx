@@ -1,15 +1,17 @@
 import { useState, useMemo } from 'react';
 import {
-  useGatewayZones,
+  useGatewaySites,
   useGatewayAgents,
   useActivateGateway,
   useSetGatewayPrimary,
   useDeleteGateway,
   useBlockGateway,
+  useUpdateGateway,
   type Gateway,
-  type ZoneSummary,
+  type SiteSummary,
   type GatewayAgent,
 } from '@/api/gateways';
+import { useSites } from '@/api/sites';
 import { useBlockAgent } from '@/api/agents';
 import { useAuthStore } from '@/stores/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -57,6 +59,7 @@ import {
   CheckCircle2,
   Search,
   FileText,
+  MapPin,
 } from 'lucide-react';
 import { LogViewerModal } from '@/components/logs/LogViewerModal';
 
@@ -71,8 +74,6 @@ function formatTimeAgo(dateStr: string | null): string {
 }
 
 function getRoleBadge(gateway: Gateway, isSingleGateway: boolean = false) {
-  // When there's only 1 gateway, don't show "Failover Active" - it's misleading
-  // Instead show "Active" since it's the only gateway
   if (isSingleGateway && gateway.role === 'failover_active') {
     return (
       <Badge variant="default" className="gap-1 bg-green-600 hover:bg-green-700">
@@ -192,6 +193,7 @@ interface GatewayItemProps {
   onBlock: (gateway: Gateway) => void;
   onBlockAgent: (agent: GatewayAgent) => void;
   onViewLogs: (gateway: Gateway) => void;
+  onAssignSite: (gateway: Gateway) => void;
 }
 
 function GatewayItem({
@@ -205,11 +207,11 @@ function GatewayItem({
   onBlock,
   onBlockAgent,
   onViewLogs,
+  onAssignSite,
 }: GatewayItemProps) {
   const [expanded, setExpanded] = useState(false);
   const { data: agents, isLoading } = useGatewayAgents(expanded ? gateway.id : '');
 
-  // Count connected agents
   const connectedAgents = agents?.filter((a) => a.connected).length ?? 0;
   const totalAgents = agents?.length ?? gateway.agent_count;
 
@@ -224,6 +226,12 @@ function GatewayItem({
         </Button>
         <Network className="h-4 w-4 text-muted-foreground shrink-0" />
         <span className="font-medium">{gateway.name}</span>
+        {gateway.site_code && (
+          <Badge variant="outline" className="gap-1 text-xs">
+            <MapPin className="h-3 w-3" />
+            {gateway.site_code}
+          </Badge>
+        )}
         {gateway.version && (
           <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
             v{gateway.version}
@@ -254,6 +262,10 @@ function GatewayItem({
                     View Logs
                   </DropdownMenuItem>
                 )}
+                <DropdownMenuItem onClick={() => onAssignSite(gateway)} disabled={isMutating}>
+                  <MapPin className="h-4 w-4 mr-2" />
+                  Assign to Site
+                </DropdownMenuItem>
                 {!gateway.is_primary && (
                   <DropdownMenuItem onClick={() => onSetPrimary(gateway)} disabled={isMutating}>
                     <Star className="h-4 w-4 mr-2" />
@@ -311,8 +323,8 @@ function GatewayItem({
   );
 }
 
-interface ZoneCardProps {
-  zone: ZoneSummary;
+interface SiteCardProps {
+  site: SiteSummary;
   isAdmin: boolean;
   search: string;
   isMutating: boolean;
@@ -322,10 +334,11 @@ interface ZoneCardProps {
   onBlock: (gateway: Gateway) => void;
   onBlockAgent: (agent: GatewayAgent) => void;
   onViewLogs: (gateway: Gateway) => void;
+  onAssignSite: (gateway: Gateway) => void;
 }
 
-function ZoneCard({
-  zone,
+function SiteCard({
+  site,
   isAdmin,
   search,
   isMutating,
@@ -335,26 +348,26 @@ function ZoneCard({
   onBlock,
   onBlockAgent,
   onViewLogs,
-}: ZoneCardProps) {
+  onAssignSite,
+}: SiteCardProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddFailover, setShowAddFailover] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Filter gateways by search
   const filteredGateways = useMemo(() => {
-    if (!search) return zone.gateways;
+    if (!search) return site.gateways;
     const searchLower = search.toLowerCase();
-    return zone.gateways.filter((g) => g.name.toLowerCase().includes(searchLower));
-  }, [zone.gateways, search]);
+    return site.gateways.filter((g) => g.name.toLowerCase().includes(searchLower));
+  }, [site.gateways, search]);
 
-  const connectedCount = zone.gateways.filter((g) => g.connected).length;
-  // Only show failover alert when there are 2+ gateways (actual HA setup)
-  const showFailoverAlert = zone.failover_active && zone.gateway_count >= 2;
-  // Single gateway - suggest adding redundancy
-  const singleGateway = zone.gateway_count === 1;
+  const connectedCount = site.gateways.filter((g) => g.connected).length;
+  const showFailoverAlert = site.failover_active && site.gateway_count >= 2;
+  const singleGateway = site.gateway_count === 1;
 
-  const failoverCommand = `GATEWAY_NAME=gateway-${zone.zone}-standby \\
-GATEWAY_ZONE=${zone.zone} \\
+  // Use site_id if available for new gateways
+  const siteIdParam = site.site_id ? `GATEWAY_SITE_ID=${site.site_id}` : `# No site_id yet - will be assigned via UI`;
+  const failoverCommand = `GATEWAY_NAME=gateway-${site.site_code.toLowerCase()}-standby \\
+${siteIdParam} \\
 LISTEN_PORT=4443 \\
 BACKEND_URL=wss://your-backend:443/ws/gateway \\
 ./appcontrol-gateway`;
@@ -365,7 +378,6 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Don't render if no gateways match search
   if (search && filteredGateways.length === 0) return null;
 
   return (
@@ -380,9 +392,10 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
               <Button variant="ghost" size="icon" className="h-6 w-6">
                 {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
               </Button>
-              <CardTitle className="text-lg">{zone.zone}</CardTitle>
+              <MapPin className="h-4 w-4 text-blue-600" />
+              <CardTitle className="text-lg">{site.site_name}</CardTitle>
               <Badge variant="secondary">
-                {zone.gateway_count} gateway{zone.gateway_count !== 1 ? 's' : ''}
+                {site.gateway_count} gateway{site.gateway_count !== 1 ? 's' : ''}
               </Badge>
               {singleGateway && (
                 <Badge variant="outline" className="gap-1 text-muted-foreground">
@@ -397,7 +410,7 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
                 </Badge>
               )}
               <span className="text-sm text-muted-foreground">
-                {connectedCount}/{zone.gateway_count} online
+                {connectedCount}/{site.gateway_count} online
               </span>
             </div>
           </div>
@@ -417,6 +430,7 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
                 onBlock={onBlock}
                 onBlockAgent={onBlockAgent}
                 onViewLogs={onViewLogs}
+                onAssignSite={onAssignSite}
               />
             ))}
             {singleGateway && !search && (
@@ -441,13 +455,12 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
         )}
       </Card>
 
-      {/* Add Failover Gateway Dialog */}
       <Dialog open={showAddFailover} onOpenChange={setShowAddFailover}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Plus className="h-5 w-5" />
-              Add Failover Gateway to "{zone.zone}"
+              Add Failover Gateway to "{site.site_name}"
             </DialogTitle>
             <DialogDescription>
               Deploy a standby gateway on a separate server for automatic failover when the primary goes
@@ -472,7 +485,7 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
             <div>
               <h4 className="font-medium mb-2">3. Start with standby configuration</h4>
               <p className="text-sm text-muted-foreground mb-2">
-                Use the same zone name but a different gateway name:
+                Assign the gateway to the same site with a different name:
               </p>
               <div className="relative">
                 <pre className="bg-muted p-3 rounded-md text-sm font-mono overflow-x-auto">
@@ -513,67 +526,70 @@ BACKEND_URL=wss://your-backend:443/ws/gateway \\
 export function GatewaysPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = user?.role === 'admin';
-  const { data: zones, isLoading, refetch } = useGatewayZones();
+  const { data: sites, isLoading, refetch } = useGatewaySites();
+  const { data: allSites } = useSites();
   const activateGateway = useActivateGateway();
   const setGatewayPrimary = useSetGatewayPrimary();
   const deleteGateway = useDeleteGateway();
   const blockGateway = useBlockGateway();
   const blockAgent = useBlockAgent();
+  const updateGateway = useUpdateGateway();
 
-  // Track if any mutation is in progress
   const isMutating =
     activateGateway.isPending ||
     setGatewayPrimary.isPending ||
     deleteGateway.isPending ||
     blockGateway.isPending ||
-    blockAgent.isPending;
+    blockAgent.isPending ||
+    updateGateway.isPending;
 
-  // Search and filters
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
-  const [zoneFilter, setZoneFilter] = useState<string>('all');
+  const [siteFilter, setSiteFilter] = useState<string>('all');
 
-  // Confirmation dialogs
   const [deleteConfirm, setDeleteConfirm] = useState<Gateway | null>(null);
   const [blockGatewayConfirm, setBlockGatewayConfirm] = useState<Gateway | null>(null);
   const [blockAgentConfirm, setBlockAgentConfirm] = useState<GatewayAgent | null>(null);
 
-  // Log viewer modal state
+  const [assignSiteGateway, setAssignSiteGateway] = useState<Gateway | null>(null);
+  const [selectedSiteId, setSelectedSiteId] = useState<string>('unassigned');
+
   const [logsGateway, setLogsGateway] = useState<Gateway | null>(null);
 
-  // Get unique zones for filter dropdown
-  const zoneOptions = useMemo(() => {
-    if (!zones) return [];
-    return zones.map((z) => z.zone);
-  }, [zones]);
+  const siteOptions = useMemo(() => {
+    if (!sites) return [];
+    return sites.map((s) => ({
+      id: s.site_id || s.site_code,
+      name: s.site_name,
+      code: s.site_code
+    }));
+  }, [sites]);
 
-  // Filter zones
-  const filteredZones = useMemo(() => {
-    if (!zones) return [];
-    return zones
-      .filter((zone) => {
-        // Zone filter
-        if (zoneFilter !== 'all' && zone.zone !== zoneFilter) return false;
-        // Status filter applies to gateways within zones
+  const filteredSites = useMemo(() => {
+    if (!sites) return [];
+    return sites
+      .filter((site) => {
+        // Use site_id or site_code for filtering
+        const siteKey = site.site_id || site.site_code;
+        if (siteFilter !== 'all' && siteKey !== siteFilter) return false;
         if (statusFilter !== 'all') {
-          const hasMatchingGateway = zone.gateways.some((g) =>
+          const hasMatchingGateway = site.gateways.some((g) =>
             statusFilter === 'online' ? g.connected : !g.connected
           );
           if (!hasMatchingGateway) return false;
         }
         return true;
       })
-      .map((zone) => {
-        // Apply status filter to gateways
-        if (statusFilter === 'all') return zone;
+      .map((site) => {
+        if (statusFilter === 'all') return site;
         return {
-          ...zone,
-          gateways: zone.gateways.filter((g) =>
+          ...site,
+          gateways: site.gateways.filter((g) =>
             statusFilter === 'online' ? g.connected : !g.connected
           ),
         };
       });
-  }, [zones, statusFilter, zoneFilter]);
+  }, [sites, statusFilter, siteFilter]);
 
   const handleActivate = async (gateway: Gateway) => {
     if (isMutating) return;
@@ -608,6 +624,21 @@ export function GatewaysPage() {
     refetch();
   };
 
+  const openAssignSite = (gateway: Gateway) => {
+    setAssignSiteGateway(gateway);
+    setSelectedSiteId(gateway.site_id || 'unassigned');
+  };
+
+  const handleAssignSite = async () => {
+    if (!assignSiteGateway || isMutating) return;
+    await updateGateway.mutateAsync({
+      id: assignSiteGateway.id,
+      site_id: selectedSiteId === 'unassigned' ? null : selectedSiteId,
+    });
+    setAssignSiteGateway(null);
+    refetch();
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -616,24 +647,23 @@ export function GatewaysPage() {
     );
   }
 
-  const zoneList = zones || [];
-  const totalGateways = zoneList.reduce((sum, z) => sum + z.gateway_count, 0);
-  const totalConnected = zoneList.reduce(
-    (sum, z) => sum + z.gateways.filter((g) => g.connected).length,
+  const siteList = sites || [];
+  const totalGateways = siteList.reduce((sum, s) => sum + s.gateway_count, 0);
+  const totalConnected = siteList.reduce(
+    (sum, s) => sum + s.gateways.filter((g) => g.connected).length,
     0
   );
-  // Only count failover zones that have 2+ gateways (actual HA setups)
-  const failoverZones = zoneList.filter((z) => z.failover_active && z.gateway_count >= 2);
+  const failoverSites = siteList.filter((s) => s.failover_active && s.gateway_count >= 2);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Gateways</h1>
         <div className="flex items-center gap-4">
-          {failoverZones.length > 0 && (
+          {failoverSites.length > 0 && (
             <Badge variant="destructive" className="gap-1">
               <AlertTriangle className="h-3 w-3" />
-              {failoverZones.length} zone{failoverZones.length !== 1 ? 's' : ''} in failover
+              {failoverSites.length} site{failoverSites.length !== 1 ? 's' : ''} in failover
             </Badge>
           )}
           <span className="text-sm text-muted-foreground">
@@ -642,7 +672,6 @@ export function GatewaysPage() {
         </div>
       </div>
 
-      {/* Search and Filters */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -663,22 +692,25 @@ export function GatewaysPage() {
             <SelectItem value="offline">Offline</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={zoneFilter} onValueChange={setZoneFilter}>
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder="Zone" />
+        <Select value={siteFilter} onValueChange={setSiteFilter}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Site" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Zones</SelectItem>
-            {zoneOptions.map((zone) => (
-              <SelectItem key={zone} value={zone}>
-                {zone}
+            <SelectItem value="all">All Sites</SelectItem>
+            {siteOptions.map((site) => (
+              <SelectItem key={site.id || 'unassigned'} value={site.id || 'unassigned'}>
+                <span className="flex items-center gap-2">
+                  <MapPin className="h-3 w-3" />
+                  {site.name} ({site.code})
+                </span>
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
 
-      {!zoneList.length ? (
+      {!siteList.length ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <Network className="h-12 w-12 text-muted-foreground mb-4" />
@@ -689,7 +721,7 @@ export function GatewaysPage() {
             </p>
           </CardContent>
         </Card>
-      ) : filteredZones.length === 0 ? (
+      ) : filteredSites.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <Search className="h-12 w-12 text-muted-foreground mb-4" />
@@ -699,10 +731,10 @@ export function GatewaysPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {filteredZones.map((zone) => (
-            <ZoneCard
-              key={zone.zone}
-              zone={zone}
+          {filteredSites.map((site) => (
+            <SiteCard
+              key={site.site_id || site.site_code}
+              site={site}
               isAdmin={isAdmin}
               search={search}
               isMutating={isMutating}
@@ -712,6 +744,7 @@ export function GatewaysPage() {
               onBlock={setBlockGatewayConfirm}
               onBlockAgent={setBlockAgentConfirm}
               onViewLogs={setLogsGateway}
+              onAssignSite={openAssignSite}
             />
           ))}
         </div>
@@ -719,22 +752,21 @@ export function GatewaysPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">About Zones & Failover</CardTitle>
+          <CardTitle className="text-lg">About Sites & Failover</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-2">
           <p>
-            <strong>Zones</strong> group gateways that can serve the same agents. Each zone has one{' '}
-            <strong>primary</strong> gateway and zero or more <strong>standby</strong> gateways.
+            <strong>Sites</strong> represent physical or logical locations (datacenters) where infrastructure runs. Each site has one{' '}
+            <strong>primary</strong> gateway and zero or more <strong>standby</strong> gateways for high availability.
           </p>
           <p>
             When the primary gateway goes offline, the standby with the lowest priority number takes over
-            automatically (<strong>failover</strong>). Agents can enroll via any gateway in their
-            authorized zone.
+            automatically (<strong>failover</strong>). Sites are also used for DR switchover — you can fail over
+            entire applications from one site to another.
           </p>
         </CardContent>
       </Card>
 
-      {/* Delete Confirmation Dialog */}
       <Dialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
         <DialogContent>
           <DialogHeader>
@@ -744,9 +776,11 @@ export function GatewaysPage() {
             </DialogTitle>
             <DialogDescription>
               Are you sure you want to delete the gateway{' '}
-              <span className="font-medium">{deleteConfirm?.name}</span> in zone{' '}
-              <span className="font-medium">{deleteConfirm?.zone}</span>? This will disconnect all agents
-              connected through this gateway.
+              <span className="font-medium">{deleteConfirm?.name}</span>
+              {deleteConfirm?.site_name && (
+                <> at site <span className="font-medium">{deleteConfirm?.site_name}</span></>
+              )}
+              ? This will disconnect all agents connected through this gateway.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -760,7 +794,6 @@ export function GatewaysPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Block Gateway Confirmation Dialog */}
       <Dialog open={!!blockGatewayConfirm} onOpenChange={(open) => !open && setBlockGatewayConfirm(null)}>
         <DialogContent>
           <DialogHeader>
@@ -787,7 +820,6 @@ export function GatewaysPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Block Agent Confirmation Dialog */}
       <Dialog open={!!blockAgentConfirm} onOpenChange={(open) => !open && setBlockAgentConfirm(null)}>
         <DialogContent>
           <DialogHeader>
@@ -812,7 +844,59 @@ export function GatewaysPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Log Viewer Modal */}
+      <Dialog open={!!assignSiteGateway} onOpenChange={(open) => !open && setAssignSiteGateway(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MapPin className="h-5 w-5" />
+              Assign Gateway to Site
+            </DialogTitle>
+            <DialogDescription>
+              Select a site for the gateway{' '}
+              <span className="font-medium">{assignSiteGateway?.name}</span>.
+              Gateways in the same site share failover responsibility.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a site..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="unassigned">
+                  <span className="flex items-center gap-2 text-muted-foreground">
+                    <MapPin className="h-4 w-4" />
+                    Unassigned
+                  </span>
+                </SelectItem>
+                {allSites?.filter((s) => s.is_active).map((site) => (
+                  <SelectItem key={site.id} value={site.id}>
+                    <span className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4" />
+                      {site.name}
+                      <span className="text-muted-foreground">({site.code})</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {(!allSites || allSites.filter((s) => s.is_active).length === 0) && (
+              <p className="text-sm text-muted-foreground mt-2">
+                No sites available. Create a site first in the Sites page.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignSiteGateway(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAssignSite} disabled={updateGateway.isPending}>
+              {updateGateway.isPending ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {logsGateway && (
         <LogViewerModal
           gatewayId={logsGateway.id}

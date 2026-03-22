@@ -4,8 +4,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
-  Upload, Server, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight, Loader2,
-  FileJson, FileCode, Shield, Check, X, HelpCircle
+  Upload, MapPin, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight, Loader2,
+  FileJson, FileCode, Shield, Check, X, HelpCircle, ChevronDown, ChevronRight, Terminal, Plus, Trash2
 } from 'lucide-react';
 import {
   useImportPreview,
@@ -13,34 +13,48 @@ import {
   ImportPreviewResponse,
   MappingConfig,
   ComponentResolution,
-  ComponentResolutionStatus,
   AvailableAgent,
   ConflictAction,
 } from '@/api/import';
-import { useGateways, Gateway } from '@/api/gateways';
+import { useGatewaySites, SiteSummary } from '@/api/gateways';
 import { JsonEditor, JsonError } from '@/components/JsonEditor';
+import { cn } from '@/lib/utils';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Wizard Steps
+// Types
 // ═══════════════════════════════════════════════════════════════════════════
 
-type WizardStep = 'upload' | 'gateway' | 'resolution' | 'confirm';
+type WizardStep = 'upload' | 'sites' | 'resolution' | 'confirm';
+
+// Per-component, per-site configuration
+interface ComponentSiteConfig {
+  enabled: boolean;  // Whether component is available on this site (default true)
+  agentId: string;
+  commandOverrides?: {
+    check_cmd?: string;
+    start_cmd?: string;
+    stop_cmd?: string;
+  };
+}
+
+// Site selection with type
+interface SelectedSite {
+  siteId: string;
+  siteType: 'primary' | 'dr';
+}
 
 interface WizardState {
   // Step 1: Upload
   content: string;
   format: 'json' | 'yaml';
   jsonError: JsonError | null;
-  // Step 2: Gateway
-  selectedGatewayIds: string[];
-  selectedDrGatewayIds: string[];
+  // Step 2: Sites
+  selectedSites: SelectedSite[];
   // Step 3: Resolution
   preview: ImportPreviewResponse | null;
-  manualMappings: Record<string, string>; // component_name -> agent_id
+  // componentName -> siteId -> config
+  componentSiteConfigs: Record<string, Record<string, ComponentSiteConfig>>;
   // Step 4: Confirm
-  profileName: string;
-  drProfileName: string;
-  enableDr: boolean;
   autoFailover: boolean;
   // Conflict handling
   conflictAction: ConflictAction;
@@ -51,24 +65,24 @@ const initialState: WizardState = {
   content: '',
   format: 'json',
   jsonError: null,
-  selectedGatewayIds: [],
-  selectedDrGatewayIds: [],
+  selectedSites: [],
   preview: null,
-  manualMappings: {},
-  profileName: 'prod',
-  drProfileName: 'dr',
-  enableDr: false,
+  componentSiteConfigs: {},
   autoFailover: false,
   conflictAction: 'fail',
   newName: '',
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Main Wizard Component
+// ═══════════════════════════════════════════════════════════════════════════
 
 export default function ImportWizard() {
   const navigate = useNavigate();
   const [step, setStep] = useState<WizardStep>('upload');
   const [state, setState] = useState<WizardState>(initialState);
 
-  const { data: gateways = [] } = useGateways();
+  const { data: sites = [] } = useGatewaySites();
   const previewMutation = useImportPreview();
   const executeMutation = useImportExecute();
 
@@ -78,13 +92,29 @@ export default function ImportWizard() {
 
   const steps: { key: WizardStep; label: string; icon: React.ReactNode }[] = [
     { key: 'upload', label: 'Upload', icon: <Upload className="h-4 w-4" /> },
-    { key: 'gateway', label: 'Gateways', icon: <Server className="h-4 w-4" /> },
+    { key: 'sites', label: 'Sites', icon: <MapPin className="h-4 w-4" /> },
     { key: 'resolution', label: 'Resolution', icon: <CheckCircle2 className="h-4 w-4" /> },
     { key: 'confirm', label: 'Confirm', icon: <Shield className="h-4 w-4" /> },
   ];
 
   const currentStepIndex = steps.findIndex((s) => s.key === step);
   const progress = ((currentStepIndex + 1) / steps.length) * 100;
+
+  // Get primary site
+  const primarySite = state.selectedSites.find((s) => s.siteType === 'primary');
+  const drSites = state.selectedSites.filter((s) => s.siteType === 'dr');
+
+  // Get gateway IDs for all selected sites
+  const getAllGatewayIds = (siteIds: string[]): string[] => {
+    const ids: string[] = [];
+    for (const siteId of siteIds) {
+      const site = sites.find((s) => s.site_id === siteId);
+      if (site) {
+        ids.push(...site.gateways.map((g) => g.id));
+      }
+    }
+    return ids;
+  };
 
   // ─────────────────────────────────────────────────────────────────────────
   // Navigation handlers
@@ -93,16 +123,13 @@ export default function ImportWizard() {
   const canProceed = (): boolean => {
     switch (step) {
       case 'upload':
-        // For JSON format, also check for validation errors
         if (state.format === 'json' && state.jsonError) return false;
         return state.content.trim().length > 0;
-      case 'gateway':
-        return state.selectedGatewayIds.length > 0;
+      case 'sites':
+        return !!primarySite;
       case 'resolution':
-        return state.preview ? isAllResolved(state.preview, state.manualMappings) : false;
+        return state.preview ? isAllResolved(state.preview, state.componentSiteConfigs, state.selectedSites) : false;
       case 'confirm': {
-        if (!state.profileName.trim()) return false;
-        // If there's a conflict, must choose rename or update
         if (state.preview?.existing_application) {
           if (state.conflictAction === 'fail') return false;
           if (state.conflictAction === 'rename' && !state.newName.trim()) return false;
@@ -116,19 +143,66 @@ export default function ImportWizard() {
 
   const handleNext = async () => {
     if (step === 'upload') {
-      setStep('gateway');
-    } else if (step === 'gateway') {
-      // Trigger preview
+      setStep('sites');
+    } else if (step === 'sites') {
+      // Preview with all selected site gateways
+      const allSiteIds = state.selectedSites.map((s) => s.siteId);
+      const primaryGatewayIds = primarySite ? getAllGatewayIds([primarySite.siteId]) : [];
+      const drGatewayIds = drSites.length > 0 ? getAllGatewayIds(drSites.map((s) => s.siteId)) : undefined;
+
       previewMutation.mutate(
         {
           content: state.content,
           format: state.format,
-          gateway_ids: state.selectedGatewayIds,
-          dr_gateway_ids: state.enableDr ? state.selectedDrGatewayIds : undefined,
+          gateway_ids: primaryGatewayIds,
+          dr_gateway_ids: drGatewayIds,
         },
         {
           onSuccess: (data) => {
-            updateState({ preview: data });
+            // Auto-configure agents when only one is available per site
+            const autoConfigs: Record<string, Record<string, ComponentSiteConfig>> = {};
+
+            for (const comp of data.components || []) {
+              autoConfigs[comp.name] = {};
+
+              // Primary site: use resolved agent or auto-select if only one
+              if (primarySite) {
+                if (comp.resolution.status === 'resolved') {
+                  autoConfigs[comp.name][primarySite.siteId] = {
+                    enabled: true,
+                    agentId: comp.resolution.agent_id,
+                  };
+                } else if (data.available_agents?.length === 1) {
+                  autoConfigs[comp.name][primarySite.siteId] = {
+                    enabled: true,
+                    agentId: data.available_agents[0].agent_id,
+                  };
+                }
+              }
+
+              // DR sites: use dr_suggestions or auto-select
+              if (data.dr_suggestions && data.dr_available_agents) {
+                const suggestion = data.dr_suggestions.find((s) => s.component_name === comp.name);
+                for (const drSite of drSites) {
+                  if (suggestion?.dr_resolution?.status === 'resolved') {
+                    autoConfigs[comp.name][drSite.siteId] = {
+                      enabled: true,
+                      agentId: suggestion.dr_resolution.agent_id,
+                    };
+                  } else if (data.dr_available_agents.length === 1) {
+                    autoConfigs[comp.name][drSite.siteId] = {
+                      enabled: true,
+                      agentId: data.dr_available_agents[0].agent_id,
+                    };
+                  }
+                }
+              }
+            }
+
+            updateState({
+              preview: data,
+              componentSiteConfigs: { ...state.componentSiteConfigs, ...autoConfigs },
+            });
             setStep('resolution');
           },
         }
@@ -136,31 +210,74 @@ export default function ImportWizard() {
     } else if (step === 'resolution') {
       setStep('confirm');
     } else if (step === 'confirm') {
-      // Execute import
-      const mappings = buildMappings(state.preview!, state.manualMappings);
-      const drMappings = state.enableDr && state.preview?.dr_suggestions
-        ? buildDrMappings(state.preview.dr_suggestions, state.manualMappings)
-        : undefined;
+      // Build the request with profiles for each site
+      const primarySiteInfo = sites.find((s) => s.site_id === primarySite?.siteId);
+
+      // Build primary profile mappings
+      const primaryMappings: MappingConfig[] = [];
+      for (const comp of state.preview?.components || []) {
+        const config = state.componentSiteConfigs[comp.name]?.[primarySite?.siteId || ''];
+        if (config?.agentId) {
+          primaryMappings.push({
+            component_name: comp.name,
+            agent_id: config.agentId,
+            resolved_via: 'wizard',
+          });
+        }
+      }
+
+      // Inject site overrides into JSON content
+      const contentWithOverrides = injectSiteOverrides(
+        state.content,
+        state.format,
+        state.selectedSites,
+        state.componentSiteConfigs,
+        sites
+      );
+
+      // Build DR profile if DR sites exist
+      let drProfile = undefined;
+      if (drSites.length > 0) {
+        const firstDrSite = sites.find((s) => s.site_id === drSites[0].siteId);
+        const drGatewayIds = getAllGatewayIds(drSites.map((s) => s.siteId));
+
+        const drMappings: MappingConfig[] = [];
+        for (const comp of state.preview?.components || []) {
+          const config = state.componentSiteConfigs[comp.name]?.[drSites[0].siteId];
+          // Skip disabled components
+          if (config?.enabled === false) continue;
+          if (config?.agentId) {
+            drMappings.push({
+              component_name: comp.name,
+              agent_id: config.agentId,
+              resolved_via: 'wizard',
+            });
+          }
+        }
+
+        drProfile = {
+          name: firstDrSite?.site_code?.toLowerCase() || 'dr',
+          description: `DR configuration for ${firstDrSite?.site_name || 'DR site'}`,
+          profile_type: 'dr' as const,
+          gateway_ids: drGatewayIds,
+          auto_failover: state.autoFailover,
+          mappings: drMappings,
+        };
+      }
 
       executeMutation.mutate(
         {
-          content: state.content,
+          content: contentWithOverrides,
           format: state.format,
+          site_id: primarySite?.siteId,
           profile: {
-            name: state.profileName,
+            name: primarySiteInfo?.site_code?.toLowerCase() || 'primary',
+            description: `Primary configuration for ${primarySiteInfo?.site_name || 'default site'}`,
             profile_type: 'primary',
-            gateway_ids: state.selectedGatewayIds,
-            mappings,
+            gateway_ids: primarySite ? getAllGatewayIds([primarySite.siteId]) : [],
+            mappings: primaryMappings,
           },
-          dr_profile: drMappings
-            ? {
-                name: state.drProfileName,
-                profile_type: 'dr',
-                gateway_ids: state.selectedDrGatewayIds,
-                auto_failover: state.autoFailover,
-                mappings: drMappings,
-              }
-            : undefined,
+          dr_profile: drProfile,
           conflict_action: state.preview?.existing_application ? state.conflictAction : undefined,
           new_name: state.conflictAction === 'rename' ? state.newName : undefined,
         },
@@ -185,14 +302,7 @@ export default function ImportWizard() {
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="container mx-auto p-6 max-w-4xl">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold mb-2">Import Application Map</h1>
-        <p className="text-muted-foreground">
-          Import an application map with gateway resolution and binding profiles.
-        </p>
-      </div>
-
+    <div className="space-y-6">
       {/* Progress bar */}
       <div className="mb-8">
         <Progress value={progress} className="h-2" />
@@ -223,39 +333,40 @@ export default function ImportWizard() {
               onJsonErrorChange={(jsonError) => updateState({ jsonError })}
             />
           )}
-          {step === 'gateway' && (
-            <GatewayStep
-              gateways={gateways}
-              selectedGatewayIds={state.selectedGatewayIds}
-              selectedDrGatewayIds={state.selectedDrGatewayIds}
-              enableDr={state.enableDr}
-              onGatewayIdsChange={(ids) => updateState({ selectedGatewayIds: ids })}
-              onDrGatewayIdsChange={(ids) => updateState({ selectedDrGatewayIds: ids })}
-              onEnableDrChange={(enabled) => updateState({ enableDr: enabled })}
+          {step === 'sites' && (
+            <SitesStep
+              sites={sites}
+              selectedSites={state.selectedSites}
+              onSitesChange={(selectedSites) => updateState({ selectedSites })}
             />
           )}
           {step === 'resolution' && state.preview && (
             <ResolutionStep
               preview={state.preview}
-              manualMappings={state.manualMappings}
-              onMappingChange={(compName, agentId) =>
+              selectedSites={state.selectedSites}
+              sites={sites}
+              componentSiteConfigs={state.componentSiteConfigs}
+              onConfigChange={(compName, siteId, config) => {
                 updateState({
-                  manualMappings: { ...state.manualMappings, [compName]: agentId },
-                })
-              }
+                  componentSiteConfigs: {
+                    ...state.componentSiteConfigs,
+                    [compName]: {
+                      ...state.componentSiteConfigs[compName],
+                      [siteId]: config,
+                    },
+                  },
+                });
+              }}
             />
           )}
           {step === 'confirm' && state.preview && (
             <ConfirmStep
               preview={state.preview}
-              profileName={state.profileName}
-              drProfileName={state.drProfileName}
-              enableDr={state.enableDr}
+              selectedSites={state.selectedSites}
+              sites={sites}
               autoFailover={state.autoFailover}
               conflictAction={state.conflictAction}
               newName={state.newName}
-              onProfileNameChange={(name) => updateState({ profileName: name })}
-              onDrProfileNameChange={(name) => updateState({ drProfileName: name })}
               onAutoFailoverChange={(enabled) => updateState({ autoFailover: enabled })}
               onConflictActionChange={(action) => updateState({ conflictAction: action })}
               onNewNameChange={(name) => updateState({ newName: name })}
@@ -319,7 +430,6 @@ function UploadStep({ content, format, onContentChange, onFormatChange, onJsonEr
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
       onContentChange(text);
-      // Auto-detect format
       if (file.name.endsWith('.json')) {
         onFormatChange('json');
       } else if (file.name.endsWith('.yaml') || file.name.endsWith('.yml')) {
@@ -334,7 +444,7 @@ function UploadStep({ content, format, onContentChange, onFormatChange, onJsonEr
       <div>
         <h3 className="text-lg font-medium mb-2">Upload or paste your map file</h3>
         <p className="text-muted-foreground text-sm">
-          Supports JSON (v4) and YAML (v3 legacy) formats.
+          Supports JSON and YAML formats.
         </p>
       </div>
 
@@ -345,7 +455,7 @@ function UploadStep({ content, format, onContentChange, onFormatChange, onJsonEr
           className="flex-1"
         >
           <FileJson className="h-4 w-4 mr-2" />
-          JSON (v4)
+          JSON
         </Button>
         <Button
           variant={format === 'yaml' ? 'default' : 'outline'}
@@ -353,7 +463,7 @@ function UploadStep({ content, format, onContentChange, onFormatChange, onJsonEr
           className="flex-1"
         >
           <FileCode className="h-4 w-4 mr-2" />
-          YAML (Legacy)
+          YAML
         </Button>
       </div>
 
@@ -374,14 +484,14 @@ function UploadStep({ content, format, onContentChange, onFormatChange, onJsonEr
             value={content}
             onChange={onContentChange}
             onValidationChange={onJsonErrorChange}
-            placeholder={'{\n  "application": {\n    "name": "My App",\n    "components": []\n  }\n}'}
+            placeholder={'{\n  "name": "My App",\n  "components": []\n}'}
             height="350px"
           />
         ) : (
           <textarea
             value={content}
             onChange={(e) => onContentChange(e.target.value)}
-            placeholder={'application:\n  name: My App\n  components:\n    - name: component1\n      ...'}
+            placeholder={'name: My App\ncomponents:\n  - name: component1\n    ...'}
             className="w-full h-64 px-3 py-2 border rounded-md bg-background text-sm font-mono"
           />
         )}
@@ -391,111 +501,144 @@ function UploadStep({ content, format, onContentChange, onFormatChange, onJsonEr
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Step 2: Gateway Selection
+// Step 2: Multi-Site Selection
 // ═══════════════════════════════════════════════════════════════════════════
 
-interface GatewayStepProps {
-  gateways: Gateway[];
-  selectedGatewayIds: string[];
-  selectedDrGatewayIds: string[];
-  enableDr: boolean;
-  onGatewayIdsChange: (ids: string[]) => void;
-  onDrGatewayIdsChange: (ids: string[]) => void;
-  onEnableDrChange: (enabled: boolean) => void;
+interface SitesStepProps {
+  sites: SiteSummary[];
+  selectedSites: SelectedSite[];
+  onSitesChange: (sites: SelectedSite[]) => void;
 }
 
-function GatewayStep({
-  gateways,
-  selectedGatewayIds,
-  selectedDrGatewayIds,
-  enableDr,
-  onGatewayIdsChange,
-  onDrGatewayIdsChange,
-  onEnableDrChange,
-}: GatewayStepProps) {
-  const toggleGateway = (id: string) => {
-    if (selectedGatewayIds.includes(id)) {
-      onGatewayIdsChange(selectedGatewayIds.filter((gid) => gid !== id));
-    } else {
-      onGatewayIdsChange([...selectedGatewayIds, id]);
+function SitesStep({ sites, selectedSites, onSitesChange }: SitesStepProps) {
+  const availableSites = sites.filter((s) => s.site_id && s.gateways.some((g) => g.connected));
+  const primarySite = selectedSites.find((s) => s.siteType === 'primary');
+  const drSites = selectedSites.filter((s) => s.siteType === 'dr');
+
+  const handlePrimarySelect = (siteId: string) => {
+    const newSites = selectedSites.filter((s) => s.siteType !== 'primary' && s.siteId !== siteId);
+    newSites.unshift({ siteId, siteType: 'primary' });
+    onSitesChange(newSites);
+  };
+
+  const handleAddDrSite = (siteId: string) => {
+    if (!selectedSites.find((s) => s.siteId === siteId)) {
+      onSitesChange([...selectedSites, { siteId, siteType: 'dr' }]);
     }
   };
 
-  const toggleDrGateway = (id: string) => {
-    if (selectedDrGatewayIds.includes(id)) {
-      onDrGatewayIdsChange(selectedDrGatewayIds.filter((gid) => gid !== id));
-    } else {
-      onDrGatewayIdsChange([...selectedDrGatewayIds, id]);
-    }
+  const handleRemoveDrSite = (siteId: string) => {
+    onSitesChange(selectedSites.filter((s) => s.siteId !== siteId));
   };
+
+  const getSiteInfo = (siteId: string) => sites.find((s) => s.site_id === siteId);
+
+  // Sites available for DR (not selected as primary or already DR)
+  const availableDrSites = availableSites.filter(
+    (s) => !selectedSites.find((sel) => sel.siteId === s.site_id)
+  );
 
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-medium mb-2">Select Primary Gateways</h3>
-        <p className="text-muted-foreground text-sm mb-4">
-          Choose the gateways that host the agents for this application.
+        <h3 className="text-lg font-medium mb-2">Configure Sites</h3>
+        <p className="text-muted-foreground text-sm">
+          Select where your application will run. You can configure multiple DR sites.
         </p>
+      </div>
+
+      {/* Primary Site Selection */}
+      <div className="space-y-3">
+        <h4 className="font-medium flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-emerald-500" />
+          Primary Site
+        </h4>
         <div className="grid gap-2">
-          {gateways.map((gw) => (
-            <div
-              key={gw.id}
-              onClick={() => toggleGateway(gw.id)}
-              className={`flex items-center justify-between p-3 border rounded-md cursor-pointer hover:bg-accent ${
-                selectedGatewayIds.includes(gw.id) ? 'border-primary bg-primary/5' : ''
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Server className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <div className="font-medium">{gw.name}</div>
-                  <div className="text-sm text-muted-foreground">{gw.zone}</div>
+          {availableSites.map((site) => {
+            const isSelected = primarySite?.siteId === site.site_id;
+            return (
+              <div
+                key={site.site_id}
+                onClick={() => handlePrimarySelect(site.site_id!)}
+                className={cn(
+                  'flex items-center justify-between p-3 border rounded-md cursor-pointer transition-colors',
+                  isSelected ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950' : 'hover:bg-accent'
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <MapPin className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <span className="font-medium">{site.site_name}</span>
+                    <span className="text-xs text-muted-foreground ml-2 font-mono">{site.site_code}</span>
+                  </div>
                 </div>
+                {isSelected && <Check className="h-4 w-4 text-emerald-600" />}
               </div>
-              {selectedGatewayIds.includes(gw.id) && <Check className="h-5 w-5 text-primary" />}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
-      <div className="border-t pt-4">
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={enableDr}
-            onChange={(e) => onEnableDrChange(e.target.checked)}
-            className="rounded"
-          />
-          <span className="font-medium">Configure DR profile</span>
-        </label>
-        <p className="text-muted-foreground text-sm mt-1">
-          Create a disaster recovery profile with separate gateway bindings.
-        </p>
-      </div>
+      {/* DR Sites */}
+      {primarySite && (
+        <div className="space-y-3 pt-4 border-t">
+          <h4 className="font-medium flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-orange-500" />
+            DR Sites (Optional)
+          </h4>
 
-      {enableDr && (
-        <div>
-          <h3 className="text-lg font-medium mb-2">Select DR Gateways</h3>
-          <div className="grid gap-2">
-            {gateways.map((gw) => (
-              <div
-                key={gw.id}
-                onClick={() => toggleDrGateway(gw.id)}
-                className={`flex items-center justify-between p-3 border rounded-md cursor-pointer hover:bg-accent ${
-                  selectedDrGatewayIds.includes(gw.id) ? 'border-orange-500 bg-orange-500/5' : ''
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <Shield className="h-5 w-5 text-muted-foreground" />
-                  <div>
-                    <div className="font-medium">{gw.name}</div>
-                    <div className="text-sm text-muted-foreground">{gw.zone}</div>
+          {/* Selected DR sites */}
+          {drSites.length > 0 && (
+            <div className="space-y-2">
+              {drSites.map((dr) => {
+                const site = getSiteInfo(dr.siteId);
+                return (
+                  <div
+                    key={dr.siteId}
+                    className="flex items-center justify-between p-3 border border-orange-300 bg-orange-50 dark:bg-orange-950 rounded-md"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Shield className="h-4 w-4 text-orange-600" />
+                      <div>
+                        <span className="font-medium">{site?.site_name}</span>
+                        <span className="text-xs text-muted-foreground ml-2 font-mono">{site?.site_code}</span>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemoveDrSite(dr.siteId)}
+                    >
+                      <Trash2 className="h-4 w-4 text-red-500" />
+                    </Button>
                   </div>
-                </div>
-                {selectedDrGatewayIds.includes(gw.id) && <Check className="h-5 w-5 text-orange-500" />}
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Add DR site */}
+          {availableDrSites.length > 0 && (
+            <div className="flex items-center gap-2">
+              <select
+                className="flex-1 px-3 py-2 border rounded-md bg-background text-sm"
+                value=""
+                onChange={(e) => e.target.value && handleAddDrSite(e.target.value)}
+              >
+                <option value="">Add DR site...</option>
+                {availableDrSites.map((site) => (
+                  <option key={site.site_id} value={site.site_id!}>
+                    {site.site_name} ({site.site_code})
+                  </option>
+                ))}
+              </select>
+              <Plus className="h-4 w-4 text-muted-foreground" />
+            </div>
+          )}
+
+          {drSites.length === 0 && availableDrSites.length === 0 && (
+            <p className="text-sm text-muted-foreground">No other sites available for DR.</p>
+          )}
         </div>
       )}
     </div>
@@ -503,63 +646,62 @@ function GatewayStep({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Step 3: Resolution
+// Step 3: Resolution (Multi-Site)
 // ═══════════════════════════════════════════════════════════════════════════
 
 interface ResolutionStepProps {
   preview: ImportPreviewResponse;
-  manualMappings: Record<string, string>;
-  onMappingChange: (componentName: string, agentId: string) => void;
+  selectedSites: SelectedSite[];
+  sites: SiteSummary[];
+  componentSiteConfigs: Record<string, Record<string, ComponentSiteConfig>>;
+  onConfigChange: (compName: string, siteId: string, config: ComponentSiteConfig) => void;
 }
 
-function ResolutionStep({ preview, manualMappings, onMappingChange }: ResolutionStepProps) {
-  const components = preview.components || [];
-  const resolved = components.filter((c) => c.resolution.status === 'resolved');
-  const multiple = components.filter((c) => c.resolution.status === 'multiple');
-  const unresolved = components.filter(
-    (c) => c.resolution.status === 'unresolved' || c.resolution.status === 'no_host'
-  );
+function ResolutionStep({
+  preview,
+  selectedSites,
+  sites,
+  componentSiteConfigs,
+  onConfigChange,
+}: ResolutionStepProps) {
+  const primarySite = selectedSites.find((s) => s.siteType === 'primary');
+  const drSites = selectedSites.filter((s) => s.siteType === 'dr');
+
+  const getSiteInfo = (siteId: string) => sites.find((s) => s.site_id === siteId);
+
+  // Get agents for a site
+  const getAgentsForSite = (siteId: string): AvailableAgent[] => {
+    const site = getSiteInfo(siteId);
+    if (!site) return [];
+
+    // For primary site, use available_agents
+    if (siteId === primarySite?.siteId) {
+      return preview.available_agents || [];
+    }
+    // For DR sites, use dr_available_agents
+    return preview.dr_available_agents || [];
+  };
 
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-medium mb-2">Host Resolution Preview</h3>
+        <h3 className="text-lg font-medium mb-2">Configure Components per Site</h3>
         <p className="text-muted-foreground text-sm">
-          {preview.application_name} - {preview.component_count} components
+          {preview.application_name} - {preview.component_count} components across {selectedSites.length} site(s)
         </p>
       </div>
 
-      {/* Summary */}
-      <div className="flex gap-4">
-        <div className="flex-1 p-3 bg-green-50 dark:bg-green-950 rounded-md">
-          <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
-            <Check className="h-5 w-5" />
-            <span className="font-medium">{resolved.length} Resolved</span>
-          </div>
-        </div>
-        <div className="flex-1 p-3 bg-amber-50 dark:bg-amber-950 rounded-md">
-          <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
-            <HelpCircle className="h-5 w-5" />
-            <span className="font-medium">{multiple.length} Multiple</span>
-          </div>
-        </div>
-        <div className="flex-1 p-3 bg-red-50 dark:bg-red-950 rounded-md">
-          <div className="flex items-center gap-2 text-red-700 dark:text-red-300">
-            <X className="h-5 w-5" />
-            <span className="font-medium">{unresolved.length} Unresolved</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Components list */}
-      <div className="space-y-2 max-h-96 overflow-y-auto">
+      {/* Components */}
+      <div className="space-y-4">
         {(preview.components || []).map((comp) => (
-          <ComponentResolutionRow
+          <ComponentSiteRow
             key={comp.name}
             component={comp}
-            availableAgents={preview.available_agents}
-            selectedAgentId={manualMappings[comp.name]}
-            onSelectAgent={(agentId) => onMappingChange(comp.name, agentId)}
+            selectedSites={selectedSites}
+            sites={sites}
+            configs={componentSiteConfigs[comp.name] || {}}
+            getAgentsForSite={getAgentsForSite}
+            onConfigChange={(siteId, config) => onConfigChange(comp.name, siteId, config)}
           />
         ))}
       </div>
@@ -582,85 +724,204 @@ function ResolutionStep({ preview, manualMappings, onMappingChange }: Resolution
   );
 }
 
-interface ComponentResolutionRowProps {
+interface ComponentSiteRowProps {
   component: ComponentResolution;
-  availableAgents: AvailableAgent[];
-  selectedAgentId?: string;
-  onSelectAgent: (agentId: string) => void;
+  selectedSites: SelectedSite[];
+  sites: SiteSummary[];
+  configs: Record<string, ComponentSiteConfig>;
+  getAgentsForSite: (siteId: string) => AvailableAgent[];
+  onConfigChange: (siteId: string, config: ComponentSiteConfig) => void;
 }
 
-function ComponentResolutionRow({
+function ComponentSiteRow({
   component,
-  availableAgents,
-  selectedAgentId,
-  onSelectAgent,
-}: ComponentResolutionRowProps) {
-  const { resolution } = component;
-  const needsSelection = resolution.status === 'multiple' || resolution.status === 'unresolved' || resolution.status === 'no_host';
+  selectedSites,
+  sites,
+  configs,
+  getAgentsForSite,
+  onConfigChange,
+}: ComponentSiteRowProps) {
+  const [expanded, setExpanded] = useState(false);
 
-  const getStatusIcon = () => {
-    if (selectedAgentId && needsSelection) {
-      return <Check className="h-4 w-4 text-green-600" />;
-    }
-    switch (resolution.status) {
-      case 'resolved':
-        return <Check className="h-4 w-4 text-green-600" />;
-      case 'multiple':
-        return <HelpCircle className="h-4 w-4 text-amber-600" />;
-      default:
-        return <X className="h-4 w-4 text-red-600" />;
-    }
-  };
+  const getSiteInfo = (siteId: string) => sites.find((s) => s.site_id === siteId);
 
-  const getStatusText = () => {
-    if (selectedAgentId && needsSelection) {
-      const agent = (availableAgents || []).find((a) => a.agent_id === selectedAgentId);
-      return agent ? `${agent.hostname} (manual)` : 'Selected';
-    }
-    switch (resolution.status) {
-      case 'resolved':
-        return `${resolution.agent_hostname} (${resolution.resolved_via})`;
-      case 'multiple':
-        return `${resolution.candidates.length} matches - select one`;
-      case 'unresolved':
-        return 'No match found - select manually';
-      case 'no_host':
-        return 'No host specified - select manually';
-    }
-  };
+  // Check if all sites are configured (respecting enabled status)
+  const allConfigured = selectedSites.every((s) => {
+    const cfg = configs[s.siteId];
+    // If explicitly disabled, consider it configured
+    if (cfg?.enabled === false) return true;
+    // Otherwise, must have an agent
+    return cfg?.agentId;
+  });
+
+  const hasOverrides = selectedSites.some((s) => {
+    const cfg = configs[s.siteId];
+    if (cfg?.enabled === false) return false;
+    return cfg?.commandOverrides?.check_cmd || cfg?.commandOverrides?.start_cmd || cfg?.commandOverrides?.stop_cmd;
+  });
+
+  // Count disabled DR sites
+  const disabledDrCount = selectedSites.filter((s) =>
+    s.siteType === 'dr' && configs[s.siteId]?.enabled === false
+  ).length;
 
   return (
-    <div className="flex items-center gap-4 p-3 border rounded-md">
-      <div className="flex-1">
-        <div className="flex items-center gap-2">
-          {getStatusIcon()}
-          <span className="font-medium">{component.name}</span>
-          <span className="text-sm text-muted-foreground">({component.component_type})</span>
-        </div>
-        <div className="text-sm text-muted-foreground mt-1">
-          {component.host ? `Host: ${component.host}` : 'No host'} &rarr; {getStatusText()}
+    <div className="border rounded-md">
+      {/* Header */}
+      <div
+        className="flex items-center gap-3 p-3 cursor-pointer hover:bg-accent/50"
+        onClick={() => setExpanded(!expanded)}
+      >
+        {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            {allConfigured ? (
+              <Check className="h-4 w-4 text-green-600" />
+            ) : (
+              <HelpCircle className="h-4 w-4 text-amber-600" />
+            )}
+            <span className="font-medium">{component.name}</span>
+            <span className="text-xs text-muted-foreground">({component.component_type})</span>
+            {hasOverrides && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300">
+                <Terminal className="h-3 w-3 inline mr-0.5" />
+                custom
+              </span>
+            )}
+            {disabledDrCount > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                {disabledDrCount} DR skipped
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            {component.host || 'no host'} → {selectedSites.length - disabledDrCount} site(s)
+          </div>
         </div>
       </div>
-      {needsSelection && (
-        <select
-          value={selectedAgentId || ''}
-          onChange={(e) => onSelectAgent(e.target.value)}
-          className="px-2 py-1 border rounded-md bg-background text-sm"
-        >
-          <option value="">Select agent...</option>
-          {resolution.status === 'multiple' &&
-            (resolution.candidates || []).map((c) => (
-              <option key={c.agent_id} value={c.agent_id}>
-                {c.hostname} ({c.matched_via})
-              </option>
-            ))}
-          {(resolution.status === 'unresolved' || resolution.status === 'no_host') &&
-            (availableAgents || []).map((a) => (
-              <option key={a.agent_id} value={a.agent_id}>
-                {a.hostname} {a.gateway_name ? `(${a.gateway_name})` : ''}
-              </option>
-            ))}
-        </select>
+
+      {/* Expanded content */}
+      {expanded && (
+        <div className="border-t p-3 space-y-4">
+          {selectedSites.map((selectedSite) => {
+            const siteInfo = getSiteInfo(selectedSite.siteId);
+            const agents = getAgentsForSite(selectedSite.siteId);
+            const config = configs[selectedSite.siteId] || {};
+            const isPrimary = selectedSite.siteType === 'primary';
+            const isEnabled = config.enabled !== false; // Default to true
+
+            return (
+              <div
+                key={selectedSite.siteId}
+                className={cn(
+                  'p-3 rounded-md border',
+                  isPrimary
+                    ? 'border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/30'
+                    : isEnabled
+                      ? 'border-orange-200 bg-orange-50/50 dark:bg-orange-950/30'
+                      : 'border-border bg-muted/30 opacity-60'
+                )}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className={cn(
+                      'w-2 h-2 rounded-full',
+                      isPrimary ? 'bg-emerald-500' : isEnabled ? 'bg-orange-500' : 'bg-muted-foreground'
+                    )} />
+                    <span className="font-medium text-sm">{siteInfo?.site_name}</span>
+                    <span className="text-xs text-muted-foreground font-mono">{siteInfo?.site_code}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">{isPrimary ? 'Primary' : 'DR'}</span>
+                    {/* Enable/Disable toggle for DR sites */}
+                    {!isPrimary && (
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <span className="text-xs text-muted-foreground">
+                          {isEnabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={isEnabled}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            onConfigChange(selectedSite.siteId, { ...config, enabled: e.target.checked });
+                          }}
+                          className="h-3.5 w-3.5 rounded"
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+
+                {/* Show content only if enabled (or primary) */}
+                {(isPrimary || isEnabled) ? (
+                  <>
+                    {/* Agent selection */}
+                    <div className="space-y-2">
+                      <label className="text-xs text-muted-foreground">Agent</label>
+                      <select
+                        value={config.agentId || ''}
+                        onChange={(e) => onConfigChange(selectedSite.siteId, { ...config, agentId: e.target.value })}
+                        className="w-full px-2 py-1.5 border rounded bg-background text-sm"
+                      >
+                        <option value="">Select agent...</option>
+                        {agents.map((a) => (
+                          <option key={a.agent_id} value={a.agent_id}>
+                            {a.hostname}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Command overrides (for DR sites) */}
+                    {!isPrimary && (
+                      <div className="mt-3 pt-3 border-t border-dashed space-y-2">
+                        <label className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Terminal className="h-3 w-3" />
+                          Command Overrides (optional)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Check command override"
+                          value={config.commandOverrides?.check_cmd || ''}
+                          onChange={(e) => onConfigChange(selectedSite.siteId, {
+                            ...config,
+                            commandOverrides: { ...config.commandOverrides, check_cmd: e.target.value || undefined }
+                          })}
+                          className="w-full px-2 py-1 border rounded bg-background text-xs font-mono"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Start command override"
+                          value={config.commandOverrides?.start_cmd || ''}
+                          onChange={(e) => onConfigChange(selectedSite.siteId, {
+                            ...config,
+                            commandOverrides: { ...config.commandOverrides, start_cmd: e.target.value || undefined }
+                          })}
+                          className="w-full px-2 py-1 border rounded bg-background text-xs font-mono"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Stop command override"
+                          value={config.commandOverrides?.stop_cmd || ''}
+                          onChange={(e) => onConfigChange(selectedSite.siteId, {
+                            ...config,
+                            commandOverrides: { ...config.commandOverrides, stop_cmd: e.target.value || undefined }
+                          })}
+                          className="w-full px-2 py-1 border rounded bg-background text-xs font-mono"
+                        />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">
+                    Component not replicated to this site
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -672,14 +933,11 @@ function ComponentResolutionRow({
 
 interface ConfirmStepProps {
   preview: ImportPreviewResponse;
-  profileName: string;
-  drProfileName: string;
-  enableDr: boolean;
+  selectedSites: SelectedSite[];
+  sites: SiteSummary[];
   autoFailover: boolean;
   conflictAction: ConflictAction;
   newName: string;
-  onProfileNameChange: (name: string) => void;
-  onDrProfileNameChange: (name: string) => void;
   onAutoFailoverChange: (enabled: boolean) => void;
   onConflictActionChange: (action: ConflictAction) => void;
   onNewNameChange: (name: string) => void;
@@ -687,18 +945,20 @@ interface ConfirmStepProps {
 
 function ConfirmStep({
   preview,
-  profileName,
-  drProfileName,
-  enableDr,
+  selectedSites,
+  sites,
   autoFailover,
   conflictAction,
   newName,
-  onProfileNameChange,
-  onDrProfileNameChange,
   onAutoFailoverChange,
   onConflictActionChange,
   onNewNameChange,
 }: ConfirmStepProps) {
+  const primarySite = selectedSites.find((s) => s.siteType === 'primary');
+  const drSites = selectedSites.filter((s) => s.siteType === 'dr');
+
+  const getSiteInfo = (siteId: string) => sites.find((s) => s.site_id === siteId);
+
   return (
     <div className="space-y-6">
       <div>
@@ -717,9 +977,6 @@ function ConfirmStep({
               Application "{preview.existing_application.name}" already exists
             </span>
           </div>
-          <p className="text-sm text-amber-700 dark:text-amber-300 mb-3">
-            Created with {preview.existing_application.component_count} components. Choose how to proceed:
-          </p>
           <div className="space-y-2">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -727,7 +984,6 @@ function ConfirmStep({
                 name="conflict"
                 checked={conflictAction === 'rename'}
                 onChange={() => onConflictActionChange('rename')}
-                className="text-amber-600"
               />
               <span className="text-sm">Import with a new name</span>
             </label>
@@ -746,46 +1002,48 @@ function ConfirmStep({
                 name="conflict"
                 checked={conflictAction === 'update'}
                 onChange={() => onConflictActionChange('update')}
-                className="text-amber-600"
               />
-              <span className="text-sm">Update existing application (replace components and profiles)</span>
+              <span className="text-sm">Update existing application</span>
             </label>
           </div>
         </div>
       )}
 
+      {/* Summary */}
       <div className="grid gap-4">
+        {/* Application */}
         <div className="p-4 border rounded-md">
           <div className="font-medium mb-2">Application</div>
-          <div className="text-sm text-muted-foreground">
+          <div className="text-lg">
             {conflictAction === 'rename' && newName ? newName : preview.application_name}
           </div>
           <div className="text-sm text-muted-foreground">{preview.component_count} components</div>
         </div>
 
+        {/* Sites summary */}
         <div className="p-4 border rounded-md">
-          <div className="font-medium mb-2">Primary Profile</div>
-          <input
-            type="text"
-            value={profileName}
-            onChange={(e) => onProfileNameChange(e.target.value)}
-            placeholder="Profile name (e.g., prod)"
-            className="w-full px-3 py-2 border rounded-md bg-background text-sm"
-          />
+          <div className="font-medium mb-3">Sites Configuration</div>
+          <div className="space-y-2">
+            {primarySite && (
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span className="text-sm font-medium">{getSiteInfo(primarySite.siteId)?.site_name}</span>
+                <span className="text-xs text-muted-foreground">(Primary)</span>
+              </div>
+            )}
+            {drSites.map((dr) => (
+              <div key={dr.siteId} className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-orange-500" />
+                <span className="text-sm font-medium">{getSiteInfo(dr.siteId)?.site_name}</span>
+                <span className="text-xs text-muted-foreground">(DR)</span>
+              </div>
+            ))}
+          </div>
         </div>
 
-        {enableDr && (
-          <div className="p-4 border rounded-md border-orange-200 dark:border-orange-800">
-            <div className="font-medium mb-2 text-orange-700 dark:text-orange-300">
-              DR Profile
-            </div>
-            <input
-              type="text"
-              value={drProfileName}
-              onChange={(e) => onDrProfileNameChange(e.target.value)}
-              placeholder="DR profile name (e.g., dr)"
-              className="w-full px-3 py-2 border rounded-md bg-background text-sm mb-2"
-            />
+        {/* Auto failover */}
+        {drSites.length > 0 && (
+          <div className="p-4 border border-orange-200 rounded-md bg-orange-50/50 dark:bg-orange-950/30">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -793,10 +1051,10 @@ function ConfirmStep({
                 onChange={(e) => onAutoFailoverChange(e.target.checked)}
                 className="rounded"
               />
-              <span className="text-sm">Enable automatic failover</span>
+              <span className="text-sm font-medium">Enable automatic failover</span>
             </label>
-            <p className="text-xs text-muted-foreground mt-1">
-              Automatically activate DR profile if primary agents become unreachable.
+            <p className="text-xs text-muted-foreground mt-1 pl-6">
+              Automatically switch to DR site if primary becomes unreachable.
             </p>
           </div>
         )}
@@ -809,48 +1067,86 @@ function ConfirmStep({
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-function isAllResolved(preview: ImportPreviewResponse, manualMappings: Record<string, string>): boolean {
+function isAllResolved(
+  preview: ImportPreviewResponse,
+  configs: Record<string, Record<string, ComponentSiteConfig>>,
+  selectedSites: SelectedSite[]
+): boolean {
   for (const comp of preview.components) {
-    if (comp.resolution.status === 'resolved') continue;
-    if (!manualMappings[comp.name]) return false;
+    for (const site of selectedSites) {
+      const config = configs[comp.name]?.[site.siteId];
+      // If explicitly disabled, no agent needed
+      if (config?.enabled === false) continue;
+      // If enabled (default), must have an agent
+      if (!config?.agentId) {
+        return false;
+      }
+    }
   }
   return true;
 }
 
-function buildMappings(preview: ImportPreviewResponse, manualMappings: Record<string, string>): MappingConfig[] {
-  return (preview.components || []).map((comp) => {
-    if (comp.resolution.status === 'resolved') {
-      return {
-        component_name: comp.name,
-        agent_id: comp.resolution.agent_id,
-        resolved_via: comp.resolution.resolved_via,
-      };
-    }
-    return {
-      component_name: comp.name,
-      agent_id: manualMappings[comp.name],
-      resolved_via: 'manual',
-    };
-  });
-}
+function injectSiteOverrides(
+  content: string,
+  format: string,
+  selectedSites: SelectedSite[],
+  configs: Record<string, Record<string, ComponentSiteConfig>>,
+  sites: SiteSummary[]
+): string {
+  if (format !== 'json') return content;
 
-function buildDrMappings(
-  drSuggestions: Array<{ component_name: string; dr_resolution: ComponentResolutionStatus | null }>,
-  manualMappings: Record<string, string>
-): MappingConfig[] {
-  return (drSuggestions || []).map((sug) => {
-    const drKey = `dr_${sug.component_name}`;
-    if (sug.dr_resolution?.status === 'resolved') {
-      return {
-        component_name: sug.component_name,
-        agent_id: sug.dr_resolution.agent_id,
-        resolved_via: 'pattern',
-      };
+  const drSites = selectedSites.filter((s) => s.siteType === 'dr');
+  if (drSites.length === 0) return content;
+
+  try {
+    let data = JSON.parse(content);
+    const app = data.application || data;
+    const components = app.components || [];
+
+    for (const comp of components) {
+      const compName = comp.name;
+      const compConfigs = configs[compName];
+      if (!compConfigs) continue;
+
+      // Initialize site_overrides if needed
+      if (!comp.site_overrides) {
+        comp.site_overrides = [];
+      }
+
+      // Add override for each DR site that has command overrides
+      for (const drSite of drSites) {
+        const siteConfig = compConfigs[drSite.siteId];
+        const siteInfo = sites.find((s) => s.site_id === drSite.siteId);
+        if (!siteInfo || !siteConfig) continue;
+
+        // Skip disabled components
+        if (siteConfig.enabled === false) continue;
+
+        // Find or create override for this site
+        let override = comp.site_overrides.find(
+          (o: { site_code: string }) => o.site_code === siteInfo.site_code
+        );
+        if (!override) {
+          override = { site_code: siteInfo.site_code };
+          comp.site_overrides.push(override);
+        }
+
+        // Apply command overrides if present
+        if (siteConfig.commandOverrides?.check_cmd) {
+          override.check_cmd_override = siteConfig.commandOverrides.check_cmd;
+        }
+        if (siteConfig.commandOverrides?.start_cmd) {
+          override.start_cmd_override = siteConfig.commandOverrides.start_cmd;
+        }
+        if (siteConfig.commandOverrides?.stop_cmd) {
+          override.stop_cmd_override = siteConfig.commandOverrides.stop_cmd;
+        }
+      }
     }
-    return {
-      component_name: sug.component_name,
-      agent_id: manualMappings[drKey] || '',
-      resolved_via: 'manual',
-    };
-  });
+
+    return JSON.stringify(data, null, 2);
+  } catch (e) {
+    console.warn('Failed to inject site overrides:', e);
+    return content;
+  }
 }

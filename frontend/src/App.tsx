@@ -21,6 +21,7 @@ import { ApiKeysPage } from '@/pages/ApiKeysPage';
 import { DiscoveryPage } from '@/pages/DiscoveryPage';
 import { UsersPage } from '@/pages/UsersPage';
 import { SupervisionPage } from '@/pages/SupervisionPage';
+import { SitesPage } from '@/pages/SitesPage';
 import { useUiStore } from '@/stores/ui';
 import { cn } from '@/lib/utils';
 
@@ -71,6 +72,7 @@ export default function App() {
         <Route path="/apps/:appId" element={<AuthLayout><MapViewPage /></AuthLayout>} />
         <Route path="/teams" element={<AuthLayout><TeamsPage /></AuthLayout>} />
         <Route path="/users" element={<AuthLayout><UsersPage /></AuthLayout>} />
+        <Route path="/sites" element={<AuthLayout><SitesPage /></AuthLayout>} />
         <Route path="/gateways" element={<AuthLayout><GatewaysPage /></AuthLayout>} />
         <Route path="/agents" element={<AuthLayout><AgentsPage /></AuthLayout>} />
         <Route path="/reports" element={<AuthLayout><ReportsPage /></AuthLayout>} />

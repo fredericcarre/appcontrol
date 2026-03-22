@@ -39,7 +39,7 @@ function useLatestReleaseVersion() {
 
   return version;
 }
-import { useGatewayZones } from '@/api/gateways';
+import { useGatewaySites } from '@/api/gateways';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -432,15 +432,18 @@ function CreateTokenDialog({
   onCreated: (token: CreateEnrollmentTokenResponse) => void;
 }) {
   const createToken = useCreateEnrollmentToken();
-  const { data: zones } = useGatewayZones();
+  const { data: sites } = useGatewaySites();
   const [name, setName] = useState('');
   const [scope, setScope] = useState<'agent' | 'gateway'>('agent');
   const [zone, setZone] = useState<string>('');
   const [maxUses, setMaxUses] = useState('');
   const [validHours, setValidHours] = useState('24');
 
-  // Get unique zones from gateway data
-  const availableZones = zones?.map((z) => z.zone) ?? [];
+  // Get unique sites from gateway data
+  const availableSites = sites?.map((s) => ({
+    code: s.site_code,
+    name: s.site_name,
+  })) ?? [];
 
   const handleCreate = async () => {
     if (!name.trim()) return;
@@ -500,26 +503,26 @@ function CreateTokenDialog({
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium">
-              Zone{' '}
+              Site{' '}
               <span className="text-muted-foreground font-normal">
-                (optional, restricts enrollment to this zone)
+                (optional, restricts enrollment to this site)
               </span>
             </label>
             <Select value={zone} onValueChange={setZone}>
               <SelectTrigger>
-                <SelectValue placeholder="Any zone (unrestricted)" />
+                <SelectValue placeholder="Any site (unrestricted)" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Any zone (unrestricted)</SelectItem>
-                {availableZones.map((z) => (
-                  <SelectItem key={z} value={z}>
-                    {z}
+                <SelectItem value="">Any site (unrestricted)</SelectItem>
+                {availableSites.map((s) => (
+                  <SelectItem key={s.code} value={s.code}>
+                    {s.name} ({s.code})
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              If set, agents can only enroll via gateways in this zone
+              If set, agents can only enroll via gateways at this site
             </p>
           </div>
           <div className="space-y-2">

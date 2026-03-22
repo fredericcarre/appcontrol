@@ -138,6 +138,12 @@ impl AgentConfig {
         let tls_cert = std::env::var("TLS_CERT_FILE").ok();
         let tls_key = std::env::var("TLS_KEY_FILE").ok();
         let tls_ca = std::env::var("TLS_CA_FILE").ok();
+        // TLS_INSECURE: skip certificate verification (for self-signed certs in dev/containers)
+        if let Ok(v) = std::env::var("TLS_INSECURE") {
+            if v == "true" || v == "1" {
+                config.gateway.tls_insecure = true;
+            }
+        }
         if tls_enabled.is_some() || tls_cert.is_some() || tls_key.is_some() || tls_ca.is_some() {
             let existing = config.tls.unwrap_or(TlsSection {
                 enabled: false,

@@ -24,7 +24,7 @@ import { ComponentNode } from './ComponentNode';
 import { MapToolbar } from './MapToolbar';
 import { InfrastructureSummary } from './InfrastructureSummary';
 import { Component, Dependency, ComponentGroup } from '@/api/apps';
-import { SiteOverride, SiteInfo, groupOverridesByComponent } from '@/api/site-overrides';
+import { SiteBinding, SiteInfo, ComponentSiteBindings, groupBindingsByComponent } from '@/api/site-overrides';
 import { ComponentState, ComponentType, STATE_COLORS } from '@/lib/colors';
 
 const nodeTypes: NodeTypes = {
@@ -63,6 +63,8 @@ interface AppMapProps {
   onShare?: () => void;
   onToggleActivity?: () => void;
   activityOpen?: boolean;
+  onSwitchover?: () => void;
+  canManage?: boolean;
   onStartComponent?: (id: string) => void;
   onStopComponent?: (id: string) => void;
   onRestartComponent?: (id: string) => void;
@@ -93,7 +95,7 @@ interface AppMapProps {
   onSaveLayout?: (positions: Array<{ id: string; x: number; y: number }>) => void;
   isSavingLayout?: boolean;
   // Multi-site data
-  siteOverrides?: SiteOverride[];
+  componentBindings?: ComponentSiteBindings[];
   primarySite?: SiteInfo | null;
 }
 
@@ -238,7 +240,7 @@ function buildNodes(
   infraHighlight?: Set<string> | null,
   forceAutoLayout?: boolean,
   allowDrag?: boolean,
-  siteOverridesMap?: Map<string, SiteOverride[]>,
+  siteBindingsMap?: Map<string, SiteBinding[]>,
   primarySite?: SiteInfo | null,
 ): Node[] {
   const groupColorMap: Record<string, string> = {};
@@ -331,13 +333,14 @@ function buildNodes(
         metrics: c.last_check_metrics,
         // Multi-site data
         primarySite: primarySite || undefined,
-        siteOverrides: siteOverridesMap?.get(c.id)?.map((o) => ({
-          site_id: o.site_id,
-          site_name: o.site_name,
-          site_code: o.site_code,
-          site_type: o.site_type,
-          site_is_active: o.site_is_active,
-          override_agent_hostname: o.override_agent_hostname,
+        siteBindings: siteBindingsMap?.get(c.id)?.map((b) => ({
+          site_id: b.site_id,
+          site_name: b.site_name,
+          site_code: b.site_code,
+          site_type: b.site_type,
+          is_active: b.is_active,
+          agent_hostname: b.agent_hostname,
+          has_command_overrides: b.has_command_overrides,
         })),
       },
     };
@@ -422,6 +425,8 @@ function AppMapInner({
   onShare,
   onToggleActivity,
   activityOpen,
+  onSwitchover,
+  canManage,
   onStartComponent,
   onStopComponent,
   onRestartComponent,
@@ -445,7 +450,7 @@ function AppMapInner({
   allowDrag = true, // Default to allowing drag in view mode
   onSaveLayout,
   isSavingLayout,
-  siteOverrides,
+  componentBindings,
   primarySite,
 }: AppMapProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
@@ -500,10 +505,10 @@ function AppMapInner({
     setPendingPositions(new Map());
   }, [pendingPositions, onSaveLayout]);
 
-  // Build site overrides lookup map
-  const siteOverridesMap = useMemo(
-    () => siteOverrides ? groupOverridesByComponent(siteOverrides) : undefined,
-    [siteOverrides],
+  // Build site bindings lookup map
+  const siteBindingsMap = useMemo(
+    () => componentBindings ? groupBindingsByComponent(componentBindings) : undefined,
+    [componentBindings],
   );
 
   const initialNodes = useMemo(
@@ -526,10 +531,10 @@ function AppMapInner({
       infraHighlight,
       forceAutoLayout,
       allowDrag,
-      siteOverridesMap,
+      siteBindingsMap,
       primarySite,
     ),
-    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteOverridesMap, primarySite],
+    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteBindingsMap, primarySite],
   );
 
   const initialEdges = useMemo(
@@ -724,10 +729,12 @@ function AppMapInner({
               onStartAll={onStartAll}
               onStopAll={onStopAll}
               onRestartErrorBranch={onRestartErrorBranch}
+              onSwitchover={onSwitchover}
               onShare={onShare}
               onToggleActivity={onToggleActivity}
               activityOpen={activityOpen}
               canOperate={canOperate}
+              canManage={canManage}
               onAutoLayout={handleAutoLayout}
               onSaveLayout={onSaveLayout ? handleSaveLayout : undefined}
               hasUnsavedPositions={pendingPositions.size > 0}

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode, HTMLAttributes } from 'react';
+import { createContext, useContext, useState, ReactNode, HTMLAttributes, ButtonHTMLAttributes } from 'react';
 import { cn } from '@/lib/utils';
 
 interface TabsContextType {
@@ -26,7 +26,7 @@ export function TabsList({ className, ...props }: HTMLAttributes<HTMLDivElement>
   );
 }
 
-export function TabsTrigger({ value, className, ...props }: { value: string } & HTMLAttributes<HTMLButtonElement>) {
+export function TabsTrigger({ value, className, disabled, ...props }: { value: string } & ButtonHTMLAttributes<HTMLButtonElement>) {
   const ctx = useContext(TabsContext);
   return (
     <button
@@ -34,9 +34,11 @@ export function TabsTrigger({ value, className, ...props }: { value: string } & 
       className={cn(
         'inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium transition-all',
         ctx.value === value ? 'bg-background text-foreground shadow-sm' : 'hover:bg-background/50',
+        disabled && 'opacity-50 cursor-not-allowed',
         className,
       )}
-      onClick={() => ctx.setValue(value)}
+      onClick={() => !disabled && ctx.setValue(value)}
+      disabled={disabled}
       {...props}
     />
   );

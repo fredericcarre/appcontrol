@@ -1611,3 +1611,223 @@ pub async fn get_component_metrics_history(
         "history": points,
     })))
 }
+
+// ============================================================================
+// Site Overrides (Failover Configuration)
+// ============================================================================
+
+/// GET /api/v1/components/:id/site-overrides
+///
+/// Returns all site overrides for a component, with site and agent details.
+pub async fn list_site_overrides(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(component_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    // First get the app_id to check permissions
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    #[derive(Debug, sqlx::FromRow)]
+    struct SiteOverrideRow {
+        id: Uuid,
+        component_id: Uuid,
+        site_id: Uuid,
+        agent_id_override: Option<Uuid>,
+        check_cmd_override: Option<String>,
+        start_cmd_override: Option<String>,
+        stop_cmd_override: Option<String>,
+        rebuild_cmd_override: Option<String>,
+        env_vars_override: Option<Value>,
+        created_at: chrono::DateTime<chrono::Utc>,
+        // Joined
+        site_name: String,
+        site_code: String,
+        site_type: String,
+        agent_hostname: Option<String>,
+    }
+
+    let overrides = sqlx::query_as::<_, SiteOverrideRow>(
+        r#"
+        SELECT
+            so.id, so.component_id, so.site_id,
+            so.agent_id_override, so.check_cmd_override, so.start_cmd_override,
+            so.stop_cmd_override, so.rebuild_cmd_override, so.env_vars_override,
+            so.created_at,
+            s.name as site_name, s.code as site_code, s.site_type,
+            a.hostname as agent_hostname
+        FROM site_overrides so
+        JOIN sites s ON so.site_id = s.id
+        LEFT JOIN agents a ON so.agent_id_override = a.id
+        WHERE so.component_id = $1
+        ORDER BY s.site_type, s.name
+        "#,
+    )
+    .bind(component_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let data: Vec<Value> = overrides
+        .into_iter()
+        .map(|o| {
+            json!({
+                "id": o.id,
+                "component_id": o.component_id,
+                "site_id": o.site_id,
+                "site_name": o.site_name,
+                "site_code": o.site_code,
+                "site_type": o.site_type,
+                "agent_id_override": o.agent_id_override,
+                "agent_hostname": o.agent_hostname,
+                "check_cmd_override": o.check_cmd_override,
+                "start_cmd_override": o.start_cmd_override,
+                "stop_cmd_override": o.stop_cmd_override,
+                "rebuild_cmd_override": o.rebuild_cmd_override,
+                "env_vars_override": o.env_vars_override,
+                "created_at": o.created_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "overrides": data })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpsertSiteOverrideRequest {
+    pub agent_id_override: Option<Uuid>,
+    pub check_cmd_override: Option<String>,
+    pub start_cmd_override: Option<String>,
+    pub stop_cmd_override: Option<String>,
+    pub rebuild_cmd_override: Option<String>,
+    pub env_vars_override: Option<Value>,
+}
+
+/// PUT /api/v1/components/:id/site-overrides/:site_id
+///
+/// Create or update a site override for a component.
+pub async fn upsert_site_override(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path((component_id, site_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<UpsertSiteOverrideRequest>,
+) -> Result<Json<Value>, ApiError> {
+    // First get the app_id to check permissions
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::Edit {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Verify site exists
+    let _site_exists = sqlx::query_scalar::<_, Uuid>("SELECT id FROM sites WHERE id = $1")
+        .bind(site_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
+
+    // Log before execute
+    log_action(
+        &state.db,
+        user.user_id,
+        "upsert_site_override",
+        "component",
+        component_id,
+        json!({
+            "site_id": site_id,
+            "agent_id_override": req.agent_id_override,
+        }),
+    )
+    .await
+    .ok();
+
+    // Upsert
+    let id = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        INSERT INTO site_overrides (component_id, site_id, agent_id_override,
+            check_cmd_override, start_cmd_override, stop_cmd_override,
+            rebuild_cmd_override, env_vars_override)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (component_id, site_id) DO UPDATE SET
+            agent_id_override = EXCLUDED.agent_id_override,
+            check_cmd_override = EXCLUDED.check_cmd_override,
+            start_cmd_override = EXCLUDED.start_cmd_override,
+            stop_cmd_override = EXCLUDED.stop_cmd_override,
+            rebuild_cmd_override = EXCLUDED.rebuild_cmd_override,
+            env_vars_override = EXCLUDED.env_vars_override
+        RETURNING id
+        "#,
+    )
+    .bind(component_id)
+    .bind(site_id)
+    .bind(req.agent_id_override)
+    .bind(&req.check_cmd_override)
+    .bind(&req.start_cmd_override)
+    .bind(&req.stop_cmd_override)
+    .bind(&req.rebuild_cmd_override)
+    .bind(&req.env_vars_override)
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(json!({
+        "id": id,
+        "component_id": component_id,
+        "site_id": site_id,
+    })))
+}
+
+/// DELETE /api/v1/components/:id/site-overrides/:site_id
+///
+/// Remove a site override for a component.
+pub async fn delete_site_override(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path((component_id, site_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    // First get the app_id to check permissions
+    let app_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::Edit {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Log before execute
+    log_action(
+        &state.db,
+        user.user_id,
+        "delete_site_override",
+        "component",
+        component_id,
+        json!({ "site_id": site_id }),
+    )
+    .await
+    .ok();
+
+    sqlx::query("DELETE FROM site_overrides WHERE component_id = $1 AND site_id = $2")
+        .bind(component_id)
+        .bind(site_id)
+        .execute(&state.db)
+        .await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}

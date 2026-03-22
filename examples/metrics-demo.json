@@ -58,7 +58,7 @@
       "name": "backend-api",
       "display_name": "Backend API",
       "description": "Application server with connected users list and business metrics",
-      "component_type": "application",
+      "component_type": "appserver",
       "host": "localhost",
       "check_cmd": "test -f /tmp/metrics_demo_backend.flag && echo '{\"active_users\": 145, \"orders_today\": 523, \"avg_response_ms\": 28, \"threads\": {\"active\": 12, \"idle\": 38, \"blocked\": 2}, \"threads_widget\": \"pie\", \"heap_percent\": 65, \"heap_percent_widget\": \"gauge\", \"connected_users\": [{\"user\": \"alice@acme.com\", \"session\": \"web\", \"since\": \"2m\"}, {\"user\": \"bob@acme.com\", \"session\": \"api\", \"since\": \"15m\"}, {\"user\": \"charlie@acme.com\", \"session\": \"mobile\", \"since\": \"1h\"}, {\"user\": \"diana@acme.com\", \"session\": \"web\", \"since\": \"5m\"}], \"connected_users_widget\": \"table\"}'",
       "start_cmd": "touch /tmp/metrics_demo_backend.flag",
