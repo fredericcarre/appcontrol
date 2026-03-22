@@ -116,6 +116,15 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/components/:id/check-events",
             get(components::list_check_events),
         )
+        // Component site overrides (failover configuration)
+        .route(
+            "/components/:id/site-overrides",
+            get(components::list_site_overrides),
+        )
+        .route(
+            "/components/:id/site-overrides/:site_id",
+            put(components::upsert_site_override).delete(components::delete_site_override),
+        )
         // Component positions (for map designer)
         .route(
             "/components/:id/position",
@@ -211,6 +220,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/apps/:app_id/reports/audit", get(reports::audit))
         .route("/apps/:app_id/reports/compliance", get(reports::compliance))
         .route("/apps/:app_id/reports/rto", get(reports::rto))
+        .route("/apps/:app_id/reports/mttr", get(reports::mttr))
         // Global audit log (org-level, all apps)
         .route("/reports/audit", get(reports::global_audit))
         .route("/apps/:app_id/activity", get(reports::activity_feed))

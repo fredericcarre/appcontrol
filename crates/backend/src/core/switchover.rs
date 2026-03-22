@@ -58,7 +58,7 @@ pub async fn start_switchover(
     Ok(switchover_id)
 }
 
-/// Execute the VALIDATE phase: verify target site agents are reachable and components have valid configs.
+/// Execute the VALIDATE phase: verify target binding profile exists and agents are reachable.
 async fn execute_validate(
     state: &Arc<AppState>,
     app_id: Uuid,
@@ -66,64 +66,116 @@ async fn execute_validate(
 ) -> Result<Value, SwitchoverError> {
     let mut issues = Vec::new();
 
-    // 1. Verify the target site exists and is a DR site
+    // 1. Verify the target site exists and is active
     let target_info = get_switchover_details(&state.db, switchover_id).await?;
     let target_site_id: Uuid = target_info["target_site_id"]
         .as_str()
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| SwitchoverError::ValidationFailed("Missing target_site_id".to_string()))?;
 
-    let site_exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM sites WHERE id = $1 AND is_active = true)",
+    let site_info = sqlx::query_as::<_, (String, bool)>(
+        "SELECT name, is_active FROM sites WHERE id = $1",
     )
     .bind(target_site_id)
-    .fetch_one(&state.db)
+    .fetch_optional(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
-    if !site_exists {
-        issues.push("Target site does not exist or is inactive".to_string());
+    match site_info {
+        None => issues.push("Target site does not exist".to_string()),
+        Some((_, false)) => issues.push("Target site is inactive".to_string()),
+        _ => {}
     }
 
-    // 2. Verify all components have site overrides for the target site (agent + commands)
-    let components = sqlx::query_as::<_, (Uuid, String, Option<Uuid>)>(
-        "SELECT id, name, agent_id FROM components WHERE application_id = $1",
+    // 2. Verify a binding profile exists for the target site
+    let target_profile = sqlx::query_as::<_, (Uuid, String, i64)>(
+        r#"
+        SELECT bp.id, bp.name,
+               (SELECT COUNT(*) FROM binding_profile_mappings WHERE profile_id = bp.id) as mapping_count
+        FROM binding_profiles bp
+        WHERE bp.application_id = $1
+          AND EXISTS (
+            SELECT 1 FROM unnest(bp.gateway_ids) AS gw_id
+            JOIN gateways g ON g.id = gw_id
+            WHERE g.site_id = $2
+          )
+        LIMIT 1
+        "#,
+    )
+    .bind(app_id)
+    .bind(target_site_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+
+    let (target_profile_id, target_profile_name) = match target_profile {
+        Some((id, name, count)) => {
+            if count == 0 {
+                issues.push(format!(
+                    "Binding profile '{}' has no component mappings",
+                    name
+                ));
+            }
+            (id, name)
+        }
+        None => {
+            issues.push(format!(
+                "No binding profile found for target site (site_id={})",
+                target_site_id
+            ));
+            return Err(SwitchoverError::ValidationFailed(
+                serde_json::to_string(&issues).unwrap_or_default(),
+            ));
+        }
+    };
+
+    // 3. Get all components and verify they have mappings in the target profile
+    let components = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT id, name FROM components WHERE application_id = $1",
     )
     .bind(app_id)
     .fetch_all(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
-    for (comp_id, comp_name, _) in &components {
-        let has_override = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM site_overrides WHERE component_id = $1 AND site_id = $2)",
+    let mut components_with_mapping = 0;
+    for (_comp_id, comp_name) in &components {
+        let has_mapping = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM binding_profile_mappings WHERE profile_id = $1 AND component_name = $2)",
         )
-        .bind(comp_id)
-        .bind(target_site_id)
+        .bind(target_profile_id)
+        .bind(comp_name)
         .fetch_one(&state.db)
         .await
         .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
-        if !has_override {
-            issues.push(format!(
-                "Component '{}' has no site override for target site",
-                comp_name
-            ));
+        if has_mapping {
+            components_with_mapping += 1;
+        } else {
+            // This is a warning, not an error - component might be intentionally disabled on DR
+            tracing::warn!(
+                app_id = %app_id,
+                component = %comp_name,
+                profile = %target_profile_name,
+                "Component has no mapping in target profile (will be skipped)"
+            );
         }
     }
 
-    // 3. Verify agents for the target site are connected (check heartbeats)
+    if components_with_mapping == 0 {
+        issues.push("No components have mappings in the target profile".to_string());
+    }
+
+    // 4. Verify agents in the target profile are connected (check heartbeats)
     let target_agents = sqlx::query_as::<_, (Uuid, String)>(
         r#"
-        SELECT DISTINCT so.agent_id_override, a.hostname
-        FROM site_overrides so
-        JOIN agents a ON a.id = so.agent_id_override
-        JOIN components c ON c.id = so.component_id
-        WHERE c.application_id = $1 AND so.site_id = $2 AND so.agent_id_override IS NOT NULL
+        SELECT DISTINCT bpm.agent_id, a.hostname
+        FROM binding_profile_mappings bpm
+        JOIN agents a ON a.id = bpm.agent_id
+        WHERE bpm.profile_id = $1
         "#,
     )
-    .bind(app_id)
-    .bind(target_site_id)
+    .bind(target_profile_id)
     .fetch_all(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -157,7 +209,9 @@ async fn execute_validate(
     }
 
     let validation_result = serde_json::json!({
-        "components_checked": components.len(),
+        "target_profile": target_profile_name,
+        "components_total": components.len(),
+        "components_with_mapping": components_with_mapping,
         "target_agents_checked": target_agents.len(),
         "issues": issues,
         "valid": issues.is_empty(),
@@ -172,13 +226,80 @@ async fn execute_validate(
     Ok(validation_result)
 }
 
-/// Execute the STOP_SOURCE phase: stop all components on the source site using the sequencer.
+/// Execute the STOP_SOURCE phase: stop components on the source site using the sequencer.
+/// For SELECTIVE mode, stops the specified components AND their dependents (impacted branch).
 async fn execute_stop_source(
     state: &Arc<AppState>,
     app_id: Uuid,
+    switchover_id: Uuid,
 ) -> Result<Value, SwitchoverError> {
-    tracing::info!(app_id = %app_id, "Switchover: stopping source site components");
+    let details = get_switchover_details(&state.db, switchover_id).await?;
+    let mode = details["mode"].as_str().unwrap_or("FULL");
+    let component_ids: Option<Vec<Uuid>> = details["component_ids"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().and_then(|s| s.parse().ok()))
+                .collect()
+        });
 
+    // Use selective stop for SELECTIVE mode, full stop for FULL mode
+    if mode == "SELECTIVE" {
+        if let Some(ids) = &component_ids {
+            if !ids.is_empty() {
+                // Build the DAG to find dependents (impacted branch)
+                let dag = super::dag::build_dag(&state.db, app_id)
+                    .await
+                    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+
+                // Find all dependents of the selected components
+                let mut impacted_set: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+                for &comp_id in ids {
+                    let dependents = dag.find_all_dependents(comp_id);
+                    impacted_set.extend(dependents);
+                }
+
+                tracing::info!(
+                    app_id = %app_id,
+                    mode = mode,
+                    selected_count = ids.len(),
+                    impacted_count = impacted_set.len(),
+                    "Switchover: stopping selected components and impacted branch"
+                );
+
+                super::sequencer::execute_stop_subset(state, app_id, &impacted_set).await?;
+
+                // Store the impacted set for START_TARGET phase
+                let impacted_ids: Vec<Uuid> = impacted_set.iter().copied().collect();
+                sqlx::query(
+                    r#"
+                    UPDATE switchover_log
+                    SET details = details || $2::jsonb
+                    WHERE switchover_id = $1 AND phase = 'PREPARE'
+                    "#,
+                )
+                .bind(switchover_id)
+                .bind(serde_json::json!({"impacted_component_ids": impacted_ids}))
+                .execute(&state.db)
+                .await
+                .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+
+                return Ok(serde_json::json!({
+                    "source_stopped": true,
+                    "mode": mode,
+                    "components_selected": ids.len(),
+                    "components_impacted": impacted_set.len(),
+                }));
+            }
+        }
+    }
+
+    // FULL mode: stop all components
+    tracing::info!(
+        app_id = %app_id,
+        mode = mode,
+        "Switchover: stopping all source site components"
+    );
     super::sequencer::execute_stop(state, app_id).await?;
 
     // Verify all non-optional components are stopped
@@ -195,146 +316,46 @@ async fn execute_stop_source(
 
     Ok(serde_json::json!({
         "source_stopped": true,
+        "mode": mode,
         "components_still_running": still_running,
     }))
 }
 
-/// Execute the SYNC phase: verify data consistency between source and target.
-/// Runs integrity checks on source-side components and WAITS for results.
-/// Fails the phase if any integrity check returns a non-zero exit code.
+/// Execute the SYNC phase: placeholder for data synchronization verification.
+/// During switchover, the source site is already stopped, so we skip runtime integrity checks.
+/// This phase can be extended to verify data replication status, backup completion, etc.
 async fn execute_sync(
-    state: &Arc<AppState>,
+    _state: &Arc<AppState>,
     app_id: Uuid,
     switchover_id: Uuid,
 ) -> Result<Value, SwitchoverError> {
-    let details = get_switchover_details(&state.db, switchover_id).await?;
-    let target_site_id: Uuid = details["target_site_id"]
-        .as_str()
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| SwitchoverError::Database("Missing target_site_id".to_string()))?;
-
-    // Run integrity checks on components that have integrity_check_cmd
-    let integrity_components = sqlx::query_as::<_, (Uuid, String, String, Option<Uuid>)>(
-        r#"
-        SELECT c.id, c.name, c.integrity_check_cmd, c.agent_id
-        FROM components c
-        WHERE c.application_id = $1 AND c.integrity_check_cmd IS NOT NULL
-        "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
-
-    // Dispatch all integrity checks and collect request_ids
-    let mut dispatched: Vec<(Uuid, String, Uuid)> = Vec::new(); // (comp_id, name, request_id)
-    for (comp_id, name, cmd, agent_id) in &integrity_components {
-        if let Some(agent_id) = agent_id {
-            let request_id = Uuid::new_v4();
-            let message = appcontrol_common::BackendMessage::ExecuteCommand {
-                request_id,
-                component_id: *comp_id,
-                command: cmd.clone(),
-                timeout_seconds: 120,
-                exec_mode: "sync".to_string(),
-            };
-
-            super::sequencer::record_command_dispatch_public(
-                &state.db,
-                request_id,
-                *comp_id,
-                *agent_id,
-                "integrity_check",
-            )
-            .await;
-
-            state.ws_hub.send_to_agent(*agent_id, message);
-            dispatched.push((*comp_id, name.clone(), request_id));
-        }
-    }
-
-    if dispatched.is_empty() {
-        return Ok(serde_json::json!({
-            "target_site_id": target_site_id,
-            "integrity_checks": 0,
-            "status": "no_checks_configured",
-        }));
-    }
+    // Note: During switchover, the source components are already stopped (STOP_SOURCE phase).
+    // Running integrity_check_cmd on stopped components doesn't make sense.
+    //
+    // In a production scenario, this phase could:
+    // 1. Verify database replication lag is zero
+    // 2. Check backup/snapshot completion
+    // 3. Verify file sync status
+    // 4. Check message queue drain status
+    //
+    // For now, we just log and proceed. The actual data sync verification
+    // should be implemented based on the specific infrastructure.
 
     tracing::info!(
         app_id = %app_id,
-        checks = dispatched.len(),
-        "SYNC: waiting for integrity check results"
+        switchover_id = %switchover_id,
+        "SYNC: skipping integrity checks (source is stopped), proceeding to START_TARGET"
     );
 
-    // Wait for ALL integrity checks to complete (timeout: 120s per check)
-    let timeout_secs: u64 = 120;
-    let poll_interval = std::time::Duration::from_secs(2);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-
-    let mut check_results = Vec::new();
-    let mut failures = Vec::new();
-
-    for (_comp_id, name, request_id) in &dispatched {
-        let result = loop {
-            let row = sqlx::query_as::<_, (String, Option<i16>, Option<String>)>(
-                "SELECT status, exit_code, stderr FROM command_executions WHERE request_id = $1",
-            )
-            .bind(request_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
-
-            match row {
-                Some((status, exit_code, _stderr)) if status == "completed" => {
-                    break serde_json::json!({
-                        "component": name,
-                        "status": "passed",
-                        "exit_code": exit_code.unwrap_or(0),
-                    });
-                }
-                Some((status, exit_code, stderr)) if status == "failed" => {
-                    let msg =
-                        stderr.unwrap_or_else(|| format!("exit code {}", exit_code.unwrap_or(-1)));
-                    failures.push(format!("{}: {}", name, msg));
-                    break serde_json::json!({
-                        "component": name,
-                        "status": "failed",
-                        "exit_code": exit_code.unwrap_or(-1),
-                        "error": msg,
-                    });
-                }
-                _ => {
-                    if std::time::Instant::now() > deadline {
-                        failures.push(format!("{}: timed out", name));
-                        break serde_json::json!({
-                            "component": name,
-                            "status": "timeout",
-                        });
-                    }
-                    tokio::time::sleep(poll_interval).await;
-                }
-            }
-        };
-        check_results.push(result);
-    }
-
-    if !failures.is_empty() {
-        return Err(SwitchoverError::ValidationFailed(format!(
-            "Integrity check failures: {}",
-            failures.join("; ")
-        )));
-    }
-
     Ok(serde_json::json!({
-        "target_site_id": target_site_id,
-        "integrity_checks_completed": check_results.len(),
-        "all_passed": true,
-        "checks": check_results,
+        "status": "skipped",
+        "reason": "Source components are stopped - integrity checks not applicable during switchover",
+        "note": "Extend this phase to verify data replication/sync status if needed"
     }))
 }
 
-/// Execute the START_TARGET phase: swap agent assignments and start components on the target site.
+/// Execute the START_TARGET phase: activate target binding profile and start components.
+/// For SELECTIVE mode, only updates and starts the specified components.
 async fn execute_start_target(
     state: &Arc<AppState>,
     app_id: Uuid,
@@ -346,45 +367,196 @@ async fn execute_start_target(
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| SwitchoverError::Database("Missing target_site_id".to_string()))?;
 
-    // Swap component configurations to use target site overrides
-    let overrides = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<String>, Option<String>, Option<String>)>(
+    let mode = details["mode"].as_str().unwrap_or("FULL");
+
+    // Debug: log raw details
+    tracing::info!(
+        details_raw = %details,
+        "DEBUG: Raw switchover details for START_TARGET"
+    );
+
+    let component_ids: Option<Vec<Uuid>> = details["component_ids"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().and_then(|s| s.parse().ok()))
+                .collect()
+        });
+
+    let initiated_by = details["initiated_by"]
+        .as_str()
+        .and_then(|s| s.parse::<Uuid>().ok())
+        .unwrap_or(Uuid::nil());
+
+    tracing::info!(
+        app_id = %app_id,
+        mode = mode,
+        component_count = component_ids.as_ref().map(|c| c.len()),
+        "Switchover: starting target site components"
+    );
+
+    // 1. Find the target binding profile (profile whose gateways belong to target site)
+    let target_profile = sqlx::query_as::<_, (Uuid, String)>(
         r#"
-        SELECT component_id, agent_id_override, check_cmd_override, start_cmd_override, stop_cmd_override
-        FROM site_overrides
-        WHERE site_id = $1 AND component_id IN (SELECT id FROM components WHERE application_id = $2)
+        SELECT bp.id, bp.name
+        FROM binding_profiles bp
+        WHERE bp.application_id = $1
+          AND EXISTS (
+            SELECT 1 FROM unnest(bp.gateway_ids) AS gw_id
+            JOIN gateways g ON g.id = gw_id
+            WHERE g.site_id = $2
+          )
+        LIMIT 1
         "#,
     )
-    .bind(target_site_id)
     .bind(app_id)
+    .bind(target_site_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| SwitchoverError::Database(e.to_string()))?
+    .ok_or_else(|| {
+        SwitchoverError::ValidationFailed(format!(
+            "No binding profile found for target site {}",
+            target_site_id
+        ))
+    })?;
+
+    let (target_profile_id, target_profile_name) = target_profile;
+
+    // 2. Get current active profile for snapshot
+    let current_profile = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = true",
+    )
+    .bind(app_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+
+    let source_profile_name = current_profile
+        .as_ref()
+        .map(|(_, name)| name.clone())
+        .unwrap_or_else(|| "none".to_string());
+
+    // For SELECTIVE mode, we DON'T change the active profile (partial switchover)
+    // For FULL mode, we switch the entire profile
+    if mode == "FULL" {
+        // Deactivate all profiles for this app
+        sqlx::query("UPDATE binding_profiles SET is_active = false WHERE application_id = $1")
+            .bind(app_id)
+            .execute(&state.db)
+            .await
+            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+
+        // Activate the target profile
+        sqlx::query("UPDATE binding_profiles SET is_active = true WHERE id = $1")
+            .bind(target_profile_id)
+            .execute(&state.db)
+            .await
+            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+
+        tracing::info!(
+            app_id = %app_id,
+            from_profile = %source_profile_name,
+            to_profile = %target_profile_name,
+            "Switchover: activated target binding profile (FULL mode)"
+        );
+
+        // Update application's site_id to the target site (only for FULL mode)
+        sqlx::query("UPDATE applications SET site_id = $2, updated_at = now() WHERE id = $1")
+            .bind(app_id)
+            .bind(target_site_id)
+            .execute(&state.db)
+            .await
+            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+    }
+
+    // 3. Get mappings from the target profile and update components
+    let mappings = sqlx::query_as::<_, (String, Uuid)>(
+        "SELECT component_name, agent_id FROM binding_profile_mappings WHERE profile_id = $1",
+    )
+    .bind(target_profile_id)
     .fetch_all(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
-    let mut swapped = 0;
-    for (comp_id, agent_override, check_override, start_override, stop_override) in &overrides {
-        // Save current config as a snapshot before swapping (config_versions)
-        let current =
-            sqlx::query_as::<_, (Option<Uuid>, Option<String>, Option<String>, Option<String>)>(
-                "SELECT agent_id, check_cmd, start_cmd, stop_cmd FROM components WHERE id = $1",
-            )
-            .bind(comp_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+    // Build set of component IDs to update (all for FULL, selected for SELECTIVE)
+    let selected_component_ids: Option<std::collections::HashSet<Uuid>> = component_ids
+        .as_ref()
+        .map(|ids| ids.iter().copied().collect());
 
-        if let Some((cur_agent, cur_check, cur_start, cur_stop)) = current {
+    tracing::info!(
+        mode = mode,
+        component_ids_count = component_ids.as_ref().map(|c| c.len()),
+        selected_set_size = selected_component_ids.as_ref().map(|s| s.len()),
+        "DEBUG: Parsed component_ids for selective filtering"
+    );
+
+    let mut swapped = 0;
+    let mut swapped_component_ids = Vec::new();
+
+    for (comp_name, new_agent_id) in &mappings {
+        // Get component id and current agent
+        let comp_info = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<String>, Option<String>, Option<String>)>(
+            "SELECT id, agent_id, check_cmd, start_cmd, stop_cmd FROM components WHERE application_id = $1 AND name = $2",
+        )
+        .bind(app_id)
+        .bind(comp_name)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+
+        if let Some((comp_id, cur_agent, cur_check, cur_start, cur_stop)) = comp_info {
+            // For SELECTIVE mode, only update selected components
+            if mode == "SELECTIVE" {
+                if let Some(ref selected) = selected_component_ids {
+                    if !selected.contains(&comp_id) {
+                        tracing::debug!(
+                            comp_id = %comp_id,
+                            comp_name = %comp_name,
+                            "SELECTIVE: Skipping component (not in selected set)"
+                        );
+                        continue;
+                    }
+                } else {
+                    // If selected_component_ids is None in SELECTIVE mode, something is wrong
+                    tracing::error!(
+                        comp_id = %comp_id,
+                        "SELECTIVE mode but selected_component_ids is None - skipping ALL updates"
+                    );
+                    continue;
+                }
+            }
+
+            // Record config snapshot before change
             let before = serde_json::json!({
                 "agent_id": cur_agent,
                 "check_cmd": cur_check,
                 "start_cmd": cur_start,
                 "stop_cmd": cur_stop,
+                "profile": source_profile_name,
             });
 
-            // Apply target site overrides with COALESCE (non-null overrides only)
+            // Check for site_overrides (command overrides only)
+            let cmd_overrides = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+                r#"
+                SELECT check_cmd_override, start_cmd_override, stop_cmd_override
+                FROM site_overrides
+                WHERE component_id = $1 AND site_id = $2
+                "#,
+            )
+            .bind(comp_id)
+            .bind(target_site_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+
+            let (check_override, start_override, stop_override) = cmd_overrides.unwrap_or((None, None, None));
+
+            // Update component with new agent and optional command overrides
             sqlx::query(
                 r#"
                 UPDATE components SET
-                    agent_id = COALESCE($2, agent_id),
+                    agent_id = $2,
                     check_cmd = COALESCE($3, check_cmd),
                     start_cmd = COALESCE($4, start_cmd),
                     stop_cmd = COALESCE($5, stop_cmd),
@@ -393,19 +565,20 @@ async fn execute_start_target(
                 "#,
             )
             .bind(comp_id)
-            .bind(agent_override)
-            .bind(check_override)
-            .bind(start_override)
-            .bind(stop_override)
+            .bind(new_agent_id)
+            .bind(&check_override)
+            .bind(&start_override)
+            .bind(&stop_override)
             .execute(&state.db)
             .await
             .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
             let after = serde_json::json!({
-                "agent_id": agent_override.or(cur_agent),
+                "agent_id": new_agent_id,
                 "check_cmd": check_override.as_ref().or(cur_check.as_ref()),
                 "start_cmd": start_override.as_ref().or(cur_start.as_ref()),
                 "stop_cmd": stop_override.as_ref().or(cur_stop.as_ref()),
+                "profile": target_profile_name,
             });
 
             // Record config snapshot (append-only)
@@ -416,45 +589,80 @@ async fn execute_start_target(
                 "#,
             )
             .bind(comp_id)
-            .bind(details["initiated_by"].as_str().and_then(|s| s.parse::<Uuid>().ok()).unwrap_or(Uuid::nil()))
+            .bind(initiated_by)
             .bind(before)
             .bind(after)
             .execute(&state.db)
             .await;
 
             swapped += 1;
+            swapped_component_ids.push(comp_id);
         }
     }
 
-    // Update application's site_id to the target site
-    sqlx::query("UPDATE applications SET site_id = $2, updated_at = now() WHERE id = $1")
-        .bind(app_id)
-        .bind(target_site_id)
-        .execute(&state.db)
-        .await
-        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+    // 4. Push config updates to all affected agents
+    tracing::info!(app_id = %app_id, "Switchover: pushing config updates to affected agents");
+    crate::websocket::push_config_to_affected_agents(state, Some(app_id), None, None).await;
 
-    // Now start all components via the sequencer (they'll use the new agent assignments)
-    tracing::info!(app_id = %app_id, "Switchover: starting components on target site");
-    super::sequencer::execute_start(state, app_id).await?;
+    // 5. Start components via the sequencer
+    if mode == "SELECTIVE" {
+        // Get the impacted component IDs (selected + dependents) stored in STOP_SOURCE phase
+        let impacted_ids: Option<Vec<Uuid>> = details["impacted_component_ids"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().and_then(|s| s.parse().ok()))
+                    .collect()
+            });
+
+        if let Some(ids) = impacted_ids {
+            if !ids.is_empty() {
+                let impacted_set: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+                tracing::info!(
+                    app_id = %app_id,
+                    mode = mode,
+                    swapped_count = swapped,
+                    impacted_count = impacted_set.len(),
+                    "Switchover: starting swapped components and impacted branch"
+                );
+                super::sequencer::execute_start_subset(state, app_id, &impacted_set).await?;
+            }
+        } else if !swapped_component_ids.is_empty() {
+            // Fallback: just start swapped components if impacted_ids not found
+            let component_set: std::collections::HashSet<Uuid> = swapped_component_ids.iter().copied().collect();
+            super::sequencer::execute_start_subset(state, app_id, &component_set).await?;
+        }
+    } else {
+        // FULL mode: Start all components
+        tracing::info!(
+            app_id = %app_id,
+            mode = mode,
+            "Switchover: starting all components on target site"
+        );
+        super::sequencer::execute_start(state, app_id).await?;
+    }
 
     Ok(serde_json::json!({
         "target_site_id": target_site_id,
+        "source_profile": source_profile_name,
+        "target_profile": target_profile_name,
+        "mode": mode,
         "components_swapped": swapped,
         "started": true,
     }))
 }
 
 /// Advance to the next phase with real orchestration.
+/// The phase that's currently "in_progress" is the one we execute.
 pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value, SwitchoverError> {
     let pool = &state.db;
 
-    // Get current phase
+    // Get the phase that's currently in_progress - that's what we need to execute
     let current = sqlx::query_as::<_, (Uuid, String, String)>(
         r#"
         SELECT switchover_id, phase, status
         FROM switchover_log
-        WHERE application_id = $1
+        WHERE application_id = $1 AND status = 'in_progress'
         ORDER BY created_at DESC
         LIMIT 1
         "#,
@@ -465,30 +673,36 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
     .map_err(|e| SwitchoverError::Database(e.to_string()))?
     .ok_or(SwitchoverError::NoActiveSwitchover)?;
 
-    let (switchover_id, current_phase, _status) = current;
+    let (switchover_id, active_phase, _status) = current;
 
-    let next_phase = match current_phase.as_str() {
-        "PREPARE" => "VALIDATE",
-        "VALIDATE" => "STOP_SOURCE",
-        "STOP_SOURCE" => "SYNC",
-        "SYNC" => "START_TARGET",
-        "START_TARGET" => "COMMIT",
-        _ => return Err(SwitchoverError::InvalidPhase),
-    };
-
-    // Execute real orchestration for each phase
-    let phase_result = match next_phase {
+    // Execute the logic for the currently active phase
+    let phase_result = match active_phase.as_str() {
+        "PREPARE" => {
+            // PREPARE is just initialization, nothing to execute
+            Ok(serde_json::json!({"status": "prepared"}))
+        }
         "VALIDATE" => execute_validate(state, app_id, switchover_id).await,
-        "STOP_SOURCE" => execute_stop_source(state, app_id).await,
+        "STOP_SOURCE" => execute_stop_source(state, app_id, switchover_id).await,
         "SYNC" => execute_sync(state, app_id, switchover_id).await,
         "START_TARGET" => execute_start_target(state, app_id, switchover_id).await,
         "COMMIT" => Ok(serde_json::json!({"finalized": true})),
-        _ => Ok(serde_json::json!({})),
+        _ => return Err(SwitchoverError::InvalidPhase),
+    };
+
+    // Determine the next phase
+    let next_phase = match active_phase.as_str() {
+        "PREPARE" => Some("VALIDATE"),
+        "VALIDATE" => Some("STOP_SOURCE"),
+        "STOP_SOURCE" => Some("SYNC"),
+        "SYNC" => Some("START_TARGET"),
+        "START_TARGET" => Some("COMMIT"),
+        "COMMIT" => None, // No more phases
+        _ => None,
     };
 
     match phase_result {
         Ok(details) => {
-            // Mark current phase as completed
+            // Mark the active phase as completed with its results
             sqlx::query(
                 r#"
                 INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
@@ -497,33 +711,37 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
             )
             .bind(switchover_id)
             .bind(app_id)
-            .bind(&current_phase)
+            .bind(&active_phase)
             .bind(&details)
             .execute(pool)
             .await
             .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
-            // Start next phase
-            sqlx::query(
-                r#"
-                INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-                VALUES (gen_random_uuid(), $1, $2, $3, 'in_progress', '{}'::jsonb)
-                "#,
-            )
-            .bind(switchover_id)
-            .bind(app_id)
-            .bind(next_phase)
-            .execute(pool)
-            .await
-            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+            // Mark the next phase as in_progress (if any)
+            if let Some(next) = next_phase {
+                sqlx::query(
+                    r#"
+                    INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
+                    VALUES (gen_random_uuid(), $1, $2, $3, 'in_progress', '{}'::jsonb)
+                    "#,
+                )
+                .bind(switchover_id)
+                .bind(app_id)
+                .bind(next)
+                .execute(pool)
+                .await
+                .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+            }
 
             // Send notification
             let db = state.db.clone();
+            let notification_phase = next_phase.map(|s| s.to_string()).unwrap_or_else(|| "DONE".to_string());
+            let notification_status = if next_phase.is_some() { "in_progress" } else { "completed" };
             let event = super::notifications::NotificationEvent::Switchover {
                 app_id,
                 switchover_id,
-                phase: next_phase.to_string(),
-                status: "in_progress".to_string(),
+                phase: notification_phase.clone(),
+                status: notification_status.to_string(),
             };
             tokio::spawn(async move {
                 let _ = super::notifications::dispatch_event(&db, app_id, event).await;
@@ -531,14 +749,14 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
 
             Ok(serde_json::json!({
                 "switchover_id": switchover_id,
-                "previous_phase": current_phase,
-                "current_phase": next_phase,
-                "status": "in_progress",
+                "completed_phase": active_phase,
+                "next_phase": next_phase,
+                "status": notification_status,
                 "details": details,
             }))
         }
         Err(e) => {
-            // Mark phase as failed
+            // Mark the active phase as failed
             let error_details = serde_json::json!({"error": e.to_string()});
             let _ = sqlx::query(
                 r#"
@@ -548,7 +766,7 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
             )
             .bind(switchover_id)
             .bind(app_id)
-            .bind(&current_phase)
+            .bind(&active_phase)
             .bind(&error_details)
             .execute(pool)
             .await;

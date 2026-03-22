@@ -495,6 +495,104 @@ pub async fn export_pdf(
 }
 
 // ---------------------------------------------------------------------------
+// Action Label Formatting (for readable history)
+// ---------------------------------------------------------------------------
+
+/// Convert technical action codes to human-readable labels
+fn format_action_label(action: &str, details: &Value, component_name: Option<&str>) -> String {
+    match action {
+        // Application actions
+        "start_app" | "start_application" => "Démarrage de l'application".to_string(),
+        "stop_app" | "stop_application" => "Arrêt de l'application".to_string(),
+        "start_switchover" => {
+            let mode = details["mode"].as_str().unwrap_or("FULL");
+            let target = details["target_site"].as_str()
+                .or_else(|| details["target_site_id"].as_str())
+                .unwrap_or("?");
+            if mode == "SELECTIVE" {
+                format!("Bascule DR partielle vers {}", target)
+            } else {
+                format!("Bascule DR complète vers {}", target)
+            }
+        }
+        "switchover_next_phase" => "Progression de la bascule DR".to_string(),
+        "switchover_rollback" => "Annulation de la bascule DR".to_string(),
+        "switchover_commit" => "Validation de la bascule DR".to_string(),
+        "diagnose" | "start_diagnose" => "Diagnostic lancé".to_string(),
+        "rebuild" | "start_rebuild" => "Reconstruction lancée".to_string(),
+
+        // Component actions
+        "start_component" => {
+            if let Some(name) = component_name {
+                format!("Démarrage de {}", name)
+            } else {
+                "Démarrage d'un composant".to_string()
+            }
+        }
+        "stop_component" => {
+            if let Some(name) = component_name {
+                format!("Arrêt de {}", name)
+            } else {
+                "Arrêt d'un composant".to_string()
+            }
+        }
+        "execute_command" => {
+            let cmd = details["command_name"].as_str().unwrap_or("commande");
+            if let Some(name) = component_name {
+                format!("Exécution de '{}' sur {}", cmd, name)
+            } else {
+                format!("Exécution de '{}'", cmd)
+            }
+        }
+
+        // Permission actions
+        "grant_permission" => "Attribution de permissions".to_string(),
+        "revoke_permission" => "Révocation de permissions".to_string(),
+        "create_share_link" => "Création d'un lien de partage".to_string(),
+
+        // Config actions
+        "update_component" => {
+            if let Some(name) = component_name {
+                format!("Modification de {}", name)
+            } else {
+                "Modification d'un composant".to_string()
+            }
+        }
+        "create_component" => "Création d'un composant".to_string(),
+        "delete_component" => "Suppression d'un composant".to_string(),
+
+        // Default: return original action with better formatting
+        _ => action.replace('_', " ").to_string(),
+    }
+}
+
+/// Categorize an event for DORA reporting
+fn categorize_event(action: &str, to_state: Option<&str>) -> &'static str {
+    match (action, to_state) {
+        // Incidents (unplanned failures)
+        (_, Some("FAILED")) => "incident",
+        (_, Some("UNREACHABLE")) => "incident",
+
+        // Recovery from incidents
+        (_, Some("RUNNING")) => "recovery",
+
+        // Planned operations
+        ("start_switchover", _) => "dr_operation",
+        ("switchover_next_phase", _) | ("switchover_commit", _) => "dr_operation",
+        ("start_app", _) | ("stop_app", _) => "planned_operation",
+        ("start_component", _) | ("stop_component", _) => "planned_operation",
+
+        // Maintenance
+        ("diagnose", _) | ("rebuild", _) => "maintenance",
+
+        // Configuration changes
+        ("update_component", _) | ("create_component", _) | ("delete_component", _) => "config_change",
+
+        _ => "other",
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Unified Activity Feed
 // ---------------------------------------------------------------------------
 
@@ -641,12 +739,50 @@ pub async fn activity_feed(
     .fetch_all(&state.db)
     .await?;
 
+    // Switchover events for this app
+    let switchovers = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Value,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        r#"
+        SELECT sl.switchover_id, sl.phase, sl.status, sl.details, sl.created_at
+        FROM switchover_log sl
+        WHERE sl.application_id = $1 AND sl.created_at < $2
+        ORDER BY sl.created_at DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(app_id)
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await?;
+
     // Build unified events list
     let mut events: Vec<Value> = Vec::new();
 
     for (comp_id, comp_name, from, to, trigger, at) in &transitions {
+        let category = categorize_event("", Some(to.as_str()));
+        let label = match to.as_str() {
+            "FAILED" => format!("{} en échec", comp_name),
+            "RUNNING" => format!("{} opérationnel", comp_name),
+            "STOPPED" => format!("{} arrêté", comp_name),
+            "STARTING" => format!("{} en démarrage", comp_name),
+            "STOPPING" => format!("{} en arrêt", comp_name),
+            "DEGRADED" => format!("{} dégradé", comp_name),
+            "UNREACHABLE" => format!("{} injoignable", comp_name),
+            _ => format!("{} → {}", comp_name, to),
+        };
         events.push(json!({
             "kind": "state_change",
+            "category": category,
+            "label": label,
             "component_id": comp_id,
             "component_name": comp_name,
             "from_state": from,
@@ -657,8 +793,12 @@ pub async fn activity_feed(
     }
 
     for (_uid, email, action, details, at, status, error_message) in &actions {
+        let label = format_action_label(action, details, None);
+        let category = categorize_event(action, None);
         events.push(json!({
             "kind": "user_action",
+            "category": category,
+            "label": label,
             "user": email,
             "action": action,
             "details": details,
@@ -669,8 +809,12 @@ pub async fn activity_feed(
     }
 
     for (_uid, email, action, comp_name, details, at, status, error_message) in &component_actions {
+        let label = format_action_label(action, details, Some(comp_name));
+        let category = categorize_event(action, None);
         events.push(json!({
             "kind": "user_action",
+            "category": category,
+            "label": label,
             "user": email,
             "action": action,
             "component_name": comp_name,
@@ -684,8 +828,11 @@ pub async fn activity_feed(
     for (req_id, comp_id, comp_name, cmd_type, exit_code, duration, dispatched, completed) in
         &commands
     {
+        let label = format!("Commande {} sur {}", cmd_type, comp_name);
         events.push(json!({
             "kind": "command",
+            "category": "planned_operation",
+            "label": label,
             "request_id": req_id,
             "component_id": comp_id,
             "component_name": comp_name,
@@ -695,6 +842,60 @@ pub async fn activity_feed(
             "dispatched_at": dispatched,
             "completed_at": completed,
             "at": completed.unwrap_or(*dispatched),
+        }));
+    }
+
+    // Add switchover events
+    for (switchover_id, phase, status, details, at) in &switchovers {
+        let label = match (phase.as_str(), status.as_str()) {
+            ("PREPARE", "in_progress") => {
+                let mode = details["mode"].as_str().unwrap_or("FULL");
+                if mode == "SELECTIVE" {
+                    "Bascule DR partielle initiée".to_string()
+                } else {
+                    "Bascule DR complète initiée".to_string()
+                }
+            }
+            ("VALIDATE", "completed") => "Validation DR réussie".to_string(),
+            ("VALIDATE", "failed") => "Validation DR échouée".to_string(),
+            ("STOP_SOURCE", "completed") => {
+                let count = details["components_impacted"].as_i64()
+                    .or_else(|| details["components_still_running"].as_i64().map(|_| 0));
+                match count {
+                    Some(n) => format!("Arrêt source terminé ({} composants)", n),
+                    None => "Arrêt source terminé".to_string(),
+                }
+            }
+            ("STOP_SOURCE", "failed") => "Arrêt source échoué".to_string(),
+            ("SYNC", "completed") => "Synchronisation terminée".to_string(),
+            ("START_TARGET", "completed") => {
+                let swapped = details["components_swapped"].as_i64().unwrap_or(0);
+                format!("Démarrage cible terminé ({} composants migrés)", swapped)
+            }
+            ("START_TARGET", "failed") => "Démarrage cible échoué".to_string(),
+            ("COMMIT", "completed") => "Bascule DR validée ✓".to_string(),
+            ("ROLLBACK", "completed") => "Bascule DR annulée".to_string(),
+            _ => format!("Bascule DR: {} ({})", phase, status),
+        };
+
+        // Calculate RTO if this is a completed switchover
+        let rto_seconds: Option<i64> = if phase == "COMMIT" && status == "completed" {
+            // Try to calculate RTO from PREPARE to COMMIT
+            None // Will be calculated separately in RTO report
+        } else {
+            None
+        };
+
+        events.push(json!({
+            "kind": "switchover",
+            "category": "dr_operation",
+            "label": label,
+            "switchover_id": switchover_id,
+            "phase": phase,
+            "status": status,
+            "details": details,
+            "rto_seconds": rto_seconds,
+            "at": at,
         }));
     }
 
@@ -729,11 +930,10 @@ pub async fn health_summary(
     // Component states breakdown
     let states = sqlx::query_as::<_, (String, i64)>(
         r#"
-        SELECT COALESCE(cs.current_state, 'UNKNOWN') as state, COUNT(*) as cnt
+        SELECT COALESCE(c.current_state, 'UNKNOWN') as state, COUNT(*) as cnt
         FROM components c
-        LEFT JOIN component_state_cache cs ON cs.component_id = c.id
         WHERE c.application_id = $1
-        GROUP BY cs.current_state
+        GROUP BY c.current_state
         ORDER BY cnt DESC
         "#,
     )
@@ -750,12 +950,11 @@ pub async fn health_summary(
     let error_components =
         sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
             r#"
-        SELECT c.id, c.name, COALESCE(cs.current_state, 'UNKNOWN'), cs.last_changed_at
+        SELECT c.id, c.name, COALESCE(c.current_state, 'UNKNOWN'), c.updated_at
         FROM components c
-        JOIN component_state_cache cs ON cs.component_id = c.id
         WHERE c.application_id = $1
-          AND cs.current_state IN ('FAILED', 'UNREACHABLE', 'DEGRADED')
-        ORDER BY cs.last_changed_at DESC
+          AND c.current_state IN ('FAILED', 'UNREACHABLE', 'DEGRADED')
+        ORDER BY c.updated_at DESC
         "#,
         )
         .bind(app_id)
@@ -834,4 +1033,174 @@ pub async fn health_summary(
         "agents": agent_status,
         "recent_incidents": incidents,
     })))
+}
+
+// ---------------------------------------------------------------------------
+// MTTR (Mean Time To Recovery) - DORA Metric
+// ---------------------------------------------------------------------------
+
+/// Calculate MTTR for an application.
+/// MTTR = average time between FAILED and subsequent RUNNING state.
+pub async fn mttr(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(app_id): Path<Uuid>,
+    Query(params): Query<ReportQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    let from = params
+        .from
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+    let to = params.to.unwrap_or_else(chrono::Utc::now);
+
+    // Find all FAILED → RUNNING recovery pairs
+    // For each component, pair each FAILED transition with the next RUNNING transition
+    let recoveries = sqlx::query_as::<
+        _,
+        (Uuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64),
+    >(
+        r#"
+        WITH failed_events AS (
+            SELECT
+                st.component_id,
+                c.name as component_name,
+                st.created_at as failed_at,
+                ROW_NUMBER() OVER (PARTITION BY st.component_id ORDER BY st.created_at) as rn
+            FROM state_transitions st
+            JOIN components c ON c.id = st.component_id
+            WHERE c.application_id = $1
+              AND st.to_state = 'FAILED'
+              AND st.created_at >= $2 AND st.created_at <= $3
+        ),
+        recovery_events AS (
+            SELECT
+                st.component_id,
+                st.created_at as recovered_at,
+                ROW_NUMBER() OVER (PARTITION BY st.component_id ORDER BY st.created_at) as rn
+            FROM state_transitions st
+            JOIN components c ON c.id = st.component_id
+            WHERE c.application_id = $1
+              AND st.to_state = 'RUNNING'
+              AND st.from_state IN ('FAILED', 'STARTING')
+              AND st.created_at >= $2 AND st.created_at <= $3
+        )
+        SELECT
+            f.component_id,
+            f.component_name,
+            f.failed_at,
+            r.recovered_at,
+            EXTRACT(EPOCH FROM (r.recovered_at - f.failed_at))::bigint as recovery_seconds
+        FROM failed_events f
+        JOIN recovery_events r ON f.component_id = r.component_id
+        WHERE r.recovered_at > f.failed_at
+          AND NOT EXISTS (
+            -- Ensure no other FAILED event between this FAILED and RUNNING
+            SELECT 1 FROM state_transitions st2
+            WHERE st2.component_id = f.component_id
+              AND st2.to_state = 'FAILED'
+              AND st2.created_at > f.failed_at
+              AND st2.created_at < r.recovered_at
+          )
+        ORDER BY f.failed_at DESC
+        LIMIT 100
+        "#,
+    )
+    .bind(app_id)
+    .bind(from)
+    .bind(to)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Calculate statistics
+    let total_incidents = recoveries.len();
+    let recovery_times: Vec<i64> = recoveries.iter().map(|r| r.4).collect();
+
+    let avg_mttr = if !recovery_times.is_empty() {
+        recovery_times.iter().sum::<i64>() as f64 / recovery_times.len() as f64
+    } else {
+        0.0
+    };
+
+    let min_mttr = recovery_times.iter().min().copied().unwrap_or(0);
+    let max_mttr = recovery_times.iter().max().copied().unwrap_or(0);
+
+    // Median
+    let median_mttr = if !recovery_times.is_empty() {
+        let mut sorted = recovery_times.clone();
+        sorted.sort();
+        if sorted.len() % 2 == 0 {
+            (sorted[sorted.len() / 2 - 1] + sorted[sorted.len() / 2]) as f64 / 2.0
+        } else {
+            sorted[sorted.len() / 2] as f64
+        }
+    } else {
+        0.0
+    };
+
+    // Per-component breakdown
+    let mut component_stats: std::collections::HashMap<String, Vec<i64>> = std::collections::HashMap::new();
+    for (_, name, _, _, seconds) in &recoveries {
+        component_stats.entry(name.clone()).or_default().push(*seconds);
+    }
+
+    let per_component: Vec<Value> = component_stats
+        .iter()
+        .map(|(name, times)| {
+            let avg = times.iter().sum::<i64>() as f64 / times.len() as f64;
+            json!({
+                "component_name": name,
+                "incident_count": times.len(),
+                "avg_mttr_seconds": avg,
+            })
+        })
+        .collect();
+
+    // Recent incidents detail
+    let recent: Vec<Value> = recoveries
+        .iter()
+        .take(10)
+        .map(|(comp_id, name, failed_at, recovered_at, seconds)| {
+            json!({
+                "component_id": comp_id,
+                "component_name": name,
+                "failed_at": failed_at,
+                "recovered_at": recovered_at,
+                "recovery_seconds": seconds,
+                "recovery_formatted": format_duration(*seconds),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "report": "mttr",
+        "period": {
+            "from": from,
+            "to": to,
+        },
+        "summary": {
+            "total_incidents": total_incidents,
+            "avg_mttr_seconds": avg_mttr,
+            "avg_mttr_formatted": format_duration(avg_mttr as i64),
+            "median_mttr_seconds": median_mttr,
+            "min_mttr_seconds": min_mttr,
+            "max_mttr_seconds": max_mttr,
+        },
+        "per_component": per_component,
+        "recent_incidents": recent,
+    })))
+}
+
+/// Format duration in human-readable format
+fn format_duration(seconds: i64) -> String {
+    if seconds < 60 {
+        format!("{}s", seconds)
+    } else if seconds < 3600 {
+        format!("{}m {}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h {}m", seconds / 3600, (seconds % 3600) / 60)
+    }
 }

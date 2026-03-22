@@ -923,6 +923,76 @@ pub async fn record_command_result(
     }
 }
 
+/// Execute a stop sequence on a subset of components within an application's DAG.
+///
+/// Builds a sub-DAG containing only the specified component IDs, computes
+/// topological levels in reverse order, and stops them. Components already
+/// STOPPED are skipped. Used for selective switchover.
+pub async fn execute_stop_subset(
+    state: &Arc<AppState>,
+    app_id: Uuid,
+    component_ids: &HashSet<Uuid>,
+) -> Result<(), SequencerError> {
+    let full_dag = dag::build_dag(&state.db, app_id).await?;
+    let sub = full_dag.sub_dag(component_ids);
+    let mut levels = sub.topological_levels()?;
+    levels.reverse(); // Stop in reverse order: dependents first
+
+    for (level_idx, level) in levels.iter().enumerate() {
+        let mut to_stop = Vec::new();
+
+        for &comp_id in level {
+            let current = super::fsm::get_current_state(&state.db, comp_id).await?;
+
+            match current {
+                ComponentState::Running | ComponentState::Degraded => {
+                    to_stop.push(comp_id);
+                }
+                _ => {
+                    tracing::debug!(
+                        component_id = %comp_id,
+                        state = ?current,
+                        "Already stopped or not running, skipping"
+                    );
+                }
+            }
+        }
+
+        if to_stop.is_empty() {
+            continue;
+        }
+
+        tracing::info!(
+            "Stopping subset level {} — {} components in parallel",
+            level_idx,
+            to_stop.len()
+        );
+
+        let mut handles = Vec::new();
+        for comp_id in to_stop {
+            let state_clone = state.clone();
+            handles.push(tokio::spawn(async move {
+                stop_single_component(&state_clone, comp_id).await
+            }));
+        }
+
+        for handle in handles {
+            match handle.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::error!("Component stop failed in subset: {}", e);
+                    return Err(e);
+                }
+                Err(e) => {
+                    tracing::error!("Task join error: {}", e);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Execute a start sequence on a subset of components within an application's DAG.
 ///
 /// Builds a sub-DAG containing only the specified component IDs, computes

@@ -1239,10 +1239,17 @@ pub async fn resume_application(
     })))
 }
 
-/// GET /api/v1/apps/:app_id/site-overrides
+/// GET /api/v1/apps/:app_id/site-bindings
 ///
-/// Returns all site overrides for components in the given application,
-/// enriched with site and agent information for multi-site visualization.
+/// Returns all site bindings for components in the given application.
+/// This is based on binding profiles (which define where components run)
+/// merged with any command overrides from site_overrides table.
+///
+/// Each component shows:
+/// - All sites where it has a binding (from binding_profile_mappings)
+/// - The agent assigned for each site
+/// - Any command overrides for that site (from site_overrides)
+/// - Whether this is the active profile
 pub async fn get_site_overrides(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -1263,47 +1270,7 @@ pub async fn get_site_overrides(
     .await?
     .ok_or_not_found()?;
 
-    // Fetch site overrides joined with site and agent info
-    #[derive(Debug, sqlx::FromRow)]
-    struct SiteOverrideRow {
-        id: Uuid,
-        component_id: Uuid,
-        site_id: Uuid,
-        agent_id_override: Option<Uuid>,
-        check_cmd_override: Option<String>,
-        start_cmd_override: Option<String>,
-        stop_cmd_override: Option<String>,
-        rebuild_cmd_override: Option<String>,
-        env_vars_override: Option<Value>,
-        // Joined site info
-        site_name: Option<String>,
-        site_code: Option<String>,
-        site_type: Option<String>,
-        site_is_active: Option<bool>,
-        // Joined agent info for override agent
-        override_agent_hostname: Option<String>,
-    }
-
-    let overrides = sqlx::query_as::<_, SiteOverrideRow>(
-        r#"
-        SELECT
-            so.id, so.component_id, so.site_id,
-            so.agent_id_override, so.check_cmd_override, so.start_cmd_override,
-            so.stop_cmd_override, so.rebuild_cmd_override, so.env_vars_override,
-            s.name as site_name, s.code as site_code, s.site_type, s.is_active as site_is_active,
-            a.hostname as override_agent_hostname
-        FROM site_overrides so
-        JOIN sites s ON so.site_id = s.id
-        LEFT JOIN agents a ON so.agent_id_override = a.id
-        WHERE so.component_id IN (SELECT id FROM components WHERE application_id = $1)
-        ORDER BY so.component_id, s.site_type, s.name
-        "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
-
-    // Also fetch the application's primary site info
+    // Fetch the application's primary site info
     #[derive(Debug, sqlx::FromRow)]
     struct AppSiteInfo {
         site_id: Uuid,
@@ -1324,35 +1291,148 @@ pub async fn get_site_overrides(
     .fetch_optional(&state.db)
     .await?;
 
-    let overrides_json: Vec<Value> = overrides
+    // Fetch all binding profile mappings with site info
+    // Each profile is associated with gateways, and gateways belong to sites
+    #[derive(Debug, sqlx::FromRow)]
+    struct BindingRow {
+        component_id: Uuid,
+        component_name: String,
+        profile_id: Uuid,
+        profile_name: String,
+        profile_type: String,
+        is_active: bool,
+        agent_id: Uuid,
+        agent_hostname: String,
+        site_id: Uuid,
+        site_name: String,
+        site_code: String,
+        site_type: String,
+    }
+
+    let bindings = sqlx::query_as::<_, BindingRow>(
+        r#"
+        SELECT DISTINCT ON (c.id, s.id)
+            c.id as component_id,
+            c.name as component_name,
+            bp.id as profile_id,
+            bp.name as profile_name,
+            bp.profile_type,
+            -- is_active is true if the component's current agent_id matches this binding's agent
+            -- This correctly handles SELECTIVE switchover where profile isn't changed but agent_id is
+            (c.agent_id = bpm.agent_id) as is_active,
+            bpm.agent_id,
+            a.hostname as agent_hostname,
+            s.id as site_id,
+            s.name as site_name,
+            s.code as site_code,
+            s.site_type
+        FROM components c
+        JOIN binding_profile_mappings bpm ON bpm.component_name = c.name
+        JOIN binding_profiles bp ON bpm.profile_id = bp.id AND bp.application_id = c.application_id
+        JOIN agents a ON bpm.agent_id = a.id
+        JOIN gateways g ON a.gateway_id = g.id
+        JOIN sites s ON g.site_id = s.id
+        WHERE c.application_id = $1
+        ORDER BY c.id, s.id, (c.agent_id = bpm.agent_id) DESC
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Fetch command overrides from site_overrides table
+    #[derive(Debug, sqlx::FromRow)]
+    struct CmdOverrideRow {
+        component_id: Uuid,
+        site_id: Uuid,
+        check_cmd_override: Option<String>,
+        start_cmd_override: Option<String>,
+        stop_cmd_override: Option<String>,
+        rebuild_cmd_override: Option<String>,
+        env_vars_override: Option<Value>,
+    }
+
+    let cmd_overrides = sqlx::query_as::<_, CmdOverrideRow>(
+        r#"
+        SELECT component_id, site_id, check_cmd_override, start_cmd_override,
+               stop_cmd_override, rebuild_cmd_override, env_vars_override
+        FROM site_overrides
+        WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Create a lookup map for command overrides
+    let cmd_override_map: std::collections::HashMap<(Uuid, Uuid), &CmdOverrideRow> = cmd_overrides
+        .iter()
+        .map(|o| ((o.component_id, o.site_id), o))
+        .collect();
+
+    // Build the response - group bindings by component
+    let mut component_map: std::collections::HashMap<Uuid, Vec<Value>> = std::collections::HashMap::new();
+
+    for binding in &bindings {
+        let cmd_override = cmd_override_map.get(&(binding.component_id, binding.site_id));
+
+        let has_overrides = cmd_override.map_or(false, |o| {
+            o.check_cmd_override.is_some() ||
+            o.start_cmd_override.is_some() ||
+            o.stop_cmd_override.is_some()
+        });
+
+        let site_binding = json!({
+            "site_id": binding.site_id,
+            "site_name": binding.site_name,
+            "site_code": binding.site_code,
+            "site_type": binding.site_type,
+            "profile_id": binding.profile_id,
+            "profile_name": binding.profile_name,
+            "profile_type": binding.profile_type,
+            "is_active": binding.is_active,
+            "agent_id": binding.agent_id,
+            "agent_hostname": binding.agent_hostname,
+            "has_command_overrides": has_overrides,
+            "command_overrides": cmd_override.map(|o| json!({
+                "check_cmd": o.check_cmd_override,
+                "start_cmd": o.start_cmd_override,
+                "stop_cmd": o.stop_cmd_override,
+                "rebuild_cmd": o.rebuild_cmd_override,
+                "env_vars": o.env_vars_override,
+            })),
+        });
+
+        component_map
+            .entry(binding.component_id)
+            .or_default()
+            .push(site_binding);
+    }
+
+    // Convert to array format
+    let component_bindings: Vec<Value> = bindings
+        .iter()
+        .map(|b| b.component_id)
+        .collect::<std::collections::HashSet<_>>()
         .into_iter()
-        .map(|o| {
-            json!({
-                "id": o.id,
-                "component_id": o.component_id,
-                "site_id": o.site_id,
-                "site_name": o.site_name,
-                "site_code": o.site_code,
-                "site_type": o.site_type,
-                "site_is_active": o.site_is_active,
-                "agent_id_override": o.agent_id_override,
-                "override_agent_hostname": o.override_agent_hostname,
-                "check_cmd_override": o.check_cmd_override,
-                "start_cmd_override": o.start_cmd_override,
-                "stop_cmd_override": o.stop_cmd_override,
-                "rebuild_cmd_override": o.rebuild_cmd_override,
-                "env_vars_override": o.env_vars_override,
-            })
+        .filter_map(|comp_id| {
+            let comp_name = bindings.iter().find(|b| b.component_id == comp_id)?.component_name.clone();
+            let sites = component_map.remove(&comp_id)?;
+            Some(json!({
+                "component_id": comp_id,
+                "component_name": comp_name,
+                "site_bindings": sites,
+            }))
         })
         .collect();
 
     Ok(Json(json!({
-        "overrides": overrides_json,
         "primary_site": primary_site.map(|s| json!({
             "id": s.site_id,
             "name": s.site_name,
             "code": s.site_code,
             "site_type": s.site_type,
         })),
+        "component_bindings": component_bindings,
     })))
 }
