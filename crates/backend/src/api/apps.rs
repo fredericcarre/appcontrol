@@ -1371,15 +1371,16 @@ pub async fn get_site_overrides(
         .collect();
 
     // Build the response - group bindings by component
-    let mut component_map: std::collections::HashMap<Uuid, Vec<Value>> = std::collections::HashMap::new();
+    let mut component_map: std::collections::HashMap<Uuid, Vec<Value>> =
+        std::collections::HashMap::new();
 
     for binding in &bindings {
         let cmd_override = cmd_override_map.get(&(binding.component_id, binding.site_id));
 
         let has_overrides = cmd_override.map_or(false, |o| {
-            o.check_cmd_override.is_some() ||
-            o.start_cmd_override.is_some() ||
-            o.stop_cmd_override.is_some()
+            o.check_cmd_override.is_some()
+                || o.start_cmd_override.is_some()
+                || o.stop_cmd_override.is_some()
         });
 
         let site_binding = json!({
@@ -1416,7 +1417,11 @@ pub async fn get_site_overrides(
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .filter_map(|comp_id| {
-            let comp_name = bindings.iter().find(|b| b.component_id == comp_id)?.component_name.clone();
+            let comp_name = bindings
+                .iter()
+                .find(|b| b.component_id == comp_id)?
+                .component_name
+                .clone();
             let sites = component_map.remove(&comp_id)?;
             Some(json!({
                 "component_id": comp_id,

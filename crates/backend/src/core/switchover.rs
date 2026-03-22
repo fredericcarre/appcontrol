@@ -73,13 +73,12 @@ async fn execute_validate(
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| SwitchoverError::ValidationFailed("Missing target_site_id".to_string()))?;
 
-    let site_info = sqlx::query_as::<_, (String, bool)>(
-        "SELECT name, is_active FROM sites WHERE id = $1",
-    )
-    .bind(target_site_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+    let site_info =
+        sqlx::query_as::<_, (String, bool)>("SELECT name, is_active FROM sites WHERE id = $1")
+            .bind(target_site_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     match site_info {
         None => issues.push("Target site does not exist".to_string()),
@@ -235,13 +234,11 @@ async fn execute_stop_source(
 ) -> Result<Value, SwitchoverError> {
     let details = get_switchover_details(&state.db, switchover_id).await?;
     let mode = details["mode"].as_str().unwrap_or("FULL");
-    let component_ids: Option<Vec<Uuid>> = details["component_ids"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().and_then(|s| s.parse().ok()))
-                .collect()
-        });
+    let component_ids: Option<Vec<Uuid>> = details["component_ids"].as_array().map(|arr| {
+        arr.iter()
+            .filter_map(|v| v.as_str().and_then(|s| s.parse().ok()))
+            .collect()
+    });
 
     // Use selective stop for SELECTIVE mode, full stop for FULL mode
     if mode == "SELECTIVE" {
@@ -253,7 +250,8 @@ async fn execute_stop_source(
                     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
                 // Find all dependents of the selected components
-                let mut impacted_set: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+                let mut impacted_set: std::collections::HashSet<Uuid> =
+                    ids.iter().copied().collect();
                 for &comp_id in ids {
                     let dependents = dag.find_all_dependents(comp_id);
                     impacted_set.extend(dependents);
@@ -375,13 +373,11 @@ async fn execute_start_target(
         "DEBUG: Raw switchover details for START_TARGET"
     );
 
-    let component_ids: Option<Vec<Uuid>> = details["component_ids"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().and_then(|s| s.parse().ok()))
-                .collect()
-        });
+    let component_ids: Option<Vec<Uuid>> = details["component_ids"].as_array().map(|arr| {
+        arr.iter()
+            .filter_map(|v| v.as_str().and_then(|s| s.parse().ok()))
+            .collect()
+    });
 
     let initiated_by = details["initiated_by"]
         .as_str()
@@ -537,20 +533,22 @@ async fn execute_start_target(
             });
 
             // Check for site_overrides (command overrides only)
-            let cmd_overrides = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
-                r#"
+            let cmd_overrides =
+                sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+                    r#"
                 SELECT check_cmd_override, start_cmd_override, stop_cmd_override
                 FROM site_overrides
                 WHERE component_id = $1 AND site_id = $2
                 "#,
-            )
-            .bind(comp_id)
-            .bind(target_site_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+                )
+                .bind(comp_id)
+                .bind(target_site_id)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
-            let (check_override, start_override, stop_override) = cmd_overrides.unwrap_or((None, None, None));
+            let (check_override, start_override, stop_override) =
+                cmd_overrides.unwrap_or((None, None, None));
 
             // Update component with new agent and optional command overrides
             sqlx::query(
@@ -607,9 +605,8 @@ async fn execute_start_target(
     // 5. Start components via the sequencer
     if mode == "SELECTIVE" {
         // Get the impacted component IDs (selected + dependents) stored in STOP_SOURCE phase
-        let impacted_ids: Option<Vec<Uuid>> = details["impacted_component_ids"]
-            .as_array()
-            .map(|arr| {
+        let impacted_ids: Option<Vec<Uuid>> =
+            details["impacted_component_ids"].as_array().map(|arr| {
                 arr.iter()
                     .filter_map(|v| v.as_str().and_then(|s| s.parse().ok()))
                     .collect()
@@ -629,7 +626,8 @@ async fn execute_start_target(
             }
         } else if !swapped_component_ids.is_empty() {
             // Fallback: just start swapped components if impacted_ids not found
-            let component_set: std::collections::HashSet<Uuid> = swapped_component_ids.iter().copied().collect();
+            let component_set: std::collections::HashSet<Uuid> =
+                swapped_component_ids.iter().copied().collect();
             super::sequencer::execute_start_subset(state, app_id, &component_set).await?;
         }
     } else {
@@ -735,8 +733,14 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
 
             // Send notification
             let db = state.db.clone();
-            let notification_phase = next_phase.map(|s| s.to_string()).unwrap_or_else(|| "DONE".to_string());
-            let notification_status = if next_phase.is_some() { "in_progress" } else { "completed" };
+            let notification_phase = next_phase
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "DONE".to_string());
+            let notification_status = if next_phase.is_some() {
+                "in_progress"
+            } else {
+                "completed"
+            };
             let event = super::notifications::NotificationEvent::Switchover {
                 app_id,
                 switchover_id,

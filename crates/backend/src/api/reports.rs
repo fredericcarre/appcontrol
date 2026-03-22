@@ -506,7 +506,8 @@ fn format_action_label(action: &str, details: &Value, component_name: Option<&st
         "stop_app" | "stop_application" => "Arrêt de l'application".to_string(),
         "start_switchover" => {
             let mode = details["mode"].as_str().unwrap_or("FULL");
-            let target = details["target_site"].as_str()
+            let target = details["target_site"]
+                .as_str()
                 .or_else(|| details["target_site_id"].as_str())
                 .unwrap_or("?");
             if mode == "SELECTIVE" {
@@ -586,7 +587,9 @@ fn categorize_event(action: &str, to_state: Option<&str>) -> &'static str {
         ("diagnose", _) | ("rebuild", _) => "maintenance",
 
         // Configuration changes
-        ("update_component", _) | ("create_component", _) | ("delete_component", _) => "config_change",
+        ("update_component", _) | ("create_component", _) | ("delete_component", _) => {
+            "config_change"
+        }
 
         _ => "other",
     }
@@ -740,29 +743,21 @@ pub async fn activity_feed(
     .await?;
 
     // Switchover events for this app
-    let switchovers = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            String,
-            Value,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
-        r#"
+    let switchovers =
+        sqlx::query_as::<_, (Uuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
+            r#"
         SELECT sl.switchover_id, sl.phase, sl.status, sl.details, sl.created_at
         FROM switchover_log sl
         WHERE sl.application_id = $1 AND sl.created_at < $2
         ORDER BY sl.created_at DESC
         LIMIT $3
         "#,
-    )
-    .bind(app_id)
-    .bind(cursor)
-    .bind(limit)
-    .fetch_all(&state.db)
-    .await?;
+        )
+        .bind(app_id)
+        .bind(cursor)
+        .bind(limit)
+        .fetch_all(&state.db)
+        .await?;
 
     // Build unified events list
     let mut events: Vec<Value> = Vec::new();
@@ -859,7 +854,8 @@ pub async fn activity_feed(
             ("VALIDATE", "completed") => "Validation DR réussie".to_string(),
             ("VALIDATE", "failed") => "Validation DR échouée".to_string(),
             ("STOP_SOURCE", "completed") => {
-                let count = details["components_impacted"].as_i64()
+                let count = details["components_impacted"]
+                    .as_i64()
                     .or_else(|| details["components_still_running"].as_i64().map(|_| 0));
                 match count {
                     Some(n) => format!("Arrêt source terminé ({} composants)", n),
@@ -1061,7 +1057,13 @@ pub async fn mttr(
     // For each component, pair each FAILED transition with the next RUNNING transition
     let recoveries = sqlx::query_as::<
         _,
-        (Uuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64),
+        (
+            Uuid,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            i64,
+        ),
     >(
         r#"
         WITH failed_events AS (
@@ -1142,9 +1144,13 @@ pub async fn mttr(
     };
 
     // Per-component breakdown
-    let mut component_stats: std::collections::HashMap<String, Vec<i64>> = std::collections::HashMap::new();
+    let mut component_stats: std::collections::HashMap<String, Vec<i64>> =
+        std::collections::HashMap::new();
     for (_, name, _, _, seconds) in &recoveries {
-        component_stats.entry(name.clone()).or_default().push(*seconds);
+        component_stats
+            .entry(name.clone())
+            .or_default()
+            .push(*seconds);
     }
 
     let per_component: Vec<Value> = component_stats
