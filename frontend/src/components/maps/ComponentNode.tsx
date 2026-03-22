@@ -294,10 +294,8 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         {/* Multi-site split panel */}
         {data.siteBindings && data.siteBindings.length > 0 && (
           <SitePanels
-            primarySite={data.primarySite || null}
             siteBindings={data.siteBindings}
             currentState={data.state}
-            agentHostname={data.agentHostname}
           />
         )}
 
@@ -407,12 +405,9 @@ function getSiteStyle(siteType: string) {
  * Shows all sites where the component has bindings (from binding profiles).
  */
 function SitePanels({
-  primarySite,
   siteBindings,
   currentState,
-  agentHostname,
 }: {
-  primarySite: { id: string; name: string; code: string; site_type: string } | null;
   siteBindings: Array<{
     site_id: string;
     site_name: string;
@@ -423,7 +418,6 @@ function SitePanels({
     has_command_overrides: boolean;
   }>;
   currentState: ComponentState;
-  agentHostname?: string;
 }) {
   // Find the active site binding (the one that's currently active)
   const activeBinding = siteBindings.find((b) => b.is_active);

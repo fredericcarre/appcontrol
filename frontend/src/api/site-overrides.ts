@@ -92,6 +92,7 @@ export function groupBindingsByComponent(
 // Legacy export - keep for compatibility
 export type SiteOverride = SiteBinding;
 export type SiteOverridesResponse = SiteBindingsResponse;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function groupOverridesByComponent(overrides: SiteBinding[]): Map<string, SiteBinding[]> {
   // This is for legacy compatibility - new code should use groupBindingsByComponent
   const map = new Map<string, SiteBinding[]>();

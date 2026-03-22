@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCreateApp, useCreateComponent, useAddDependency } from '@/api/apps';
-import { useGatewaySites, SiteSummary } from '@/api/gateways';
+import { useGatewaySites } from '@/api/gateways';
 import { useAgents, Agent } from '@/api/agents';
 import { useCreateProfile, MappingConfig } from '@/api/import';
 import client from '@/api/client';

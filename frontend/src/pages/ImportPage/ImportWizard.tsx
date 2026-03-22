@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
   Upload, MapPin, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight, Loader2,
-  FileJson, FileCode, Shield, Check, X, HelpCircle, ChevronDown, ChevronRight, Terminal, Plus, Trash2
+  FileJson, FileCode, Shield, Check, HelpCircle, ChevronDown, ChevronRight, Terminal, Plus, Trash2
 } from 'lucide-react';
 import {
   useImportPreview,
@@ -146,7 +146,6 @@ export default function ImportWizard() {
       setStep('sites');
     } else if (step === 'sites') {
       // Preview with all selected site gateways
-      const allSiteIds = state.selectedSites.map((s) => s.siteId);
       const primaryGatewayIds = primarySite ? getAllGatewayIds([primarySite.siteId]) : [];
       const drGatewayIds = drSites.length > 0 ? getAllGatewayIds(drSites.map((s) => s.siteId)) : undefined;
 
@@ -665,7 +664,6 @@ function ResolutionStep({
   onConfigChange,
 }: ResolutionStepProps) {
   const primarySite = selectedSites.find((s) => s.siteType === 'primary');
-  const drSites = selectedSites.filter((s) => s.siteType === 'dr');
 
   const getSiteInfo = (siteId: string) => sites.find((s) => s.site_id === siteId);
 
@@ -1099,7 +1097,7 @@ function injectSiteOverrides(
   if (drSites.length === 0) return content;
 
   try {
-    let data = JSON.parse(content);
+    const data = JSON.parse(content);
     const app = data.application || data;
     const components = app.components || [];
 
