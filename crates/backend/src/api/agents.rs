@@ -484,7 +484,13 @@ pub async fn delete_agent(
         .execute(&state.db)
         .await?;
 
-    // 5. Delete the agent
+    // 5. Delete binding profile mappings for this agent
+    sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = $1")
+        .bind(agent_id)
+        .execute(&state.db)
+        .await?;
+
+    // 6. Delete the agent
     sqlx::query("DELETE FROM agents WHERE id = $1")
         .bind(agent_id)
         .execute(&state.db)
@@ -585,7 +591,19 @@ pub async fn bulk_delete_agents(
         .execute(&mut *tx)
         .await?;
 
-    // 4. Delete the agents
+    // 4. Delete certificate events for these agents
+    sqlx::query("DELETE FROM certificate_events WHERE agent_id = ANY($1)")
+        .bind(&valid_ids)
+        .execute(&mut *tx)
+        .await?;
+
+    // 5. Delete binding profile mappings for these agents
+    sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = ANY($1)")
+        .bind(&valid_ids)
+        .execute(&mut *tx)
+        .await?;
+
+    // 6. Delete the agents
     let delete_result = sqlx::query("DELETE FROM agents WHERE id = ANY($1)")
         .bind(&valid_ids)
         .execute(&mut *tx)

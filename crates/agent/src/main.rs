@@ -172,8 +172,11 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Start all subsystems
+    tracing::info!("Starting connection manager...");
     let conn_handle = tokio::spawn(connection.run(msg_rx));
+    tracing::info!("Starting scheduler...");
     let sched_handle = tokio::spawn(check_scheduler.run());
+    tracing::info!("All subsystems started, entering main loop");
 
     // Platform-specific signal handling for configuration reload
     #[cfg(unix)]
@@ -208,11 +211,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Allow unused variable for log layer handle (can be used to enable/disable log streaming)
     let _ = log_layer_handle;
+    // Log handle can exit independently without affecting other tasks
+    let _ = log_handle;
 
+    // Only wait for connection or scheduler to exit - these are the critical tasks
     tokio::select! {
         r = conn_handle => { tracing::error!("Connection manager exited: {:?}", r); }
         r = sched_handle => { tracing::error!("Scheduler exited: {:?}", r); }
-        r = log_handle => { tracing::debug!("Log forwarder exited: {:?}", r); }
     }
 
     Ok(())

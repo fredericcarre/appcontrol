@@ -119,15 +119,19 @@ impl CheckScheduler {
     /// Main scheduler loop. Sends heartbeats every 60s and evaluates
     /// per-component check intervals on a 5-second tick.
     pub async fn run(self: Arc<Self>) {
+        tracing::info!("Scheduler run loop starting...");
         let mut tick_interval = tokio::time::interval(Duration::from_secs(TICK_INTERVAL_SECS));
         let mut heartbeat_counter: u64 = 0;
 
         loop {
+            tracing::info!("Scheduler waiting for tick...");
             tick_interval.tick().await;
             heartbeat_counter += 1;
+            tracing::info!("Scheduler tick #{}", heartbeat_counter);
 
             // Send heartbeat every ~60 seconds
             if heartbeat_counter.is_multiple_of(HEARTBEAT_EVERY_N_TICKS) {
+                tracing::info!("Sending heartbeat (tick #{})", heartbeat_counter);
                 self.send_heartbeat();
             }
 
@@ -190,6 +194,8 @@ impl CheckScheduler {
         let now = chrono::Utc::now();
         let components = self.components.read().await;
 
+        tracing::info!("run_due_checks: {} components in scheduler", components.len());
+
         if components.is_empty() {
             return;
         }
@@ -201,6 +207,7 @@ impl CheckScheduler {
             let check_state = self.check_state.read().await;
             for (comp_id, config) in components.iter() {
                 if config.check_cmd.is_none() {
+                    tracing::debug!("Component {} has no check_cmd, skipping", comp_id);
                     continue;
                 }
 
@@ -214,14 +221,29 @@ impl CheckScheduler {
                     Some(state) => {
                         // Skip if already in flight (prevents piling)
                         if state.in_flight {
+                            tracing::debug!("Component {} in flight, skipping", comp_id);
                             continue;
                         }
                         match state.last_checked_at {
-                            Some(last) => (now - last).num_seconds() >= interval_secs,
-                            None => true, // never checked
+                            Some(last) => {
+                                let elapsed = (now - last).num_seconds();
+                                let due = elapsed >= interval_secs;
+                                tracing::debug!(
+                                    "Component {} last_checked {}s ago, interval {}s, due={}",
+                                    comp_id, elapsed, interval_secs, due
+                                );
+                                due
+                            }
+                            None => {
+                                tracing::debug!("Component {} never checked, due=true", comp_id);
+                                true
+                            }
                         }
                     }
-                    None => true, // no state yet
+                    None => {
+                        tracing::debug!("Component {} no check state yet, due=true", comp_id);
+                        true
+                    }
                 };
 
                 if is_due {
@@ -231,10 +253,11 @@ impl CheckScheduler {
         } // drop read lock
 
         if due_components.is_empty() {
+            tracing::info!("No components due for check this tick");
             return;
         }
 
-        tracing::debug!("Running checks for {} due components", due_components.len());
+        tracing::info!("Running checks for {} due components", due_components.len());
 
         // Mark all due components as in_flight and set last_checked_at to NOW
         // (start time, not completion time — prevents drift)

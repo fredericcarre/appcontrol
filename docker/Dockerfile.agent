@@ -9,6 +9,7 @@ RUN cargo build --release --bin appcontrol-agent
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 RUN groupadd -r appcontrol && useradd -r -g appcontrol -s /sbin/nologin appcontrol
+RUN mkdir -p /var/lib/appcontrol && chown appcontrol:appcontrol /var/lib/appcontrol
 COPY --from=builder /app/target/release/appcontrol-agent /usr/local/bin/
 USER appcontrol
 ENV RUST_LOG=info
