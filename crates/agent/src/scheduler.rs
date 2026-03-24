@@ -194,7 +194,10 @@ impl CheckScheduler {
         let now = chrono::Utc::now();
         let components = self.components.read().await;
 
-        tracing::info!("run_due_checks: {} components in scheduler", components.len());
+        tracing::info!(
+            "run_due_checks: {} components in scheduler",
+            components.len()
+        );
 
         if components.is_empty() {
             return;
@@ -230,7 +233,10 @@ impl CheckScheduler {
                                 let due = elapsed >= interval_secs;
                                 tracing::debug!(
                                     "Component {} last_checked {}s ago, interval {}s, due={}",
-                                    comp_id, elapsed, interval_secs, due
+                                    comp_id,
+                                    elapsed,
+                                    interval_secs,
+                                    due
                                 );
                                 due
                             }
