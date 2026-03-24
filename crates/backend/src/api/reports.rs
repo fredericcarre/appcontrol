@@ -291,8 +291,10 @@ pub async fn drp_report(
     .await?;
 
     // Group by switchover_id
-    let mut switchovers_map: std::collections::HashMap<Uuid, Vec<(String, String, Value, chrono::DateTime<chrono::Utc>)>> =
-        std::collections::HashMap::new();
+    let mut switchovers_map: std::collections::HashMap<
+        Uuid,
+        Vec<(String, String, Value, chrono::DateTime<chrono::Utc>)>,
+    > = std::collections::HashMap::new();
 
     for (switchover_id, phase, status, details, created_at) in logs {
         switchovers_map
