@@ -212,7 +212,7 @@ async fn main() -> anyhow::Result<()> {
     // Allow unused variable for log layer handle (can be used to enable/disable log streaming)
     let _ = log_layer_handle;
     // Log handle can exit independently without affecting other tasks
-    let _ = log_handle;
+    drop(log_handle);
 
     // Only wait for connection or scheduler to exit - these are the critical tasks
     tokio::select! {

@@ -7,7 +7,7 @@ edition = "2021"
 appcontrol-common = { path = "../common" }
 axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
@@ -20,8 +20,8 @@ serde_yaml = "0.9"
 anyhow = "1"
 thiserror = "1"
 futures-util = "0.3"
-tokio-rustls = "0.25"
-rustls = { version = "0.22", default-features = false }
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false }
 rustls-pemfile = "2"
 rustls-native-certs = "0.7"
 hyper-util = { version = "0.1", features = ["tokio"] }

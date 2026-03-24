@@ -8,6 +8,7 @@ import { getGlobalWebSocket } from '@/hooks/use-websocket';
 
 interface AgentTerminalProps {
   agentId: string;
+  agentHostname?: string;
   sessionId: string | null;
   onSessionStart: (sessionId: string) => void;
   onSessionEnd: () => void;
@@ -18,6 +19,7 @@ type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
 export function AgentTerminal({
   agentId,
+  agentHostname,
   sessionId,
   onSessionStart,
   onSessionEnd,
@@ -73,7 +75,7 @@ export function AgentTerminal({
     // Welcome message
     term.writeln('AppControl Terminal');
     term.writeln('───────────────────────────────────────');
-    term.writeln(`Agent: ${agentId}`);
+    term.writeln(`Agent: ${agentHostname || agentId}`);
     term.writeln('');
     term.writeln('Connecting...');
 
@@ -283,7 +285,7 @@ export function AgentTerminal({
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-3 py-2 bg-[#1a1a2e] border-b border-gray-700">
         <span className="text-sm text-gray-400 font-mono">
-          {agentId.slice(0, 8)}...
+          {agentHostname || agentId.slice(0, 8)}
         </span>
         {statusBadge()}
       </div>

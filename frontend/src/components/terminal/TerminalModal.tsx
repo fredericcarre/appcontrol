@@ -119,6 +119,7 @@ export function TerminalModal({
         <div className="flex-1 min-h-0">
           <AgentTerminal
             agentId={agentId}
+            agentHostname={agentHostname}
             sessionId={sessionId}
             onSessionStart={handleSessionStart}
             onSessionEnd={handleSessionEnd}

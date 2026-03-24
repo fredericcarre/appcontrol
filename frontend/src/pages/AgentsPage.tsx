@@ -202,7 +202,6 @@ export function AgentsPage() {
               <TableRow>
                 <TableHead className="w-[40px]"></TableHead>
                 <TableHead>Agent</TableHead>
-                <TableHead>Hostname</TableHead>
                 <TableHead>Gateway</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>System</TableHead>
@@ -214,7 +213,7 @@ export function AgentsPage() {
             <TableBody>
               {!filteredAgents.length ? (
                 <TableRow>
-                  <TableCell colSpan={isAdmin ? 9 : 8} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={isAdmin ? 8 : 7} className="text-center text-muted-foreground py-8">
                     {agentList.length === 0 ? 'No agents registered' : 'No agents match filters'}
                   </TableCell>
                 </TableRow>
@@ -234,10 +233,9 @@ export function AgentsPage() {
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <Server className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-medium font-mono text-xs">{agent.id?.slice(0, 8)}</span>
+                        <span className="font-medium">{agent.hostname || agent.id?.slice(0, 8)}</span>
                       </div>
                     </TableCell>
-                    <TableCell>{agent.hostname || '-'}</TableCell>
                     <TableCell>
                       {agent.gateway_name ? (
                         <div className="flex items-center gap-2">
@@ -378,7 +376,7 @@ export function AgentsPage() {
                   </TableRow>
                   {expandedAgentId === agent.id && (
                     <TableRow>
-                      <TableCell colSpan={isAdmin ? 9 : 8} className="p-4 bg-muted/30">
+                      <TableCell colSpan={isAdmin ? 8 : 7} className="p-4 bg-muted/30">
                         <AgentMetricsChart agentId={agent.id} hostname={agent.hostname || 'Unknown'} />
                       </TableCell>
                     </TableRow>

@@ -20,6 +20,6 @@ chrono = { version = "0.4", features = ["serde"] }
 jsonwebtoken = "9"
 anyhow = "1"
 axum = "0.7"
-tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 base64 = "0.22"
