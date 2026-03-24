@@ -1297,6 +1297,7 @@ pub async fn get_site_overrides(
     struct BindingRow {
         component_id: Uuid,
         component_name: String,
+        component_host: Option<String>,
         profile_id: Uuid,
         profile_name: String,
         profile_type: String,
@@ -1314,6 +1315,7 @@ pub async fn get_site_overrides(
         SELECT DISTINCT ON (c.id, s.id)
             c.id as component_id,
             c.name as component_name,
+            c.host as component_host,
             bp.id as profile_id,
             bp.name as profile_name,
             bp.profile_type,

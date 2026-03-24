@@ -72,6 +72,54 @@ export function useComplianceReport(appId: string) {
   });
 }
 
+// ============================================================================
+// PRA (Plan de Reprise d'Activité) / DRP Reports - DORA Compliance
+// ============================================================================
+
+export interface PraPhase {
+  phase: string;
+  status: string;
+  started_at: string;
+  completed_at: string;
+  duration_ms: number;
+  details: Record<string, unknown>;
+}
+
+export interface PraExercise {
+  switchover_id: string;
+  started_at: string;
+  completed_at: string | null;
+  rto_seconds: number | null;
+  status: 'completed' | 'failed' | 'rolled_back' | 'in_progress';
+  source_site: string | null;
+  target_site: string | null;
+  components_count: number | null;
+  phases: PraPhase[];
+}
+
+export interface PraReport {
+  report: string;
+  application: {
+    id: string;
+    name: string;
+    current_site: string | null;
+  };
+  total_exercises: number;
+  exercises: PraExercise[];
+  generated_at: string;
+}
+
+export function usePraReport(appId: string) {
+  return useQuery({
+    queryKey: ['reports', 'pra', appId],
+    queryFn: async () => {
+      const { data } = await client.get<PraReport>(`/apps/${appId}/reports/pra`);
+      return data;
+    },
+    enabled: !!appId,
+  });
+}
+
 export interface Agent {
   id: string;
   hostname: string;

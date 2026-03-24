@@ -255,6 +255,158 @@ pub async fn switchovers(
     Ok(Json(json!({ "report": "switchovers", "data": data })))
 }
 
+/// DRP Exercise Report - Detailed switchover history for DORA compliance
+/// Groups switchover phases and calculates RTO for each exercise
+pub async fn drp_report(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(app_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Get application info
+    let app_info = sqlx::query_as::<_, (String, Option<Uuid>, Option<String>)>(
+        "SELECT a.name, a.site_id, s.name FROM applications a LEFT JOIN sites s ON a.site_id = s.id WHERE a.id = $1"
+    )
+    .bind(app_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (app_name, _site_id, site_name) = app_info.unwrap_or(("Unknown".to_string(), None, None));
+
+    // Get all switchover logs grouped by switchover_id
+    let logs = sqlx::query_as::<_, (Uuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
+        r#"
+        SELECT switchover_id, phase, status, details, created_at
+        FROM switchover_log
+        WHERE application_id = $1
+        ORDER BY switchover_id, created_at ASC
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Group by switchover_id
+    let mut switchovers_map: std::collections::HashMap<Uuid, Vec<(String, String, Value, chrono::DateTime<chrono::Utc>)>> =
+        std::collections::HashMap::new();
+
+    for (switchover_id, phase, status, details, created_at) in logs {
+        switchovers_map
+            .entry(switchover_id)
+            .or_default()
+            .push((phase, status, details, created_at));
+    }
+
+    // Build structured switchover reports
+    let mut switchovers: Vec<Value> = Vec::new();
+
+    for (switchover_id, phases) in switchovers_map {
+        let mut phase_details: Vec<Value> = Vec::new();
+        let mut started_at: Option<chrono::DateTime<chrono::Utc>> = None;
+        let mut completed_at: Option<chrono::DateTime<chrono::Utc>> = None;
+        let mut final_status = "in_progress".to_string();
+        let mut source_site: Option<String> = None;
+        let mut target_site: Option<String> = None;
+        let mut components_count: Option<i64> = None;
+        let mut current_phase_start: Option<chrono::DateTime<chrono::Utc>> = None;
+        let mut current_phase_name: Option<String> = None;
+
+        for (phase, status, details, at) in &phases {
+            // Track first timestamp as switchover start
+            if started_at.is_none() {
+                started_at = Some(*at);
+            }
+
+            // Extract site info from PREPARE phase
+            if phase == "PREPARE" && status == "in_progress" {
+                source_site = details["source_site_name"].as_str().map(String::from);
+                target_site = details["target_site_name"].as_str().map(String::from);
+            }
+
+            // Extract component count from relevant phases
+            if let Some(count) = details["components_impacted"].as_i64() {
+                components_count = Some(count);
+            }
+            if let Some(count) = details["components_swapped"].as_i64() {
+                components_count = Some(count);
+            }
+
+            // Track phase timing
+            if status == "in_progress" {
+                current_phase_start = Some(*at);
+                let _ = current_phase_name.insert(phase.clone()); // For potential future use
+            } else if status == "completed" || status == "failed" {
+                let phase_started = current_phase_start.unwrap_or(*at);
+                let duration_ms = (*at - phase_started).num_milliseconds();
+
+                phase_details.push(json!({
+                    "phase": phase,
+                    "status": status,
+                    "started_at": phase_started,
+                    "completed_at": at,
+                    "duration_ms": duration_ms,
+                    "details": details
+                }));
+
+                current_phase_start = None;
+            }
+
+            // Track final status
+            if phase == "COMMIT" && status == "completed" {
+                final_status = "completed".to_string();
+                completed_at = Some(*at);
+            } else if phase == "ROLLBACK" && status == "completed" {
+                final_status = "rolled_back".to_string();
+                completed_at = Some(*at);
+            } else if status == "failed" {
+                final_status = "failed".to_string();
+                completed_at = Some(*at);
+            }
+        }
+
+        // Calculate RTO (Recovery Time Objective) in seconds
+        let rto_seconds = match (started_at, completed_at) {
+            (Some(start), Some(end)) => Some((end - start).num_seconds()),
+            _ => None,
+        };
+
+        switchovers.push(json!({
+            "switchover_id": switchover_id,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "rto_seconds": rto_seconds,
+            "status": final_status,
+            "source_site": source_site,
+            "target_site": target_site,
+            "components_count": components_count,
+            "phases": phase_details
+        }));
+    }
+
+    // Sort by started_at descending (most recent first)
+    switchovers.sort_by(|a, b| {
+        let a_time = a["started_at"].as_str().unwrap_or("");
+        let b_time = b["started_at"].as_str().unwrap_or("");
+        b_time.cmp(a_time)
+    });
+
+    Ok(Json(json!({
+        "report": "drp_exercises",
+        "application": {
+            "id": app_id,
+            "name": app_name,
+            "current_site": site_name
+        },
+        "total_exercises": switchovers.len(),
+        "exercises": switchovers,
+        "generated_at": chrono::Utc::now()
+    })))
+}
+
 pub async fn audit(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,

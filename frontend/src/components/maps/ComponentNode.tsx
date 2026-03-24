@@ -42,6 +42,7 @@ interface ComponentNodeData {
   agentHostname?: string;
   agentId?: string;
   gatewayId?: string;
+  gatewayName?: string;
   // Application reference (for application-type components)
   referencedAppId?: string | null;
   referencedAppName?: string | null;
@@ -249,7 +250,7 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
               {data.referencedAppName || 'App ref'}
             </span>
           ) : (
-            <span className="text-xs text-muted-foreground truncate max-w-[100px]" title={data.host}>
+            <span className="text-xs text-muted-foreground truncate max-w-[100px]" title={data.agentHostname || data.host}>
               {data.agentHostname || data.host}
             </span>
           )}
@@ -302,19 +303,19 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         {selected && (
           <>
             {/* Infrastructure info - hide for application-type components */}
-            {data.componentType !== 'application' && (data.agentHostname || data.gatewayId) && (
+            {data.componentType !== 'application' && (data.agentHostname || data.host || data.gatewayId) && (
               <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-gray-200">
-                {data.agentHostname && (
+                {(data.agentHostname || data.host) && (
                   <span
                     className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${
                       data.connectivityStatus === 'connected'
                         ? 'bg-blue-100 text-blue-700'
                         : 'bg-orange-100 text-orange-700'
                     }`}
-                    title={`Agent: ${data.agentHostname}`}
+                    title={`Agent: ${data.agentHostname || data.host}`}
                   >
                     <Server className="h-2.5 w-2.5" />
-                    <span className="max-w-[80px] truncate">{data.agentHostname}</span>
+                    <span className="max-w-[80px] truncate">{data.agentHostname || data.host}</span>
                   </span>
                 )}
                 {data.gatewayId && (
@@ -324,10 +325,10 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
                         ? 'bg-emerald-100 text-emerald-700'
                         : 'bg-red-100 text-red-700'
                     }`}
-                    title={`Gateway: ${data.gatewayId.slice(0, 8)}...`}
+                    title={`Gateway: ${data.gatewayName || data.gatewayId.slice(0, 8)}`}
                   >
                     <Radio className="h-2.5 w-2.5" />
-                    <span>{data.gatewayId.slice(0, 6)}</span>
+                    <span>{data.gatewayName || data.gatewayId.slice(0, 6)}</span>
                   </span>
                 )}
               </div>
@@ -511,4 +512,30 @@ function MetricsTooltipContent({ metrics }: { metrics: Record<string, unknown> }
   );
 }
 
-export const ComponentNode = memo(ComponentNodeInner);
+// Custom comparison to ensure re-renders when state changes (important for history mode)
+function arePropsEqual(prevProps: NodeProps, nextProps: NodeProps): boolean {
+  const prevData = prevProps.data as ComponentNodeData;
+  const nextData = nextProps.data as ComponentNodeData;
+
+  // Always re-render if state changes
+  if (prevData.state !== nextData.state) return false;
+
+  // Re-render if highlight changes
+  if (prevData.highlightType !== nextData.highlightType) return false;
+  if (prevData.highlightColor !== nextData.highlightColor) return false;
+  if (prevData.isErrorBranch !== nextData.isErrorBranch) return false;
+
+  // Re-render if connectivity status changes
+  if (prevData.connectivityStatus !== nextData.connectivityStatus) return false;
+
+  // Re-render if selection changes
+  if (prevProps.selected !== nextProps.selected) return false;
+
+  // Re-render if metrics change (simple reference check)
+  if (prevData.metrics !== nextData.metrics) return false;
+
+  // Default: don't re-render for other changes (position, etc. handled by React Flow)
+  return true;
+}
+
+export const ComponentNode = memo(ComponentNodeInner, arePropsEqual);

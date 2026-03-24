@@ -146,8 +146,7 @@ function AgentItem({ agent, isAdmin, onBlock }: AgentItemProps) {
   return (
     <div className="flex items-center gap-3 text-sm py-1.5">
       <Server className="h-3 w-3 text-muted-foreground" />
-      <span className="font-mono text-xs">{agent.id.slice(0, 8)}</span>
-      <span className="flex-1">{agent.hostname}</span>
+      <span className="flex-1 font-medium">{agent.hostname}</span>
       {agent.connected ? (
         <Badge variant="default" className="text-xs gap-1 bg-green-600">
           <Wifi className="h-2.5 w-2.5" /> Connected

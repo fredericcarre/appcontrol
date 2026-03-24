@@ -64,7 +64,7 @@ export function InfrastructureSummary({
         if (!agents.has(c.agent_id)) {
           agents.set(c.agent_id, {
             id: c.agent_id,
-            name: c.agent_hostname || 'Unknown Agent',
+            name: c.agent_hostname || c.host || 'Unknown Agent',
             type: 'agent',
             connected: c.agent_connected ?? false,
             componentCount: 0,
@@ -75,8 +75,8 @@ export function InfrastructureSummary({
         agent.componentCount++;
         agent.componentIds.push(c.id);
         // Update hostname if not set
-        if (c.agent_hostname && agent.name === 'Unknown Agent') {
-          agent.name = c.agent_hostname;
+        if ((c.agent_hostname || c.host) && agent.name === 'Unknown Agent') {
+          agent.name = c.agent_hostname || c.host || 'Unknown Agent';
         }
         // Update connected status
         if (c.agent_connected) agent.connected = true;

@@ -314,6 +314,7 @@ function buildNodes(
         agentHostname: c.agent_hostname,
         agentId: c.agent_id || undefined,
         gatewayId: c.gateway_id || undefined,
+        gatewayName: c.gateway_name || undefined,
         // Application reference (for application-type components)
         referencedAppId: c.referenced_app_id || undefined,
         referencedAppName: c.referenced_app_name || undefined,

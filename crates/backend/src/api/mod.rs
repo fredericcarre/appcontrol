@@ -217,6 +217,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/apps/:app_id/reports/switchovers",
             get(reports::switchovers),
         )
+        .route("/apps/:app_id/reports/pra", get(reports::drp_report))
         .route("/apps/:app_id/reports/audit", get(reports::audit))
         .route("/apps/:app_id/reports/compliance", get(reports::compliance))
         .route("/apps/:app_id/reports/rto", get(reports::rto))

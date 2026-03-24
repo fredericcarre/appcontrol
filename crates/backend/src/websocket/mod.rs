@@ -1574,11 +1574,7 @@ pub async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
         }
     };
 
-    if rows.is_empty() {
-        tracing::debug!(agent_id = %agent_id, "No components assigned to agent — skipping UpdateConfig");
-        return;
-    }
-
+    // Always send UpdateConfig, even if empty - this ensures agent's scheduler stays in sync
     let components: Vec<appcontrol_common::ComponentConfig> = rows
         .into_iter()
         .map(
