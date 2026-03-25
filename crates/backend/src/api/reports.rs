@@ -290,6 +290,14 @@ pub async fn drp_report(
     .fetch_all(&state.db)
     .await?;
 
+    // Pre-fetch all sites for name lookup
+    let sites: std::collections::HashMap<Uuid, String> =
+        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM sites")
+            .fetch_all(&state.db)
+            .await?
+            .into_iter()
+            .collect();
+
     // Group by switchover_id
     // Phase tuple: (phase_name, status, details, created_at)
     type PhaseEntry = (String, String, Value, chrono::DateTime<chrono::Utc>);
@@ -313,9 +321,9 @@ pub async fn drp_report(
         let mut final_status = "in_progress".to_string();
         let mut source_site: Option<String> = None;
         let mut target_site: Option<String> = None;
+        let mut target_site_id: Option<Uuid> = None;
         let mut components_count: Option<i64> = None;
         let mut current_phase_start: Option<chrono::DateTime<chrono::Utc>> = None;
-        let mut current_phase_name: Option<String> = None;
 
         for (phase, status, details, at) in &phases {
             // Track first timestamp as switchover start
@@ -325,8 +333,24 @@ pub async fn drp_report(
 
             // Extract site info from PREPARE phase
             if phase == "PREPARE" && status == "in_progress" {
-                source_site = details["source_site_name"].as_str().map(String::from);
-                target_site = details["target_site_name"].as_str().map(String::from);
+                // Get target_site_id and lookup name
+                if let Some(tid) = details["target_site_id"]
+                    .as_str()
+                    .and_then(|s| s.parse::<Uuid>().ok())
+                {
+                    target_site_id = Some(tid);
+                    target_site = sites.get(&tid).cloned();
+                }
+            }
+
+            // Extract source/target profile info from START_TARGET completed phase
+            if phase == "START_TARGET" && status == "completed" {
+                if source_site.is_none() {
+                    source_site = details["source_profile"].as_str().map(String::from);
+                }
+                if target_site.is_none() {
+                    target_site = details["target_profile"].as_str().map(String::from);
+                }
             }
 
             // Extract component count from relevant phases
@@ -340,7 +364,6 @@ pub async fn drp_report(
             // Track phase timing
             if status == "in_progress" {
                 current_phase_start = Some(*at);
-                let _ = current_phase_name.insert(phase.clone()); // For potential future use
             } else if status == "completed" || status == "failed" {
                 let phase_started = current_phase_start.unwrap_or(*at);
                 let duration_ms = (*at - phase_started).num_milliseconds();
@@ -376,6 +399,44 @@ pub async fn drp_report(
             _ => None,
         };
 
+        // Get component sequence during this switchover (stop and start transitions)
+        let component_sequence = if let (Some(start), Some(end)) = (started_at, completed_at) {
+            let transitions =
+                sqlx::query_as::<_, (String, String, String, chrono::DateTime<chrono::Utc>)>(
+                    r#"
+                SELECT c.name, st.from_state, st.to_state, st.created_at
+                FROM state_transitions st
+                JOIN components c ON c.id = st.component_id
+                WHERE c.application_id = $1
+                  AND st.created_at >= $2
+                  AND st.created_at <= $3
+                  AND (st.to_state IN ('STOPPED', 'STOPPING', 'RUNNING', 'STARTING'))
+                ORDER BY st.created_at ASC
+                "#,
+                )
+                .bind(app_id)
+                .bind(start)
+                .bind(end)
+                .fetch_all(&state.db)
+                .await
+                .unwrap_or_default();
+
+            let seq: Vec<Value> = transitions
+                .into_iter()
+                .map(|(name, from, to, at)| {
+                    json!({
+                        "component": name,
+                        "from_state": from,
+                        "to_state": to,
+                        "at": at
+                    })
+                })
+                .collect();
+            Some(seq)
+        } else {
+            None
+        };
+
         switchovers.push(json!({
             "switchover_id": switchover_id,
             "started_at": started_at,
@@ -384,8 +445,10 @@ pub async fn drp_report(
             "status": final_status,
             "source_site": source_site,
             "target_site": target_site,
+            "target_site_id": target_site_id,
             "components_count": components_count,
-            "phases": phase_details
+            "phases": phase_details,
+            "component_sequence": component_sequence
         }));
     }
 

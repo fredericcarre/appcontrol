@@ -85,6 +85,13 @@ export interface PraPhase {
   details: Record<string, unknown>;
 }
 
+export interface ComponentTransition {
+  component: string;
+  from_state: string;
+  to_state: string;
+  at: string;
+}
+
 export interface PraExercise {
   switchover_id: string;
   started_at: string;
@@ -93,8 +100,10 @@ export interface PraExercise {
   status: 'completed' | 'failed' | 'rolled_back' | 'in_progress';
   source_site: string | null;
   target_site: string | null;
+  target_site_id: string | null;
   components_count: number | null;
   phases: PraPhase[];
+  component_sequence: ComponentTransition[] | null;
 }
 
 export interface PraReport {

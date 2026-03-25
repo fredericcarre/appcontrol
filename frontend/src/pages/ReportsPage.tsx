@@ -159,6 +159,50 @@ function PraExerciseCard({
                 </div>
               ))}
             </div>
+
+            {/* Component Sequence */}
+            {exercise.component_sequence && exercise.component_sequence.length > 0 && (
+              <div className="mt-4">
+                <h5 className="font-medium mb-3">Séquence des composants</h5>
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Stop sequence */}
+                  <div>
+                    <h6 className="text-sm font-medium text-muted-foreground mb-2">Arrêts</h6>
+                    <div className="space-y-1">
+                      {exercise.component_sequence
+                        .filter((t) => t.to_state === 'STOPPED' || t.to_state === 'STOPPING')
+                        .map((t, idx) => (
+                          <div key={idx} className="flex items-center gap-2 text-sm">
+                            <span className="w-6 text-muted-foreground">{idx + 1}.</span>
+                            <span className="font-medium">{t.component}</span>
+                            <span className="text-muted-foreground text-xs">
+                              {new Date(t.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                  {/* Start sequence */}
+                  <div>
+                    <h6 className="text-sm font-medium text-muted-foreground mb-2">Démarrages</h6>
+                    <div className="space-y-1">
+                      {exercise.component_sequence
+                        .filter((t) => t.to_state === 'RUNNING' || t.to_state === 'STARTING')
+                        .map((t, idx) => (
+                          <div key={idx} className="flex items-center gap-2 text-sm">
+                            <span className="w-6 text-muted-foreground">{idx + 1}.</span>
+                            <span className="font-medium">{t.component}</span>
+                            <span className="text-muted-foreground text-xs">
+                              {new Date(t.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {exercise.components_count && (
               <p className="text-sm text-muted-foreground mt-3">
                 {exercise.components_count} composants impactés
