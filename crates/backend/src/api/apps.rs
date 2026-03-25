@@ -1297,6 +1297,7 @@ pub async fn get_site_overrides(
     struct BindingRow {
         component_id: Uuid,
         component_name: String,
+        #[allow(dead_code)]
         component_host: Option<String>,
         profile_id: Uuid,
         profile_name: String,
