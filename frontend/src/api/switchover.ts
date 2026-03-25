@@ -80,6 +80,8 @@ export function useAdvanceSwitchover() {
     onSuccess: (_, appId) => {
       qc.invalidateQueries({ queryKey: ['apps', appId, 'switchover'] });
       qc.invalidateQueries({ queryKey: ['apps', appId] });
+      qc.invalidateQueries({ queryKey: ['apps', appId, 'components'] });
+      qc.invalidateQueries({ queryKey: ['apps', appId, 'bindings'] });
     },
   });
 }
@@ -99,6 +101,8 @@ export function useRollbackSwitchover() {
     onSuccess: (_, appId) => {
       qc.invalidateQueries({ queryKey: ['apps', appId, 'switchover'] });
       qc.invalidateQueries({ queryKey: ['apps', appId] });
+      qc.invalidateQueries({ queryKey: ['apps', appId, 'components'] });
+      qc.invalidateQueries({ queryKey: ['apps', appId, 'bindings'] });
     },
   });
 }
@@ -118,6 +122,8 @@ export function useCommitSwitchover() {
     onSuccess: (_, appId) => {
       qc.invalidateQueries({ queryKey: ['apps', appId, 'switchover'] });
       qc.invalidateQueries({ queryKey: ['apps', appId] });
+      qc.invalidateQueries({ queryKey: ['apps', appId, 'components'] });
+      qc.invalidateQueries({ queryKey: ['apps', appId, 'bindings'] });
     },
   });
 }
