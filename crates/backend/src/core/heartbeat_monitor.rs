@@ -27,6 +27,7 @@ struct StaleComponent {
 /// Runs every `check_interval` seconds, queries for agents whose last_heartbeat_at
 /// exceeds the organization's configured timeout, and transitions their components
 /// to UNREACHABLE. Also monitors gateway heartbeats and marks them disconnected.
+/// When agents reconnect with UNREACHABLE components, triggers resync.
 pub async fn run_heartbeat_monitor(state: Arc<AppState>, check_interval: Duration) {
     let mut interval = tokio::time::interval(check_interval);
 
@@ -40,6 +41,11 @@ pub async fn run_heartbeat_monitor(state: Arc<AppState>, check_interval: Duratio
 
         if let Err(e) = check_stale_agents(&state).await {
             tracing::error!("Heartbeat monitor error: {}", e);
+        }
+
+        // Resync UNREACHABLE components when agent is active
+        if let Err(e) = resync_unreachable_components(&state).await {
+            tracing::error!("Resync unreachable components error: {}", e);
         }
     }
 }
@@ -242,6 +248,64 @@ async fn transition_to_unreachable(
         trigger = %trigger,
         "Component transitioned to UNREACHABLE"
     );
+
+    Ok(())
+}
+
+/// Agent with UNREACHABLE components that has a recent heartbeat.
+#[derive(Debug, sqlx::FromRow)]
+struct AgentToResync {
+    agent_id: Uuid,
+    unreachable_count: i64,
+}
+
+/// Detect agents that are active (recent heartbeat) but have UNREACHABLE components.
+/// This happens when an agent reconnects after a timeout period.
+/// We send RunChecksNow to trigger immediate health checks and resync state.
+async fn resync_unreachable_components(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
+    // Find agents with:
+    // 1. Recent heartbeat (within timeout)
+    // 2. At least one component in UNREACHABLE state
+    // 3. Gateway is active
+    let agents_to_resync = sqlx::query_as::<_, AgentToResync>(
+        r#"
+        SELECT a.id AS agent_id, COUNT(c.id) AS unreachable_count
+        FROM agents a
+        JOIN organizations o ON o.id = a.organization_id
+        JOIN components c ON c.agent_id = a.id
+        LEFT JOIN gateways g ON g.id = a.gateway_id
+        WHERE a.is_active = true
+          AND a.last_heartbeat_at IS NOT NULL
+          AND a.last_heartbeat_at >= now() - (o.heartbeat_timeout_seconds || ' seconds')::interval
+          AND c.current_state = 'UNREACHABLE'
+          AND (g.id IS NULL OR g.is_active = true)
+          AND (g.id IS NULL OR g.status = 'active')
+        GROUP BY a.id
+        HAVING COUNT(c.id) > 0
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    if agents_to_resync.is_empty() {
+        return Ok(());
+    }
+
+    tracing::info!(
+        agents_count = agents_to_resync.len(),
+        "Detected active agents with UNREACHABLE components — triggering resync"
+    );
+
+    for agent in &agents_to_resync {
+        tracing::info!(
+            agent_id = %agent.agent_id,
+            unreachable_count = agent.unreachable_count,
+            "Sending RunChecksNow to resync UNREACHABLE components"
+        );
+
+        // Use the websocket module's send_run_checks_now function
+        crate::websocket::send_run_checks_now(state, agent.agent_id);
+    }
 
     Ok(())
 }
