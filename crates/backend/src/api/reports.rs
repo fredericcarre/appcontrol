@@ -324,6 +324,7 @@ pub async fn drp_report(
         let mut target_site_id: Option<Uuid> = None;
         let mut components_count: Option<i64> = None;
         let mut current_phase_start: Option<chrono::DateTime<chrono::Utc>> = None;
+        let mut initiated_by_user_id: Option<String> = None;
 
         for (phase, status, details, at) in &phases {
             // Track first timestamp as switchover start
@@ -331,7 +332,7 @@ pub async fn drp_report(
                 started_at = Some(*at);
             }
 
-            // Extract site info from PREPARE phase
+            // Extract site info and initiated_by from PREPARE phase
             if phase == "PREPARE" && status == "in_progress" {
                 // Get target_site_id and lookup name
                 if let Some(tid) = details["target_site_id"]
@@ -340,6 +341,10 @@ pub async fn drp_report(
                 {
                     target_site_id = Some(tid);
                     target_site = sites.get(&tid).cloned();
+                }
+                // Get initiated_by user_id
+                if initiated_by_user_id.is_none() {
+                    initiated_by_user_id = details["initiated_by"].as_str().map(String::from);
                 }
             }
 
@@ -437,8 +442,25 @@ pub async fn drp_report(
             None
         };
 
+        // Get user email if we have the user_id (extracted from PREPARE phase above)
+        let initiated_by_email: Option<String> = if let Some(ref user_id_str) = initiated_by_user_id {
+            if let Ok(user_id) = uuid::Uuid::parse_str(user_id_str) {
+                sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
+                    .bind(user_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Get executed commands during this switchover from state_transitions
         // The sequencer doesn't log to action_log, so we derive commands from state changes
+        // Include agent and gateway info for each component
         let commands_executed = if let (Some(start), Some(end)) = (started_at, completed_at) {
             let cmds = sqlx::query_as::<
                 _,
@@ -447,13 +469,18 @@ pub async fn drp_report(
                     String,
                     Option<String>,
                     Option<String>,
+                    Option<String>,
+                    Option<String>,
                     chrono::DateTime<chrono::Utc>,
                 ),
             >(
                 r#"
-                SELECT st.to_state, c.name, c.start_cmd, c.stop_cmd, st.created_at
+                SELECT st.to_state, c.name, c.start_cmd, c.stop_cmd,
+                       a.hostname as agent_hostname, g.name as gateway_name, st.created_at
                 FROM state_transitions st
                 JOIN components c ON c.id = st.component_id
+                LEFT JOIN agents a ON a.id = c.agent_id
+                LEFT JOIN gateways g ON g.id = a.gateway_id
                 WHERE c.application_id = $1
                   AND st.created_at >= $2
                   AND st.created_at <= $3
@@ -470,20 +497,24 @@ pub async fn drp_report(
 
             let cmd_list: Vec<Value> = cmds
                 .into_iter()
-                .map(|(to_state, comp_name, start_cmd, stop_cmd, at)| {
-                    // Select the appropriate command based on state transition
-                    let (action, command) = match to_state.as_str() {
-                        "STARTING" => ("start", start_cmd),
-                        "STOPPING" => ("stop", stop_cmd),
-                        _ => ("unknown", None),
-                    };
-                    json!({
-                        "action": action,
-                        "component": comp_name,
-                        "command": command,
-                        "at": at
-                    })
-                })
+                .map(
+                    |(to_state, comp_name, start_cmd, stop_cmd, agent, gateway, at)| {
+                        // Select the appropriate command based on state transition
+                        let (action, command) = match to_state.as_str() {
+                            "STARTING" => ("start", start_cmd),
+                            "STOPPING" => ("stop", stop_cmd),
+                            _ => ("unknown", None),
+                        };
+                        json!({
+                            "action": action,
+                            "component": comp_name,
+                            "command": command,
+                            "agent": agent,
+                            "gateway": gateway,
+                            "at": at
+                        })
+                    },
+                )
                 .collect();
             Some(cmd_list)
         } else {
@@ -496,6 +527,7 @@ pub async fn drp_report(
             "completed_at": completed_at,
             "rto_seconds": rto_seconds,
             "status": final_status,
+            "initiated_by": initiated_by_email,
             "source_site": source_site,
             "target_site": target_site,
             "target_site_id": target_site_id,
@@ -514,9 +546,12 @@ pub async fn drp_report(
     });
 
     // Fetch components for the topology graph
-    let components = sqlx::query_as::<_, (Uuid, String, String, Option<f64>, Option<f64>)>(
+    // position_x/y are `real` (f32) in Postgres, cast to float8 for f64 compatibility
+    let components = sqlx::query_as::<_, (Uuid, String, String, f64, f64)>(
         r#"
-        SELECT id, name, component_type, position_x, position_y
+        SELECT id, name, component_type,
+               COALESCE(position_x, 0)::float8,
+               COALESCE(position_y, 0)::float8
         FROM components
         WHERE application_id = $1
         ORDER BY name
@@ -534,7 +569,7 @@ pub async fn drp_report(
                 "id": id,
                 "name": name,
                 "type": comp_type,
-                "position": { "x": x.unwrap_or(0.0), "y": y.unwrap_or(0.0) }
+                "position": { "x": x, "y": y }
             })
         })
         .collect();
@@ -542,10 +577,9 @@ pub async fn drp_report(
     // Fetch dependencies for the topology edges
     let dependencies = sqlx::query_as::<_, (Uuid, Uuid)>(
         r#"
-        SELECT d.upstream_id, d.downstream_id
+        SELECT d.from_component_id, d.to_component_id
         FROM dependencies d
-        JOIN components c ON c.id = d.upstream_id
-        WHERE c.application_id = $1
+        WHERE d.application_id = $1
         "#,
     )
     .bind(app_id)

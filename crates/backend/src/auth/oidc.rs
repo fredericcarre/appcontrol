@@ -225,7 +225,7 @@ async fn discover_authorization_endpoint(discovery_url: &str) -> Result<String, 
 
 /// Find existing user by OIDC subject or create a new one.
 async fn find_or_create_oidc_user(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     email: &str,
     display_name: &str,
     oidc_sub: &str,

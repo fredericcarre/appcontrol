@@ -962,7 +962,7 @@ pub async fn list_revoked_certificates(
 
 /// Check if a certificate fingerprint is revoked.
 /// Used internally by the gateway mTLS verification.
-pub async fn is_cert_revoked(db: &sqlx::PgPool, org_id: Uuid, fingerprint: &str) -> bool {
+pub async fn is_cert_revoked(db: &crate::db::DbPool, org_id: Uuid, fingerprint: &str) -> bool {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM revoked_certificates WHERE organization_id = $1 AND fingerprint = $2)",
     )
@@ -976,7 +976,7 @@ pub async fn is_cert_revoked(db: &sqlx::PgPool, org_id: Uuid, fingerprint: &str)
 /// Verify an agent's certificate fingerprint matches what we issued (pinning).
 /// Returns true if the fingerprint matches the stored one for this agent.
 pub async fn verify_agent_cert_pinning(
-    db: &sqlx::PgPool,
+    db: &crate::db::DbPool,
     agent_id: Uuid,
     presented_fingerprint: &str,
 ) -> bool {

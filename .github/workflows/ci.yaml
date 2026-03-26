@@ -74,6 +74,36 @@ jobs:
           retention-days: 5
 
   # ---------------------------------------------------------------------------
+  # SQLite Build Verification — ensure dual-mode backend compiles
+  # ---------------------------------------------------------------------------
+  sqlite-build:
+    name: SQLite Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-sqlite-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-sqlite-
+
+      - name: Build backend with SQLite feature
+        run: cargo build --package appcontrol-backend --no-default-features --features sqlite
+
+      - name: Run unit tests with SQLite feature
+        run: cargo test --package appcontrol-backend --no-default-features --features sqlite -- --nocapture
+
+  # ---------------------------------------------------------------------------
   # E2E Integration Tests — in-process backend + real PostgreSQL
   # ---------------------------------------------------------------------------
   e2e-tests:

@@ -694,7 +694,7 @@ pub async fn enroll(
 
 /// Log a failed enrollment attempt (APPEND-ONLY).
 async fn log_enrollment_event(
-    db: &sqlx::PgPool,
+    db: &crate::db::DbPool,
     org_id: Uuid,
     token_id: Option<Uuid>,
     event_type: &str,

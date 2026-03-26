@@ -26,7 +26,7 @@ impl From<super::sequencer::SequencerError> for SwitchoverError {
 
 /// Start a new switchover process (6 phases: PREPARE → VALIDATE → STOP_SOURCE → SYNC → START_TARGET → COMMIT).
 pub async fn start_switchover(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     app_id: Uuid,
     target_site_id: Uuid,
     mode: &str,
@@ -781,7 +781,7 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
 }
 
 /// Rollback the switchover.
-pub async fn rollback(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
+pub async fn rollback(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
     let current = sqlx::query_as::<_, (Uuid, String)>(
         r#"
         SELECT switchover_id, phase
@@ -821,7 +821,7 @@ pub async fn rollback(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Value, Switch
 }
 
 /// Commit the switchover (final phase).
-pub async fn commit(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
+pub async fn commit(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
     let current = sqlx::query_as::<_, (Uuid, String)>(
         r#"
         SELECT switchover_id, phase
@@ -862,7 +862,7 @@ pub async fn commit(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Value, Switchov
 }
 
 /// Get switchover status.
-pub async fn get_status(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
+pub async fn get_status(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
     let logs = sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
         r#"
         SELECT switchover_id, phase, status, created_at
@@ -897,7 +897,7 @@ pub async fn get_status(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Value, Swit
 
 /// Retrieve the details JSON from the PREPARE phase entry for a switchover.
 async fn get_switchover_details(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     switchover_id: Uuid,
 ) -> Result<Value, SwitchoverError> {
     sqlx::query_scalar::<_, Value>(

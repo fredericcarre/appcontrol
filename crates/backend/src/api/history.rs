@@ -220,19 +220,7 @@ pub async fn app_history(
     let initial_states = get_initial_states(&state.db, &component_ids, from).await?;
 
     // 5. Get all state transitions in the time range
-    let transitions = sqlx::query_as::<_, StateTransitionRow>(
-        r#"
-        SELECT component_id, from_state, to_state, trigger, created_at
-        FROM state_transitions
-        WHERE component_id = ANY($1) AND created_at >= $2 AND created_at <= $3
-        ORDER BY created_at ASC
-        "#,
-    )
-    .bind(&component_ids)
-    .bind(from)
-    .bind(to)
-    .fetch_all(&state.db)
-    .await?;
+    let transitions = fetch_transition_rows(&state.db, &component_ids, from, to).await?;
 
     // 6. Calculate snapshots at each resolution interval
     let snapshots = calculate_snapshots(
@@ -274,13 +262,21 @@ pub async fn app_history(
 /// Get the initial state of each component at a given time.
 /// This finds the most recent state_transition before the given time.
 async fn get_initial_states(
-    db: &sqlx::PgPool,
+    db: &crate::db::DbPool,
     component_ids: &[Uuid],
     at: DateTime<Utc>,
 ) -> Result<HashMap<Uuid, String>, ApiError> {
-    // For each component, get either the most recent transition before 'at',
-    // or fall back to the current_state from the components table
-    let rows = sqlx::query_as::<_, (Uuid, String)>(
+    let rows = fetch_initial_states(db, component_ids, at).await?;
+    Ok(rows.into_iter().collect())
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_initial_states(
+    db: &crate::db::DbPool,
+    component_ids: &[Uuid],
+    at: DateTime<Utc>,
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid, String)>(
         r#"
         SELECT c.id, COALESCE(
             (SELECT st.to_state
@@ -297,9 +293,45 @@ async fn get_initial_states(
     .bind(component_ids)
     .bind(at)
     .fetch_all(db)
-    .await?;
+    .await
+}
 
-    Ok(rows.into_iter().collect())
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_initial_states(
+    db: &crate::db::DbPool,
+    component_ids: &[Uuid],
+    at: DateTime<Utc>,
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    if component_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    // SQLite: use IN clause with placeholders
+    // $1 is for 'at', component_ids start at $2
+    let placeholders: Vec<String> = (2..=1 + component_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT c.id, COALESCE(
+            (SELECT st.to_state
+             FROM state_transitions st
+             WHERE st.component_id = c.id AND st.created_at < $1
+             ORDER BY st.created_at DESC
+             LIMIT 1),
+            c.current_state
+        ) as state
+        FROM components c
+        WHERE c.id IN ({})
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, (String, String)>(&query).bind(at.to_rfc3339());
+    for id in component_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows: Vec<(String, String)> = q.fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id_str, state)| Uuid::parse_str(&id_str).ok().map(|id| (id, state)))
+        .collect())
 }
 
 /// Calculate snapshots at each resolution interval.
@@ -362,7 +394,7 @@ fn calculate_snapshots(
 
 /// Get all events (state transitions, user actions, commands) in the time range.
 async fn get_events(
-    db: &sqlx::PgPool,
+    db: &crate::db::DbPool,
     app_id: Uuid,
     component_ids: &[Uuid],
     component_names: &HashMap<Uuid, String>,
@@ -373,21 +405,7 @@ async fn get_events(
     let mut events = Vec::new();
 
     // State transitions
-    let transitions = sqlx::query_as::<_, (Uuid, String, String, String, DateTime<Utc>)>(
-        r#"
-        SELECT component_id, from_state, to_state, trigger, created_at
-        FROM state_transitions
-        WHERE component_id = ANY($1) AND created_at >= $2 AND created_at <= $3
-        ORDER BY created_at ASC
-        LIMIT $4
-        "#,
-    )
-    .bind(component_ids)
-    .bind(from)
-    .bind(to)
-    .bind(limit)
-    .fetch_all(db)
-    .await?;
+    let transitions = fetch_state_transitions(db, component_ids, from, to, limit).await?;
 
     for (comp_id, from_state, to_state, trigger, at) in transitions {
         events.push(HistoryEvent {
@@ -416,7 +434,7 @@ async fn get_events(
         ),
     >(
         r#"
-        SELECT COALESCE(u.email, al.user_id::text), al.action, al.details, al.created_at,
+        SELECT COALESCE(u.email, CAST(al.user_id AS TEXT)), al.action, al.details, al.created_at,
                al.status, al.error_message
         FROM action_log al
         LEFT JOIN users u ON u.id = al.user_id
@@ -447,39 +465,7 @@ async fn get_events(
     }
 
     // User actions on components
-    let component_actions = sqlx::query_as::<
-        _,
-        (
-            String,
-            String,
-            Uuid,
-            String,
-            Value,
-            DateTime<Utc>,
-            Option<String>,
-            Option<String>,
-        ),
-    >(
-        r#"
-        SELECT COALESCE(u.email, al.user_id::text), al.action, al.resource_id,
-               COALESCE(c.name, al.resource_id::text), al.details, al.created_at,
-               al.status, al.error_message
-        FROM action_log al
-        LEFT JOIN users u ON u.id = al.user_id
-        LEFT JOIN components c ON c.id = al.resource_id
-        WHERE al.resource_type = 'component'
-          AND al.resource_id = ANY($1)
-          AND al.created_at >= $2 AND al.created_at <= $3
-        ORDER BY al.created_at ASC
-        LIMIT $4
-        "#,
-    )
-    .bind(component_ids)
-    .bind(from)
-    .bind(to)
-    .bind(limit)
-    .fetch_all(db)
-    .await?;
+    let component_actions = fetch_component_actions(db, component_ids, from, to, limit).await?;
 
     for (user, action, comp_id, comp_name, details, at, status, error_message) in component_actions
     {
@@ -499,33 +485,7 @@ async fn get_events(
     }
 
     // Command executions
-    let commands = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            Uuid,
-            String,
-            Option<i16>,
-            Option<i32>,
-            DateTime<Utc>,
-            Option<DateTime<Utc>>,
-        ),
-    >(
-        r#"
-        SELECT ce.request_id, ce.component_id, ce.command_type,
-               ce.exit_code, ce.duration_ms, ce.dispatched_at, ce.completed_at
-        FROM command_executions ce
-        WHERE ce.component_id = ANY($1) AND ce.dispatched_at >= $2 AND ce.dispatched_at <= $3
-        ORDER BY ce.dispatched_at ASC
-        LIMIT $4
-        "#,
-    )
-    .bind(component_ids)
-    .bind(from)
-    .bind(to)
-    .bind(limit)
-    .fetch_all(db)
-    .await?;
+    let commands = fetch_command_executions(db, component_ids, from, to, limit).await?;
 
     for (request_id, comp_id, cmd_type, exit_code, duration_ms, dispatched_at, completed_at) in
         commands
@@ -553,6 +513,304 @@ async fn get_events(
     events.truncate(limit as usize);
 
     Ok(events)
+}
+
+// ============================================================================
+// Database-specific helper functions
+// ============================================================================
+
+#[cfg(feature = "postgres")]
+async fn fetch_transition_rows(
+    db: &crate::db::DbPool,
+    component_ids: &[Uuid],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Vec<StateTransitionRow>, sqlx::Error> {
+    sqlx::query_as::<_, StateTransitionRow>(
+        r#"
+        SELECT component_id, from_state, to_state, trigger, created_at
+        FROM state_transitions
+        WHERE component_id = ANY($1) AND created_at >= $2 AND created_at <= $3
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(component_ids)
+    .bind(from)
+    .bind(to)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_transition_rows(
+    db: &crate::db::DbPool,
+    component_ids: &[Uuid],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Vec<StateTransitionRow>, sqlx::Error> {
+    if component_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (3..=2 + component_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT component_id, from_state, to_state, trigger, created_at
+        FROM state_transitions
+        WHERE component_id IN ({}) AND created_at >= $1 AND created_at <= $2
+        ORDER BY created_at ASC
+        "#,
+        placeholders.join(", ")
+    );
+    // SQLite returns TEXT for UUID and timestamp - use a custom row type
+    #[derive(sqlx::FromRow)]
+    struct SqliteRow {
+        component_id: String,
+        from_state: String,
+        to_state: String,
+        trigger: String,
+        created_at: String,
+    }
+    let mut q = sqlx::query_as::<_, SqliteRow>(&query)
+        .bind(from.to_rfc3339())
+        .bind(to.to_rfc3339());
+    for id in component_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows = q.fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let id = Uuid::parse_str(&r.component_id).ok()?;
+            let at = chrono::DateTime::parse_from_rfc3339(&r.created_at).ok()?.with_timezone(&Utc);
+            Some(StateTransitionRow {
+                component_id: id,
+                from_state: r.from_state,
+                to_state: r.to_state,
+                trigger: r.trigger,
+                created_at: at,
+            })
+        })
+        .collect())
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_state_transitions(
+    db: &crate::db::DbPool,
+    component_ids: &[Uuid],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    limit: i64,
+) -> Result<Vec<(Uuid, String, String, String, DateTime<Utc>)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid, String, String, String, DateTime<Utc>)>(
+        r#"
+        SELECT component_id, from_state, to_state, trigger, created_at
+        FROM state_transitions
+        WHERE component_id = ANY($1) AND created_at >= $2 AND created_at <= $3
+        ORDER BY created_at ASC
+        LIMIT $4
+        "#,
+    )
+    .bind(component_ids)
+    .bind(from)
+    .bind(to)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_state_transitions(
+    db: &crate::db::DbPool,
+    component_ids: &[Uuid],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    limit: i64,
+) -> Result<Vec<(Uuid, String, String, String, DateTime<Utc>)>, sqlx::Error> {
+    if component_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (4..=3 + component_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT component_id, from_state, to_state, trigger, created_at
+        FROM state_transitions
+        WHERE component_id IN ({}) AND created_at >= $1 AND created_at <= $2
+        ORDER BY created_at ASC
+        LIMIT $3
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, (String, String, String, String, String)>(&query)
+        .bind(from.to_rfc3339())
+        .bind(to.to_rfc3339())
+        .bind(limit);
+    for id in component_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows: Vec<(String, String, String, String, String)> = q.fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(comp_id, from_state, to_state, trigger, created_at)| {
+            let id = Uuid::parse_str(&comp_id).ok()?;
+            let at = chrono::DateTime::parse_from_rfc3339(&created_at).ok()?.with_timezone(&Utc);
+            Some((id, from_state, to_state, trigger, at))
+        })
+        .collect())
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_component_actions(
+    db: &crate::db::DbPool,
+    component_ids: &[Uuid],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    limit: i64,
+) -> Result<Vec<(String, String, Uuid, String, Value, DateTime<Utc>, Option<String>, Option<String>)>, sqlx::Error> {
+    sqlx::query_as::<
+        _,
+        (String, String, Uuid, String, Value, DateTime<Utc>, Option<String>, Option<String>),
+    >(
+        r#"
+        SELECT COALESCE(u.email, al.user_id::text), al.action, al.resource_id,
+               COALESCE(c.name, al.resource_id::text), al.details, al.created_at,
+               al.status, al.error_message
+        FROM action_log al
+        LEFT JOIN users u ON u.id = al.user_id
+        LEFT JOIN components c ON c.id = al.resource_id
+        WHERE al.resource_type = 'component'
+          AND al.resource_id = ANY($1)
+          AND al.created_at >= $2 AND al.created_at <= $3
+        ORDER BY al.created_at ASC
+        LIMIT $4
+        "#,
+    )
+    .bind(component_ids)
+    .bind(from)
+    .bind(to)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_component_actions(
+    db: &crate::db::DbPool,
+    component_ids: &[Uuid],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    limit: i64,
+) -> Result<Vec<(String, String, Uuid, String, Value, DateTime<Utc>, Option<String>, Option<String>)>, sqlx::Error> {
+    if component_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (4..=3 + component_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT COALESCE(u.email, CAST(al.user_id AS TEXT)), al.action, al.resource_id,
+               COALESCE(c.name, CAST(al.resource_id AS TEXT)), al.details, al.created_at,
+               al.status, al.error_message
+        FROM action_log al
+        LEFT JOIN users u ON u.id = al.user_id
+        LEFT JOIN components c ON c.id = al.resource_id
+        WHERE al.resource_type = 'component'
+          AND al.resource_id IN ({})
+          AND al.created_at >= $1 AND al.created_at <= $2
+        ORDER BY al.created_at ASC
+        LIMIT $3
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>)>(&query)
+        .bind(from.to_rfc3339())
+        .bind(to.to_rfc3339())
+        .bind(limit);
+    for id in component_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows = q.fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(user, action, resource_id, comp_name, details, created_at, status, error)| {
+            let id = Uuid::parse_str(&resource_id).ok()?;
+            let at = chrono::DateTime::parse_from_rfc3339(&created_at).ok()?.with_timezone(&Utc);
+            let details_val: Value = serde_json::from_str(&details).unwrap_or(Value::Null);
+            Some((user, action, id, comp_name, details_val, at, status, error))
+        })
+        .collect())
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_command_executions(
+    db: &crate::db::DbPool,
+    component_ids: &[Uuid],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    limit: i64,
+) -> Result<Vec<(Uuid, Uuid, String, Option<i16>, Option<i32>, DateTime<Utc>, Option<DateTime<Utc>>)>, sqlx::Error> {
+    sqlx::query_as::<
+        _,
+        (Uuid, Uuid, String, Option<i16>, Option<i32>, DateTime<Utc>, Option<DateTime<Utc>>),
+    >(
+        r#"
+        SELECT ce.request_id, ce.component_id, ce.command_type,
+               ce.exit_code, ce.duration_ms, ce.dispatched_at, ce.completed_at
+        FROM command_executions ce
+        WHERE ce.component_id = ANY($1) AND ce.dispatched_at >= $2 AND ce.dispatched_at <= $3
+        ORDER BY ce.dispatched_at ASC
+        LIMIT $4
+        "#,
+    )
+    .bind(component_ids)
+    .bind(from)
+    .bind(to)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_command_executions(
+    db: &crate::db::DbPool,
+    component_ids: &[Uuid],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    limit: i64,
+) -> Result<Vec<(Uuid, Uuid, String, Option<i16>, Option<i32>, DateTime<Utc>, Option<DateTime<Utc>>)>, sqlx::Error> {
+    if component_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (4..=3 + component_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT ce.request_id, ce.component_id, ce.command_type,
+               ce.exit_code, ce.duration_ms, ce.dispatched_at, ce.completed_at
+        FROM command_executions ce
+        WHERE ce.component_id IN ({}) AND ce.dispatched_at >= $1 AND ce.dispatched_at <= $2
+        ORDER BY ce.dispatched_at ASC
+        LIMIT $3
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, (String, String, String, Option<i16>, Option<i32>, String, Option<String>)>(&query)
+        .bind(from.to_rfc3339())
+        .bind(to.to_rfc3339())
+        .bind(limit);
+    for id in component_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows = q.fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(request_id, comp_id, cmd_type, exit_code, duration_ms, dispatched_at, completed_at)| {
+            let req_id = Uuid::parse_str(&request_id).ok()?;
+            let cid = Uuid::parse_str(&comp_id).ok()?;
+            let dispatched = chrono::DateTime::parse_from_rfc3339(&dispatched_at).ok()?.with_timezone(&Utc);
+            let completed = completed_at
+                .and_then(|c| chrono::DateTime::parse_from_rfc3339(&c).ok())
+                .map(|c| c.with_timezone(&Utc));
+            Some((req_id, cid, cmd_type, exit_code, duration_ms, dispatched, completed))
+        })
+        .collect())
 }
 
 #[cfg(test)]

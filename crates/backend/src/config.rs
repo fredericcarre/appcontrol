@@ -1,6 +1,31 @@
 use crate::auth::oidc::OidcConfig;
 use crate::auth::saml::SamlConfig;
 
+/// Database type for runtime selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DatabaseType {
+    #[default]
+    Postgres,
+    Sqlite,
+}
+
+impl DatabaseType {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "sqlite" => DatabaseType::Sqlite,
+            _ => DatabaseType::Postgres,
+        }
+    }
+
+    pub fn is_postgres(&self) -> bool {
+        matches!(self, DatabaseType::Postgres)
+    }
+
+    pub fn is_sqlite(&self) -> bool {
+        matches!(self, DatabaseType::Sqlite)
+    }
+}
+
 /// Seed configuration for the initial organization and admin user.
 /// All values are read from environment variables at startup.
 #[derive(Debug, Clone)]
@@ -45,6 +70,8 @@ impl SeedConfig {
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub database_url: String,
+    /// Database type: postgres (default) or sqlite
+    pub database_type: DatabaseType,
     pub port: u16,
     pub jwt_secret: String,
     pub jwt_issuer: String,
@@ -95,6 +122,11 @@ impl AppConfig {
         let app_env = std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
         let is_production = app_env == "production";
 
+        // DATABASE_TYPE: postgres (default) or sqlite
+        let database_type = std::env::var("DATABASE_TYPE")
+            .map(|s| DatabaseType::from_str(&s))
+            .unwrap_or_default();
+
         // JWT_SECRET: required in production, fallback in dev
         let jwt_secret = match std::env::var("JWT_SECRET") {
             Ok(secret) => {
@@ -125,21 +157,35 @@ impl AppConfig {
         };
 
         // DATABASE_URL: required in production, fallback in dev
+        // For SQLite, default to ./appcontrol.db; for PostgreSQL, default to localhost
         let database_url = match std::env::var("DATABASE_URL") {
             Ok(url) => {
-                if is_production && url.contains("appcontrol:appcontrol@localhost") {
+                if is_production
+                    && database_type.is_postgres()
+                    && url.contains("appcontrol:appcontrol@localhost")
+                {
                     tracing::warn!("DATABASE_URL uses default credentials in production!");
                 }
                 url
             }
             Err(_) => {
-                if is_production {
-                    panic!("FATAL: DATABASE_URL must be set when APP_ENV=production.");
+                if is_production && database_type.is_postgres() {
+                    panic!("FATAL: DATABASE_URL must be set when APP_ENV=production (PostgreSQL mode).");
                 }
-                tracing::warn!(
-                    "DATABASE_URL not set — using localhost default. NOT SAFE FOR PRODUCTION."
-                );
-                "postgresql://appcontrol:appcontrol@localhost:5432/appcontrol".to_string()
+                match database_type {
+                    DatabaseType::Sqlite => {
+                        let path = std::env::var("SQLITE_PATH")
+                            .unwrap_or_else(|_| "./appcontrol.db".to_string());
+                        tracing::info!(path = %path, "Using SQLite database");
+                        format!("sqlite:{}", path)
+                    }
+                    DatabaseType::Postgres => {
+                        tracing::warn!(
+                            "DATABASE_URL not set — using localhost default. NOT SAFE FOR PRODUCTION."
+                        );
+                        "postgresql://appcontrol:appcontrol@localhost:5432/appcontrol".to_string()
+                    }
+                }
             }
         };
 
@@ -162,6 +208,7 @@ impl AppConfig {
 
         Self {
             database_url,
+            database_type,
             port: std::env::var("PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())

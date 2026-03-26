@@ -1437,7 +1437,7 @@ pub async fn list_check_events(
 ///
 /// No multicast: returns the first match only. If multiple agents
 /// share an IP, the first one (by created_at) wins.
-pub async fn resolve_host_to_agent(pool: &sqlx::PgPool, host: &str) -> Option<Uuid> {
+pub async fn resolve_host_to_agent(pool: &crate::db::DbPool, host: &str) -> Option<Uuid> {
     // 1. Try exact hostname match
     let by_hostname = sqlx::query_scalar::<_, Uuid>(
         "SELECT id FROM agents WHERE hostname = $1 AND is_active = true ORDER BY created_at LIMIT 1",
@@ -1469,7 +1469,7 @@ pub async fn resolve_host_to_agent(pool: &sqlx::PgPool, host: &str) -> Option<Uu
 /// This is the "late binding" path: user creates component with host="srv-oracle.prod",
 /// agent registers later with hostname="srv-oracle.prod" → agent_id is set automatically.
 pub async fn resolve_components_for_agent(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     agent_id: Uuid,
     hostname: &str,
     ip_addresses: &[String],

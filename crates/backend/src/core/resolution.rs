@@ -9,7 +9,8 @@
 //! 3. IP address match (from agents.ip_addresses JSONB array)
 
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool};
+use sqlx::FromRow;
+use crate::db::DbPool;
 use uuid::Uuid;
 
 /// Resolution status for a single host
@@ -99,7 +100,7 @@ struct AgentRow {
 /// 2. FQDN suffix match (host is prefix of agent hostname, followed by '.')
 /// 3. IP address match (host is in agents.ip_addresses array)
 pub async fn resolve_host_with_options(
-    pool: &PgPool,
+    pool: &DbPool,
     host: &str,
     gateway_ids: &[Uuid],
     org_id: Uuid,
@@ -107,28 +108,7 @@ pub async fn resolve_host_with_options(
     let host_lower = host.to_lowercase();
 
     // 1. Try exact hostname match
-    let exact_matches: Vec<AgentRow> = sqlx::query_as(
-        r#"
-        SELECT
-            a.id as agent_id,
-            a.hostname,
-            a.gateway_id,
-            g.name as gateway_name,
-            COALESCE(a.ip_addresses, '[]'::jsonb) as ip_addresses,
-            a.is_active
-        FROM agents a
-        LEFT JOIN gateways g ON a.gateway_id = g.id
-        WHERE a.organization_id = $1
-          AND LOWER(a.hostname) = LOWER($2)
-          AND ($3::uuid[] IS NULL OR array_length($3::uuid[], 1) IS NULL OR a.gateway_id = ANY($3))
-          AND a.is_active = true
-        "#,
-    )
-    .bind(org_id)
-    .bind(&host_lower)
-    .bind(gateway_ids)
-    .fetch_all(pool)
-    .await?;
+    let exact_matches: Vec<AgentRow> = query_agents_exact_hostname(pool, org_id, &host_lower, gateway_ids).await?;
 
     if exact_matches.len() == 1 {
         let m = &exact_matches[0];
@@ -158,28 +138,7 @@ pub async fn resolve_host_with_options(
 
     // 2. Try FQDN suffix match (host is prefix of hostname followed by '.')
     let fqdn_pattern = format!("{}.", host_lower);
-    let fqdn_matches: Vec<AgentRow> = sqlx::query_as(
-        r#"
-        SELECT
-            a.id as agent_id,
-            a.hostname,
-            a.gateway_id,
-            g.name as gateway_name,
-            COALESCE(a.ip_addresses, '[]'::jsonb) as ip_addresses,
-            a.is_active
-        FROM agents a
-        LEFT JOIN gateways g ON a.gateway_id = g.id
-        WHERE a.organization_id = $1
-          AND LOWER(a.hostname) LIKE $2 || '%'
-          AND ($3::uuid[] IS NULL OR array_length($3::uuid[], 1) IS NULL OR a.gateway_id = ANY($3))
-          AND a.is_active = true
-        "#,
-    )
-    .bind(org_id)
-    .bind(&fqdn_pattern)
-    .bind(gateway_ids)
-    .fetch_all(pool)
-    .await?;
+    let fqdn_matches: Vec<AgentRow> = query_agents_fqdn_match(pool, org_id, &fqdn_pattern, gateway_ids).await?;
 
     if fqdn_matches.len() == 1 {
         let m = &fqdn_matches[0];
@@ -208,29 +167,7 @@ pub async fn resolve_host_with_options(
     }
 
     // 3. Try IP address match
-    let ip_json = serde_json::json!([host]);
-    let ip_matches: Vec<AgentRow> = sqlx::query_as(
-        r#"
-        SELECT
-            a.id as agent_id,
-            a.hostname,
-            a.gateway_id,
-            g.name as gateway_name,
-            COALESCE(a.ip_addresses, '[]'::jsonb) as ip_addresses,
-            a.is_active
-        FROM agents a
-        LEFT JOIN gateways g ON a.gateway_id = g.id
-        WHERE a.organization_id = $1
-          AND a.ip_addresses @> $2
-          AND ($3::uuid[] IS NULL OR array_length($3::uuid[], 1) IS NULL OR a.gateway_id = ANY($3))
-          AND a.is_active = true
-        "#,
-    )
-    .bind(org_id)
-    .bind(&ip_json)
-    .bind(gateway_ids)
-    .fetch_all(pool)
-    .await?;
+    let ip_matches: Vec<AgentRow> = query_agents_ip_match(pool, org_id, host, gateway_ids).await?;
 
     if ip_matches.len() == 1 {
         let m = &ip_matches[0];
@@ -264,30 +201,11 @@ pub async fn resolve_host_with_options(
 
 /// List all available agents on specified gateways (for manual selection)
 pub async fn list_available_agents(
-    pool: &PgPool,
+    pool: &DbPool,
     gateway_ids: &[Uuid],
     org_id: Uuid,
 ) -> Result<Vec<AvailableAgent>, sqlx::Error> {
-    let agents: Vec<AgentRow> = sqlx::query_as(
-        r#"
-        SELECT
-            a.id as agent_id,
-            a.hostname,
-            a.gateway_id,
-            g.name as gateway_name,
-            COALESCE(a.ip_addresses, '[]'::jsonb) as ip_addresses,
-            a.is_active
-        FROM agents a
-        LEFT JOIN gateways g ON a.gateway_id = g.id
-        WHERE a.organization_id = $1
-          AND ($2::uuid[] IS NULL OR array_length($2::uuid[], 1) IS NULL OR a.gateway_id = ANY($2))
-        ORDER BY a.hostname
-        "#,
-    )
-    .bind(org_id)
-    .bind(gateway_ids)
-    .fetch_all(pool)
-    .await?;
+    let agents: Vec<AgentRow> = query_agents_list(pool, org_id, gateway_ids).await?;
 
     Ok(agents
         .into_iter()
@@ -311,7 +229,7 @@ struct PatternRuleRow {
 
 /// Apply DR pattern rules to suggest a DR hostname from a primary hostname
 pub async fn suggest_dr_hostname(
-    pool: &PgPool,
+    pool: &DbPool,
     org_id: Uuid,
     primary_hostname: &str,
 ) -> Result<Option<String>, sqlx::Error> {
@@ -341,7 +259,7 @@ pub async fn suggest_dr_hostname(
 
 /// Try to resolve a suggested DR hostname to an actual agent
 pub async fn resolve_dr_agent(
-    pool: &PgPool,
+    pool: &DbPool,
     org_id: Uuid,
     dr_gateway_ids: &[Uuid],
     primary_hostname: &str,
@@ -354,6 +272,239 @@ pub async fn resolve_dr_agent(
     }
 
     Ok(None)
+}
+
+// ============================================================================
+// Database-specific helper functions
+// ============================================================================
+
+#[cfg(feature = "postgres")]
+async fn query_agents_exact_hostname(
+    pool: &DbPool,
+    org_id: Uuid,
+    host_lower: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<AgentRow>, sqlx::Error> {
+    sqlx::query_as::<_, AgentRow>(
+        r#"
+        SELECT a.id AS agent_id, a.hostname, a.gateway_id,
+               g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a
+        LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1
+          AND LOWER(a.hostname) = $2
+          AND a.gateway_id = ANY($3)
+        "#,
+    )
+    .bind(org_id)
+    .bind(host_lower)
+    .bind(gateway_ids)
+    .fetch_all(pool)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn query_agents_exact_hostname(
+    pool: &DbPool,
+    org_id: Uuid,
+    host_lower: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<AgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT a.id AS agent_id, a.hostname, a.gateway_id,
+               g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a
+        LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1
+          AND LOWER(a.hostname) = $2
+          AND a.gateway_id IN ({})
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, AgentRow>(&query)
+        .bind(org_id.to_string())
+        .bind(host_lower);
+    // Bind placeholder $3 is skipped, gateway_ids start at $4
+    for gid in gateway_ids {
+        q = q.bind(gid.to_string());
+    }
+    q.fetch_all(pool).await
+}
+
+#[cfg(feature = "postgres")]
+async fn query_agents_fqdn_match(
+    pool: &DbPool,
+    org_id: Uuid,
+    fqdn_pattern: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<AgentRow>, sqlx::Error> {
+    sqlx::query_as::<_, AgentRow>(
+        r#"
+        SELECT a.id AS agent_id, a.hostname, a.gateway_id,
+               g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a
+        LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1
+          AND LOWER(a.hostname) LIKE $2 || '%'
+          AND a.gateway_id = ANY($3)
+        "#,
+    )
+    .bind(org_id)
+    .bind(fqdn_pattern)
+    .bind(gateway_ids)
+    .fetch_all(pool)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn query_agents_fqdn_match(
+    pool: &DbPool,
+    org_id: Uuid,
+    fqdn_pattern: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<AgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT a.id AS agent_id, a.hostname, a.gateway_id,
+               g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a
+        LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1
+          AND LOWER(a.hostname) LIKE $2 || '%'
+          AND a.gateway_id IN ({})
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, AgentRow>(&query)
+        .bind(org_id.to_string())
+        .bind(fqdn_pattern);
+    for gid in gateway_ids {
+        q = q.bind(gid.to_string());
+    }
+    q.fetch_all(pool).await
+}
+
+#[cfg(feature = "postgres")]
+async fn query_agents_ip_match(
+    pool: &DbPool,
+    org_id: Uuid,
+    ip: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<AgentRow>, sqlx::Error> {
+    sqlx::query_as::<_, AgentRow>(
+        r#"
+        SELECT a.id AS agent_id, a.hostname, a.gateway_id,
+               g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a
+        LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1
+          AND a.ip_addresses @> $2::jsonb
+          AND a.gateway_id = ANY($3)
+        "#,
+    )
+    .bind(org_id)
+    .bind(serde_json::json!([ip]))
+    .bind(gateway_ids)
+    .fetch_all(pool)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn query_agents_ip_match(
+    pool: &DbPool,
+    org_id: Uuid,
+    ip: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<AgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    // SQLite: check if ip_addresses JSON array contains the IP
+    let query = format!(
+        r#"
+        SELECT a.id AS agent_id, a.hostname, a.gateway_id,
+               g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a
+        LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1
+          AND EXISTS (
+              SELECT 1 FROM json_each(a.ip_addresses)
+              WHERE json_each.value = $2
+          )
+          AND a.gateway_id IN ({})
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, AgentRow>(&query)
+        .bind(org_id.to_string())
+        .bind(ip);
+    for gid in gateway_ids {
+        q = q.bind(gid.to_string());
+    }
+    q.fetch_all(pool).await
+}
+
+#[cfg(feature = "postgres")]
+async fn query_agents_list(
+    pool: &DbPool,
+    org_id: Uuid,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<AgentRow>, sqlx::Error> {
+    sqlx::query_as::<_, AgentRow>(
+        r#"
+        SELECT a.id AS agent_id, a.hostname, a.gateway_id,
+               g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a
+        LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1
+          AND a.gateway_id = ANY($2)
+        ORDER BY a.hostname
+        "#,
+    )
+    .bind(org_id)
+    .bind(gateway_ids)
+    .fetch_all(pool)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn query_agents_list(
+    pool: &DbPool,
+    org_id: Uuid,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<AgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (2..=1 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT a.id AS agent_id, a.hostname, a.gateway_id,
+               g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a
+        LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1
+          AND a.gateway_id IN ({})
+        ORDER BY a.hostname
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, AgentRow>(&query)
+        .bind(org_id.to_string());
+    for gid in gateway_ids {
+        q = q.bind(gid.to_string());
+    }
+    q.fetch_all(pool).await
 }
 
 #[cfg(test)]

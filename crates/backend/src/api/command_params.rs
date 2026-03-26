@@ -55,7 +55,7 @@ pub struct UpdateInputParamRequest {
 }
 
 /// Resolve the application_id for a command through the component chain.
-async fn app_id_for_command(db: &sqlx::PgPool, command_id: Uuid) -> Result<Uuid, ApiError> {
+async fn app_id_for_command(db: &crate::db::DbPool, command_id: Uuid) -> Result<Uuid, ApiError> {
     sqlx::query_scalar::<_, Uuid>(
         "SELECT c.application_id FROM component_commands cc \
          JOIN components c ON c.id = cc.component_id \

@@ -1,4 +1,4 @@
-use sqlx::PgPool;
+use crate::db::DbPool;
 use uuid::Uuid;
 
 use appcontrol_common::PermissionLevel;
@@ -11,7 +11,7 @@ use appcontrol_common::PermissionLevel;
 /// 3. Get all team permissions from app_permissions_teams (via team_members)
 /// 4. Return MAX of all
 pub async fn effective_permission(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     app_id: Uuid,
     is_org_admin: bool,
@@ -73,7 +73,7 @@ pub async fn effective_permission(
 /// - Otherwise, user must be in a workspace that includes the given site
 ///   (directly as user, or via team membership)
 pub async fn can_access_site(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     site_id: Uuid,
     organization_id: Uuid,
@@ -136,7 +136,7 @@ pub async fn can_access_site(
 /// Returns the effective permission level if the user has site access,
 /// or None if they lack site access entirely.
 pub async fn can_operate_component(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     component_id: Uuid,
     is_org_admin: bool,

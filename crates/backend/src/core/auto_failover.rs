@@ -9,7 +9,8 @@
 
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
-use sqlx::{FromRow, PgPool};
+use sqlx::FromRow;
+use crate::db::DbPool;
 use std::sync::Arc;
 use tokio::time;
 use uuid::Uuid;
@@ -37,7 +38,7 @@ impl Default for AutoFailoverConfig {
 }
 
 /// Spawn the auto-failover background task
-pub fn spawn_auto_failover_task(pool: Arc<PgPool>, ws_hub: Arc<Hub>, config: AutoFailoverConfig) {
+pub fn spawn_auto_failover_task(pool: Arc<DbPool>, ws_hub: Arc<Hub>, config: AutoFailoverConfig) {
     tokio::spawn(async move {
         tracing::info!(
             "Auto-failover monitor started (interval: {}s)",
@@ -58,7 +59,7 @@ pub fn spawn_auto_failover_task(pool: Arc<PgPool>, ws_hub: Arc<Hub>, config: Aut
 
 /// Check all applications with auto-failover enabled and trigger failover if needed
 async fn check_and_failover(
-    pool: &PgPool,
+    pool: &DbPool,
     ws_hub: &Hub,
     config: &AutoFailoverConfig,
 ) -> Result<(), sqlx::Error> {
@@ -123,7 +124,7 @@ async fn check_and_failover(
 /// Check health of a specific profile's agents and trigger failover if needed
 #[allow(clippy::too_many_arguments)]
 async fn check_profile_health_and_failover(
-    pool: &PgPool,
+    pool: &DbPool,
     ws_hub: &Hub,
     config: &AutoFailoverConfig,
     app_id: &Uuid,
@@ -255,7 +256,7 @@ async fn check_profile_health_and_failover(
 /// Trigger automatic failover from active profile to DR profile
 #[allow(clippy::too_many_arguments)]
 async fn trigger_auto_failover(
-    pool: &PgPool,
+    pool: &DbPool,
     ws_hub: &Hub,
     app_id: &Uuid,
     app_name: &str,

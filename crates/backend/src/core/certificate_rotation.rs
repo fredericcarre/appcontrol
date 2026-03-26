@@ -10,7 +10,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use crate::db::DbPool;
 use uuid::Uuid;
 
 use crate::error::ApiError;
@@ -69,7 +69,7 @@ pub struct RotationProgress {
 /// This imports the new CA and initiates the rotation process.
 /// Connected gateways will be notified to forward the rotation command to agents.
 pub async fn start_rotation(
-    pool: &PgPool,
+    pool: &DbPool,
     org_id: Uuid,
     new_ca_cert_pem: &str,
     new_ca_key_pem: &str,
@@ -173,7 +173,7 @@ pub async fn start_rotation(
 /// Record that an entity has successfully rotated to the new CA.
 #[allow(clippy::too_many_arguments)]
 pub async fn record_migration(
-    pool: &PgPool,
+    pool: &DbPool,
     org_id: Uuid,
     rotation_id: Uuid,
     agent_id: Option<Uuid>,
@@ -231,7 +231,7 @@ pub async fn record_migration(
 /// Record that an entity failed to rotate.
 #[allow(clippy::too_many_arguments)]
 pub async fn record_migration_failure(
-    pool: &PgPool,
+    pool: &DbPool,
     org_id: Uuid,
     rotation_id: Uuid,
     agent_id: Option<Uuid>,
@@ -284,7 +284,7 @@ pub async fn record_migration_failure(
 
 /// Check if all entities have migrated and update status.
 async fn check_rotation_completion(
-    pool: &PgPool,
+    pool: &DbPool,
     org_id: Uuid,
     rotation_id: Uuid,
 ) -> Result<bool, ApiError> {
@@ -326,7 +326,7 @@ async fn check_rotation_completion(
 /// Get the current rotation progress.
 #[allow(clippy::type_complexity)]
 pub async fn get_rotation_progress(
-    pool: &PgPool,
+    pool: &DbPool,
     org_id: Uuid,
 ) -> Result<Option<RotationProgress>, ApiError> {
     let row: Option<(
@@ -413,7 +413,7 @@ pub async fn get_rotation_progress(
 ///
 /// This should only be called after all entities have migrated (status = 'ready').
 /// After finalization, the old CA is removed and only the new CA is trusted.
-pub async fn finalize_rotation(pool: &PgPool, org_id: Uuid) -> Result<(), ApiError> {
+pub async fn finalize_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiError> {
     // Check that rotation is ready
     let progress: Option<(Uuid, String)> = sqlx::query_as(
         r#"SELECT rotation_id, status FROM rotation_progress
@@ -481,7 +481,7 @@ pub async fn finalize_rotation(pool: &PgPool, org_id: Uuid) -> Result<(), ApiErr
 ///
 /// This clears the pending CA and marks the rotation as cancelled.
 /// Entities that already migrated will need to re-enroll with the original CA.
-pub async fn cancel_rotation(pool: &PgPool, org_id: Uuid) -> Result<(), ApiError> {
+pub async fn cancel_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiError> {
     let progress: Option<(Uuid, String)> = sqlx::query_as(
         r#"SELECT rotation_id, status FROM rotation_progress
            WHERE organization_id = $1
@@ -545,7 +545,7 @@ pub async fn cancel_rotation(pool: &PgPool, org_id: Uuid) -> Result<(), ApiError
 ///
 /// During rotation, returns both old and new CAs concatenated.
 /// Otherwise, returns just the current CA.
-pub async fn get_ca_bundle(pool: &PgPool, org_id: Uuid) -> Result<String, ApiError> {
+pub async fn get_ca_bundle(pool: &DbPool, org_id: Uuid) -> Result<String, ApiError> {
     let row: Option<(Option<String>, Option<String>)> =
         sqlx::query_as("SELECT ca_cert_pem, pending_ca_cert_pem FROM organizations WHERE id = $1")
             .bind(org_id)

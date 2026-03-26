@@ -52,7 +52,7 @@ fn require_super_admin(
 }
 
 /// Fetch the platform_role for a user from the database.
-async fn get_platform_role(db: &sqlx::PgPool, user_id: Uuid) -> Option<String> {
+async fn get_platform_role(db: &crate::db::DbPool, user_id: Uuid) -> Option<String> {
     sqlx::query_scalar::<_, Option<String>>("SELECT platform_role FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_optional(db)

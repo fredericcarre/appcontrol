@@ -312,7 +312,7 @@ pub async fn saml_metadata(
 ///
 /// Returns list of team names that were synced.
 async fn sync_saml_groups(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     user_id: Uuid,
     saml_groups: &[String],
 ) -> Result<Vec<String>, sqlx::Error> {
@@ -395,7 +395,7 @@ struct SamlGroupMapping {
 // ── User management ──
 
 async fn find_or_create_saml_user(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     email: &str,
     display_name: &str,
     name_id: &str,

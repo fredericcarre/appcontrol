@@ -99,12 +99,12 @@ fn extract_token(request: &Request) -> TokenSource {
 
 /// Check if a token has been revoked (stored in PostgreSQL revoked_tokens table).
 /// Public version for use by ws-token endpoint.
-pub async fn is_token_revoked_public(pool: &sqlx::PgPool, token: &str) -> bool {
+pub async fn is_token_revoked_public(pool: &crate::db::DbPool, token: &str) -> bool {
     is_token_revoked(pool, token).await
 }
 
 /// Check if a token has been revoked (stored in PostgreSQL revoked_tokens table).
-async fn is_token_revoked(pool: &sqlx::PgPool, token: &str) -> bool {
+async fn is_token_revoked(pool: &crate::db::DbPool, token: &str) -> bool {
     let fingerprint = token_fingerprint(token);
 
     match sqlx::query_scalar::<_, bool>(
@@ -124,7 +124,7 @@ async fn is_token_revoked(pool: &sqlx::PgPool, token: &str) -> bool {
 
 /// Revoke a token by adding it to the PostgreSQL revoked_tokens table.
 /// The entry expires when the token would have expired (max 24h + 1h buffer).
-pub async fn revoke_token(pool: &sqlx::PgPool, token: &str) -> Result<(), String> {
+pub async fn revoke_token(pool: &crate::db::DbPool, token: &str) -> Result<(), String> {
     let fingerprint = token_fingerprint(token);
     // Token expires in 24h max, so set expiry to 24h + buffer
     let ttl_secs: i64 = 86400 + 3600; // 25 hours
@@ -143,7 +143,7 @@ pub async fn revoke_token(pool: &sqlx::PgPool, token: &str) -> Result<(), String
 }
 
 /// Cleanup expired revocation entries (called periodically from background task).
-pub async fn cleanup_expired_revocations(pool: &sqlx::PgPool) {
+pub async fn cleanup_expired_revocations(pool: &crate::db::DbPool) {
     match sqlx::query("DELETE FROM revoked_tokens WHERE expires_at < now()")
         .execute(pool)
         .await

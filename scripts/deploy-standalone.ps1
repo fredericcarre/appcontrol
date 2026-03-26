@@ -4,24 +4,30 @@
     Deploy AppControl standalone on Windows (no Docker, no admin required)
 
 .DESCRIPTION
-    Deploys AppControl with embedded PostgreSQL - everything runs from a folder.
-    No installation required, can run from USB drive or network share.
+    Deploys AppControl with configurable database backend:
+    - sqlite: Single-file database, zero dependencies (recommended for portable deployment)
+    - embedded: Portable PostgreSQL downloaded automatically
+    - external: Connect to your own PostgreSQL server
 
 .PARAMETER InstallDir
     Installation directory (default: current directory)
 
 .PARAMETER DbMode
-    Database mode: 'embedded' (portable PostgreSQL) or 'external' (your own DB)
+    Database mode:
+    - 'sqlite'   : Single-file SQLite database (recommended, zero dependencies)
+    - 'embedded' : Portable PostgreSQL (heavier, but full features)
+    - 'external' : Your own PostgreSQL server
 
 .EXAMPLE
-    .\deploy-standalone.ps1
-    .\deploy-standalone.ps1 -InstallDir C:\AppControl -DbMode external
+    .\deploy-standalone.ps1 -DbMode sqlite
+    .\deploy-standalone.ps1 -InstallDir C:\AppControl -DbMode embedded
+    .\deploy-standalone.ps1 -DbMode external
 #>
 
 param(
     [string]$InstallDir = ".\AppControl",
-    [ValidateSet("embedded", "external")]
-    [string]$DbMode = "embedded"
+    [ValidateSet("sqlite", "embedded", "external")]
+    [string]$DbMode = "sqlite"
 )
 
 $ErrorActionPreference = "Stop"
@@ -87,7 +93,9 @@ function Setup-Directories {
     Ensure-Directory $InstallDir
     Ensure-Directory "$InstallDir\bin"
     Ensure-Directory "$InstallDir\data"
-    Ensure-Directory "$InstallDir\data\postgres"
+    if ($DbMode -eq "embedded") {
+        Ensure-Directory "$InstallDir\data\postgres"
+    }
     Ensure-Directory "$InstallDir\logs"
     Ensure-Directory "$InstallDir\config"
     Ensure-Directory "$InstallDir\certs"
@@ -272,13 +280,29 @@ function Create-Configuration {
     # Generate JWT secret
     $jwtSecret = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([guid]::NewGuid().ToString()))
 
+    # Database configuration depends on mode
+    if ($DbMode -eq "sqlite") {
+        $dbConfig = @"
+# Database - SQLite (portable, single-file)
+database:
+  type: sqlite
+  path: ../data/appcontrol.db
+"@
+    } else {
+        $dbConfig = @"
+# Database - PostgreSQL
+database:
+  type: postgres
+  url: postgresql://appcontrol:appcontrol123@127.0.0.1:5433/appcontrol
+"@
+    }
+
     $config = @"
 # AppControl Configuration
 # Generated on $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+# Database mode: $DbMode
 
-# Database
-database:
-  url: postgresql://appcontrol:appcontrol123@127.0.0.1:5433/appcontrol
+$dbConfig
 
 # Backend
 backend:
@@ -317,8 +341,105 @@ gateways:
 function Create-ServiceScripts {
     Write-Status "Creating service scripts..."
 
-    # Start script
-    $startScript = @'
+    if ($DbMode -eq "sqlite") {
+        # SQLite mode: simpler scripts, no PostgreSQL
+        $startScript = @'
+@echo off
+setlocal
+cd /d "%~dp0"
+
+echo Starting AppControl (SQLite mode)...
+echo.
+
+REM Set SQLite environment
+set DATABASE_TYPE=sqlite
+set SQLITE_PATH=%~dp0data\appcontrol.db
+
+REM Start Backend
+echo [1/2] Starting Backend...
+start "AppControl Backend" /min cmd /c "bin\appcontrol-backend.exe > logs\backend.log 2>&1"
+timeout /t 3 /nobreak >nul
+echo Backend started on port 3000
+
+REM Start Gateway
+echo [2/2] Starting Gateway...
+start "AppControl Gateway" /min cmd /c "bin\appcontrol-gateway.exe > logs\gateway.log 2>&1"
+echo Gateway started on port 8443
+
+echo.
+echo ========================================
+echo   AppControl is running!
+echo ========================================
+echo.
+echo   Web UI: http://localhost:3000
+echo   Gateway: localhost:8443
+echo   Database: %~dp0data\appcontrol.db
+echo.
+echo   Logs: %~dp0logs\
+echo.
+echo Press any key to open the Web UI...
+pause >nul
+start http://localhost:3000
+'@
+        $stopScript = @'
+@echo off
+setlocal
+cd /d "%~dp0"
+
+echo Stopping AppControl...
+
+REM Stop Gateway
+echo Stopping Gateway...
+taskkill /f /im appcontrol-gateway.exe 2>nul
+
+REM Stop Backend
+echo Stopping Backend...
+taskkill /f /im appcontrol-backend.exe 2>nul
+
+echo.
+echo AppControl stopped.
+pause
+'@
+        $statusScript = @'
+@echo off
+setlocal
+
+echo AppControl Status (SQLite mode)
+echo ================================
+echo.
+
+tasklist /fi "imagename eq appcontrol-backend.exe" 2>nul | find "appcontrol-backend" >nul
+if errorlevel 1 (
+    echo Backend:    STOPPED
+) else (
+    echo Backend:    RUNNING
+)
+
+tasklist /fi "imagename eq appcontrol-gateway.exe" 2>nul | find "appcontrol-gateway" >nul
+if errorlevel 1 (
+    echo Gateway:    STOPPED
+) else (
+    echo Gateway:    RUNNING
+)
+
+if exist "%~dp0data\appcontrol.db" (
+    echo Database:   %~dp0data\appcontrol.db
+) else (
+    echo Database:   Not created yet (will be created on first start)
+)
+
+echo.
+pause
+'@
+        $logsScript = @'
+@echo off
+cd /d "%~dp0"
+start "Backend Logs" cmd /c "type logs\backend.log & pause"
+start "Gateway Logs" cmd /c "type logs\gateway.log & pause"
+'@
+    } else {
+        # PostgreSQL mode: include PostgreSQL management
+        $startScript = @'
 @echo off
 setlocal
 cd /d "%~dp0"
@@ -364,11 +485,7 @@ echo Press any key to open the Web UI...
 pause >nul
 start http://localhost:3000
 '@
-
-    $startScript | Set-Content "$InstallDir\start.bat" -Encoding ASCII
-
-    # Stop script
-    $stopScript = @'
+        $stopScript = @'
 @echo off
 setlocal
 cd /d "%~dp0"
@@ -391,11 +508,7 @@ echo.
 echo AppControl stopped.
 pause
 '@
-
-    $stopScript | Set-Content "$InstallDir\stop.bat" -Encoding ASCII
-
-    # Status script
-    $statusScript = @'
+        $statusScript = @'
 @echo off
 setlocal
 
@@ -427,18 +540,18 @@ if errorlevel 1 (
 echo.
 pause
 '@
-
-    $statusScript | Set-Content "$InstallDir\status.bat" -Encoding ASCII
-
-    # Logs viewer
-    $logsScript = @'
+        $logsScript = @'
 @echo off
 cd /d "%~dp0"
 start "PostgreSQL Logs" cmd /c "type logs\postgres.log & pause"
 start "Backend Logs" cmd /c "type logs\backend.log & pause"
 start "Gateway Logs" cmd /c "type logs\gateway.log & pause"
 '@
+    }
 
+    $startScript | Set-Content "$InstallDir\start.bat" -Encoding ASCII
+    $stopScript | Set-Content "$InstallDir\stop.bat" -Encoding ASCII
+    $statusScript | Set-Content "$InstallDir\status.bat" -Encoding ASCII
     $logsScript | Set-Content "$InstallDir\view-logs.bat" -Encoding ASCII
 
     Write-Status "Service scripts created" "SUCCESS"
@@ -527,6 +640,9 @@ Write-Host "  status.bat    - Check service status"
 Write-Host "  view-logs.bat - View log files"
 Write-Host ""
 
-if ($DbMode -eq "embedded") {
+if ($DbMode -eq "sqlite") {
+    Write-Host "NOTE: Using SQLite - single-file database at data\appcontrol.db" -ForegroundColor Yellow
+    Write-Host "      No PostgreSQL required. Portable and lightweight." -ForegroundColor Yellow
+} elseif ($DbMode -eq "embedded") {
     Write-Host "NOTE: PostgreSQL uses port 5433 (non-standard) to avoid conflicts" -ForegroundColor Yellow
 }

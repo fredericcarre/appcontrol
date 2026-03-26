@@ -33,7 +33,7 @@ impl HeartbeatBatcher {
     }
 
     /// Background flush loop. Call via `tokio::spawn`.
-    pub async fn run(&self, db: sqlx::PgPool) {
+    pub async fn run(&self, db: crate::db::DbPool) {
         let mut interval = tokio::time::interval(Duration::from_secs(FLUSH_INTERVAL_SECS));
 
         loop {
@@ -52,18 +52,41 @@ impl HeartbeatBatcher {
             let count = agent_ids.len();
 
             // Single UPDATE for all agents in the batch
-            if let Err(e) =
-                sqlx::query("UPDATE agents SET last_heartbeat_at = now() WHERE id = ANY($1)")
-                    .bind(&agent_ids)
-                    .execute(&db)
-                    .await
-            {
+            if let Err(e) = batch_update_heartbeats(&db, &agent_ids).await {
                 tracing::warn!(count, "Failed to batch-update heartbeats: {}", e);
             } else {
                 tracing::trace!(count, "Flushed heartbeat batch");
             }
         }
     }
+}
+
+#[cfg(feature = "postgres")]
+async fn batch_update_heartbeats(db: &crate::db::DbPool, agent_ids: &[Uuid]) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE agents SET last_heartbeat_at = now() WHERE id = ANY($1)")
+        .bind(agent_ids)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn batch_update_heartbeats(db: &crate::db::DbPool, agent_ids: &[Uuid]) -> Result<(), sqlx::Error> {
+    if agent_ids.is_empty() {
+        return Ok(());
+    }
+    // For SQLite, use IN clause with individual placeholders
+    let placeholders: Vec<String> = (1..=agent_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        "UPDATE agents SET last_heartbeat_at = datetime('now') WHERE id IN ({})",
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query(&query);
+    for id in agent_ids {
+        q = q.bind(id.to_string());
+    }
+    q.execute(db).await?;
+    Ok(())
 }
 
 impl Default for HeartbeatBatcher {

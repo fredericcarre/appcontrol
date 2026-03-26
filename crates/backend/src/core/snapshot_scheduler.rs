@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
+use crate::db::UuidArray;
 use crate::AppState;
 
 /// Row returned when querying for due schedules.
@@ -15,7 +16,7 @@ struct DueSchedule {
     id: Uuid,
     organization_id: Uuid,
     name: String,
-    agent_ids: Vec<Uuid>,
+    agent_ids: UuidArray,
     frequency: String,
     retention_days: i32,
 }
@@ -108,7 +109,7 @@ async fn execute_due_schedules(state: &Arc<AppState>) -> Result<(), sqlx::Error>
         tracing::info!(
             schedule_id = %schedule.id,
             schedule_name = %schedule.name,
-            agents = schedule.agent_ids.len(),
+            agents = schedule.agent_ids.0.len(),
             "Executing scheduled snapshot"
         );
 
@@ -133,7 +134,7 @@ async fn execute_single_schedule(
 
     // Trigger discovery on all agents in the schedule
     let mut successful_agents = Vec::new();
-    for agent_id in &schedule.agent_ids {
+    for agent_id in &schedule.agent_ids.0 {
         let msg = appcontrol_common::BackendMessage::RequestDiscovery { request_id };
         if state.ws_hub.send_to_agent(*agent_id, msg) {
             successful_agents.push(*agent_id);
@@ -144,42 +145,12 @@ async fn execute_single_schedule(
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // Collect the report IDs for agents that were scanned
-    let report_ids: Vec<Uuid> = sqlx::query_scalar(
-        r#"
-        SELECT DISTINCT ON (agent_id) id
-        FROM discovery_reports
-        WHERE agent_id = ANY($1)
-          AND scanned_at > now() - interval '1 minute'
-        ORDER BY agent_id, scanned_at DESC
-        "#,
-    )
-    .bind(&successful_agents)
-    .fetch_all(&state.db)
-    .await?;
+    let report_ids = fetch_recent_report_ids(&state.db, &successful_agents).await?;
 
     // Create correlation result for comparison
     let correlation_result = if !report_ids.is_empty() {
         // Simplified correlation - just get the services as a single JSON array
-        let services: serde_json::Value = sqlx::query_scalar(
-            r#"
-            SELECT COALESCE(jsonb_agg(svc), '[]'::jsonb)
-            FROM (
-                SELECT
-                    r.hostname,
-                    p->>'name' as process_name,
-                    p->'listening_ports' as ports,
-                    p->'technology_hint' as technology_hint
-                FROM discovery_reports r,
-                     jsonb_array_elements(r.report->'processes') p
-                WHERE r.id = ANY($1)
-                  AND p->'listening_ports' IS NOT NULL
-                  AND jsonb_array_length(p->'listening_ports') > 0
-            ) svc
-            "#,
-        )
-        .bind(&report_ids)
-        .fetch_one(&state.db)
-        .await?;
+        let services = fetch_services_for_correlation(&state.db, &report_ids).await?;
 
         serde_json::json!({
             "services": services,
@@ -207,8 +178,8 @@ async fn execute_single_schedule(
     .bind(snapshot_id)
     .bind(schedule.id)
     .bind(schedule.organization_id)
-    .bind(&successful_agents)
-    .bind(&report_ids)
+    .bind(UuidArray::from(successful_agents.clone()))
+    .bind(UuidArray::from(report_ids.clone()))
     .bind(&correlation_result)
     .bind(expires_at)
     .execute(&state.db)
@@ -216,18 +187,7 @@ async fn execute_single_schedule(
 
     // Update the schedule: set last_run_at and calculate next_run_at
     let next_run = calculate_next_run(&schedule.frequency);
-    sqlx::query(
-        r#"
-        UPDATE snapshot_schedules
-        SET last_run_at = now(),
-            next_run_at = $2
-        WHERE id = $1
-        "#,
-    )
-    .bind(schedule.id)
-    .bind(next_run)
-    .execute(&state.db)
-    .await?;
+    update_schedule_after_run(&state.db, schedule.id, next_run).await?;
 
     tracing::info!(
         schedule_id = %schedule.id,
@@ -236,6 +196,167 @@ async fn execute_single_schedule(
         "Scheduled snapshot completed"
     );
 
+    Ok(())
+}
+
+// ============================================================================
+// Database-specific helper functions
+// ============================================================================
+
+#[cfg(feature = "postgres")]
+async fn fetch_recent_report_ids(
+    db: &crate::db::DbPool,
+    agent_ids: &[Uuid],
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT DISTINCT ON (agent_id) id
+        FROM discovery_reports
+        WHERE agent_id = ANY($1)
+          AND scanned_at > now() - interval '1 minute'
+        ORDER BY agent_id, scanned_at DESC
+        "#,
+    )
+    .bind(agent_ids)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_recent_report_ids(
+    db: &crate::db::DbPool,
+    agent_ids: &[Uuid],
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    if agent_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (1..=agent_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT id FROM discovery_reports
+        WHERE agent_id IN ({})
+          AND scanned_at > datetime('now', '-1 minute')
+        GROUP BY agent_id
+        HAVING scanned_at = MAX(scanned_at)
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_scalar::<_, String>(&query);
+    for id in agent_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows: Vec<String> = q.fetch_all(db).await?;
+    Ok(rows.into_iter().filter_map(|s| Uuid::parse_str(&s).ok()).collect())
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_services_for_correlation(
+    db: &crate::db::DbPool,
+    report_ids: &[Uuid],
+) -> Result<serde_json::Value, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(jsonb_agg(svc), '[]'::jsonb)
+        FROM (
+            SELECT
+                r.hostname,
+                p->>'name' as process_name,
+                p->'listening_ports' as ports,
+                p->'technology_hint' as technology_hint
+            FROM discovery_reports r,
+                 jsonb_array_elements(r.report->'processes') p
+            WHERE r.id = ANY($1)
+              AND p->'listening_ports' IS NOT NULL
+              AND jsonb_array_length(p->'listening_ports') > 0
+        ) svc
+        "#,
+    )
+    .bind(report_ids)
+    .fetch_one(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_services_for_correlation(
+    db: &crate::db::DbPool,
+    report_ids: &[Uuid],
+) -> Result<serde_json::Value, sqlx::Error> {
+    // SQLite: simplified approach - fetch reports and process in Rust
+    if report_ids.is_empty() {
+        return Ok(serde_json::json!([]));
+    }
+    let placeholders: Vec<String> = (1..=report_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        "SELECT hostname, report FROM discovery_reports WHERE id IN ({})",
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, (String, String)>(&query);
+    for id in report_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows: Vec<(String, String)> = q.fetch_all(db).await?;
+
+    let mut services = Vec::new();
+    for (hostname, report_str) in rows {
+        if let Ok(report) = serde_json::from_str::<serde_json::Value>(&report_str) {
+            if let Some(processes) = report.get("processes").and_then(|p| p.as_array()) {
+                for p in processes {
+                    if let Some(ports) = p.get("listening_ports").and_then(|lp| lp.as_array()) {
+                        if !ports.is_empty() {
+                            services.push(serde_json::json!({
+                                "hostname": hostname,
+                                "process_name": p.get("name"),
+                                "ports": ports,
+                                "technology_hint": p.get("technology_hint"),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(serde_json::Value::Array(services))
+}
+
+#[cfg(feature = "postgres")]
+async fn update_schedule_after_run(
+    db: &crate::db::DbPool,
+    schedule_id: Uuid,
+    next_run: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE snapshot_schedules
+        SET last_run_at = now(),
+            next_run_at = $2
+        WHERE id = $1
+        "#,
+    )
+    .bind(schedule_id)
+    .bind(next_run)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn update_schedule_after_run(
+    db: &crate::db::DbPool,
+    schedule_id: Uuid,
+    next_run: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE snapshot_schedules
+        SET last_run_at = datetime('now'),
+            next_run_at = $2
+        WHERE id = $1
+        "#,
+    )
+    .bind(schedule_id.to_string())
+    .bind(next_run.to_rfc3339())
+    .execute(db)
+    .await?;
     Ok(())
 }
 

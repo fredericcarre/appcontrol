@@ -30,6 +30,7 @@ use crate::core::resolution::{
     list_available_agents, resolve_dr_agent, resolve_host_with_options, AvailableAgent,
     ResolutionResult,
 };
+use crate::db::UuidArray;
 use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
@@ -1000,7 +1001,7 @@ pub async fn execute_import(
     .bind(&body.profile.description)
     .bind(&body.profile.profile_type)
     .bind(true) // Primary is active by default
-    .bind(&body.profile.gateway_ids)
+    .bind(UuidArray::from(body.profile.gateway_ids.clone()))
     .bind(body.profile.auto_failover.unwrap_or(false))
     .bind(user.user_id)
     .execute(&state.db)
@@ -1047,7 +1048,7 @@ pub async fn execute_import(
         .bind(&dr_profile.description)
         .bind(&dr_profile.profile_type)
         .bind(false) // DR is inactive by default
-        .bind(&dr_profile.gateway_ids)
+        .bind(UuidArray::from(dr_profile.gateway_ids.clone()))
         .bind(dr_profile.auto_failover.unwrap_or(false))
         .bind(user.user_id)
         .execute(&state.db)

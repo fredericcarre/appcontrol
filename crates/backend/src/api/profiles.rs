@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::db::UuidArray;
 use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
@@ -37,7 +38,7 @@ pub struct BindingProfile {
     pub description: Option<String>,
     pub profile_type: String,
     pub is_active: bool,
-    pub gateway_ids: Vec<Uuid>,
+    pub gateway_ids: UuidArray,
     pub auto_failover: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub created_by: Option<Uuid>,
@@ -51,7 +52,7 @@ pub struct ProfileSummary {
     pub description: Option<String>,
     pub profile_type: String,
     pub is_active: bool,
-    pub gateway_ids: Vec<Uuid>,
+    pub gateway_ids: UuidArray,
     pub auto_failover: bool,
     pub mapping_count: i64,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -139,7 +140,7 @@ pub async fn list_profiles(
         description: Option<String>,
         profile_type: String,
         is_active: bool,
-        gateway_ids: Vec<Uuid>,
+        gateway_ids: UuidArray,
         auto_failover: bool,
         created_at: chrono::DateTime<chrono::Utc>,
         mapping_count: Option<i64>,
@@ -294,7 +295,7 @@ pub async fn create_profile(
     .bind(&body.name)
     .bind(&body.description)
     .bind(&body.profile_type)
-    .bind(&body.gateway_ids)
+    .bind(UuidArray::from(body.gateway_ids.clone()))
     .bind(body.auto_failover.unwrap_or(false))
     .bind(user.user_id)
     .fetch_one(&state.db)

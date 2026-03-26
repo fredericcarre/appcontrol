@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::db::DbPool;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::middleware::audit::{complete_action_failed, complete_action_success, log_action};
 use crate::AppState;
@@ -355,50 +356,13 @@ pub async fn get_app(
         std::collections::HashMap::new();
 
     if !referenced_app_ids.is_empty() {
-        #[derive(sqlx::FromRow)]
-        struct AppStatusCounts {
-            app_id: Uuid,
-            app_name: String,
-            running_count: Option<i64>,
-            starting_count: Option<i64>,
-            stopping_count: Option<i64>,
-            stopped_count: Option<i64>,
-            failed_count: Option<i64>,
-            component_count: Option<i64>,
-        }
-
-        let status_rows = sqlx::query_as::<_, AppStatusCounts>(
-            r#"
-            SELECT
-                a.id as app_id,
-                a.name as app_name,
-                COUNT(c.id) as component_count,
-                COUNT(c.id) FILTER (WHERE c.current_state = 'RUNNING') as running_count,
-                COUNT(c.id) FILTER (WHERE c.current_state = 'STARTING') as starting_count,
-                COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPING') as stopping_count,
-                COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPED') as stopped_count,
-                COUNT(c.id) FILTER (WHERE c.current_state = 'FAILED') as failed_count
-            FROM applications a
-            LEFT JOIN components c ON c.application_id = a.id
-            WHERE a.id = ANY($1)
-            GROUP BY a.id, a.name
-            "#,
-        )
-        .bind(&referenced_app_ids)
-        .fetch_all(&state.db)
-        .await?;
-
-        for row in status_rows {
-            referenced_app_names.insert(row.app_id, row.app_name);
+        let status_rows = fetch_referenced_app_statuses(&state.db, &referenced_app_ids).await?;
+        for (app_id, app_name, counts) in status_rows {
+            referenced_app_names.insert(app_id, app_name);
             let (state, _) = compute_app_status(
-                row.running_count.unwrap_or(0),
-                row.stopped_count.unwrap_or(0),
-                row.failed_count.unwrap_or(0),
-                row.starting_count.unwrap_or(0),
-                row.stopping_count.unwrap_or(0),
-                row.component_count.unwrap_or(0),
+                counts.0, counts.1, counts.2, counts.3, counts.4, counts.5,
             );
-            referenced_app_statuses.insert(row.app_id, state);
+            referenced_app_statuses.insert(app_id, state);
         }
     }
 
@@ -1443,4 +1407,136 @@ pub async fn get_site_overrides(
         })),
         "component_bindings": component_bindings,
     })))
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Helper functions for cross-database compatibility
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Fetch status counts for referenced applications
+/// Returns Vec of (app_id, app_name, (running, stopped, failed, starting, stopping, total))
+#[cfg(feature = "postgres")]
+async fn fetch_referenced_app_statuses(
+    pool: &DbPool,
+    app_ids: &[Uuid],
+) -> Result<Vec<(Uuid, String, (i64, i64, i64, i64, i64, i64))>, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        app_id: Uuid,
+        app_name: String,
+        running_count: Option<i64>,
+        starting_count: Option<i64>,
+        stopping_count: Option<i64>,
+        stopped_count: Option<i64>,
+        failed_count: Option<i64>,
+        component_count: Option<i64>,
+    }
+
+    let rows: Vec<Row> = sqlx::query_as(
+        r#"
+        SELECT
+            a.id as app_id,
+            a.name as app_name,
+            COUNT(c.id) as component_count,
+            COUNT(c.id) FILTER (WHERE c.current_state = 'RUNNING') as running_count,
+            COUNT(c.id) FILTER (WHERE c.current_state = 'STARTING') as starting_count,
+            COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPING') as stopping_count,
+            COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPED') as stopped_count,
+            COUNT(c.id) FILTER (WHERE c.current_state = 'FAILED') as failed_count
+        FROM applications a
+        LEFT JOIN components c ON c.application_id = a.id
+        WHERE a.id = ANY($1)
+        GROUP BY a.id, a.name
+        "#,
+    )
+    .bind(app_ids)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            (
+                r.app_id,
+                r.app_name,
+                (
+                    r.running_count.unwrap_or(0),
+                    r.stopped_count.unwrap_or(0),
+                    r.failed_count.unwrap_or(0),
+                    r.starting_count.unwrap_or(0),
+                    r.stopping_count.unwrap_or(0),
+                    r.component_count.unwrap_or(0),
+                ),
+            )
+        })
+        .collect())
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_referenced_app_statuses(
+    pool: &DbPool,
+    app_ids: &[Uuid],
+) -> Result<Vec<(Uuid, String, (i64, i64, i64, i64, i64, i64))>, sqlx::Error> {
+    if app_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        app_id: String,
+        app_name: String,
+        running_count: i64,
+        starting_count: i64,
+        stopping_count: i64,
+        stopped_count: i64,
+        failed_count: i64,
+        component_count: i64,
+    }
+
+    let placeholders: Vec<String> = (1..=app_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT
+            a.id as app_id,
+            a.name as app_name,
+            COUNT(c.id) as component_count,
+            SUM(CASE WHEN c.current_state = 'RUNNING' THEN 1 ELSE 0 END) as running_count,
+            SUM(CASE WHEN c.current_state = 'STARTING' THEN 1 ELSE 0 END) as starting_count,
+            SUM(CASE WHEN c.current_state = 'STOPPING' THEN 1 ELSE 0 END) as stopping_count,
+            SUM(CASE WHEN c.current_state = 'STOPPED' THEN 1 ELSE 0 END) as stopped_count,
+            SUM(CASE WHEN c.current_state = 'FAILED' THEN 1 ELSE 0 END) as failed_count
+        FROM applications a
+        LEFT JOIN components c ON c.application_id = a.id
+        WHERE a.id IN ({})
+        GROUP BY a.id, a.name
+        "#,
+        placeholders.join(", ")
+    );
+
+    let mut q = sqlx::query_as::<_, Row>(&query);
+    for id in app_ids {
+        q = q.bind(id.to_string());
+    }
+
+    let rows: Vec<Row> = q.fetch_all(pool).await?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            Uuid::parse_str(&r.app_id).ok().map(|id| {
+                (
+                    id,
+                    r.app_name,
+                    (
+                        r.running_count,
+                        r.stopped_count,
+                        r.failed_count,
+                        r.starting_count,
+                        r.stopping_count,
+                        r.component_count,
+                    ),
+                )
+            })
+        })
+        .collect())
 }

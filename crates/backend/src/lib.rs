@@ -21,7 +21,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 pub struct AppState {
-    pub db: sqlx::PgPool,
+    pub db: crate::db::DbPool,
     pub ws_hub: websocket::Hub,
     pub config: config::AppConfig,
     pub rate_limiter: middleware::rate_limit::RateLimitState,

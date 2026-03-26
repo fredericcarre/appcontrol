@@ -227,7 +227,7 @@ pub async fn delete_variable(
 /// Used by the executor to interpolate $(var) in commands.
 #[allow(dead_code)]
 pub async fn resolve_variables(
-    db: &sqlx::PgPool,
+    db: &crate::db::DbPool,
     app_id: Uuid,
 ) -> Result<std::collections::HashMap<String, String>, sqlx::Error> {
     let rows = sqlx::query_as::<_, (String, String)>(

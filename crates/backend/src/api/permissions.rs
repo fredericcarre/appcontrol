@@ -67,7 +67,7 @@ pub async fn list_user_permissions(
 }
 
 /// Resolve the site_id and organization_id for an application.
-async fn app_site_info(pool: &sqlx::PgPool, app_id: Uuid) -> Option<(Uuid, Uuid)> {
+async fn app_site_info(pool: &crate::db::DbPool, app_id: Uuid) -> Option<(Uuid, Uuid)> {
     sqlx::query_as::<_, (Uuid, Uuid)>(
         "SELECT site_id, organization_id FROM applications WHERE id = $1",
     )
@@ -81,7 +81,7 @@ async fn app_site_info(pool: &sqlx::PgPool, app_id: Uuid) -> Option<(Uuid, Uuid)
 /// Validate that a target user has workspace access to the app's site.
 /// Skipped when workspace feature is not configured (no workspace_sites rows).
 async fn validate_workspace_access(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     target_user_id: Uuid,
     app_id: Uuid,
 ) -> Result<(), ApiError> {

@@ -15,7 +15,7 @@ pub enum BranchError {
 /// Detect the "error branch" — the subgraph of FAILED components and their dependents
 /// that need to be restarted.
 pub async fn detect_error_branch(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     app_id: Uuid,
     failed_component_id: Uuid,
 ) -> Result<Value, BranchError> {

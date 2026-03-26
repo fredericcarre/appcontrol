@@ -1,11 +1,11 @@
-use sqlx::PgPool;
+use crate::db::DbPool;
 use uuid::Uuid;
 
 /// Log an action to the action_log table BEFORE the action executes.
 /// This is a critical rule: log before execute.
 /// Returns the action_log ID which can be used to update the result later.
 pub async fn log_action(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     action: &str,
     resource_type: &str,
@@ -31,7 +31,7 @@ pub async fn log_action(
 }
 
 /// Mark an action as successfully completed.
-pub async fn complete_action_success(pool: &PgPool, action_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn complete_action_success(pool: &DbPool, action_id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
         UPDATE action_log
@@ -48,7 +48,7 @@ pub async fn complete_action_success(pool: &PgPool, action_id: Uuid) -> Result<(
 
 /// Mark an action as failed with an error message.
 pub async fn complete_action_failed(
-    pool: &PgPool,
+    pool: &DbPool,
     action_id: Uuid,
     error_message: &str,
 ) -> Result<(), sqlx::Error> {
@@ -68,7 +68,7 @@ pub async fn complete_action_failed(
 }
 
 /// Mark an action as cancelled.
-pub async fn complete_action_cancelled(pool: &PgPool, action_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn complete_action_cancelled(pool: &DbPool, action_id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
         UPDATE action_log

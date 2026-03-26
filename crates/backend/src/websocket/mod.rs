@@ -1817,14 +1817,9 @@ pub async fn push_config_to_affected_agents(
     // Find agents affected by specific components
     if let Some(comp_ids) = component_ids {
         if !comp_ids.is_empty() {
-            let comp_agents: Vec<uuid::Uuid> = sqlx::query_scalar(
-                "SELECT DISTINCT agent_id FROM components
-                 WHERE id = ANY($1) AND agent_id IS NOT NULL",
-            )
-            .bind(comp_ids)
-            .fetch_all(&state.db)
-            .await
-            .unwrap_or_default();
+            let comp_agents = fetch_agents_for_components(&state.db, comp_ids)
+                .await
+                .unwrap_or_default();
             agent_ids.extend(comp_agents);
         }
     }
@@ -1873,7 +1868,7 @@ pub async fn push_config_to_affected_agents(
 ///
 /// Returns Ok(org_id) if valid, Err(reason) if invalid.
 async fn validate_gateway_enrollment_token(
-    db: &sqlx::PgPool,
+    db: &crate::db::DbPool,
     token: &str,
 ) -> Result<uuid::Uuid, &'static str> {
     use sha2::Digest;
@@ -1947,4 +1942,42 @@ async fn validate_gateway_enrollment_token(
     );
 
     Ok(org_id)
+}
+
+// Helper for cross-database component agent lookup
+#[cfg(feature = "postgres")]
+async fn fetch_agents_for_components(
+    db: &crate::db::DbPool,
+    comp_ids: &[uuid::Uuid],
+) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT agent_id FROM components WHERE id = ANY($1) AND agent_id IS NOT NULL",
+    )
+    .bind(comp_ids)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_agents_for_components(
+    db: &crate::db::DbPool,
+    comp_ids: &[uuid::Uuid],
+) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
+    if comp_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (1..=comp_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        "SELECT DISTINCT agent_id FROM components WHERE id IN ({}) AND agent_id IS NOT NULL",
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_scalar::<_, String>(&query);
+    for id in comp_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows: Vec<String> = q.fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+        .collect())
 }

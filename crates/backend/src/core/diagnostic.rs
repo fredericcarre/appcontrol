@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use appcontrol_common::{CheckStatus, DiagnosticRecommendation};
+use crate::db::DbPool;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiagnosticError {
@@ -64,7 +65,7 @@ pub fn compute_recommendation(
 /// Uses a single query with ROW_NUMBER() window function to get the latest
 /// check result for each (component, check_type) pair, instead of O(3N) queries.
 pub async fn diagnose_app(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     app_id: Uuid,
 ) -> Result<Vec<ComponentDiagnosis>, DiagnosticError> {
     // Get all components
@@ -83,23 +84,9 @@ pub async fn diagnose_app(
     let comp_ids: Vec<Uuid> = components.iter().map(|(id, _)| *id).collect();
 
     // Single query: get latest check result per (component_id, check_type)
-    let latest_checks = sqlx::query_as::<_, (Uuid, String, i16)>(
-        r#"
-        SELECT component_id, check_type, exit_code
-        FROM (
-            SELECT component_id, check_type, exit_code,
-                   ROW_NUMBER() OVER (PARTITION BY component_id, check_type ORDER BY created_at DESC) as rn
-            FROM check_events
-            WHERE component_id = ANY($1)
-              AND check_type IN ('health', 'integrity', 'infrastructure')
-        ) ranked
-        WHERE rn = 1
-        "#,
-    )
-    .bind(&comp_ids)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| DiagnosticError::Database(e.to_string()))?;
+    let latest_checks = fetch_latest_checks(pool, &comp_ids)
+        .await
+        .map_err(|e| DiagnosticError::Database(e.to_string()))?;
 
     // Build a lookup: (component_id, check_type) → exit_code
     let mut check_map: std::collections::HashMap<(Uuid, &str), i16> =
@@ -142,6 +129,66 @@ pub async fn diagnose_app(
         .collect();
 
     Ok(diagnoses)
+}
+
+/// Fetch latest check results for given component IDs
+#[cfg(feature = "postgres")]
+async fn fetch_latest_checks(
+    pool: &DbPool,
+    comp_ids: &[Uuid],
+) -> Result<Vec<(Uuid, String, i16)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid, String, i16)>(
+        r#"
+        SELECT component_id, check_type, exit_code
+        FROM (
+            SELECT component_id, check_type, exit_code,
+                   ROW_NUMBER() OVER (PARTITION BY component_id, check_type ORDER BY created_at DESC) as rn
+            FROM check_events
+            WHERE component_id = ANY($1)
+              AND check_type IN ('health', 'integrity', 'infrastructure')
+        ) ranked
+        WHERE rn = 1
+        "#,
+    )
+    .bind(comp_ids)
+    .fetch_all(pool)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_latest_checks(
+    pool: &DbPool,
+    comp_ids: &[Uuid],
+) -> Result<Vec<(Uuid, String, i16)>, sqlx::Error> {
+    if comp_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (1..=comp_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT component_id, check_type, exit_code
+        FROM (
+            SELECT component_id, check_type, exit_code,
+                   ROW_NUMBER() OVER (PARTITION BY component_id, check_type ORDER BY created_at DESC) as rn
+            FROM check_events
+            WHERE component_id IN ({})
+              AND check_type IN ('health', 'integrity', 'infrastructure')
+        ) ranked
+        WHERE rn = 1
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, (String, String, i16)>(&query);
+    for id in comp_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows: Vec<(String, String, i16)> = q.fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id_str, check_type, exit_code)| {
+            Uuid::parse_str(&id_str).ok().map(|id| (id, check_type, exit_code))
+        })
+        .collect())
 }
 
 #[cfg(test)]

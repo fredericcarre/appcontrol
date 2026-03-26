@@ -17,7 +17,7 @@ pub enum FsmError {
 /// Get the current state of a component from the cached `current_state` column.
 /// This is O(1) — no scan on the append-only state_transitions table.
 pub async fn get_current_state(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     component_id: Uuid,
 ) -> Result<ComponentState, FsmError> {
     let state_str =
@@ -35,20 +35,53 @@ pub async fn get_current_state(
 
 /// Get the current state for multiple components in a single query.
 pub async fn get_current_states(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     component_ids: &[Uuid],
 ) -> Result<Vec<(Uuid, ComponentState)>, FsmError> {
-    let rows = sqlx::query_as::<_, (Uuid, String)>(
+    let rows = fetch_component_states(pool, component_ids)
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    rows.into_iter()
+        .map(|(id, s)| parse_state(&s).map(|state| (id, state)))
+        .collect()
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_component_states(
+    pool: &crate::db::DbPool,
+    component_ids: &[Uuid],
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, current_state FROM components WHERE id = ANY($1)",
     )
     .bind(component_ids)
     .fetch_all(pool)
     .await
-    .map_err(|e| FsmError::Database(e.to_string()))?;
+}
 
-    rows.into_iter()
-        .map(|(id, s)| parse_state(&s).map(|state| (id, state)))
-        .collect()
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_component_states(
+    pool: &crate::db::DbPool,
+    component_ids: &[Uuid],
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    if component_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (1..=component_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        "SELECT id, current_state FROM components WHERE id IN ({})",
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, (String, String)>(&query);
+    for id in component_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows: Vec<(String, String)> = q.fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id_str, state)| Uuid::parse_str(&id_str).ok().map(|id| (id, state)))
+        .collect())
 }
 
 /// Transition a component to a new state, validating the FSM rules.
@@ -62,7 +95,8 @@ pub async fn transition_component(
     new_state: ComponentState,
 ) -> Result<(), FsmError> {
     // Run the state read + validate + write atomically in a transaction.
-    // SELECT ... FOR UPDATE prevents concurrent transitions on the same component.
+    // PostgreSQL: SELECT ... FOR UPDATE prevents concurrent transitions.
+    // SQLite: File-level locking via WAL mode handles concurrency.
     let mut tx = state
         .db
         .begin()
@@ -70,16 +104,9 @@ pub async fn transition_component(
         .map_err(|e| FsmError::Database(e.to_string()))?;
 
     // Read current state with row lock, including names for event broadcasting
-    let row = sqlx::query_as::<_, (String, Uuid, String, String)>(
-        r#"SELECT c.current_state, c.application_id, c.name, a.name
-           FROM components c
-           JOIN applications a ON c.application_id = a.id
-           WHERE c.id = $1 FOR UPDATE OF c"#,
-    )
-    .bind(component_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|e| FsmError::Database(e.to_string()))?;
+    let row = fetch_component_for_transition(&mut tx, component_id)
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?;
 
     let (current_str, app_id, component_name, app_name) =
         row.ok_or(FsmError::ComponentNotFound(component_id))?;
@@ -108,10 +135,7 @@ pub async fn transition_component(
     .map_err(|e| FsmError::Database(e.to_string()))?;
 
     // Update cached current_state on the components row (fast read path)
-    sqlx::query("UPDATE components SET current_state = $2, updated_at = now() WHERE id = $1")
-        .bind(component_id)
-        .bind(new_state.to_string())
-        .execute(&mut *tx)
+    update_component_state(&mut tx, component_id, &new_state.to_string())
         .await
         .map_err(|e| FsmError::Database(e.to_string()))?;
 
@@ -174,16 +198,9 @@ pub async fn force_transition_component(
         .await
         .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    let row = sqlx::query_as::<_, (String, Uuid, String, String)>(
-        r#"SELECT c.current_state, c.application_id, c.name, a.name
-           FROM components c
-           JOIN applications a ON c.application_id = a.id
-           WHERE c.id = $1 FOR UPDATE OF c"#,
-    )
-    .bind(component_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|e| FsmError::Database(e.to_string()))?;
+    let row = fetch_component_for_transition(&mut tx, component_id)
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?;
 
     let (current_str, app_id, component_name, app_name) =
         row.ok_or(FsmError::ComponentNotFound(component_id))?;
@@ -204,10 +221,7 @@ pub async fn force_transition_component(
     .await
     .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    sqlx::query("UPDATE components SET current_state = $2, updated_at = now() WHERE id = $1")
-        .bind(component_id)
-        .bind(new_state.to_string())
-        .execute(&mut *tx)
+    update_component_state(&mut tx, component_id, &new_state.to_string())
         .await
         .map_err(|e| FsmError::Database(e.to_string()))?;
 
@@ -271,7 +285,7 @@ pub async fn process_check_result(
 /// Store a check result in check_events with optional metrics.
 /// This is separate from FSM processing to handle the full CheckResult data.
 pub async fn store_check_event(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     check_result: &appcontrol_common::CheckResult,
 ) -> Result<(), FsmError> {
     let check_type = match check_result.check_type {
@@ -313,4 +327,84 @@ fn parse_state(s: &str) -> Result<ComponentState, FsmError> {
             to: "unknown".to_string(),
         }),
     }
+}
+
+// ============================================================================
+// Database-specific helper functions for FSM transactions
+// ============================================================================
+
+/// Fetch component data for state transition with row-level locking.
+/// PostgreSQL uses FOR UPDATE, SQLite relies on WAL mode file-level locking.
+#[cfg(feature = "postgres")]
+async fn fetch_component_for_transition<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    component_id: Uuid,
+) -> Result<Option<(String, Uuid, String, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (String, Uuid, String, String)>(
+        r#"SELECT c.current_state, c.application_id, c.name, a.name
+           FROM components c
+           JOIN applications a ON c.application_id = a.id
+           WHERE c.id = $1 FOR UPDATE OF c"#,
+    )
+    .bind(component_id)
+    .fetch_optional(&mut **tx)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_component_for_transition<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Sqlite>,
+    component_id: Uuid,
+) -> Result<Option<(String, Uuid, String, String)>, sqlx::Error> {
+    // SQLite: No FOR UPDATE needed - WAL mode provides serializable isolation
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        current_state: String,
+        application_id: String,
+        component_name: String,
+        app_name: String,
+    }
+    let row = sqlx::query_as::<_, Row>(
+        r#"SELECT c.current_state, c.application_id, c.name as component_name, a.name as app_name
+           FROM components c
+           JOIN applications a ON c.application_id = a.id
+           WHERE c.id = $1"#,
+    )
+    .bind(component_id.to_string())
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    Ok(row.map(|r| {
+        let app_id = Uuid::parse_str(&r.application_id).unwrap_or(Uuid::nil());
+        (r.current_state, app_id, r.component_name, r.app_name)
+    }))
+}
+
+/// Update component state with database-appropriate timestamp function.
+#[cfg(feature = "postgres")]
+async fn update_component_state<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    component_id: Uuid,
+    new_state: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE components SET current_state = $2, updated_at = now() WHERE id = $1")
+        .bind(component_id)
+        .bind(new_state)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn update_component_state<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Sqlite>,
+    component_id: Uuid,
+    new_state: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE components SET current_state = $2, updated_at = datetime('now') WHERE id = $1")
+        .bind(component_id.to_string())
+        .bind(new_state)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }

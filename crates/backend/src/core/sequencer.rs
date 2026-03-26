@@ -26,7 +26,7 @@ pub enum SequencerError {
 }
 
 /// Helper to get a component's display name (display_name or name fallback)
-async fn get_component_name(pool: &sqlx::PgPool, component_id: Uuid) -> String {
+async fn get_component_name(pool: &crate::db::DbPool, component_id: Uuid) -> String {
     sqlx::query_scalar::<_, String>(
         "SELECT COALESCE(display_name, name) FROM components WHERE id = $1",
     )
@@ -39,7 +39,7 @@ async fn get_component_name(pool: &sqlx::PgPool, component_id: Uuid) -> String {
 }
 
 /// Build a start plan without executing it (for dry_run and display).
-pub async fn build_start_plan(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Value, SequencerError> {
+pub async fn build_start_plan(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, SequencerError> {
     let dag = dag::build_dag(pool, app_id).await?;
     let levels = dag.topological_levels()?;
 
@@ -854,7 +854,7 @@ pub async fn stop_single_component(
 
 /// Record a dispatched command in the command_executions table (public variant for rebuild/switchover).
 pub async fn record_command_dispatch_public(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     request_id: Uuid,
     component_id: Uuid,
     agent_id: Uuid,
@@ -865,7 +865,7 @@ pub async fn record_command_dispatch_public(
 
 /// Record a dispatched command in the command_executions table.
 async fn record_command_dispatch(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     request_id: Uuid,
     component_id: Uuid,
     agent_id: Uuid,
@@ -892,7 +892,7 @@ async fn record_command_dispatch(
 
 /// Record a command result in the command_executions table.
 pub async fn record_command_result(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     request_id: Uuid,
     exit_code: i32,
     stdout: &str,

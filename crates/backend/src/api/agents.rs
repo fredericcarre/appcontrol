@@ -8,6 +8,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbPool;
 use crate::error::{ApiError, OptionExt};
 use crate::AppState;
 
@@ -542,13 +543,7 @@ pub async fn bulk_delete_agents(
     }
 
     // Verify all agents belong to the user's organization
-    let valid_agents: Vec<(Uuid, String)> = sqlx::query_as(
-        "SELECT id, hostname FROM agents WHERE id = ANY($1) AND organization_id = $2",
-    )
-    .bind(&body.agent_ids)
-    .bind(user.organization_id)
-    .fetch_all(&state.db)
-    .await?;
+    let valid_agents = verify_agents_in_org(&state.db, &body.agent_ids, user.organization_id).await?;
 
     if valid_agents.is_empty() {
         return Err(ApiError::NotFound);
@@ -580,34 +575,10 @@ pub async fn bulk_delete_agents(
     }
 
     // 2. Clear agent_id from components (don't delete components)
-    sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = ANY($1)")
-        .bind(&valid_ids)
-        .execute(&mut *tx)
-        .await?;
+    // 3-6. Delete related records and agents
+    bulk_delete_agent_records(&mut tx, &valid_ids).await?;
 
-    // 3. Delete discovery reports for these agents
-    sqlx::query("DELETE FROM discovery_reports WHERE agent_id = ANY($1)")
-        .bind(&valid_ids)
-        .execute(&mut *tx)
-        .await?;
-
-    // 4. Delete certificate events for these agents
-    sqlx::query("DELETE FROM certificate_events WHERE agent_id = ANY($1)")
-        .bind(&valid_ids)
-        .execute(&mut *tx)
-        .await?;
-
-    // 5. Delete binding profile mappings for these agents
-    sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = ANY($1)")
-        .bind(&valid_ids)
-        .execute(&mut *tx)
-        .await?;
-
-    // 6. Delete the agents
-    let delete_result = sqlx::query("DELETE FROM agents WHERE id = ANY($1)")
-        .bind(&valid_ids)
-        .execute(&mut *tx)
-        .await?;
+    let delete_result = valid_ids.len();
 
     tx.commit().await?;
 
@@ -619,8 +590,125 @@ pub async fn bulk_delete_agents(
     }
 
     Ok(Json(json!({
-        "deleted": delete_result.rows_affected(),
+        "deleted": delete_result,
         "agent_ids": valid_ids,
         "components_affected": components_affected,
     })))
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Helper functions for cross-database compatibility
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Verify agents belong to organization - returns (id, hostname) pairs
+#[cfg(feature = "postgres")]
+async fn verify_agents_in_org(
+    pool: &DbPool,
+    agent_ids: &[Uuid],
+    org_id: Uuid,
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, hostname FROM agents WHERE id = ANY($1) AND organization_id = $2",
+    )
+    .bind(agent_ids)
+    .bind(org_id)
+    .fetch_all(pool)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn verify_agents_in_org(
+    pool: &DbPool,
+    agent_ids: &[Uuid],
+    org_id: Uuid,
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    if agent_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (1..=agent_ids.len()).map(|i| format!("${}", i)).collect();
+    let org_placeholder = format!("${}", agent_ids.len() + 1);
+    let query = format!(
+        "SELECT id, hostname FROM agents WHERE id IN ({}) AND organization_id = {}",
+        placeholders.join(", "),
+        org_placeholder
+    );
+    let mut q = sqlx::query_as::<_, (String, String)>(&query);
+    for id in agent_ids {
+        q = q.bind(id.to_string());
+    }
+    q = q.bind(org_id.to_string());
+    let rows: Vec<(String, String)> = q.fetch_all(pool).await?;
+    // Parse UUID strings back
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id_str, hostname)| {
+            Uuid::parse_str(&id_str).ok().map(|id| (id, hostname))
+        })
+        .collect())
+}
+
+/// Delete all agent-related records in a transaction
+#[cfg(feature = "postgres")]
+async fn bulk_delete_agent_records<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    agent_ids: &[Uuid],
+) -> Result<(), sqlx::Error> {
+    // Clear agent_id from components
+    sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = ANY($1)")
+        .bind(agent_ids)
+        .execute(&mut **tx)
+        .await?;
+    // Delete discovery reports
+    sqlx::query("DELETE FROM discovery_reports WHERE agent_id = ANY($1)")
+        .bind(agent_ids)
+        .execute(&mut **tx)
+        .await?;
+    // Delete certificate events
+    sqlx::query("DELETE FROM certificate_events WHERE agent_id = ANY($1)")
+        .bind(agent_ids)
+        .execute(&mut **tx)
+        .await?;
+    // Delete binding profile mappings
+    sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = ANY($1)")
+        .bind(agent_ids)
+        .execute(&mut **tx)
+        .await?;
+    // Delete agents
+    sqlx::query("DELETE FROM agents WHERE id = ANY($1)")
+        .bind(agent_ids)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn bulk_delete_agent_records<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Sqlite>,
+    agent_ids: &[Uuid],
+) -> Result<(), sqlx::Error> {
+    // For SQLite, we loop through individual deletes
+    for agent_id in agent_ids {
+        let id_str = agent_id.to_string();
+        sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = $1")
+            .bind(&id_str)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("DELETE FROM discovery_reports WHERE agent_id = $1")
+            .bind(&id_str)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("DELETE FROM certificate_events WHERE agent_id = $1")
+            .bind(&id_str)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = $1")
+            .bind(&id_str)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("DELETE FROM agents WHERE id = $1")
+            .bind(&id_str)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
 }

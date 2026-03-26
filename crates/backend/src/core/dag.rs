@@ -186,7 +186,7 @@ impl Dag {
 }
 
 /// Build a DAG from the dependencies table for a given application.
-pub async fn build_dag(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Dag, DagError> {
+pub async fn build_dag(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Dag, DagError> {
     let components =
         sqlx::query_as::<_, (Uuid,)>("SELECT id FROM components WHERE application_id = $1")
             .bind(app_id)
@@ -220,7 +220,7 @@ pub async fn build_dag(pool: &sqlx::PgPool, app_id: Uuid) -> Result<Dag, DagErro
 
 /// Validate that adding a new edge won't create a cycle.
 pub async fn validate_no_cycle(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     app_id: Uuid,
     from: Uuid,
     to: Uuid,

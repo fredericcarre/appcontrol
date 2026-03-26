@@ -1,10 +1,10 @@
-use sqlx::PgPool;
+use crate::db::DbPool;
 use uuid::Uuid;
 
 use super::AuthUser;
 
 /// Validate an API key (format: ac_XXXXX) and return the associated user.
-pub async fn validate_api_key(pool: &PgPool, key: &str) -> Result<AuthUser, ApiKeyError> {
+pub async fn validate_api_key(pool: &DbPool, key: &str) -> Result<AuthUser, ApiKeyError> {
     if !key.starts_with("ac_") {
         return Err(ApiKeyError::InvalidFormat);
     }

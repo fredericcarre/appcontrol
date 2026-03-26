@@ -72,6 +72,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Database migrations completed successfully");
 
     // Auto-create partitions for check_events (current + next year)
+    // PostgreSQL only - SQLite doesn't support table partitioning
+    #[cfg(feature = "postgres")]
     if let Err(e) = ensure_check_event_partitions(&pool).await {
         tracing::warn!("Failed to ensure check_event partitions: {}", e);
     }
@@ -211,16 +213,20 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Partition maintenance task (runs daily, creates partitions for current + next year)
-    let partition_pool = state.db.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(86400));
-        loop {
-            interval.tick().await;
-            if let Err(e) = ensure_check_event_partitions(&partition_pool).await {
-                tracing::warn!("Partition maintenance failed: {}", e);
+    // PostgreSQL only - SQLite doesn't support table partitioning
+    #[cfg(feature = "postgres")]
+    {
+        let partition_pool = state.db.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(86400));
+            loop {
+                interval.tick().await;
+                if let Err(e) = ensure_check_event_partitions(&partition_pool).await {
+                    tracing::warn!("Partition maintenance failed: {}", e);
+                }
             }
-        }
-    });
+        });
+    }
 
     // Database pool metrics reporter (every 10s)
     db::spawn_pool_metrics(state.db.clone());
@@ -305,7 +311,9 @@ async fn shutdown_signal(timeout_secs: u64) {
 }
 
 /// Ensure check_events partitions exist for the current and next year.
-async fn ensure_check_event_partitions(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+/// PostgreSQL only - SQLite doesn't support table partitioning.
+#[cfg(feature = "postgres")]
+async fn ensure_check_event_partitions(pool: &crate::db::DbPool) -> anyhow::Result<()> {
     let current_year = chrono::Utc::now().year();
 
     for year in [current_year, current_year + 1] {
@@ -338,6 +346,7 @@ async fn ensure_check_event_partitions(pool: &sqlx::PgPool) -> anyhow::Result<()
     Ok(())
 }
 
+#[cfg(feature = "postgres")]
 use chrono::Datelike;
 
 /// Seed a default organization and admin user on first start.
@@ -346,7 +355,7 @@ use chrono::Datelike;
 /// All values come from SEED_* environment variables — nothing is hardcoded.
 ///
 /// Uses UPSERT to override any migration-seeded data with the configured values.
-async fn seed_initial_user(pool: &sqlx::PgPool, seed: &config::SeedConfig) {
+async fn seed_initial_user(pool: &crate::db::DbPool, seed: &config::SeedConfig) {
     let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(pool)
         .await
@@ -419,7 +428,7 @@ async fn seed_initial_user(pool: &sqlx::PgPool, seed: &config::SeedConfig) {
 /// On first startup, there's typically one organization (created by migration or seed).
 /// Without this, the admin must manually call `POST /api/v1/pki/init` before any
 /// agent can enroll. This eliminates that manual step — zero-config mTLS.
-async fn auto_init_pki(pool: &sqlx::PgPool) {
+async fn auto_init_pki(pool: &crate::db::DbPool) {
     let orgs_without_ca: Vec<(uuid::Uuid, String)> =
         sqlx::query_as("SELECT id, name FROM organizations WHERE ca_cert_pem IS NULL")
             .fetch_all(pool)
@@ -460,7 +469,11 @@ async fn auto_init_pki(pool: &sqlx::PgPool) {
 /// action_log is APPEND-ONLY (Critical Rule #2): we archive old entries to
 /// action_log_archive instead of deleting them. The archive table uses the same
 /// schema and is cheap to query for auditors, while keeping the hot table small.
-async fn run_data_retention(pool: &sqlx::PgPool, action_log_days: u32, check_events_days: u32) {
+///
+/// PostgreSQL: Uses partitions for check_events, archives action_log via CTE.
+/// SQLite: Simple DELETE for check_events (no partitioning), same archive logic.
+#[cfg(feature = "postgres")]
+async fn run_data_retention(pool: &crate::db::DbPool, action_log_days: u32, check_events_days: u32) {
     if action_log_days > 0 {
         let interval = format!("{} days", action_log_days);
 
@@ -551,11 +564,96 @@ async fn run_data_retention(pool: &sqlx::PgPool, action_log_days: u32, check_eve
     }
 }
 
+/// SQLite version of data retention.
+/// Uses simpler DELETE queries since SQLite doesn't support partitioning.
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn run_data_retention(pool: &crate::db::DbPool, action_log_days: u32, check_events_days: u32) {
+    use chrono::Duration;
+
+    if action_log_days > 0 {
+        let cutoff = chrono::Utc::now() - Duration::days(action_log_days as i64);
+        let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        // Create archive table if needed (SQLite syntax)
+        let _ = sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS action_log_archive (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                details TEXT,
+                status TEXT NOT NULL DEFAULT 'in_progress',
+                error_message TEXT,
+                completed_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )"#,
+        )
+        .execute(pool)
+        .await;
+
+        // Archive old entries
+        let result = sqlx::query(
+            "INSERT OR IGNORE INTO action_log_archive SELECT * FROM action_log WHERE created_at < ?",
+        )
+        .bind(&cutoff_str)
+        .execute(pool)
+        .await;
+
+        if let Ok(result) = result {
+            let count = result.rows_affected();
+            if count > 0 {
+                tracing::info!(
+                    archived = count,
+                    retention_days = action_log_days,
+                    "Action log: archived old entries to action_log_archive"
+                );
+            }
+        }
+    }
+
+    if check_events_days > 0 {
+        let cutoff = chrono::Utc::now() - Duration::days(check_events_days as i64);
+        let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        // SQLite: simple DELETE (no partitioning)
+        match sqlx::query("DELETE FROM check_events WHERE created_at < ?")
+            .bind(&cutoff_str)
+            .execute(pool)
+            .await
+        {
+            Ok(result) => {
+                let count = result.rows_affected();
+                if count > 0 {
+                    tracing::info!(
+                        deleted = count,
+                        retention_days = check_events_days,
+                        "Check events: deleted old entries"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Check events cleanup failed: {}", e);
+            }
+        }
+    }
+}
+
 /// Run migrations from the migrations/ directory.
 /// Handles Flyway-style naming (V001__name.sql) by executing them in order.
 /// Uses a `_migrations` tracking table to avoid re-running already-applied migrations.
-async fn run_migrations(pool: &sqlx::PgPool) -> anyhow::Result<()> {
-    // Ensure tracking table exists
+///
+/// For PostgreSQL: uses migrations/postgres/ directory
+/// For SQLite: uses migrations/sqlite/ directory
+async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
+    // Determine the database type subdirectory
+    #[cfg(feature = "postgres")]
+    let db_subdir = "postgres";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let db_subdir = "sqlite";
+
+    // Ensure tracking table exists (cross-database compatible syntax)
+    #[cfg(feature = "postgres")]
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS _migrations (
             version INTEGER PRIMARY KEY,
@@ -566,20 +664,40 @@ async fn run_migrations(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS _migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+    )
+    .execute(pool)
+    .await?;
+
     // Find migration files.
     // Try multiple locations: CARGO_MANIFEST_DIR-relative (dev), /app/migrations (Docker),
     // and MIGRATIONS_DIR env var (custom deployments).
-    let cargo_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
-    let docker_dir = std::path::PathBuf::from("/app/migrations");
+    // For dual-database support, look in the database-specific subdirectory.
+    let cargo_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../migrations")
+        .join(db_subdir);
+    let docker_dir = std::path::PathBuf::from("/app/migrations").join(db_subdir);
     let env_dir = std::env::var("MIGRATIONS_DIR")
         .ok()
-        .map(std::path::PathBuf::from);
+        .map(|p| std::path::PathBuf::from(p).join(db_subdir));
+
+    // Also check the root migrations directory (for backwards compatibility)
+    let cargo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
 
     let migrations_dir = env_dir
         .filter(|p| p.exists())
         .or_else(|| {
             if cargo_dir.exists() {
-                Some(cargo_dir)
+                Some(cargo_dir.clone())
+            } else if cargo_root.exists() {
+                // Fallback to root for backwards compatibility (PostgreSQL-only setups)
+                Some(cargo_root)
             } else {
                 None
             }

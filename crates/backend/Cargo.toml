@@ -3,6 +3,12 @@ name = "appcontrol-backend"
 version.workspace = true
 edition = "2021"
 
+[features]
+default = ["postgres"]
+postgres = ["sqlx/postgres"]
+sqlite = ["sqlx/sqlite"]
+full = ["postgres", "sqlite"]
+
 [dependencies]
 appcontrol-common = { path = "../common" }
 axum = { version = "0.7", features = ["ws"] }
@@ -10,7 +16,8 @@ axum-extra = { version = "0.9", features = ["typed-header"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 hostname = "0.4"
-sqlx = { version = "0.7", features = ["postgres", "runtime-tokio", "tls-rustls", "uuid", "chrono", "json", "migrate"] }
+# SQLx with Any driver for runtime database selection + specific drivers via features
+sqlx = { version = "0.7", features = ["runtime-tokio", "tls-rustls", "uuid", "chrono", "json", "migrate", "any"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"

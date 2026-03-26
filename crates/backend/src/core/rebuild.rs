@@ -32,7 +32,7 @@ pub enum RebuildError {
 
 /// Build a rebuild plan. Checks protected components and resolves rebuild commands.
 pub async fn build_rebuild_plan(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     app_id: Uuid,
     component_ids: Option<&[Uuid]>,
 ) -> Result<Value, RebuildError> {
@@ -87,7 +87,7 @@ type RebuildTarget = (
 
 /// Fetch rebuild target components with effective rebuild commands.
 async fn fetch_rebuild_targets(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     app_id: Uuid,
     component_ids: Option<&[Uuid]>,
 ) -> Result<Vec<RebuildTarget>, RebuildError> {
@@ -389,7 +389,7 @@ pub async fn execute_rebuild(
 }
 
 /// Get the agent_id assigned to a component.
-async fn get_component_agent(pool: &sqlx::PgPool, component_id: Uuid) -> Option<Uuid> {
+async fn get_component_agent(pool: &crate::db::DbPool, component_id: Uuid) -> Option<Uuid> {
     sqlx::query_scalar::<_, Uuid>(
         "SELECT agent_id FROM components WHERE id = $1 AND agent_id IS NOT NULL",
     )
@@ -409,7 +409,7 @@ enum CommandCompletion {
 
 /// Poll the command_executions table until the command completes or times out.
 async fn wait_for_command_completion(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     request_id: Uuid,
     timeout_secs: u64,
 ) -> CommandCompletion {

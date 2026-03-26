@@ -88,7 +88,7 @@ impl Default for RateLimitState {
 /// Check rate limit using PostgreSQL if HA mode is enabled, otherwise use in-memory.
 /// PostgreSQL approach: UPSERT counter with window reset on expiry.
 async fn check_rate_limit(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     fallback: &RateLimiter,
     key: &str,
     max_requests: u32,
@@ -137,7 +137,7 @@ async fn check_rate_limit(
 }
 
 /// Cleanup expired rate limit counters (called periodically from background task).
-pub async fn cleanup_rate_limit_counters(pool: &sqlx::PgPool) {
+pub async fn cleanup_rate_limit_counters(pool: &crate::db::DbPool) {
     // Remove counters older than 2 minutes (window is 60s, 2x buffer)
     let _ = sqlx::query(
         "DELETE FROM rate_limit_counters WHERE window_start < now() - interval '2 minutes'",

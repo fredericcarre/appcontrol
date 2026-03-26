@@ -11,7 +11,7 @@ use uuid::Uuid;
 /// - Works in HA mode (multiple backend instances)
 #[derive(Debug, Clone)]
 pub struct OperationLock {
-    pool: sqlx::PgPool,
+    pool: crate::db::DbPool,
     instance_id: String,
 }
 
@@ -48,7 +48,7 @@ const HEARTBEAT_INTERVAL_SECONDS: u64 = 5;
 
 impl OperationLock {
     /// Create with a database pool.
-    pub fn new(pool: sqlx::PgPool) -> Self {
+    pub fn new(pool: crate::db::DbPool) -> Self {
         // Generate a unique instance ID for this backend process
         let instance_id = format!(
             "{}-{}",
@@ -363,7 +363,7 @@ impl OperationLock {
 }
 
 /// Heartbeat loop - updates last_heartbeat every 5 seconds until shutdown signal.
-async fn heartbeat_loop(pool: sqlx::PgPool, app_id: Uuid, mut shutdown_rx: watch::Receiver<bool>) {
+async fn heartbeat_loop(pool: crate::db::DbPool, app_id: Uuid, mut shutdown_rx: watch::Receiver<bool>) {
     let interval = std::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECONDS);
 
     loop {
@@ -395,7 +395,7 @@ async fn heartbeat_loop(pool: sqlx::PgPool, app_id: Uuid, mut shutdown_rx: watch
 
 /// RAII guard that releases the operation lock when dropped.
 pub struct OperationGuard {
-    pool: sqlx::PgPool,
+    pool: crate::db::DbPool,
     app_id: Uuid,
     shutdown_tx: Option<watch::Sender<bool>>,
 }

@@ -92,7 +92,7 @@ fn required_approvals_for_risk(risk_level: &str) -> i32 {
 /// Check whether an operation requires approval based on org policies.
 /// Returns None if no approval needed, or Some(risk_level) if approval is required.
 pub async fn check_approval_required(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     organization_id: Uuid,
     operation_type: &str,
 ) -> Option<String> {

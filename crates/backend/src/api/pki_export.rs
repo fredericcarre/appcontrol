@@ -388,7 +388,7 @@ pub async fn get_pki_status(
 /// - gateway.crt: Gateway server certificate (signed by PKI CA)
 /// - gateway.key: Gateway private key
 pub async fn export_certs_to_volume_if_configured(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let export_path = match std::env::var("CERT_EXPORT_PATH") {
         Ok(p) if !p.is_empty() => p,
@@ -492,7 +492,7 @@ pub async fn export_certs_to_volume_if_configured(
 /// Backward-compatible alias for export_certs_to_volume_if_configured.
 #[allow(dead_code)]
 pub async fn export_ca_to_volume_if_configured(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     _org_id: Uuid,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     export_certs_to_volume_if_configured(pool).await

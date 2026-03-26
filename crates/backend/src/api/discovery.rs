@@ -32,6 +32,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::{IntArray, UuidArray};
 use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
@@ -1284,7 +1285,7 @@ pub async fn create_draft(
         .bind(&comp.name)
         .bind(&comp.process_name)
         .bind(&comp.host)
-        .bind(&comp.listening_ports)
+        .bind(IntArray::from(comp.listening_ports.clone()))
         .bind(&comp.component_type)
         .bind(&comp.check_cmd)
         .bind(&comp.start_cmd)
@@ -1682,6 +1683,21 @@ pub async fn apply_draft(
 // Snapshot Schedules — automated discovery snapshots for comparison
 // ===========================================================================
 
+/// Row type for schedule queries (uses UuidArray for cross-database compatibility).
+#[derive(Debug, sqlx::FromRow)]
+struct ScheduleRow {
+    id: Uuid,
+    name: String,
+    agent_ids: UuidArray,
+    frequency: String,
+    cron_expression: Option<String>,
+    enabled: bool,
+    retention_days: i32,
+    last_run_at: Option<chrono::DateTime<chrono::Utc>>,
+    next_run_at: Option<chrono::DateTime<chrono::Utc>>,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// List snapshot schedules for the organization.
 pub async fn list_schedules(
     State(state): State<Arc<AppState>>,
@@ -1691,21 +1707,7 @@ pub async fn list_schedules(
         return Err(ApiError::Forbidden);
     }
 
-    let rows = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            Vec<Uuid>,
-            String,
-            Option<String>,
-            bool,
-            i32,
-            Option<chrono::DateTime<chrono::Utc>>,
-            Option<chrono::DateTime<chrono::Utc>>,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
+    let rows = sqlx::query_as::<_, ScheduleRow>(
         "SELECT id, name, agent_ids, frequency, cron_expression, enabled,
                 retention_days, last_run_at, next_run_at, created_at
          FROM snapshot_schedules
@@ -1718,33 +1720,20 @@ pub async fn list_schedules(
 
     let schedules: Vec<Value> = rows
         .iter()
-        .map(
-            |(
-                id,
-                name,
-                agent_ids,
-                frequency,
-                cron_expr,
-                enabled,
-                retention_days,
-                last_run,
-                next_run,
-                created_at,
-            )| {
-                json!({
-                    "id": id,
-                    "name": name,
-                    "agent_ids": agent_ids,
-                    "frequency": frequency,
-                    "cron_expression": cron_expr,
-                    "enabled": enabled,
-                    "retention_days": retention_days,
-                    "last_run_at": last_run,
-                    "next_run_at": next_run,
-                    "created_at": created_at,
-                })
-            },
-        )
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "name": row.name,
+                "agent_ids": row.agent_ids.0,
+                "frequency": row.frequency,
+                "cron_expression": row.cron_expression,
+                "enabled": row.enabled,
+                "retention_days": row.retention_days,
+                "last_run_at": row.last_run_at,
+                "next_run_at": row.next_run_at,
+                "created_at": row.created_at,
+            })
+        })
         .collect();
 
     Ok(Json(json!({ "schedules": schedules })))
@@ -1807,7 +1796,7 @@ pub async fn create_schedule(
     .bind(schedule_id)
     .bind(user.organization_id)
     .bind(&body.name)
-    .bind(&body.agent_ids)
+    .bind(UuidArray::from(body.agent_ids.clone()))
     .bind(&body.frequency)
     .bind(body.retention_days)
     .bind(next_run)
@@ -1890,7 +1879,7 @@ pub async fn update_schedule(
     if let Some(ref agent_ids) = body.agent_ids {
         sqlx::query("UPDATE snapshot_schedules SET agent_ids = $2 WHERE id = $1")
             .bind(schedule_id)
-            .bind(agent_ids)
+            .bind(UuidArray::from(agent_ids.clone()))
             .execute(&state.db)
             .await?;
     }
@@ -2036,6 +2025,17 @@ pub struct ListSnapshotsQuery {
     pub schedule_id: Option<Uuid>,
 }
 
+/// Row type for snapshot queries.
+#[derive(Debug, sqlx::FromRow)]
+struct SnapshotRow {
+    id: Uuid,
+    schedule_id: Uuid,
+    schedule_name: String,
+    agent_ids: UuidArray,
+    report_ids: UuidArray,
+    captured_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// List scheduled snapshots.
 pub async fn list_snapshots(
     State(state): State<Arc<AppState>>,
@@ -2046,13 +2046,9 @@ pub async fn list_snapshots(
         return Err(ApiError::Forbidden);
     }
 
-    let rows =
-        if let Some(schedule_id) = query.schedule_id {
-            sqlx::query_as::<
-            _,
-            (Uuid, Uuid, String, Vec<Uuid>, Vec<Uuid>, chrono::DateTime<chrono::Utc>),
-        >(
-            "SELECT ss.id, ss.schedule_id, sch.name, ss.agent_ids, ss.report_ids, ss.captured_at
+    let rows = if let Some(schedule_id) = query.schedule_id {
+        sqlx::query_as::<_, SnapshotRow>(
+            "SELECT ss.id, ss.schedule_id, sch.name as schedule_name, ss.agent_ids, ss.report_ids, ss.captured_at
              FROM scheduled_snapshots ss
              JOIN snapshot_schedules sch ON sch.id = ss.schedule_id
              WHERE ss.organization_id = $1 AND ss.schedule_id = $2
@@ -2063,12 +2059,9 @@ pub async fn list_snapshots(
         .bind(schedule_id)
         .fetch_all(&state.db)
         .await?
-        } else {
-            sqlx::query_as::<
-            _,
-            (Uuid, Uuid, String, Vec<Uuid>, Vec<Uuid>, chrono::DateTime<chrono::Utc>),
-        >(
-            "SELECT ss.id, ss.schedule_id, sch.name, ss.agent_ids, ss.report_ids, ss.captured_at
+    } else {
+        sqlx::query_as::<_, SnapshotRow>(
+            "SELECT ss.id, ss.schedule_id, sch.name as schedule_name, ss.agent_ids, ss.report_ids, ss.captured_at
              FROM scheduled_snapshots ss
              JOIN snapshot_schedules sch ON sch.id = ss.schedule_id
              WHERE ss.organization_id = $1
@@ -2078,22 +2071,20 @@ pub async fn list_snapshots(
         .bind(user.organization_id)
         .fetch_all(&state.db)
         .await?
-        };
+    };
 
     let snapshots: Vec<Value> = rows
         .iter()
-        .map(
-            |(id, schedule_id, schedule_name, agent_ids, report_ids, captured_at)| {
-                json!({
-                    "id": id,
-                    "schedule_id": schedule_id,
-                    "schedule_name": schedule_name,
-                    "agent_ids": agent_ids,
-                    "report_ids": report_ids,
-                    "captured_at": captured_at,
-                })
-            },
-        )
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "schedule_id": row.schedule_id,
+                "schedule_name": row.schedule_name,
+                "agent_ids": row.agent_ids.0,
+                "report_ids": row.report_ids.0,
+                "captured_at": row.captured_at,
+            })
+        })
         .collect();
 
     Ok(Json(json!({ "snapshots": snapshots })))

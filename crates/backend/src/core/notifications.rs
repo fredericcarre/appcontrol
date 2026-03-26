@@ -102,7 +102,7 @@ impl NotificationEvent {
 
 /// Dispatch a notification event to all matching webhook endpoints.
 pub async fn dispatch_event(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     app_id: Uuid,
     event: NotificationEvent,
 ) -> Result<(), NotificationError> {
@@ -188,7 +188,7 @@ pub async fn dispatch_event(
 /// Deliver a single webhook with retry logic.
 #[allow(clippy::too_many_arguments)]
 async fn deliver_webhook(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     client: &reqwest::Client,
     webhook_id: Uuid,
     url: &str,
