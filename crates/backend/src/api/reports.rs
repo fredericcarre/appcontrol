@@ -437,8 +437,8 @@ pub async fn drp_report(
             None
         };
 
-        // Get executed commands during this switchover from action_log
-        // Includes the actual command line from the component's start_cmd/stop_cmd
+        // Get executed commands during this switchover from state_transitions
+        // The sequencer doesn't log to action_log, so we derive commands from state changes
         let commands_executed = if let (Some(start), Some(end)) = (started_at, completed_at) {
             let cmds = sqlx::query_as::<
                 _,
@@ -451,31 +451,31 @@ pub async fn drp_report(
                 ),
             >(
                 r#"
-                SELECT al.action, c.name, c.start_cmd, c.stop_cmd, al.created_at
-                FROM action_log al
-                LEFT JOIN components c ON c.id = al.resource_id AND al.resource_type = 'component'
-                WHERE al.created_at >= $1
-                  AND al.created_at <= $2
-                  AND al.action IN ('start_component', 'stop_component', 'execute_command')
-                  AND (c.application_id = $3 OR al.resource_id = $3)
-                ORDER BY al.created_at ASC
+                SELECT st.to_state, c.name, c.start_cmd, c.stop_cmd, st.created_at
+                FROM state_transitions st
+                JOIN components c ON c.id = st.component_id
+                WHERE c.application_id = $1
+                  AND st.created_at >= $2
+                  AND st.created_at <= $3
+                  AND st.to_state IN ('STARTING', 'STOPPING')
+                ORDER BY st.created_at ASC
                 "#,
             )
+            .bind(app_id)
             .bind(start)
             .bind(end)
-            .bind(app_id)
             .fetch_all(&state.db)
             .await
             .unwrap_or_default();
 
             let cmd_list: Vec<Value> = cmds
                 .into_iter()
-                .map(|(action, comp_name, start_cmd, stop_cmd, at)| {
-                    // Select the appropriate command based on action type
-                    let command = match action.as_str() {
-                        "start_component" => start_cmd.as_deref(),
-                        "stop_component" => stop_cmd.as_deref(),
-                        _ => None,
+                .map(|(to_state, comp_name, start_cmd, stop_cmd, at)| {
+                    // Select the appropriate command based on state transition
+                    let (action, command) = match to_state.as_str() {
+                        "STARTING" => ("start", start_cmd),
+                        "STOPPING" => ("stop", stop_cmd),
+                        _ => ("unknown", None),
                     };
                     json!({
                         "action": action,
@@ -513,6 +513,56 @@ pub async fn drp_report(
         b_time.cmp(a_time)
     });
 
+    // Fetch components for the topology graph
+    let components = sqlx::query_as::<_, (Uuid, String, String, Option<f64>, Option<f64>)>(
+        r#"
+        SELECT id, name, component_type, position_x, position_y
+        FROM components
+        WHERE application_id = $1
+        ORDER BY name
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let component_list: Vec<Value> = components
+        .into_iter()
+        .map(|(id, name, comp_type, x, y)| {
+            json!({
+                "id": id,
+                "name": name,
+                "type": comp_type,
+                "position": { "x": x.unwrap_or(0.0), "y": y.unwrap_or(0.0) }
+            })
+        })
+        .collect();
+
+    // Fetch dependencies for the topology edges
+    let dependencies = sqlx::query_as::<_, (Uuid, Uuid)>(
+        r#"
+        SELECT d.upstream_id, d.downstream_id
+        FROM dependencies d
+        JOIN components c ON c.id = d.upstream_id
+        WHERE c.application_id = $1
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let edge_list: Vec<Value> = dependencies
+        .into_iter()
+        .map(|(source, target)| {
+            json!({
+                "source": source,
+                "target": target
+            })
+        })
+        .collect();
+
     Ok(Json(json!({
         "report": "drp_exercises",
         "application": {
@@ -522,6 +572,10 @@ pub async fn drp_report(
         },
         "total_exercises": switchovers.len(),
         "exercises": switchovers,
+        "topology": {
+            "nodes": component_list,
+            "edges": edge_list
+        },
         "generated_at": chrono::Utc::now()
     })))
 }

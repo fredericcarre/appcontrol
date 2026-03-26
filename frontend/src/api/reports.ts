@@ -114,6 +114,18 @@ export interface PraExercise {
   commands_executed: CommandExecuted[] | null;
 }
 
+export interface TopologyNode {
+  id: string;
+  name: string;
+  type: string;
+  position: { x: number; y: number };
+}
+
+export interface TopologyEdge {
+  source: string;
+  target: string;
+}
+
 export interface PraReport {
   report: string;
   application: {
@@ -123,6 +135,10 @@ export interface PraReport {
   };
   total_exercises: number;
   exercises: PraExercise[];
+  topology: {
+    nodes: TopologyNode[];
+    edges: TopologyEdge[];
+  };
   generated_at: string;
 }
 

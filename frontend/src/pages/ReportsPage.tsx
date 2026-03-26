@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApps } from '@/api/apps';
-import { useAuditLog, useComplianceReport, usePraReport, PraExercise } from '@/api/reports';
+import { useAuditLog, useComplianceReport, usePraReport, PraExercise, TopologyNode, TopologyEdge } from '@/api/reports';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -76,6 +76,107 @@ interface ExportReport {
   generated_by: string;
 }
 
+// Simple topology mini-map component
+function TopologyMiniMap({ nodes, edges }: { nodes: TopologyNode[]; edges: TopologyEdge[] }) {
+  if (!nodes || nodes.length === 0) return null;
+
+  // Calculate bounds with padding
+  const padding = 20;
+  const nodeRadius = 8;
+  const width = 300;
+  const height = 150;
+
+  // Find min/max positions
+  const xs = nodes.map(n => n.position.x);
+  const ys = nodes.map(n => n.position.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+
+  // Scale to fit
+  const scaleX = (maxX - minX) > 0 ? (width - 2 * padding) / (maxX - minX) : 1;
+  const scaleY = (maxY - minY) > 0 ? (height - 2 * padding) / (maxY - minY) : 1;
+  const scale = Math.min(scaleX, scaleY, 2); // Cap scale at 2x
+
+  const transform = (x: number, y: number) => ({
+    x: padding + (x - minX) * scale,
+    y: padding + (y - minY) * scale,
+  });
+
+  // Create node map for edge lookup
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+
+  return (
+    <div className="mt-4">
+      <h5 className="font-medium mb-3">Application Topology</h5>
+      <div className="border rounded bg-muted/20 p-2">
+        <svg width={width} height={height} className="w-full">
+          {/* Edges */}
+          {edges.map((edge, idx) => {
+            const source = nodeMap.get(edge.source);
+            const target = nodeMap.get(edge.target);
+            if (!source || !target) return null;
+            const p1 = transform(source.position.x, source.position.y);
+            const p2 = transform(target.position.x, target.position.y);
+            return (
+              <line
+                key={idx}
+                x1={p1.x}
+                y1={p1.y}
+                x2={p2.x}
+                y2={p2.y}
+                stroke="#9CA3AF"
+                strokeWidth={1.5}
+                markerEnd="url(#arrowhead)"
+              />
+            );
+          })}
+          {/* Arrow marker definition */}
+          <defs>
+            <marker
+              id="arrowhead"
+              markerWidth="6"
+              markerHeight="6"
+              refX="5"
+              refY="3"
+              orient="auto"
+            >
+              <path d="M0,0 L0,6 L6,3 z" fill="#9CA3AF" />
+            </marker>
+          </defs>
+          {/* Nodes */}
+          {nodes.map((node) => {
+            const pos = transform(node.position.x, node.position.y);
+            return (
+              <g key={node.id}>
+                <circle
+                  cx={pos.x}
+                  cy={pos.y}
+                  r={nodeRadius}
+                  fill="#3B82F6"
+                  stroke="#1D4ED8"
+                  strokeWidth={1.5}
+                />
+                <text
+                  x={pos.x}
+                  y={pos.y + nodeRadius + 10}
+                  textAnchor="middle"
+                  fontSize={8}
+                  fill="currentColor"
+                  className="text-muted-foreground"
+                >
+                  {node.name.length > 12 ? node.name.slice(0, 10) + '...' : node.name}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 // PRA Exercise Card Component
 function PraExerciseCard({
   exercise,
@@ -84,6 +185,7 @@ function PraExerciseCard({
   formatDuration,
   appName,
   onPrint,
+  topology,
 }: {
   exercise: PraExercise;
   expanded: boolean;
@@ -91,6 +193,7 @@ function PraExerciseCard({
   formatDuration: (seconds: number | null) => string;
   appName: string;
   onPrint: (exerciseId: string) => void;
+  topology?: { nodes: TopologyNode[]; edges: TopologyEdge[] };
 }) {
   const statusConfig = {
     completed: { label: 'Success', variant: 'running' as const, icon: CheckCircle },
@@ -244,6 +347,11 @@ function PraExerciseCard({
                   ))}
                 </div>
               </div>
+            )}
+
+            {/* Topology Mini-Map */}
+            {topology && topology.nodes.length > 0 && (
+              <TopologyMiniMap nodes={topology.nodes} edges={topology.edges} />
             )}
 
             {exercise.components_count && (
@@ -636,6 +744,7 @@ export function ReportsPage() {
                         formatDuration={formatDuration}
                         appName={praData.application.name}
                         onPrint={handlePrintExercise}
+                        topology={praData.topology}
                       />
                     ))}
                   </div>
