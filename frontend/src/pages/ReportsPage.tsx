@@ -89,20 +89,20 @@ function PraExerciseCard({
   formatDuration: (seconds: number | null) => string;
 }) {
   const statusConfig = {
-    completed: { label: 'Réussi', variant: 'running' as const, icon: CheckCircle },
-    failed: { label: 'Échoué', variant: 'failed' as const, icon: XCircle },
-    rolled_back: { label: 'Annulé', variant: 'degraded' as const, icon: AlertTriangle },
-    in_progress: { label: 'En cours', variant: 'secondary' as const, icon: Clock },
+    completed: { label: 'Success', variant: 'running' as const, icon: CheckCircle },
+    failed: { label: 'Failed', variant: 'failed' as const, icon: XCircle },
+    rolled_back: { label: 'Rolled Back', variant: 'degraded' as const, icon: AlertTriangle },
+    in_progress: { label: 'In Progress', variant: 'secondary' as const, icon: Clock },
   };
 
   const phaseLabels: Record<string, string> = {
-    PREPARE: 'Préparation',
-    VALIDATE: 'Validation',
-    STOP_SOURCE: 'Arrêt source',
-    SYNC: 'Synchronisation',
-    START_TARGET: 'Démarrage cible',
-    COMMIT: 'Validation finale',
-    ROLLBACK: 'Annulation',
+    PREPARE: 'Prepare',
+    VALIDATE: 'Validate',
+    STOP_SOURCE: 'Stop Source',
+    SYNC: 'Sync',
+    START_TARGET: 'Start Target',
+    COMMIT: 'Commit',
+    ROLLBACK: 'Rollback',
   };
 
   const config = statusConfig[exercise.status] || statusConfig.in_progress;
@@ -125,7 +125,7 @@ function PraExerciseCard({
                   {exercise.source_site || 'Site source'} → {exercise.target_site || 'Site cible'}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  {new Date(exercise.started_at).toLocaleString('fr-FR')}
+                  {new Date(exercise.started_at).toLocaleString('en-US')}
                 </p>
               </div>
             </div>
@@ -142,19 +142,19 @@ function PraExerciseCard({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="border-t p-4 bg-muted/30 print:bg-transparent">
-            <h5 className="font-medium mb-3">Phases horodatées</h5>
+            <h5 className="font-medium mb-3">Timestamped Phases</h5>
             <div className="space-y-2">
               {exercise.phases.map((phase, idx) => (
                 <div key={idx} className="flex items-center gap-4 text-sm">
                   <div className="w-32 font-medium">{phaseLabels[phase.phase] || phase.phase}</div>
                   <div className="w-48 text-muted-foreground">
-                    {new Date(phase.started_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    {new Date(phase.started_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
                     {' → '}
-                    {new Date(phase.completed_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    {new Date(phase.completed_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
                   </div>
                   <div className="w-20 text-right">{phase.duration_ms}ms</div>
                   <Badge variant={phase.status === 'completed' ? 'running' : 'failed'} className="text-xs">
-                    {phase.status === 'completed' ? 'OK' : 'KO'}
+                    {phase.status === 'completed' ? 'OK' : 'FAIL'}
                   </Badge>
                 </div>
               ))}
@@ -163,20 +163,20 @@ function PraExerciseCard({
             {/* Component Sequence */}
             {exercise.component_sequence && exercise.component_sequence.length > 0 && (
               <div className="mt-4">
-                <h5 className="font-medium mb-3">Séquence des composants</h5>
+                <h5 className="font-medium mb-3">Component Sequence</h5>
                 <div className="grid grid-cols-2 gap-4">
                   {/* Stop sequence */}
                   <div>
-                    <h6 className="text-sm font-medium text-muted-foreground mb-2">Arrêts</h6>
+                    <h6 className="text-sm font-medium text-muted-foreground mb-2">Stops</h6>
                     <div className="space-y-1">
                       {exercise.component_sequence
-                        .filter((t) => t.to_state === 'STOPPED' || t.to_state === 'STOPPING')
+                        .filter((t) => t.to_state === 'STOPPED')
                         .map((t, idx) => (
                           <div key={idx} className="flex items-center gap-2 text-sm">
                             <span className="w-6 text-muted-foreground">{idx + 1}.</span>
                             <span className="font-medium">{t.component}</span>
                             <span className="text-muted-foreground text-xs">
-                              {new Date(t.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              {new Date(t.at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
                             </span>
                           </div>
                         ))}
@@ -184,16 +184,16 @@ function PraExerciseCard({
                   </div>
                   {/* Start sequence */}
                   <div>
-                    <h6 className="text-sm font-medium text-muted-foreground mb-2">Démarrages</h6>
+                    <h6 className="text-sm font-medium text-muted-foreground mb-2">Starts</h6>
                     <div className="space-y-1">
                       {exercise.component_sequence
-                        .filter((t) => t.to_state === 'RUNNING' || t.to_state === 'STARTING')
+                        .filter((t) => t.to_state === 'RUNNING')
                         .map((t, idx) => (
                           <div key={idx} className="flex items-center gap-2 text-sm">
                             <span className="w-6 text-muted-foreground">{idx + 1}.</span>
                             <span className="font-medium">{t.component}</span>
                             <span className="text-muted-foreground text-xs">
-                              {new Date(t.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              {new Date(t.at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
                             </span>
                           </div>
                         ))}
@@ -203,9 +203,27 @@ function PraExerciseCard({
               </div>
             )}
 
+            {/* Commands Executed */}
+            {exercise.commands_executed && exercise.commands_executed.length > 0 && (
+              <div className="mt-4">
+                <h5 className="font-medium mb-3">Commands Executed</h5>
+                <div className="space-y-2 font-mono text-xs bg-black/5 dark:bg-white/5 p-3 rounded">
+                  {exercise.commands_executed.map((cmd, idx) => (
+                    <div key={idx} className="flex items-start gap-2">
+                      <span className="text-muted-foreground w-20 flex-shrink-0">
+                        {new Date(cmd.at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+                      </span>
+                      <span className="text-blue-600 dark:text-blue-400 w-24 flex-shrink-0">{cmd.component}</span>
+                      <span className="text-muted-foreground">{cmd.command || cmd.action}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {exercise.components_count && (
               <p className="text-sm text-muted-foreground mt-3">
-                {exercise.components_count} composants impactés
+                {exercise.components_count} components affected
               </p>
             )}
             <p className="text-xs text-muted-foreground mt-2 font-mono">
@@ -276,7 +294,7 @@ export function ReportsPage() {
         <TabsList>
           <TabsTrigger value="audit">Audit Trail</TabsTrigger>
           <TabsTrigger value="availability">Availability</TabsTrigger>
-          <TabsTrigger value="pra">Exercices PRA</TabsTrigger>
+          <TabsTrigger value="pra">DRP Exercises</TabsTrigger>
           <TabsTrigger value="compliance">Compliance</TabsTrigger>
         </TabsList>
 
@@ -464,7 +482,7 @@ export function ReportsPage() {
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-lg flex items-center gap-2">
-                  <RefreshCw className="h-5 w-5" /> Exercices PRA
+                  <RefreshCw className="h-5 w-5" /> DRP Exercises
                 </CardTitle>
                 <CardDescription className="mt-1">
                   Historique des tests de reprise d'activité (DORA Article 11)
@@ -488,7 +506,7 @@ export function ReportsPage() {
                 {praData && praData.exercises.length > 0 && (
                   <Button variant="outline" onClick={() => window.print()}>
                     <Printer className="h-4 w-4 mr-2" />
-                    Imprimer
+                    Print
                   </Button>
                 )}
               </div>
@@ -497,7 +515,7 @@ export function ReportsPage() {
               {!praAppId ? (
                 <div className="text-center py-12">
                   <RefreshCw className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
-                  <p className="text-muted-foreground">Sélectionnez une application pour voir l'historique des exercices PRA</p>
+                  <p className="text-muted-foreground">Select an application to view DRP exercise history</p>
                   <p className="text-sm text-muted-foreground/70 mt-2">
                     Conforme à DORA Article 11 : traçabilité des tests de reprise
                   </p>
@@ -507,7 +525,7 @@ export function ReportsPage() {
               ) : !praData?.exercises?.length ? (
                 <div className="text-center py-12">
                   <Clock className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
-                  <p className="text-muted-foreground">Aucun exercice PRA enregistré</p>
+                  <p className="text-muted-foreground">No DRP exercises recorded</p>
                   <p className="text-sm text-muted-foreground/70 mt-2">
                     Les bascules de site seront documentées ici avec horodatage complet
                   </p>
@@ -554,14 +572,14 @@ export function ReportsPage() {
                               )
                             : 'N/A'}
                         </p>
-                        <p className="text-sm text-muted-foreground">RTO moyen</p>
+                        <p className="text-sm text-muted-foreground">Avg RTO</p>
                       </div>
                     </div>
                   </div>
 
                   {/* Exercises List */}
                   <div className="space-y-3">
-                    <h4 className="font-medium">Détail des exercices</h4>
+                    <h4 className="font-medium">Exercise Details</h4>
                     {praData.exercises.map((exercise) => (
                       <PraExerciseCard
                         key={exercise.switchover_id}
@@ -577,7 +595,7 @@ export function ReportsPage() {
 
                   {/* Print Footer */}
                   <div className="hidden print:block border-t pt-4 mt-8 text-sm text-muted-foreground">
-                    <p>Rapport généré le {new Date().toLocaleString('fr-FR')}</p>
+                    <p>Report generated on {new Date().toLocaleString('en-US')}</p>
                     <p>Application : {praData.application.name}</p>
                     <p>Conforme DORA Article 11 - Traçabilité des activités de reprise</p>
                   </div>

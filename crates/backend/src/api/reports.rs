@@ -399,7 +399,7 @@ pub async fn drp_report(
             _ => None,
         };
 
-        // Get component sequence during this switchover (stop and start transitions)
+        // Get component sequence during this switchover (only final states: STOPPED and RUNNING)
         let component_sequence = if let (Some(start), Some(end)) = (started_at, completed_at) {
             let transitions =
                 sqlx::query_as::<_, (String, String, String, chrono::DateTime<chrono::Utc>)>(
@@ -410,7 +410,7 @@ pub async fn drp_report(
                 WHERE c.application_id = $1
                   AND st.created_at >= $2
                   AND st.created_at <= $3
-                  AND (st.to_state IN ('STOPPED', 'STOPPING', 'RUNNING', 'STARTING'))
+                  AND st.to_state IN ('STOPPED', 'RUNNING')
                 ORDER BY st.created_at ASC
                 "#,
                 )
@@ -437,6 +437,43 @@ pub async fn drp_report(
             None
         };
 
+        // Get executed commands during this switchover from action_log
+        let commands_executed = if let (Some(start), Some(end)) = (started_at, completed_at) {
+            let cmds = sqlx::query_as::<_, (String, String, Value, chrono::DateTime<chrono::Utc>)>(
+                r#"
+                SELECT al.action, c.name, al.details, al.created_at
+                FROM action_log al
+                LEFT JOIN components c ON c.id = al.target_id AND al.target_type = 'component'
+                WHERE al.created_at >= $1
+                  AND al.created_at <= $2
+                  AND al.action IN ('start_component', 'stop_component', 'execute_command')
+                  AND (c.application_id = $3 OR al.target_id = $3)
+                ORDER BY al.created_at ASC
+                "#,
+            )
+            .bind(start)
+            .bind(end)
+            .bind(app_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+
+            let cmd_list: Vec<Value> = cmds
+                .into_iter()
+                .map(|(action, comp_name, details, at)| {
+                    json!({
+                        "action": action,
+                        "component": comp_name,
+                        "command": details.get("command").cloned(),
+                        "at": at
+                    })
+                })
+                .collect();
+            Some(cmd_list)
+        } else {
+            None
+        };
+
         switchovers.push(json!({
             "switchover_id": switchover_id,
             "started_at": started_at,
@@ -448,7 +485,8 @@ pub async fn drp_report(
             "target_site_id": target_site_id,
             "components_count": components_count,
             "phases": phase_details,
-            "component_sequence": component_sequence
+            "component_sequence": component_sequence,
+            "commands_executed": commands_executed
         }));
     }
 

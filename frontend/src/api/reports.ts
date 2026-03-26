@@ -92,6 +92,13 @@ export interface ComponentTransition {
   at: string;
 }
 
+export interface CommandExecuted {
+  action: string;
+  component: string;
+  command: string | null;
+  at: string;
+}
+
 export interface PraExercise {
   switchover_id: string;
   started_at: string;
@@ -104,6 +111,7 @@ export interface PraExercise {
   components_count: number | null;
   phases: PraPhase[];
   component_sequence: ComponentTransition[] | null;
+  commands_executed: CommandExecuted[] | null;
 }
 
 export interface PraReport {
