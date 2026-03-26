@@ -74,6 +74,11 @@ enum ServiceAction {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Install rustls crypto provider (required for rustls 0.23+)
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     // Create log streaming channel for WebSocket transmission
     let (log_sender, log_receiver) = appcontrol_common::LogSender::new();
     let ws_log_layer = appcontrol_common::WebSocketLogLayer::new(log_sender, tracing::Level::DEBUG);
