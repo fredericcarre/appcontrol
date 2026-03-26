@@ -440,7 +440,16 @@ pub async fn drp_report(
         // Get executed commands during this switchover from action_log
         // Includes the actual command line from the component's start_cmd/stop_cmd
         let commands_executed = if let (Some(start), Some(end)) = (started_at, completed_at) {
-            let cmds = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)>(
+            let cmds = sqlx::query_as::<
+                _,
+                (
+                    String,
+                    String,
+                    Option<String>,
+                    Option<String>,
+                    chrono::DateTime<chrono::Utc>,
+                ),
+            >(
                 r#"
                 SELECT al.action, c.name, c.start_cmd, c.stop_cmd, al.created_at
                 FROM action_log al
