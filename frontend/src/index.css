@@ -144,3 +144,42 @@
 .discovery-edge-particle {
   animation: flowParticle 2s ease-in-out infinite;
 }
+
+/* PRA Report print styles - only print the expanded exercise */
+@media print {
+  /* Hide navigation, header, sidebar */
+  nav, header, aside, .sidebar, [data-sidebar], .no-print {
+    display: none !important;
+  }
+
+  /* Hide non-printable exercise content */
+  [data-pra-exercise]:not([data-pra-printable="true"]) {
+    display: none !important;
+  }
+
+  /* Hide summary stats when printing a specific exercise */
+  .pra-summary-stats {
+    display: none !important;
+  }
+
+  /* Hide tabs header when printing */
+  [role="tablist"] {
+    display: none !important;
+  }
+
+  /* Show only the printable exercise */
+  [data-pra-printable="true"] {
+    page-break-inside: avoid;
+  }
+
+  /* Ensure good contrast for print */
+  .print-bg-white {
+    background-color: white !important;
+    color: black !important;
+  }
+
+  /* Show print footer */
+  .print-footer {
+    display: block !important;
+  }
+}

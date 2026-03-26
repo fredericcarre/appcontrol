@@ -438,16 +438,17 @@ pub async fn drp_report(
         };
 
         // Get executed commands during this switchover from action_log
+        // Includes the actual command line from the component's start_cmd/stop_cmd
         let commands_executed = if let (Some(start), Some(end)) = (started_at, completed_at) {
-            let cmds = sqlx::query_as::<_, (String, String, Value, chrono::DateTime<chrono::Utc>)>(
+            let cmds = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)>(
                 r#"
-                SELECT al.action, c.name, al.details, al.created_at
+                SELECT al.action, c.name, c.start_cmd, c.stop_cmd, al.created_at
                 FROM action_log al
-                LEFT JOIN components c ON c.id = al.target_id AND al.target_type = 'component'
+                LEFT JOIN components c ON c.id = al.resource_id AND al.resource_type = 'component'
                 WHERE al.created_at >= $1
                   AND al.created_at <= $2
                   AND al.action IN ('start_component', 'stop_component', 'execute_command')
-                  AND (c.application_id = $3 OR al.target_id = $3)
+                  AND (c.application_id = $3 OR al.resource_id = $3)
                 ORDER BY al.created_at ASC
                 "#,
             )
@@ -460,11 +461,17 @@ pub async fn drp_report(
 
             let cmd_list: Vec<Value> = cmds
                 .into_iter()
-                .map(|(action, comp_name, details, at)| {
+                .map(|(action, comp_name, start_cmd, stop_cmd, at)| {
+                    // Select the appropriate command based on action type
+                    let command = match action.as_str() {
+                        "start_component" => start_cmd.as_deref(),
+                        "stop_component" => stop_cmd.as_deref(),
+                        _ => None,
+                    };
                     json!({
                         "action": action,
                         "component": comp_name,
-                        "command": details.get("command").cloned(),
+                        "command": command,
                         "at": at
                     })
                 })

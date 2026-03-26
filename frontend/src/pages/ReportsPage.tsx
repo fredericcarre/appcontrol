@@ -82,11 +82,15 @@ function PraExerciseCard({
   expanded,
   onToggle,
   formatDuration,
+  appName,
+  onPrint,
 }: {
   exercise: PraExercise;
   expanded: boolean;
   onToggle: () => void;
   formatDuration: (seconds: number | null) => string;
+  appName: string;
+  onPrint: (exerciseId: string) => void;
 }) {
   const statusConfig = {
     completed: { label: 'Success', variant: 'running' as const, icon: CheckCircle },
@@ -110,7 +114,10 @@ function PraExerciseCard({
 
   return (
     <Collapsible open={expanded} onOpenChange={onToggle}>
-      <div className="border rounded-lg overflow-hidden print:break-inside-avoid">
+      <div
+        className="border rounded-lg overflow-hidden print:break-inside-avoid"
+        data-pra-exercise={exercise.switchover_id}
+      >
         <CollapsibleTrigger asChild>
           <button className="w-full p-4 flex items-center justify-between hover:bg-muted/50 transition-colors text-left">
             <div className="flex items-center gap-4">
@@ -122,7 +129,7 @@ function PraExerciseCard({
               }`} />
               <div>
                 <p className="font-medium">
-                  {exercise.source_site || 'Site source'} → {exercise.target_site || 'Site cible'}
+                  {exercise.source_site || 'Source Site'} → {exercise.target_site || 'Target Site'}
                 </p>
                 <p className="text-sm text-muted-foreground">
                   {new Date(exercise.started_at).toLocaleString('en-US')}
@@ -142,6 +149,24 @@ function PraExerciseCard({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="border-t p-4 bg-muted/30 print:bg-transparent">
+            {/* Print Header - only visible when printing */}
+            <div className="hidden print:block mb-6 pb-4 border-b">
+              <h2 className="text-xl font-bold">DRP Exercise Report</h2>
+              <p className="text-sm text-muted-foreground">Application: {appName}</p>
+              <p className="text-sm text-muted-foreground">
+                {exercise.source_site} → {exercise.target_site} | {new Date(exercise.started_at).toLocaleString('en-US')}
+              </p>
+              <p className="text-sm">Status: {statusConfig[exercise.status]?.label || exercise.status} | RTO: {formatDuration(exercise.rto_seconds)}</p>
+            </div>
+
+            {/* Print Button */}
+            <div className="flex justify-end mb-3 no-print">
+              <Button variant="outline" size="sm" onClick={() => onPrint(exercise.switchover_id)}>
+                <Printer className="h-4 w-4 mr-2" />
+                Print This Exercise
+              </Button>
+            </div>
+
             <h5 className="font-medium mb-3">Timestamped Phases</h5>
             <div className="space-y-2">
               {exercise.phases.map((phase, idx) => (
@@ -229,6 +254,12 @@ function PraExerciseCard({
             <p className="text-xs text-muted-foreground mt-2 font-mono">
               ID: {exercise.switchover_id}
             </p>
+
+            {/* Print Footer - only visible when printing */}
+            <div className="hidden print:block mt-8 pt-4 border-t text-sm text-muted-foreground">
+              <p>Report generated on {new Date().toLocaleString('en-US')}</p>
+              <p>DORA Article 11 Compliant - Recovery Activity Traceability</p>
+            </div>
           </div>
         </CollapsibleContent>
       </div>
@@ -285,6 +316,26 @@ export function ReportsPage() {
   const overallAvailability = availabilityData?.data?.length
     ? (availabilityData.data.reduce((sum, d) => sum + d.availability_pct, 0) / availabilityData.data.length).toFixed(1)
     : null;
+
+  // Print handler for specific exercise
+  const handlePrintExercise = (exerciseId: string) => {
+    // Mark the specific exercise as printable
+    document.querySelectorAll('[data-pra-exercise]').forEach((el) => {
+      if (el.getAttribute('data-pra-exercise') === exerciseId) {
+        el.setAttribute('data-pra-printable', 'true');
+      } else {
+        el.removeAttribute('data-pra-printable');
+      }
+    });
+    // Trigger print
+    window.print();
+    // Clean up after print
+    setTimeout(() => {
+      document.querySelectorAll('[data-pra-exercise]').forEach((el) => {
+        el.removeAttribute('data-pra-printable');
+      });
+    }, 1000);
+  };
 
   return (
     <div className="space-y-6">
@@ -485,14 +536,14 @@ export function ReportsPage() {
                   <RefreshCw className="h-5 w-5" /> DRP Exercises
                 </CardTitle>
                 <CardDescription className="mt-1">
-                  Historique des tests de reprise d'activité (DORA Article 11)
+                  Disaster Recovery Test History (DORA Article 11)
                 </CardDescription>
               </div>
               <div className="flex items-center gap-2">
                 <Select value={praAppId || ''} onValueChange={(v) => setPraAppId(v || null)}>
                   <SelectTrigger className="w-[250px]">
-                    <SelectValue placeholder="Sélectionner une application">
-                      {getAppName(praAppId) || 'Sélectionner une application'}
+                    <SelectValue placeholder="Select an application">
+                      {getAppName(praAppId) || 'Select an application'}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
@@ -503,12 +554,6 @@ export function ReportsPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                {praData && praData.exercises.length > 0 && (
-                  <Button variant="outline" onClick={() => window.print()}>
-                    <Printer className="h-4 w-4 mr-2" />
-                    Print
-                  </Button>
-                )}
               </div>
             </CardHeader>
             <CardContent>
@@ -517,28 +562,28 @@ export function ReportsPage() {
                   <RefreshCw className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
                   <p className="text-muted-foreground">Select an application to view DRP exercise history</p>
                   <p className="text-sm text-muted-foreground/70 mt-2">
-                    Conforme à DORA Article 11 : traçabilité des tests de reprise
+                    DORA Article 11 Compliant: Recovery Test Traceability
                   </p>
                 </div>
               ) : praLoading ? (
-                <p className="text-sm text-muted-foreground text-center py-8">Chargement...</p>
+                <p className="text-sm text-muted-foreground text-center py-8">Loading...</p>
               ) : !praData?.exercises?.length ? (
                 <div className="text-center py-12">
                   <Clock className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
                   <p className="text-muted-foreground">No DRP exercises recorded</p>
                   <p className="text-sm text-muted-foreground/70 mt-2">
-                    Les bascules de site seront documentées ici avec horodatage complet
+                    Site switchovers will be documented here with full timestamps
                   </p>
                 </div>
               ) : (
                 <div className="space-y-4 print:space-y-6">
                   {/* Summary Stats */}
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 print:grid-cols-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pra-summary-stats">
                     <div className="flex items-center gap-4 p-4 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
                       <RefreshCw className="h-8 w-8 text-blue-500" />
                       <div>
                         <p className="text-2xl font-bold text-blue-700 dark:text-blue-400">{praData.total_exercises}</p>
-                        <p className="text-sm text-muted-foreground">Exercices</p>
+                        <p className="text-sm text-muted-foreground">Exercises</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-4 p-4 rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800">
@@ -547,7 +592,7 @@ export function ReportsPage() {
                         <p className="text-2xl font-bold text-green-700 dark:text-green-400">
                           {praData.exercises.filter(e => e.status === 'completed').length}
                         </p>
-                        <p className="text-sm text-muted-foreground">Réussis</p>
+                        <p className="text-sm text-muted-foreground">Successful</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-4 p-4 rounded-lg bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800">
@@ -556,7 +601,7 @@ export function ReportsPage() {
                         <p className="text-2xl font-bold text-orange-700 dark:text-orange-400">
                           {praData.exercises.filter(e => e.status === 'rolled_back').length}
                         </p>
-                        <p className="text-sm text-muted-foreground">Annulés</p>
+                        <p className="text-sm text-muted-foreground">Rolled Back</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-4 p-4 rounded-lg bg-muted/50 border">
@@ -579,7 +624,7 @@ export function ReportsPage() {
 
                   {/* Exercises List */}
                   <div className="space-y-3">
-                    <h4 className="font-medium">Exercise Details</h4>
+                    <h4 className="font-medium no-print">Exercise Details</h4>
                     {praData.exercises.map((exercise) => (
                       <PraExerciseCard
                         key={exercise.switchover_id}
@@ -589,16 +634,12 @@ export function ReportsPage() {
                           expandedExercise === exercise.switchover_id ? null : exercise.switchover_id
                         )}
                         formatDuration={formatDuration}
+                        appName={praData.application.name}
+                        onPrint={handlePrintExercise}
                       />
                     ))}
                   </div>
 
-                  {/* Print Footer */}
-                  <div className="hidden print:block border-t pt-4 mt-8 text-sm text-muted-foreground">
-                    <p>Report generated on {new Date().toLocaleString('en-US')}</p>
-                    <p>Application : {praData.application.name}</p>
-                    <p>Conforme DORA Article 11 - Traçabilité des activités de reprise</p>
-                  </div>
                 </div>
               )}
             </CardContent>
