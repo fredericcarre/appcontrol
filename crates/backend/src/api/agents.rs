@@ -543,7 +543,8 @@ pub async fn bulk_delete_agents(
     }
 
     // Verify all agents belong to the user's organization
-    let valid_agents = verify_agents_in_org(&state.db, &body.agent_ids, user.organization_id).await?;
+    let valid_agents =
+        verify_agents_in_org(&state.db, &body.agent_ids, user.organization_id).await?;
 
     if valid_agents.is_empty() {
         return Err(ApiError::NotFound);
@@ -607,13 +608,11 @@ async fn verify_agents_in_org(
     agent_ids: &[Uuid],
     org_id: Uuid,
 ) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT id, hostname FROM agents WHERE id = ANY($1) AND organization_id = $2",
-    )
-    .bind(agent_ids)
-    .bind(org_id)
-    .fetch_all(pool)
-    .await
+    sqlx::query_as("SELECT id, hostname FROM agents WHERE id = ANY($1) AND organization_id = $2")
+        .bind(agent_ids)
+        .bind(org_id)
+        .fetch_all(pool)
+        .await
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -641,9 +640,7 @@ async fn verify_agents_in_org(
     // Parse UUID strings back
     Ok(rows
         .into_iter()
-        .filter_map(|(id_str, hostname)| {
-            Uuid::parse_str(&id_str).ok().map(|id| (id, hostname))
-        })
+        .filter_map(|(id_str, hostname)| Uuid::parse_str(&id_str).ok().map(|id| (id, hostname)))
         .collect())
 }
 

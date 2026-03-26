@@ -359,9 +359,8 @@ pub async fn get_app(
         let status_rows = fetch_referenced_app_statuses(&state.db, &referenced_app_ids).await?;
         for (app_id, app_name, counts) in status_rows {
             referenced_app_names.insert(app_id, app_name);
-            let (state, _) = compute_app_status(
-                counts.0, counts.1, counts.2, counts.3, counts.4, counts.5,
-            );
+            let (state, _) =
+                compute_app_status(counts.0, counts.1, counts.2, counts.3, counts.4, counts.5);
             referenced_app_statuses.insert(app_id, state);
         }
     }

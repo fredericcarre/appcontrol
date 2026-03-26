@@ -68,7 +68,9 @@ async fn fetch_component_states(
     if component_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders: Vec<String> = (1..=component_ids.len()).map(|i| format!("${}", i)).collect();
+    let placeholders: Vec<String> = (1..=component_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         "SELECT id, current_state FROM components WHERE id IN ({})",
         placeholders.join(", ")
@@ -401,10 +403,12 @@ async fn update_component_state<'a>(
     component_id: Uuid,
     new_state: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE components SET current_state = $2, updated_at = datetime('now') WHERE id = $1")
-        .bind(component_id.to_string())
-        .bind(new_state)
-        .execute(&mut **tx)
-        .await?;
+    sqlx::query(
+        "UPDATE components SET current_state = $2, updated_at = datetime('now') WHERE id = $1",
+    )
+    .bind(component_id.to_string())
+    .bind(new_state)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }

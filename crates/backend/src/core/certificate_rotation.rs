@@ -8,9 +8,9 @@
 //! During rotation, both old and new CAs are trusted (dual-trust period).
 //! This allows for a gradual, zero-downtime migration.
 
+use crate::db::DbPool;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::db::DbPool;
 use uuid::Uuid;
 
 use crate::error::ApiError;

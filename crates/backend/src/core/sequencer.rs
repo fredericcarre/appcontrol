@@ -39,7 +39,10 @@ async fn get_component_name(pool: &crate::db::DbPool, component_id: Uuid) -> Str
 }
 
 /// Build a start plan without executing it (for dry_run and display).
-pub async fn build_start_plan(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, SequencerError> {
+pub async fn build_start_plan(
+    pool: &crate::db::DbPool,
+    app_id: Uuid,
+) -> Result<Value, SequencerError> {
     let dag = dag::build_dag(pool, app_id).await?;
     let levels = dag.topological_levels()?;
 

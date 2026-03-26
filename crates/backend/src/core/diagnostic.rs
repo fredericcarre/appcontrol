@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use appcontrol_common::{CheckStatus, DiagnosticRecommendation};
 use crate::db::DbPool;
+use appcontrol_common::{CheckStatus, DiagnosticRecommendation};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiagnosticError {
@@ -186,7 +186,9 @@ async fn fetch_latest_checks(
     Ok(rows
         .into_iter()
         .filter_map(|(id_str, check_type, exit_code)| {
-            Uuid::parse_str(&id_str).ok().map(|id| (id, check_type, exit_code))
+            Uuid::parse_str(&id_str)
+                .ok()
+                .map(|id| (id, check_type, exit_code))
         })
         .collect())
 }

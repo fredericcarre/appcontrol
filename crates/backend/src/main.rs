@@ -473,7 +473,11 @@ async fn auto_init_pki(pool: &crate::db::DbPool) {
 /// PostgreSQL: Uses partitions for check_events, archives action_log via CTE.
 /// SQLite: Simple DELETE for check_events (no partitioning), same archive logic.
 #[cfg(feature = "postgres")]
-async fn run_data_retention(pool: &crate::db::DbPool, action_log_days: u32, check_events_days: u32) {
+async fn run_data_retention(
+    pool: &crate::db::DbPool,
+    action_log_days: u32,
+    check_events_days: u32,
+) {
     if action_log_days > 0 {
         let interval = format!("{} days", action_log_days);
 
@@ -567,7 +571,11 @@ async fn run_data_retention(pool: &crate::db::DbPool, action_log_days: u32, chec
 /// SQLite version of data retention.
 /// Uses simpler DELETE queries since SQLite doesn't support partitioning.
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn run_data_retention(pool: &crate::db::DbPool, action_log_days: u32, check_events_days: u32) {
+async fn run_data_retention(
+    pool: &crate::db::DbPool,
+    action_log_days: u32,
+    check_events_days: u32,
+) {
     use chrono::Duration;
 
     if action_log_days > 0 {

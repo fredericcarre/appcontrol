@@ -99,13 +99,11 @@ pub async fn create_pool(config: &AppConfig) -> Result<DbPool, sqlx::Error> {
         }
 
         #[cfg(all(feature = "sqlite", feature = "postgres"))]
-        DatabaseType::Sqlite => {
-            Err(sqlx::Error::Configuration(
-                "SQLite mode not supported when compiled with 'postgres' feature. \
+        DatabaseType::Sqlite => Err(sqlx::Error::Configuration(
+            "SQLite mode not supported when compiled with 'postgres' feature. \
                  Use --features sqlite (without postgres) for SQLite support."
-                    .into(),
-            ))
-        }
+                .into(),
+        )),
 
         #[allow(unreachable_patterns)]
         _ => Err(sqlx::Error::Configuration(
@@ -407,10 +405,7 @@ impl sqlx::Type<sqlx::Postgres> for UuidArray {
 
 #[cfg(feature = "postgres")]
 impl<'q> sqlx::Encode<'q, sqlx::Postgres> for UuidArray {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> sqlx::encode::IsNull {
+    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> sqlx::encode::IsNull {
         <Vec<Uuid> as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
     }
 }
@@ -475,10 +470,7 @@ pub async fn delete_by_ids(
         return Ok(0);
     }
     let query = format!("DELETE FROM {} WHERE {} = ANY($1)", table, column);
-    let result = sqlx::query(&query)
-        .bind(ids)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query(&query).bind(ids).execute(pool).await?;
     Ok(result.rows_affected())
 }
 
@@ -521,11 +513,11 @@ pub async fn update_by_ids(
     if ids.is_empty() {
         return Ok(0);
     }
-    let query = format!("UPDATE {} SET {} WHERE {} = ANY($1)", table, set_clause, column);
-    let result = sqlx::query(&query)
-        .bind(ids)
-        .execute(pool)
-        .await?;
+    let query = format!(
+        "UPDATE {} SET {} WHERE {} = ANY($1)",
+        table, set_clause, column
+    );
+    let result = sqlx::query(&query).bind(ids).execute(pool).await?;
     Ok(result.rows_affected())
 }
 
@@ -576,10 +568,7 @@ where
         "SELECT {} FROM {} WHERE {} = ANY($1)",
         select_column, table, where_column
     );
-    let rows: Vec<(Uuid,)> = sqlx::query_as(&query)
-        .bind(ids)
-        .fetch_all(executor)
-        .await?;
+    let rows: Vec<(Uuid,)> = sqlx::query_as(&query).bind(ids).fetch_all(executor).await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
@@ -600,7 +589,9 @@ where
     let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("${}", i)).collect();
     let query = format!(
         "SELECT {} FROM {} WHERE {} IN ({})",
-        select_column, table, where_column,
+        select_column,
+        table,
+        where_column,
         placeholders.join(", ")
     );
     let mut q = sqlx::query_as(&query);
@@ -652,10 +643,7 @@ impl sqlx::Type<sqlx::Postgres> for IntArray {
 
 #[cfg(feature = "postgres")]
 impl<'q> sqlx::Encode<'q, sqlx::Postgres> for IntArray {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> sqlx::encode::IsNull {
+    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> sqlx::encode::IsNull {
         <Vec<i32> as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
     }
 }
@@ -722,17 +710,17 @@ mod tests {
         assert_eq!(sql::ilike(), "ILIKE");
         assert_eq!(sql::bool_true(), "TRUE");
         assert_eq!(sql::bool_false(), "FALSE");
-        assert_eq!(
-            sql::count_filter("x = 1"),
-            "COUNT(*) FILTER (WHERE x = 1)"
-        );
+        assert_eq!(sql::count_filter("x = 1"), "COUNT(*) FILTER (WHERE x = 1)");
     }
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     #[test]
     fn test_sql_helpers_sqlite() {
         assert_eq!(sql::now(), "datetime('now')");
-        assert_eq!(sql::json_extract("col", "field"), "json_extract(col, '$.field')");
+        assert_eq!(
+            sql::json_extract("col", "field"),
+            "json_extract(col, '$.field')"
+        );
         assert_eq!(sql::ilike(), "LIKE");
         assert_eq!(sql::bool_true(), "1");
         assert_eq!(sql::bool_false(), "0");

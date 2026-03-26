@@ -246,7 +246,10 @@ async fn fetch_recent_report_ids(
         q = q.bind(id.to_string());
     }
     let rows: Vec<String> = q.fetch_all(db).await?;
-    Ok(rows.into_iter().filter_map(|s| Uuid::parse_str(&s).ok()).collect())
+    Ok(rows
+        .into_iter()
+        .filter_map(|s| Uuid::parse_str(&s).ok())
+        .collect())
 }
 
 #[cfg(feature = "postgres")]

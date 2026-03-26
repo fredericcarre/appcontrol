@@ -307,7 +307,9 @@ async fn fetch_initial_states(
     }
     // SQLite: use IN clause with placeholders
     // $1 is for 'at', component_ids start at $2
-    let placeholders: Vec<String> = (2..=1 + component_ids.len()).map(|i| format!("${}", i)).collect();
+    let placeholders: Vec<String> = (2..=1 + component_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"
         SELECT c.id, COALESCE(
@@ -551,7 +553,9 @@ async fn fetch_transition_rows(
     if component_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders: Vec<String> = (3..=2 + component_ids.len()).map(|i| format!("${}", i)).collect();
+    let placeholders: Vec<String> = (3..=2 + component_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"
         SELECT component_id, from_state, to_state, trigger, created_at
@@ -581,7 +585,9 @@ async fn fetch_transition_rows(
         .into_iter()
         .filter_map(|r| {
             let id = Uuid::parse_str(&r.component_id).ok()?;
-            let at = chrono::DateTime::parse_from_rfc3339(&r.created_at).ok()?.with_timezone(&Utc);
+            let at = chrono::DateTime::parse_from_rfc3339(&r.created_at)
+                .ok()?
+                .with_timezone(&Utc);
             Some(StateTransitionRow {
                 component_id: id,
                 from_state: r.from_state,
@@ -629,7 +635,9 @@ async fn fetch_state_transitions(
     if component_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders: Vec<String> = (4..=3 + component_ids.len()).map(|i| format!("${}", i)).collect();
+    let placeholders: Vec<String> = (4..=3 + component_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"
         SELECT component_id, from_state, to_state, trigger, created_at
@@ -652,7 +660,9 @@ async fn fetch_state_transitions(
         .into_iter()
         .filter_map(|(comp_id, from_state, to_state, trigger, created_at)| {
             let id = Uuid::parse_str(&comp_id).ok()?;
-            let at = chrono::DateTime::parse_from_rfc3339(&created_at).ok()?.with_timezone(&Utc);
+            let at = chrono::DateTime::parse_from_rfc3339(&created_at)
+                .ok()?
+                .with_timezone(&Utc);
             Some((id, from_state, to_state, trigger, at))
         })
         .collect())
@@ -665,10 +675,31 @@ async fn fetch_component_actions(
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     limit: i64,
-) -> Result<Vec<(String, String, Uuid, String, Value, DateTime<Utc>, Option<String>, Option<String>)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        String,
+        String,
+        Uuid,
+        String,
+        Value,
+        DateTime<Utc>,
+        Option<String>,
+        Option<String>,
+    )>,
+    sqlx::Error,
+> {
     sqlx::query_as::<
         _,
-        (String, String, Uuid, String, Value, DateTime<Utc>, Option<String>, Option<String>),
+        (
+            String,
+            String,
+            Uuid,
+            String,
+            Value,
+            DateTime<Utc>,
+            Option<String>,
+            Option<String>,
+        ),
     >(
         r#"
         SELECT COALESCE(u.email, al.user_id::text), al.action, al.resource_id,
@@ -699,11 +730,25 @@ async fn fetch_component_actions(
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     limit: i64,
-) -> Result<Vec<(String, String, Uuid, String, Value, DateTime<Utc>, Option<String>, Option<String>)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        String,
+        String,
+        Uuid,
+        String,
+        Value,
+        DateTime<Utc>,
+        Option<String>,
+        Option<String>,
+    )>,
+    sqlx::Error,
+> {
     if component_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders: Vec<String> = (4..=3 + component_ids.len()).map(|i| format!("${}", i)).collect();
+    let placeholders: Vec<String> = (4..=3 + component_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"
         SELECT COALESCE(u.email, CAST(al.user_id AS TEXT)), al.action, al.resource_id,
@@ -720,22 +765,38 @@ async fn fetch_component_actions(
         "#,
         placeholders.join(", ")
     );
-    let mut q = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>)>(&query)
-        .bind(from.to_rfc3339())
-        .bind(to.to_rfc3339())
-        .bind(limit);
+    let mut q = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        ),
+    >(&query)
+    .bind(from.to_rfc3339())
+    .bind(to.to_rfc3339())
+    .bind(limit);
     for id in component_ids {
         q = q.bind(id.to_string());
     }
     let rows = q.fetch_all(db).await?;
     Ok(rows
         .into_iter()
-        .filter_map(|(user, action, resource_id, comp_name, details, created_at, status, error)| {
-            let id = Uuid::parse_str(&resource_id).ok()?;
-            let at = chrono::DateTime::parse_from_rfc3339(&created_at).ok()?.with_timezone(&Utc);
-            let details_val: Value = serde_json::from_str(&details).unwrap_or(Value::Null);
-            Some((user, action, id, comp_name, details_val, at, status, error))
-        })
+        .filter_map(
+            |(user, action, resource_id, comp_name, details, created_at, status, error)| {
+                let id = Uuid::parse_str(&resource_id).ok()?;
+                let at = chrono::DateTime::parse_from_rfc3339(&created_at)
+                    .ok()?
+                    .with_timezone(&Utc);
+                let details_val: Value = serde_json::from_str(&details).unwrap_or(Value::Null);
+                Some((user, action, id, comp_name, details_val, at, status, error))
+            },
+        )
         .collect())
 }
 
@@ -746,10 +807,29 @@ async fn fetch_command_executions(
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     limit: i64,
-) -> Result<Vec<(Uuid, Uuid, String, Option<i16>, Option<i32>, DateTime<Utc>, Option<DateTime<Utc>>)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        Uuid,
+        Uuid,
+        String,
+        Option<i16>,
+        Option<i32>,
+        DateTime<Utc>,
+        Option<DateTime<Utc>>,
+    )>,
+    sqlx::Error,
+> {
     sqlx::query_as::<
         _,
-        (Uuid, Uuid, String, Option<i16>, Option<i32>, DateTime<Utc>, Option<DateTime<Utc>>),
+        (
+            Uuid,
+            Uuid,
+            String,
+            Option<i16>,
+            Option<i32>,
+            DateTime<Utc>,
+            Option<DateTime<Utc>>,
+        ),
     >(
         r#"
         SELECT ce.request_id, ce.component_id, ce.command_type,
@@ -775,11 +855,24 @@ async fn fetch_command_executions(
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     limit: i64,
-) -> Result<Vec<(Uuid, Uuid, String, Option<i16>, Option<i32>, DateTime<Utc>, Option<DateTime<Utc>>)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        Uuid,
+        Uuid,
+        String,
+        Option<i16>,
+        Option<i32>,
+        DateTime<Utc>,
+        Option<DateTime<Utc>>,
+    )>,
+    sqlx::Error,
+> {
     if component_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders: Vec<String> = (4..=3 + component_ids.len()).map(|i| format!("${}", i)).collect();
+    let placeholders: Vec<String> = (4..=3 + component_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"
         SELECT ce.request_id, ce.component_id, ce.command_type,
@@ -791,25 +884,56 @@ async fn fetch_command_executions(
         "#,
         placeholders.join(", ")
     );
-    let mut q = sqlx::query_as::<_, (String, String, String, Option<i16>, Option<i32>, String, Option<String>)>(&query)
-        .bind(from.to_rfc3339())
-        .bind(to.to_rfc3339())
-        .bind(limit);
+    let mut q = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            Option<i16>,
+            Option<i32>,
+            String,
+            Option<String>,
+        ),
+    >(&query)
+    .bind(from.to_rfc3339())
+    .bind(to.to_rfc3339())
+    .bind(limit);
     for id in component_ids {
         q = q.bind(id.to_string());
     }
     let rows = q.fetch_all(db).await?;
     Ok(rows
         .into_iter()
-        .filter_map(|(request_id, comp_id, cmd_type, exit_code, duration_ms, dispatched_at, completed_at)| {
-            let req_id = Uuid::parse_str(&request_id).ok()?;
-            let cid = Uuid::parse_str(&comp_id).ok()?;
-            let dispatched = chrono::DateTime::parse_from_rfc3339(&dispatched_at).ok()?.with_timezone(&Utc);
-            let completed = completed_at
-                .and_then(|c| chrono::DateTime::parse_from_rfc3339(&c).ok())
-                .map(|c| c.with_timezone(&Utc));
-            Some((req_id, cid, cmd_type, exit_code, duration_ms, dispatched, completed))
-        })
+        .filter_map(
+            |(
+                request_id,
+                comp_id,
+                cmd_type,
+                exit_code,
+                duration_ms,
+                dispatched_at,
+                completed_at,
+            )| {
+                let req_id = Uuid::parse_str(&request_id).ok()?;
+                let cid = Uuid::parse_str(&comp_id).ok()?;
+                let dispatched = chrono::DateTime::parse_from_rfc3339(&dispatched_at)
+                    .ok()?
+                    .with_timezone(&Utc);
+                let completed = completed_at
+                    .and_then(|c| chrono::DateTime::parse_from_rfc3339(&c).ok())
+                    .map(|c| c.with_timezone(&Utc));
+                Some((
+                    req_id,
+                    cid,
+                    cmd_type,
+                    exit_code,
+                    duration_ms,
+                    dispatched,
+                    completed,
+                ))
+            },
+        )
         .collect())
 }
 

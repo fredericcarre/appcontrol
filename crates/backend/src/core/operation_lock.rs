@@ -363,7 +363,11 @@ impl OperationLock {
 }
 
 /// Heartbeat loop - updates last_heartbeat every 5 seconds until shutdown signal.
-async fn heartbeat_loop(pool: crate::db::DbPool, app_id: Uuid, mut shutdown_rx: watch::Receiver<bool>) {
+async fn heartbeat_loop(
+    pool: crate::db::DbPool,
+    app_id: Uuid,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
     let interval = std::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECONDS);
 
     loop {

@@ -7,10 +7,10 @@
 //! Check interval: 30 seconds
 //! Failover threshold: >50% agents unreachable for >2 minutes
 
+use crate::db::DbPool;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 use sqlx::FromRow;
-use crate::db::DbPool;
 use std::sync::Arc;
 use tokio::time;
 use uuid::Uuid;

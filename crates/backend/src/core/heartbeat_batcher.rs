@@ -62,7 +62,10 @@ impl HeartbeatBatcher {
 }
 
 #[cfg(feature = "postgres")]
-async fn batch_update_heartbeats(db: &crate::db::DbPool, agent_ids: &[Uuid]) -> Result<(), sqlx::Error> {
+async fn batch_update_heartbeats(
+    db: &crate::db::DbPool,
+    agent_ids: &[Uuid],
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE agents SET last_heartbeat_at = now() WHERE id = ANY($1)")
         .bind(agent_ids)
         .execute(db)
@@ -71,7 +74,10 @@ async fn batch_update_heartbeats(db: &crate::db::DbPool, agent_ids: &[Uuid]) -> 
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn batch_update_heartbeats(db: &crate::db::DbPool, agent_ids: &[Uuid]) -> Result<(), sqlx::Error> {
+async fn batch_update_heartbeats(
+    db: &crate::db::DbPool,
+    agent_ids: &[Uuid],
+) -> Result<(), sqlx::Error> {
     if agent_ids.is_empty() {
         return Ok(());
     }

@@ -8,9 +8,9 @@
 //! 2. FQDN suffix match (host matches start of agent's hostname)
 //! 3. IP address match (from agents.ip_addresses JSONB array)
 
+use crate::db::DbPool;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use crate::db::DbPool;
 use uuid::Uuid;
 
 /// Resolution status for a single host
@@ -108,7 +108,8 @@ pub async fn resolve_host_with_options(
     let host_lower = host.to_lowercase();
 
     // 1. Try exact hostname match
-    let exact_matches: Vec<AgentRow> = query_agents_exact_hostname(pool, org_id, &host_lower, gateway_ids).await?;
+    let exact_matches: Vec<AgentRow> =
+        query_agents_exact_hostname(pool, org_id, &host_lower, gateway_ids).await?;
 
     if exact_matches.len() == 1 {
         let m = &exact_matches[0];
@@ -138,7 +139,8 @@ pub async fn resolve_host_with_options(
 
     // 2. Try FQDN suffix match (host is prefix of hostname followed by '.')
     let fqdn_pattern = format!("{}.", host_lower);
-    let fqdn_matches: Vec<AgentRow> = query_agents_fqdn_match(pool, org_id, &fqdn_pattern, gateway_ids).await?;
+    let fqdn_matches: Vec<AgentRow> =
+        query_agents_fqdn_match(pool, org_id, &fqdn_pattern, gateway_ids).await?;
 
     if fqdn_matches.len() == 1 {
         let m = &fqdn_matches[0];
@@ -313,7 +315,9 @@ async fn query_agents_exact_hostname(
     if gateway_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"
         SELECT a.id AS agent_id, a.hostname, a.gateway_id,
@@ -371,7 +375,9 @@ async fn query_agents_fqdn_match(
     if gateway_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"
         SELECT a.id AS agent_id, a.hostname, a.gateway_id,
@@ -428,7 +434,9 @@ async fn query_agents_ip_match(
     if gateway_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     // SQLite: check if ip_addresses JSON array contains the IP
     let query = format!(
         r#"
@@ -486,7 +494,9 @@ async fn query_agents_list(
     if gateway_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders: Vec<String> = (2..=1 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    let placeholders: Vec<String> = (2..=1 + gateway_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"
         SELECT a.id AS agent_id, a.hostname, a.gateway_id,
@@ -499,8 +509,7 @@ async fn query_agents_list(
         "#,
         placeholders.join(", ")
     );
-    let mut q = sqlx::query_as::<_, AgentRow>(&query)
-        .bind(org_id.to_string());
+    let mut q = sqlx::query_as::<_, AgentRow>(&query).bind(org_id.to_string());
     for gid in gateway_ids {
         q = q.bind(gid.to_string());
     }
