@@ -16,8 +16,8 @@ axum-extra = { version = "0.9", features = ["typed-header"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 hostname = "0.4"
-# SQLx with Any driver for runtime database selection + specific drivers via features
-sqlx = { version = "0.7", features = ["runtime-tokio", "tls-rustls", "uuid", "chrono", "json", "migrate", "any"] }
+# SQLx with database-specific drivers enabled via features (no "any" - makes binaries truly exclusive)
+sqlx = { version = "0.7", features = ["runtime-tokio", "tls-rustls", "uuid", "chrono", "json", "migrate"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
