@@ -101,10 +101,7 @@ async fn execute_due_schedules(state: &Arc<AppState>) -> Result<(), sqlx::Error>
 }
 
 /// Execute a single schedule: log action, execute operation, update status.
-async fn execute_single_schedule(
-    state: &Arc<AppState>,
-    schedule: &DueSchedule,
-) -> ScheduleResult {
+async fn execute_single_schedule(state: &Arc<AppState>, schedule: &DueSchedule) -> ScheduleResult {
     let start_time = std::time::Instant::now();
 
     // Determine the target (application or component)
@@ -116,7 +113,11 @@ async fn execute_single_schedule(
                 .await
                 .ok()
                 .flatten();
-        ("application", app_id, app_name.unwrap_or_else(|| app_id.to_string()))
+        (
+            "application",
+            app_id,
+            app_name.unwrap_or_else(|| app_id.to_string()),
+        )
     } else if let Some(comp_id) = schedule.component_id {
         let comp_name: Option<String> =
             sqlx::query_scalar("SELECT COALESCE(display_name, name) FROM components WHERE id = $1")
@@ -125,7 +126,11 @@ async fn execute_single_schedule(
                 .await
                 .ok()
                 .flatten();
-        ("component", comp_id, comp_name.unwrap_or_else(|| comp_id.to_string()))
+        (
+            "component",
+            comp_id,
+            comp_name.unwrap_or_else(|| comp_id.to_string()),
+        )
     } else {
         return Err("Schedule has no target (neither application_id nor component_id)".to_string());
     };

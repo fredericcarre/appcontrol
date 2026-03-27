@@ -181,13 +181,18 @@ async fn get_target_info(
     component_id: Option<Uuid>,
 ) -> (String, Uuid, String) {
     if let Some(app_id) = application_id {
-        let name: Option<String> = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-            .bind(app_id)
-            .fetch_optional(db)
-            .await
-            .ok()
-            .flatten();
-        ("application".to_string(), app_id, name.unwrap_or_else(|| app_id.to_string()))
+        let name: Option<String> =
+            sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
+                .bind(app_id)
+                .fetch_optional(db)
+                .await
+                .ok()
+                .flatten();
+        (
+            "application".to_string(),
+            app_id,
+            name.unwrap_or_else(|| app_id.to_string()),
+        )
     } else if let Some(comp_id) = component_id {
         let name: Option<String> =
             sqlx::query_scalar("SELECT COALESCE(display_name, name) FROM components WHERE id = $1")
@@ -196,13 +201,22 @@ async fn get_target_info(
                 .await
                 .ok()
                 .flatten();
-        ("component".to_string(), comp_id, name.unwrap_or_else(|| comp_id.to_string()))
+        (
+            "component".to_string(),
+            comp_id,
+            name.unwrap_or_else(|| comp_id.to_string()),
+        )
     } else {
         ("unknown".to_string(), Uuid::nil(), "Unknown".to_string())
     }
 }
 
-fn row_to_response(row: ScheduleRow, target_type: String, target_id: Uuid, target_name: String) -> ScheduleResponse {
+fn row_to_response(
+    row: ScheduleRow,
+    target_type: String,
+    target_id: Uuid,
+    target_name: String,
+) -> ScheduleResponse {
     let next_run_relative = row.next_run_at.map(relative_time);
     let cron_human = cron_to_human(&row.cron_expression);
 
@@ -293,12 +307,13 @@ pub async fn list_app_schedules(
     };
 
     // Get app name once for all schedules
-    let app_name: Option<String> = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-        .bind(app_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
+    let app_name: Option<String> =
+        sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
+            .bind(app_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
     let target_name = app_name.unwrap_or_else(|| app_id.to_string());
 
     let responses: Vec<ScheduleResponse> = rows
@@ -419,12 +434,13 @@ pub async fn create_app_schedule(
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    let app_name: Option<String> = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-        .bind(app_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
+    let app_name: Option<String> =
+        sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
+            .bind(app_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
     let target_name = app_name.unwrap_or_else(|| app_id.to_string());
 
     let response = row_to_response(row, "application".to_string(), app_id, target_name);
@@ -680,7 +696,12 @@ pub async fn get_schedule(
     let (target_type, target_id, target_name) =
         get_target_info(&state.db, row.application_id, row.component_id).await;
 
-    Ok(Json(row_to_response(row, target_type, target_id, target_name)))
+    Ok(Json(row_to_response(
+        row,
+        target_type,
+        target_id,
+        target_name,
+    )))
 }
 
 /// PUT /api/v1/schedules/:id - Update a schedule
@@ -828,10 +849,19 @@ pub async fn update_schedule(
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    let (target_type, target_id, target_name) =
-        get_target_info(&state.db, updated_row.application_id, updated_row.component_id).await;
+    let (target_type, target_id, target_name) = get_target_info(
+        &state.db,
+        updated_row.application_id,
+        updated_row.component_id,
+    )
+    .await;
 
-    Ok(Json(row_to_response(updated_row, target_type, target_id, target_name)))
+    Ok(Json(row_to_response(
+        updated_row,
+        target_type,
+        target_id,
+        target_name,
+    )))
 }
 
 /// DELETE /api/v1/schedules/:id - Delete a schedule
@@ -950,7 +980,11 @@ pub async fn toggle_schedule(
     let _action_id = audit::log_action(
         &state.db,
         user.user_id,
-        if new_enabled { "enable_schedule" } else { "disable_schedule" },
+        if new_enabled {
+            "enable_schedule"
+        } else {
+            "disable_schedule"
+        },
         "schedule",
         schedule_id,
         serde_json::json!({
