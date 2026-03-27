@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::core::operation_scheduler::{calculate_next_run, cron_to_human, preset_to_cron};
+use crate::core::operation_scheduler::{
+    calculate_next_run, cron_to_human, is_valid_cron, preset_to_cron,
+};
 use crate::core::permissions::effective_permission;
 use crate::error::ApiError;
 use crate::middleware::audit;
@@ -359,7 +361,7 @@ pub async fn create_app_schedule(
     };
 
     // Validate cron expression
-    if cron_expression.parse::<cron::Schedule>().is_err() {
+    if !is_valid_cron(&cron_expression) {
         return Err(ApiError::Validation(format!(
             "Invalid cron expression '{}'",
             cron_expression
@@ -562,7 +564,7 @@ pub async fn create_component_schedule(
     };
 
     // Validate cron expression
-    if cron_expression.parse::<cron::Schedule>().is_err() {
+    if !is_valid_cron(&cron_expression) {
         return Err(ApiError::Validation(format!(
             "Invalid cron expression '{}'",
             cron_expression
@@ -777,13 +779,11 @@ pub async fn update_schedule(
     }
 
     // Validate cron if changed
-    if cron_changed {
-        if cron_expression.parse::<cron::Schedule>().is_err() {
-            return Err(ApiError::Validation(format!(
-                "Invalid cron expression '{}'",
-                cron_expression
-            )));
-        }
+    if cron_changed && !is_valid_cron(&cron_expression) {
+        return Err(ApiError::Validation(format!(
+            "Invalid cron expression '{}'",
+            cron_expression
+        )));
     }
 
     // Recalculate next_run_at if cron or timezone changed

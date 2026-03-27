@@ -343,16 +343,39 @@ async fn update_schedule_after_run(
     Ok(())
 }
 
+/// Convert a 5-field cron expression to 6-field format (adding seconds).
+/// The cron crate requires 6 fields: sec min hour day month weekday
+/// Standard Unix cron uses 5 fields: min hour day month weekday
+pub fn to_6_field_cron(cron_expr: &str) -> String {
+    let fields: Vec<&str> = cron_expr.split_whitespace().collect();
+    if fields.len() == 5 {
+        // Prepend "0" for seconds
+        format!("0 {}", cron_expr)
+    } else {
+        // Already 6 or 7 fields, use as-is
+        cron_expr.to_string()
+    }
+}
+
+/// Check if a cron expression is valid (supports both 5 and 6 field formats).
+pub fn is_valid_cron(cron_expr: &str) -> bool {
+    let cron_6field = to_6_field_cron(cron_expr);
+    cron_6field.parse::<CronSchedule>().is_ok()
+}
+
 /// Calculate the next run time from a cron expression and timezone.
 pub fn calculate_next_run(cron_expr: &str, timezone: &str) -> Option<DateTime<Utc>> {
     // Parse the timezone (default to UTC if invalid)
     let tz: chrono_tz::Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
 
+    // Convert to 6-field format if needed
+    let cron_6field = to_6_field_cron(cron_expr);
+
     // Parse the cron expression
-    let schedule: CronSchedule = match cron_expr.parse() {
+    let schedule: CronSchedule = match cron_6field.parse() {
         Ok(s) => s,
         Err(e) => {
-            tracing::warn!(cron = cron_expr, error = %e, "Invalid cron expression");
+            tracing::warn!(cron = cron_expr, cron_6field = %cron_6field, error = %e, "Invalid cron expression");
             return None;
         }
     };
