@@ -108,17 +108,15 @@ jobs:
           # Build backend with SQLite support (for standalone Windows deployment)
           # IMPORTANT: --no-default-features is required because default=["postgres"]
           # Without it, both features are enabled and postgres takes precedence
-          # IMPORTANT: Must clean the backend package first, otherwise Cargo reuses
-          # the PostgreSQL build artifacts and doesn't recompile with SQLite features
-          cargo clean --release --target ${{ matrix.target }} -p appcontrol-backend
+          # IMPORTANT: Use separate target directory to avoid Cargo reusing PostgreSQL artifacts
           if [ "${USE_CROSS:-}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --bin appcontrol-backend --no-default-features --features sqlite
+            CARGO_TARGET_DIR=target-sqlite cross build --release --target ${{ matrix.target }} --bin appcontrol-backend --no-default-features --features sqlite
           else
-            cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --no-default-features --features sqlite
+            CARGO_TARGET_DIR=target-sqlite cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --no-default-features --features sqlite
           fi
           # Copy SQLite backend for packaging
           mkdir -p target/${{ matrix.target }}/release/sqlite
-          cp target/${{ matrix.target }}/release/appcontrol-backend* target/${{ matrix.target }}/release/sqlite/ 2>/dev/null || true
+          cp target-sqlite/${{ matrix.target }}/release/appcontrol-backend* target/${{ matrix.target }}/release/sqlite/ 2>/dev/null || true
         shell: bash
 
       - name: Package binaries (Unix)
