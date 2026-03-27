@@ -10,7 +10,9 @@ pub enum DatabaseType {
 }
 
 impl DatabaseType {
-    pub fn from_str(s: &str) -> Self {
+    /// Parse a database type from a string.
+    /// Returns Postgres as the default for any unrecognized input.
+    pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "sqlite" => DatabaseType::Sqlite,
             _ => DatabaseType::Postgres,
@@ -124,7 +126,7 @@ impl AppConfig {
 
         // DATABASE_TYPE: postgres (default) or sqlite
         let database_type = std::env::var("DATABASE_TYPE")
-            .map(|s| DatabaseType::from_str(&s))
+            .map(|s| DatabaseType::parse(&s))
             .unwrap_or_default();
 
         // JWT_SECRET: required in production, fallback in dev
