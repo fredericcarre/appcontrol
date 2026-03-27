@@ -70,6 +70,36 @@ impl McpClient {
                 self.get_activity(&app, limit).await
             }
             "list_agents" => self.list_agents().await,
+            // Log access tools
+            "list_log_sources" => {
+                let app = get_arg_str(args, "app_name")?;
+                let component = get_arg_str(args, "component_name")?;
+                self.list_log_sources(&app, &component).await
+            }
+            "get_component_logs" => {
+                let app = get_arg_str(args, "app_name")?;
+                let component = get_arg_str(args, "component_name")?;
+                let source = args.get("source").and_then(|v| v.as_str());
+                let lines = args.get("lines").and_then(|v| v.as_u64()).map(|v| v as i32);
+                let filter = args.get("filter").and_then(|v| v.as_str());
+                let since = args.get("since").and_then(|v| v.as_str());
+                self.get_component_logs(&app, &component, source, lines, filter, since)
+                    .await
+            }
+            "run_diagnostic_command" => {
+                let app = get_arg_str(args, "app_name")?;
+                let component = get_arg_str(args, "component_name")?;
+                let command_name = get_arg_str(args, "command_name")?;
+                self.run_diagnostic_command(&app, &component, &command_name)
+                    .await
+            }
+            "search_logs" => {
+                let app = get_arg_str(args, "app_name")?;
+                let pattern = get_arg_str(args, "pattern")?;
+                let level = args.get("level").and_then(|v| v.as_str());
+                let since = args.get("since").and_then(|v| v.as_str()).unwrap_or("1h");
+                self.search_logs(&app, &pattern, level, since).await
+            }
             _ => anyhow::bail!("Unknown tool: {}", name),
         }
     }
@@ -230,6 +260,326 @@ impl McpClient {
     }
 
     // -----------------------------------------------------------------------
+    // Log access tools
+    // -----------------------------------------------------------------------
+
+    async fn list_log_sources(&self, app_name: &str, component_name: &str) -> Result<String> {
+        let component_id = self.resolve_component(app_name, component_name).await?;
+        let resp = self
+            .get(&format!("/api/v1/components/{}/log-sources", component_id))
+            .await?;
+
+        let mut output = format!("## Log Sources for {} / {}\n\n", app_name, component_name);
+
+        // Always available: process stdout/stderr
+        output.push_str("### Process Output (always available)\n");
+        output.push_str("- **process**: Console stdout/stderr captured by AppControl\n\n");
+
+        if let Some(sources) = resp.as_array() {
+            if !sources.is_empty() {
+                output.push_str("### Declared Log Sources\n\n");
+                for source in sources {
+                    let id = source.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                    let name = source.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                    let source_type = source
+                        .get("source_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
+                    let description = source
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let is_sensitive = source
+                        .get("is_sensitive")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    let type_icon = match source_type {
+                        "file" => "[FILE]",
+                        "event_log" => "[EVENTLOG]",
+                        "command" => "[CMD]",
+                        _ => "[?]",
+                    };
+
+                    let sensitive_tag = if is_sensitive { " [SENSITIVE]" } else { "" };
+                    output.push_str(&format!(
+                        "- **{}**: {} `{}`{}\n",
+                        name, type_icon, id, sensitive_tag
+                    ));
+                    if !description.is_empty() {
+                        output.push_str(&format!("  _{}_\n", description));
+                    }
+
+                    // Show additional details based on type
+                    match source_type {
+                        "file" => {
+                            if let Some(path) = source.get("file_path").and_then(|v| v.as_str()) {
+                                output.push_str(&format!("  Path: `{}`\n", path));
+                            }
+                        }
+                        "event_log" => {
+                            if let Some(log) = source.get("event_log_name").and_then(|v| v.as_str())
+                            {
+                                output.push_str(&format!("  Log: {}\n", log));
+                            }
+                            if let Some(src) =
+                                source.get("event_log_source").and_then(|v| v.as_str())
+                            {
+                                output.push_str(&format!("  Source: {}\n", src));
+                            }
+                        }
+                        "command" => {
+                            if let Some(cmd) = source.get("command").and_then(|v| v.as_str()) {
+                                output.push_str(&format!("  Command: `{}`\n", cmd));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            } else {
+                output.push_str("_No additional log sources declared._\n");
+            }
+        }
+
+        Ok(output)
+    }
+
+    async fn get_component_logs(
+        &self,
+        app_name: &str,
+        component_name: &str,
+        source: Option<&str>,
+        lines: Option<i32>,
+        filter: Option<&str>,
+        since: Option<&str>,
+    ) -> Result<String> {
+        let component_id = self.resolve_component(app_name, component_name).await?;
+
+        // Build query parameters
+        let mut params = Vec::new();
+        if let Some(s) = source {
+            params.push(format!("source={}", s));
+        }
+        if let Some(l) = lines {
+            params.push(format!("lines={}", l.min(1000))); // Cap at 1000
+        }
+        if let Some(f) = filter {
+            params.push(format!("filter={}", urlencoding::encode(f)));
+        }
+        if let Some(s) = since {
+            params.push(format!("since={}", s));
+        }
+
+        let query = if params.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", params.join("&"))
+        };
+
+        let resp = self
+            .get(&format!(
+                "/api/v1/components/{}/logs{}",
+                component_id, query
+            ))
+            .await?;
+
+        let source_type = resp
+            .get("source_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("process");
+        let source_name = resp
+            .get("source_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Console output");
+        let total_lines = resp
+            .get("total_lines")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let truncated = resp
+            .get("truncated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let mut output = format!(
+            "## Logs: {} / {} - {}\n\n",
+            app_name, component_name, source_name
+        );
+
+        output.push_str(&format!(
+            "_Source: {} | Lines: {}{}_\n\n",
+            source_type,
+            total_lines,
+            if truncated { " (truncated)" } else { "" }
+        ));
+
+        output.push_str("```\n");
+        if let Some(entries) = resp.get("entries").and_then(|v| v.as_array()) {
+            for entry in entries {
+                let timestamp = entry
+                    .get("timestamp")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let level = entry.get("level").and_then(|v| v.as_str());
+                let content = entry.get("content").and_then(|v| v.as_str()).unwrap_or("");
+
+                if let Some(lvl) = level {
+                    output.push_str(&format!("{} [{}] {}\n", timestamp, lvl, content));
+                } else if !timestamp.is_empty() {
+                    output.push_str(&format!("{} {}\n", timestamp, content));
+                } else {
+                    output.push_str(&format!("{}\n", content));
+                }
+            }
+        }
+        output.push_str("```\n");
+
+        Ok(output)
+    }
+
+    async fn run_diagnostic_command(
+        &self,
+        app_name: &str,
+        component_name: &str,
+        command_name: &str,
+    ) -> Result<String> {
+        let component_id = self.resolve_component(app_name, component_name).await?;
+        let resp = self
+            .post(
+                &format!(
+                    "/api/v1/components/{}/logs/command/{}",
+                    component_id,
+                    urlencoding::encode(command_name)
+                ),
+                &serde_json::json!({}),
+            )
+            .await?;
+
+        let exit_code = resp.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(-1);
+        let duration_ms = resp
+            .get("duration_ms")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let stdout = resp.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+        let stderr = resp.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+
+        let status_icon = if exit_code == 0 { "[OK]" } else { "[FAIL]" };
+
+        let mut output = format!(
+            "## Diagnostic Command: {} {} ({}ms)\n\n",
+            command_name, status_icon, duration_ms
+        );
+
+        output.push_str(&format!("_Exit code: {}_\n\n", exit_code));
+
+        if !stdout.is_empty() {
+            output.push_str("### Output\n```\n");
+            output.push_str(stdout);
+            if !stdout.ends_with('\n') {
+                output.push('\n');
+            }
+            output.push_str("```\n");
+        }
+
+        if !stderr.is_empty() {
+            output.push_str("\n### Errors\n```\n");
+            output.push_str(stderr);
+            if !stderr.ends_with('\n') {
+                output.push('\n');
+            }
+            output.push_str("```\n");
+        }
+
+        Ok(output)
+    }
+
+    async fn search_logs(
+        &self,
+        app_name: &str,
+        pattern: &str,
+        level: Option<&str>,
+        since: &str,
+    ) -> Result<String> {
+        let app_id = self.resolve_app(app_name).await?;
+
+        // Get all components for the app
+        let status = self
+            .get(&format!("/api/v1/orchestration/apps/{}/status", app_id))
+            .await?;
+
+        let mut output = format!("## Log Search: '{}' in {}\n\n", pattern, app_name);
+        output.push_str(&format!(
+            "_Filter: level={}, since={}_\n\n",
+            level.unwrap_or("ALL"),
+            since
+        ));
+
+        let mut total_matches = 0;
+
+        if let Some(components) = status.get("components").and_then(|c| c.as_array()) {
+            for comp in components {
+                let comp_id = match comp.get("id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => continue,
+                };
+                let comp_name = comp
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+
+                // Build query with filter=pattern
+                let mut params = vec![
+                    format!("filter={}", urlencoding::encode(pattern)),
+                    format!("since={}", since),
+                    "lines=50".to_string(),
+                ];
+                if let Some(lvl) = level {
+                    params.push(format!("filter={}", lvl));
+                }
+
+                let query = format!("?{}", params.join("&"));
+                let logs_result = self
+                    .get(&format!("/api/v1/components/{}/logs{}", comp_id, query))
+                    .await;
+
+                if let Ok(logs) = logs_result {
+                    if let Some(entries) = logs.get("entries").and_then(|v| v.as_array()) {
+                        if !entries.is_empty() {
+                            total_matches += entries.len();
+                            output.push_str(&format!(
+                                "### {} ({} matches)\n```\n",
+                                comp_name,
+                                entries.len()
+                            ));
+                            for entry in entries.iter().take(10) {
+                                // Limit per component
+                                let ts = entry
+                                    .get("timestamp")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let content =
+                                    entry.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                                output.push_str(&format!("{} {}\n", ts, content));
+                            }
+                            if entries.len() > 10 {
+                                output.push_str(&format!("... and {} more\n", entries.len() - 10));
+                            }
+                            output.push_str("```\n\n");
+                        }
+                    }
+                }
+            }
+        }
+
+        if total_matches == 0 {
+            output.push_str("_No matches found._\n");
+        } else {
+            output.push_str(&format!("\n**Total: {} matches**\n", total_matches));
+        }
+
+        Ok(output)
+    }
+
+    // -----------------------------------------------------------------------
     // HTTP helpers
     // -----------------------------------------------------------------------
 
@@ -294,6 +644,40 @@ impl McpClient {
         }
 
         anyhow::bail!("Application '{}' not found", name_or_id)
+    }
+
+    /// Resolve a component name to its UUID.
+    /// Requires the app name/id to look up the component within that app.
+    async fn resolve_component(&self, app_name: &str, component_name: &str) -> Result<String> {
+        // If component_name looks like a UUID, use it directly
+        if uuid::Uuid::parse_str(component_name).is_ok() {
+            return Ok(component_name.to_string());
+        }
+
+        // First resolve the app
+        let app_id = self.resolve_app(app_name).await?;
+
+        // Get app status which includes components
+        let status = self
+            .get(&format!("/api/v1/orchestration/apps/{}/status", app_id))
+            .await?;
+
+        if let Some(components) = status.get("components").and_then(|c| c.as_array()) {
+            for comp in components {
+                let comp_name = comp.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                if comp_name.eq_ignore_ascii_case(component_name) {
+                    if let Some(id) = comp.get("id").and_then(|i| i.as_str()) {
+                        return Ok(id.to_string());
+                    }
+                }
+            }
+        }
+
+        anyhow::bail!(
+            "Component '{}' not found in application '{}'",
+            component_name,
+            app_name
+        )
     }
 }
 

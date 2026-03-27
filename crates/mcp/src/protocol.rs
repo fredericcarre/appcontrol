@@ -235,5 +235,108 @@ fn tool_definitions() -> Vec<Value> {
                 "required": []
             }
         }),
+        // Log access tools
+        json!({
+            "name": "list_log_sources",
+            "description": "List all declared log sources for a component. Sources can be files, Windows Event Logs, or diagnostic commands. Use this to discover available logs before fetching them.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "app_name": {
+                        "type": "string",
+                        "description": "Application name or ID"
+                    },
+                    "component_name": {
+                        "type": "string",
+                        "description": "Component name within the application"
+                    }
+                },
+                "required": ["app_name", "component_name"]
+            }
+        }),
+        json!({
+            "name": "get_component_logs",
+            "description": "Get logs from a component. By default returns process stdout/stderr (console output). Can also fetch from declared log sources (files, event logs). Use list_log_sources first to discover available sources.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "app_name": {
+                        "type": "string",
+                        "description": "Application name or ID"
+                    },
+                    "component_name": {
+                        "type": "string",
+                        "description": "Component name within the application"
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Log source: 'process' (default), or a source ID from list_log_sources"
+                    },
+                    "lines": {
+                        "type": "integer",
+                        "description": "Number of lines to return (default: 100, max: 1000)"
+                    },
+                    "filter": {
+                        "type": "string",
+                        "description": "Filter logs by text or level (ERROR, WARN, INFO)"
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "Time range: '1h', '6h', '24h', '7d'"
+                    }
+                },
+                "required": ["app_name", "component_name"]
+            }
+        }),
+        json!({
+            "name": "run_diagnostic_command",
+            "description": "Execute a diagnostic command declared for a component. Use list_log_sources first to discover available commands (source_type='command'). Commands are read-only diagnostic tools like 'rabbitmqctl status', 'netstat', etc.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "app_name": {
+                        "type": "string",
+                        "description": "Application name or ID"
+                    },
+                    "component_name": {
+                        "type": "string",
+                        "description": "Component name within the application"
+                    },
+                    "command_name": {
+                        "type": "string",
+                        "description": "Name of the diagnostic command (from list_log_sources)"
+                    }
+                },
+                "required": ["app_name", "component_name", "command_name"]
+            }
+        }),
+        json!({
+            "name": "search_logs",
+            "description": "Search for errors or patterns across all components of an application. Returns matching log entries with component names and timestamps. Useful for debugging cross-component issues.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "app_name": {
+                        "type": "string",
+                        "description": "Application name or ID"
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Search pattern (supports regex)"
+                    },
+                    "level": {
+                        "type": "string",
+                        "description": "Filter by log level: ERROR, WARN, INFO",
+                        "enum": ["ERROR", "WARN", "INFO"]
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "Time range: '1h', '6h', '24h', '7d'",
+                        "default": "1h"
+                    }
+                },
+                "required": ["app_name", "pattern"]
+            }
+        }),
     ]
 }
