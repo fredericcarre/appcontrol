@@ -443,7 +443,8 @@ pub async fn drp_report(
         };
 
         // Get user email if we have the user_id (extracted from PREPARE phase above)
-        let initiated_by_email: Option<String> = if let Some(ref user_id_str) = initiated_by_user_id {
+        let initiated_by_email: Option<String> = if let Some(ref user_id_str) = initiated_by_user_id
+        {
             if let Ok(user_id) = uuid::Uuid::parse_str(user_id_str) {
                 sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
                     .bind(user_id)
