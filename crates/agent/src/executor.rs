@@ -3,6 +3,46 @@ use nix::unistd::{fork, setsid, ForkResult};
 use std::process::Stdio;
 use std::time::Duration;
 
+// ---------------------------------------------------------------------------
+// Close inherited file descriptors (Unix only)
+// ---------------------------------------------------------------------------
+
+/// Close all file descriptors inherited from the parent process (FD >= 3).
+///
+/// This is CRITICAL for detached processes: without it, the child inherits
+/// open handles to the agent's WebSocket, sled database, log files, etc.
+/// These leaked FDs can:
+/// - Prevent proper cleanup when the agent restarts
+/// - Hold resources (sockets, files) open indefinitely
+/// - Cause "address already in use" errors on agent restart
+///
+/// On Linux 5.9+, uses the efficient close_range() syscall.
+/// On older systems/macOS, falls back to iterating FDs 3..max_fd.
+#[cfg(unix)]
+unsafe fn close_inherited_fds() {
+    // Try close_range() first (Linux 5.9+, kernel syscall 436)
+    #[cfg(target_os = "linux")]
+    {
+        // close_range(first, last, flags) - closes FDs from first to last inclusive
+        // flags=0 means close normally (not CLOSE_RANGE_UNSHARE or CLOSE_RANGE_CLOEXEC)
+        let result = libc::syscall(libc::SYS_close_range, 3_u32, u32::MAX, 0_u32);
+        if result == 0 {
+            return; // Success, all FDs >= 3 are closed
+        }
+        // Fall through to manual close if syscall not available
+    }
+
+    // Fallback: close FDs 3 to max manually
+    // This works on all Unix systems but is slower for high FD counts
+    let max_fd = libc::sysconf(libc::_SC_OPEN_MAX);
+    let max_fd = if max_fd <= 0 { 1024 } else { max_fd as i32 };
+
+    for fd in 3..max_fd {
+        // close() on an invalid FD just returns EBADF, which we ignore
+        libc::close(fd);
+    }
+}
+
 /// Command execution mode.
 #[allow(dead_code)]
 pub enum CommandMode {
@@ -376,6 +416,13 @@ pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
                             libc::dup2(devnull, 2); // stderr
                             libc::close(devnull);
                         }
+                    }
+
+                    // Close all inherited file descriptors (FD >= 3)
+                    // This prevents the detached process from holding agent's
+                    // WebSocket, sled DB, and other handles open after fork.
+                    unsafe {
+                        close_inherited_fds();
                     }
 
                     // NOTE: We intentionally do NOT apply resource limits to detached processes.
