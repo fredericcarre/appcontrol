@@ -15,7 +15,7 @@
 
 -- For each gateway zone, create a site if one doesn't exist with that code
 -- Note: SQLite uses app-generated UUIDs, so we use subselect pattern
-INSERT INTO sites (id, organization_id, name, code, site_type, is_active, created_at, updated_at)
+INSERT INTO sites (id, organization_id, name, code, site_type, is_active, created_at)
 SELECT DISTINCT
     lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6))),
     g.organization_id,
@@ -23,7 +23,6 @@ SELECT DISTINCT
     g.zone,           -- code = zone
     'primary',
     1,
-    datetime('now'),
     datetime('now')
 FROM gateways g
 WHERE g.site_id IS NULL
