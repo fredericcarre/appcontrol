@@ -697,6 +697,8 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
 
     // Also check the root migrations directory (for backwards compatibility)
     let cargo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    // Docker root fallback for PostgreSQL (migrations are in /app/migrations/, not /app/migrations/postgres/)
+    let docker_root = std::path::PathBuf::from("/app/migrations");
 
     let migrations_dir = env_dir
         .filter(|p| p.exists())
@@ -706,11 +708,23 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
             } else if cargo_root.exists() {
                 // Fallback to root for backwards compatibility (PostgreSQL-only setups)
                 Some(cargo_root)
+            } else if docker_dir.exists() {
+                // Docker: database-specific subdirectory exists
+                Some(docker_dir.clone())
+            } else if docker_root.exists() {
+                // Docker fallback: root directory (for PostgreSQL when postgres/ subdir doesn't exist)
+                Some(docker_root)
             } else {
                 None
             }
         })
         .unwrap_or(docker_dir);
+
+    tracing::debug!(
+        "Migration path resolution: dir={}, exists={}",
+        migrations_dir.display(),
+        migrations_dir.exists()
+    );
 
     let mut entries: Vec<(i32, String, std::path::PathBuf)> = Vec::new();
 
@@ -788,6 +802,11 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
 
     if applied_count > 0 {
         tracing::info!("Applied {} new migration(s)", applied_count);
+    } else if entries.is_empty() {
+        tracing::warn!(
+            "No migration files found in {} - check MIGRATIONS_DIR or ensure migrations are present",
+            migrations_dir.display()
+        );
     } else {
         tracing::info!("Database is up to date (no new migrations)");
     }
