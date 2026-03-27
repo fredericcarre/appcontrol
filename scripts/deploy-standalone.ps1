@@ -353,25 +353,39 @@ function Create-ServiceScripts {
         # SQLite mode: simpler scripts, no PostgreSQL
         $startScript = @'
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo Starting AppControl (SQLite mode)...
 echo.
 
-REM Set SQLite environment
-set DATABASE_TYPE=sqlite
-set SQLITE_PATH=%~dp0data\appcontrol.db
+REM Set environment variables for SQLite mode
+REM These are set at system level so child processes inherit them
+set "DATABASE_TYPE=sqlite"
+set "DATABASE_URL=sqlite:%~dp0data\appcontrol.db"
+set "JWT_SECRET=standalone-deployment-secret-change-me"
+set "LOCAL_AUTH_ENABLED=true"
+set "SEED_ENABLED=true"
+set "SEED_ADMIN_EMAIL=admin@localhost"
+set "SEED_ADMIN_PASSWORD=admin"
+set "SEED_ORG_NAME=AppControl"
+set "SEED_ORG_SLUG=appcontrol"
+set "APP_ENV=development"
+set "RUST_LOG=info"
 
-REM Start Backend
+REM Create data directory if needed
+if not exist "data" mkdir data
+if not exist "logs" mkdir logs
+
+REM Start Backend with environment variables
 echo [1/2] Starting Backend...
-start "AppControl Backend" /min cmd /c "bin\appcontrol-backend.exe > logs\backend.log 2>&1"
-timeout /t 3 /nobreak >nul
+start "AppControl Backend" /min cmd /c "set DATABASE_TYPE=sqlite && set DATABASE_URL=sqlite:%~dp0data\appcontrol.db && set JWT_SECRET=standalone-deployment-secret-change-me && set LOCAL_AUTH_ENABLED=true && set SEED_ENABLED=true && set SEED_ADMIN_EMAIL=admin@localhost && set SEED_ADMIN_PASSWORD=admin && set SEED_ORG_NAME=AppControl && set SEED_ORG_SLUG=appcontrol && set APP_ENV=development && set RUST_LOG=info && bin\appcontrol-backend.exe > logs\backend.log 2>&1"
+timeout /t 5 /nobreak >nul
 echo Backend started on port 3000
 
 REM Start Gateway
 echo [2/2] Starting Gateway...
-start "AppControl Gateway" /min cmd /c "bin\appcontrol-gateway.exe > logs\gateway.log 2>&1"
+start "AppControl Gateway" /min cmd /c "set RUST_LOG=info && bin\appcontrol-gateway.exe > logs\gateway.log 2>&1"
 echo Gateway started on port 8443
 
 echo.
@@ -382,6 +396,10 @@ echo.
 echo   Web UI: http://localhost:3000
 echo   Gateway: localhost:8443
 echo   Database: %~dp0data\appcontrol.db
+echo.
+echo   Default login:
+echo     Email: admin@localhost
+echo     Password: admin
 echo.
 echo   Logs: %~dp0logs\
 echo.
