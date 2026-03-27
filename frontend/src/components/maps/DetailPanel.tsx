@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch, ArrowRight, Wrench, ChevronDown, ChevronRight, Copy, Check, BarChart3 } from 'lucide-react';
+import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch, ArrowRight, Wrench, ChevronDown, ChevronRight, Copy, Check, BarChart3, Calendar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -9,6 +9,7 @@ import { STATE_COLORS, ComponentState } from '@/lib/colors';
 import { Component, useComponentMetrics } from '@/api/apps';
 import { useStateTransitions, useCommandExecutions, useCheckEvents, CommandExecution, CheckEvent } from '@/api/components';
 import { MetricsWidgets } from './MetricsWidgets';
+import { ScheduleList } from '@/components/schedules';
 
 interface DetailPanelProps {
   component: Component;
@@ -139,6 +140,7 @@ export function DetailPanel({
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="commands">Commands</TabsTrigger>
           <TabsTrigger value="events">Events</TabsTrigger>
+          <TabsTrigger value="schedules">Schedules</TabsTrigger>
         </TabsList>
 
         <TabsContent value="metrics" className="flex-1 overflow-auto p-4">
@@ -259,6 +261,10 @@ export function DetailPanel({
               )}
             </div>
           </ScrollArea>
+        </TabsContent>
+
+        <TabsContent value="schedules" className="flex-1 overflow-auto p-4">
+          <ScheduleList componentId={component.id} canOperate={canOperate} />
         </TabsContent>
       </Tabs>
     </div>

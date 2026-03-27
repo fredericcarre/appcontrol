@@ -24,6 +24,7 @@ pub mod permissions;
 pub mod pki_export;
 pub mod profiles;
 pub mod reports;
+pub mod schedules;
 pub mod sites;
 pub mod switchover;
 pub mod teams;
@@ -520,6 +521,28 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/discovery/file-content",
             post(discovery::read_file_content),
         )
+        // Operation Schedules (start/stop/restart automation)
+        .route(
+            "/apps/:app_id/schedules",
+            get(schedules::list_app_schedules).post(schedules::create_app_schedule),
+        )
+        .route(
+            "/components/:comp_id/schedules",
+            get(schedules::list_component_schedules).post(schedules::create_component_schedule),
+        )
+        .route(
+            "/schedules/:id",
+            get(schedules::get_schedule)
+                .put(schedules::update_schedule)
+                .delete(schedules::delete_schedule),
+        )
+        .route("/schedules/:id/toggle", post(schedules::toggle_schedule))
+        .route("/schedules/:id/run-now", post(schedules::run_schedule_now))
+        .route(
+            "/schedules/:id/executions",
+            get(schedules::list_schedule_executions),
+        )
+        .route("/schedules/presets", get(schedules::list_presets))
         // Air-gap agent update
         .route(
             "/admin/agent-binaries",

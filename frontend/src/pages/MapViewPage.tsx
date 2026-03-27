@@ -35,6 +35,7 @@ import { DetailPanel } from '@/components/maps/DetailPanel';
 import { ShareModal } from '@/components/share/ShareModal';
 import { CommandModal } from '@/components/commands/CommandModal';
 import { ActivityPanel } from '@/components/activity/ActivityPanel';
+import { SchedulePanel } from '@/components/schedules/SchedulePanel';
 import { HistoryTimeline } from '@/components/history/HistoryTimeline';
 import { TimeSnapshot } from '@/api/apps';
 import { ComponentPalette } from '@/components/maps/ComponentPalette';
@@ -54,7 +55,7 @@ import {
   Pencil, Download, Save, ArrowLeft, Play, Square, Loader2,
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   MoreVertical, Trash2, Pause, PlayCircle, Maximize, Minimize,
-  Monitor, History, X,
+  Monitor, History, X, Calendar,
 } from 'lucide-react';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 
@@ -110,6 +111,7 @@ export function MapViewPage() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandComponentId, setCommandComponentId] = useState<string | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [switchoverOpen, setSwitchoverOpen] = useState(false);
   const [isOperating, setIsOperating] = useState(false);
   const [operationType, setOperationType] = useState<'start' | 'stop' | null>(null);
@@ -530,7 +532,13 @@ export function MapViewPage() {
 
   const handleToggleActivity = useCallback(() => {
     setActivityOpen((prev) => !prev);
-  }, []);
+    if (!activityOpen) setSchedulesOpen(false); // Close schedules when opening activity
+  }, [activityOpen]);
+
+  const handleToggleSchedules = useCallback(() => {
+    setSchedulesOpen((prev) => !prev);
+    if (!schedulesOpen) setActivityOpen(false); // Close activity when opening schedules
+  }, [schedulesOpen]);
 
   const handleSwitchover = useCallback(() => {
     setSwitchoverOpen(true);
@@ -972,6 +980,11 @@ export function MapViewPage() {
                     <Monitor className="h-4 w-4 mr-2" />
                     Supervision Mode
                   </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleToggleSchedules}>
+                    <Calendar className="h-4 w-4 mr-2" />
+                    {schedulesOpen ? 'Hide Schedules' : 'Schedules'}
+                  </DropdownMenuItem>
                   {canManage && (
                     <>
                       <DropdownMenuSeparator />
@@ -1107,6 +1120,14 @@ export function MapViewPage() {
           appId={appId || ''}
           onClose={() => setActivityOpen(false)}
           onSelectComponent={handleActivitySelectComponent}
+        />
+      )}
+
+      {schedulesOpen && (
+        <SchedulePanel
+          appId={appId || ''}
+          canOperate={canOperate}
+          onClose={() => setSchedulesOpen(false)}
         />
       )}
 

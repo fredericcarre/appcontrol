@@ -197,6 +197,16 @@ async fn main() -> anyhow::Result<()> {
         .await;
     });
 
+    // Start operation scheduler background task (checks every 60s)
+    let op_scheduler_state = state.clone();
+    tokio::spawn(async move {
+        appcontrol_backend::core::operation_scheduler::run_operation_scheduler(
+            op_scheduler_state,
+            std::time::Duration::from_secs(60),
+        )
+        .await;
+    });
+
     // Rate limiter cleanup task (every 5 minutes)
     let rl_state = state.clone();
     tokio::spawn(async move {
