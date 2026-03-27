@@ -26,4 +26,10 @@ Thumbs.db
 
 # sled databases
 *.sled/
+
+# Docker build artifacts
+docker/appcontrol-backend
 docker/appcontrol-ca.crt
+docker/appcontrol-ca.srl
+docker/certs/
+docker/frontend-dist/
