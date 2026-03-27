@@ -11,6 +11,77 @@ use axum::{
     routing::{get, post},
     Router,
 };
+
+// ---------------------------------------------------------------------------
+// File descriptor limit management (Unix only)
+// ---------------------------------------------------------------------------
+
+/// Raise the file descriptor limit to support many concurrent agent connections.
+///
+/// Each agent connection consumes one file descriptor. On Linux/macOS, the default
+/// soft limit is often 1024, which limits the gateway to ~1000 agents.
+/// This function raises the soft limit to match the hard limit (typically 65535+).
+///
+/// If the limit cannot be raised (e.g., running as non-root with low hard limit),
+/// a warning is logged but execution continues.
+#[cfg(unix)]
+fn raise_file_descriptor_limit() {
+    use tracing::{info, warn};
+
+    // Get current limits
+    let mut rlim = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+
+    let result = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) };
+    if result != 0 {
+        warn!("Failed to get file descriptor limit: {}", std::io::Error::last_os_error());
+        return;
+    }
+
+    let current_soft = rlim.rlim_cur;
+    let current_hard = rlim.rlim_max;
+
+    // Target: at least 65535, or the hard limit if lower
+    let target = std::cmp::min(65535, current_hard);
+
+    if current_soft >= target {
+        info!(
+            soft = current_soft,
+            hard = current_hard,
+            "File descriptor limit already sufficient"
+        );
+        return;
+    }
+
+    // Raise soft limit to target
+    rlim.rlim_cur = target;
+
+    let result = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &rlim) };
+    if result != 0 {
+        warn!(
+            current = current_soft,
+            target = target,
+            error = %std::io::Error::last_os_error(),
+            "Failed to raise file descriptor limit (run as root or increase hard limit in /etc/security/limits.conf)"
+        );
+    } else {
+        info!(
+            previous = current_soft,
+            new = target,
+            hard = current_hard,
+            "Raised file descriptor limit"
+        );
+    }
+}
+
+#[cfg(windows)]
+fn raise_file_descriptor_limit() {
+    // Windows doesn't have the same file descriptor limits as Unix.
+    // The handle limit is much higher by default (~16 million).
+    tracing::debug!("File descriptor limit management not needed on Windows");
+}
 use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -277,6 +348,9 @@ pub struct GatewayState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Raise file descriptor limit FIRST, before opening any connections
+    raise_file_descriptor_limit();
+
     // Install rustls crypto provider (required for rustls 0.23+)
     rustls::crypto::ring::default_provider()
         .install_default()
