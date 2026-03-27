@@ -1,7 +1,7 @@
 -- V016: FSM state cache, webhook notifications (SQLite)
 
--- Add current_state column to components (already in base schema for SQLite)
--- ALTER TABLE components ADD COLUMN current_state TEXT NOT NULL DEFAULT 'UNKNOWN';
+-- Add current_state column to components
+ALTER TABLE components ADD COLUMN current_state TEXT NOT NULL DEFAULT 'UNKNOWN';
 CREATE INDEX IF NOT EXISTS idx_components_state ON components (current_state);
 
 -- Webhook endpoints
