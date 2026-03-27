@@ -236,6 +236,7 @@ function PraExerciseCard({
                 </p>
                 <p className="text-sm text-muted-foreground">
                   {new Date(exercise.started_at).toLocaleString('en-US')}
+                  {exercise.initiated_by && ` • by ${exercise.initiated_by}`}
                 </p>
               </div>
             </div>
@@ -335,14 +336,23 @@ function PraExerciseCard({
             {exercise.commands_executed && exercise.commands_executed.length > 0 && (
               <div className="mt-4">
                 <h5 className="font-medium mb-3">Commands Executed</h5>
-                <div className="space-y-2 font-mono text-xs bg-black/5 dark:bg-white/5 p-3 rounded">
+                <div className="space-y-2 font-mono text-xs bg-black/5 dark:bg-white/5 p-3 rounded overflow-x-auto">
+                  <div className="flex items-center gap-2 text-muted-foreground border-b pb-1 mb-2">
+                    <span className="w-20 flex-shrink-0">Time</span>
+                    <span className="w-28 flex-shrink-0">Component</span>
+                    <span className="w-20 flex-shrink-0">Agent</span>
+                    <span className="w-24 flex-shrink-0">Gateway</span>
+                    <span>Command</span>
+                  </div>
                   {exercise.commands_executed.map((cmd, idx) => (
                     <div key={idx} className="flex items-start gap-2">
                       <span className="text-muted-foreground w-20 flex-shrink-0">
                         {new Date(cmd.at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
                       </span>
-                      <span className="text-blue-600 dark:text-blue-400 w-24 flex-shrink-0">{cmd.component}</span>
-                      <span className="text-muted-foreground">{cmd.command || cmd.action}</span>
+                      <span className="text-blue-600 dark:text-blue-400 w-28 flex-shrink-0">{cmd.component}</span>
+                      <span className="text-green-600 dark:text-green-400 w-20 flex-shrink-0">{cmd.agent || '-'}</span>
+                      <span className="text-purple-600 dark:text-purple-400 w-24 flex-shrink-0">{cmd.gateway || '-'}</span>
+                      <span className="text-muted-foreground break-all">{cmd.command || cmd.action}</span>
                     </div>
                   ))}
                 </div>

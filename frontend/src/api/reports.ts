@@ -96,6 +96,8 @@ export interface CommandExecuted {
   action: string;
   component: string;
   command: string | null;
+  agent: string | null;
+  gateway: string | null;
   at: string;
 }
 
@@ -105,6 +107,7 @@ export interface PraExercise {
   completed_at: string | null;
   rto_seconds: number | null;
   status: 'completed' | 'failed' | 'rolled_back' | 'in_progress';
+  initiated_by: string | null;
   source_site: string | null;
   target_site: string | null;
   target_site_id: string | null;
