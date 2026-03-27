@@ -107,14 +107,16 @@ jobs:
 
           # Build backend with SQLite support (for standalone Windows deployment)
           # IMPORTANT: --no-default-features is required because default=["postgres"]
-          # Without it, both features are enabled and postgres takes precedence
-          # IMPORTANT: Use separate target directory to avoid Cargo reusing PostgreSQL artifacts
-          export CARGO_TARGET_DIR=target-sqlite
+          # IMPORTANT: Build from crate directory to avoid workspace feature unification
+          # (e2e-tests depends on sqlx with postgres, which would pollute the SQLite build)
+          export CARGO_TARGET_DIR=$PWD/target-sqlite
+          cd crates/backend
           if [ "${USE_CROSS:-}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --bin appcontrol-backend --no-default-features --features sqlite
+            cross build --release --target ${{ matrix.target }} --no-default-features --features sqlite
           else
-            cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --no-default-features --features sqlite
+            cargo build --release --target ${{ matrix.target }} --no-default-features --features sqlite
           fi
+          cd ../..
           unset CARGO_TARGET_DIR
           # Copy SQLite backend for packaging - fail if file doesn't exist
           mkdir -p target/${{ matrix.target }}/release/sqlite
