@@ -36,7 +36,10 @@ fn raise_file_descriptor_limit() {
 
     let result = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) };
     if result != 0 {
-        warn!("Failed to get file descriptor limit: {}", std::io::Error::last_os_error());
+        warn!(
+            "Failed to get file descriptor limit: {}",
+            std::io::Error::last_os_error()
+        );
         return;
     }
 
