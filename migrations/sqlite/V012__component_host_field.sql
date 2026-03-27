@@ -1,5 +1,7 @@
 -- V012: Add host field to components (SQLite)
--- Already included in base components table for SQLite
+
+-- Add host column to components table
+ALTER TABLE components ADD COLUMN host TEXT;
 
 -- Index for fast host→agent resolution
 CREATE INDEX IF NOT EXISTS idx_components_host ON components (host);
