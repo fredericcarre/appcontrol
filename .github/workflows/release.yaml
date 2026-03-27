@@ -14,7 +14,7 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Build Rust binaries for each target
+  # Build Rust binaries for each target (PostgreSQL - default)
   # ---------------------------------------------------------------------------
   build-binaries:
     name: Build ${{ matrix.target }}
@@ -46,6 +46,7 @@ jobs:
             os: windows-latest
             suffix: windows-arm64
             ext: .exe
+
 
     steps:
       - uses: actions/checkout@v4
@@ -92,10 +93,13 @@ jobs:
 
       - name: Build release binaries
         run: |
+          # Build backend with full feature (postgres + sqlite support)
           if [ "${USE_CROSS:-}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --bin appcontrol-backend --bin appcontrol-gateway --bin appcontrol-agent --bin appctl
+            cross build --release --target ${{ matrix.target }} --bin appcontrol-backend --features full
+            cross build --release --target ${{ matrix.target }} --bin appcontrol-gateway --bin appcontrol-agent --bin appctl
           else
-            cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --bin appcontrol-gateway --bin appcontrol-agent --bin appctl
+            cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --features full
+            cargo build --release --target ${{ matrix.target }} --bin appcontrol-gateway --bin appcontrol-agent --bin appctl
           fi
         shell: bash
 

@@ -212,7 +212,7 @@ function Download-AppControlBinaries {
     $releases = "https://github.com/fredericcarre/appcontrol/releases/latest/download"
     $binDir = "$InstallDir\bin"
 
-    # Backend
+    # Backend (dual-mode: supports both PostgreSQL and SQLite via DATABASE_TYPE env var)
     if (-not (Test-Path "$binDir\appcontrol-backend.exe")) {
         try {
             Download-File -Url "$releases/appcontrol-backend-windows-amd64.exe" -Output "$binDir\appcontrol-backend.exe"
