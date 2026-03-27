@@ -16,7 +16,9 @@ export default defineConfig({
   timeout: 30_000,
   retries: 1,
   use: {
-    baseURL: 'http://localhost:8080',
+    // Access app through nginx (HTTPS with self-signed cert)
+    baseURL: 'https://localhost:443',
+    ignoreHTTPSErrors: true, // Allow self-signed certificates
     screenshot: 'off', // We take screenshots manually in tests
     viewport: { width: 1440, height: 900 },
     colorScheme: 'light',
