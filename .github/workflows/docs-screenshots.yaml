@@ -76,7 +76,7 @@ jobs:
 
       - name: Capture screenshots
         working-directory: frontend
-        run: npx playwright test --project=screenshots
+        run: npm run screenshots
         continue-on-error: true  # Don't fail the build if some pages have no data
 
       - name: List captured screenshots
