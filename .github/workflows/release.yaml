@@ -106,10 +106,12 @@ jobs:
           cp target/${{ matrix.target }}/release/appcontrol-backend* target/${{ matrix.target }}/release/postgres/ 2>/dev/null || true
 
           # Build backend with SQLite support (for standalone Windows deployment)
+          # IMPORTANT: --no-default-features is required because default=["postgres"]
+          # Without it, both features are enabled and postgres takes precedence
           if [ "${USE_CROSS:-}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --bin appcontrol-backend --features sqlite
+            cross build --release --target ${{ matrix.target }} --bin appcontrol-backend --no-default-features --features sqlite
           else
-            cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --features sqlite
+            cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --no-default-features --features sqlite
           fi
           # Copy SQLite backend for packaging
           mkdir -p target/${{ matrix.target }}/release/sqlite
