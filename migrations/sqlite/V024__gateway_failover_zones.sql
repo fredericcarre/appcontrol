@@ -14,8 +14,7 @@
 ALTER TABLE gateways ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE gateways ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
 
--- Track when gateway last reported healthy (for failover detection)
-ALTER TABLE gateways ADD COLUMN last_heartbeat_at TEXT;
+-- Note: last_heartbeat_at already exists in gateways (V002)
 
 -- Note: SQLite partial unique indexes have limited support
 -- We'll enforce one primary per zone in application code
