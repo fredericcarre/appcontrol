@@ -18,6 +18,7 @@ pub mod history;
 pub mod import;
 pub mod import_wizard;
 pub mod links;
+pub mod logs;
 pub mod orchestration;
 pub mod organizations;
 pub mod permissions;
@@ -116,6 +117,20 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/components/:id/check-events",
             get(components::list_check_events),
+        )
+        // Component log sources
+        .route(
+            "/components/:id/log-sources",
+            get(logs::list_log_sources).post(logs::create_log_source),
+        )
+        .route(
+            "/log-sources/:id",
+            put(logs::update_log_source).delete(logs::delete_log_source),
+        )
+        .route("/components/:id/logs", get(logs::get_component_logs))
+        .route(
+            "/components/:id/logs/command/:name",
+            post(logs::run_diagnostic_command),
         )
         // Component site overrides (failover configuration)
         .route(
