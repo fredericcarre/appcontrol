@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   Schedule,
-  SchedulePreset,
   useSchedulePresets,
   useCreateAppSchedule,
   useCreateComponentSchedule,
@@ -87,6 +86,8 @@ export function ScheduleDialog({
     updateSchedule.isPending;
 
   // Reset form when dialog opens/closes or schedule changes
+  // This is a valid pattern for form reset when dialog opens
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (open) {
       if (schedule) {
@@ -118,6 +119,7 @@ export function ScheduleDialog({
       setCronError(null);
     }
   }, [open, schedule, presets]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Validate cron expression (basic validation)
   const validateCron = (cron: string): boolean => {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch, ArrowRight, Wrench, ChevronDown, ChevronRight, Copy, Check, BarChart3, Calendar } from 'lucide-react';
+import { X, Play, Square, RotateCcw, Terminal, Search, Server, Clock, Shield, Skull, GitBranch, ArrowRight, Wrench, ChevronDown, ChevronRight, Copy, Check, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';

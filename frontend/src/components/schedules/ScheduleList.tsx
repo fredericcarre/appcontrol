@@ -73,10 +73,12 @@ export function ScheduleList({ appId, componentId, canOperate = false }: Schedul
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Schedule | null>(null);
 
-  // Use appropriate hook based on target type
-  const { data: schedules, isLoading } = appId
-    ? useAppSchedules(appId)
-    : useComponentSchedules(componentId || '');
+  // Call both hooks unconditionally (React rules of hooks), use results based on target type
+  const appSchedules = useAppSchedules(appId || '');
+  const componentSchedules = useComponentSchedules(componentId || '');
+
+  // Use the appropriate result based on which ID is provided
+  const { data: schedules, isLoading } = appId ? appSchedules : componentSchedules;
 
   const toggleSchedule = useToggleSchedule();
   const deleteSchedule = useDeleteSchedule();
