@@ -93,21 +93,41 @@ jobs:
 
       - name: Build release binaries
         run: |
-          # Build backend with full feature (postgres + sqlite support)
+          # Build backend with PostgreSQL support (default for Docker/server deployments)
           if [ "${USE_CROSS:-}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --bin appcontrol-backend --features full
+            cross build --release --target ${{ matrix.target }} --bin appcontrol-backend --features postgres
             cross build --release --target ${{ matrix.target }} --bin appcontrol-gateway --bin appcontrol-agent --bin appctl
           else
-            cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --features full
+            cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --features postgres
             cargo build --release --target ${{ matrix.target }} --bin appcontrol-gateway --bin appcontrol-agent --bin appctl
           fi
+          # Copy PostgreSQL backend for packaging
+          mkdir -p target/${{ matrix.target }}/release/postgres
+          cp target/${{ matrix.target }}/release/appcontrol-backend* target/${{ matrix.target }}/release/postgres/ 2>/dev/null || true
+
+          # Build backend with SQLite support (for standalone Windows deployment)
+          if [ "${USE_CROSS:-}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} --bin appcontrol-backend --features sqlite
+          else
+            cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --features sqlite
+          fi
+          # Copy SQLite backend for packaging
+          mkdir -p target/${{ matrix.target }}/release/sqlite
+          cp target/${{ matrix.target }}/release/appcontrol-backend* target/${{ matrix.target }}/release/sqlite/ 2>/dev/null || true
         shell: bash
 
       - name: Package binaries (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          for bin in appcontrol-backend appcontrol-gateway appcontrol-agent appctl; do
+          # Package PostgreSQL backend (default)
+          cp target/${{ matrix.target }}/release/postgres/appcontrol-backend dist/appcontrol-backend-${{ matrix.suffix }}
+          chmod +x dist/appcontrol-backend-${{ matrix.suffix }}
+          # Package SQLite backend (standalone)
+          cp target/${{ matrix.target }}/release/sqlite/appcontrol-backend dist/appcontrol-backend-sqlite-${{ matrix.suffix }}
+          chmod +x dist/appcontrol-backend-sqlite-${{ matrix.suffix }}
+          # Package other binaries
+          for bin in appcontrol-gateway appcontrol-agent appctl; do
             cp target/${{ matrix.target }}/release/$bin dist/${bin}-${{ matrix.suffix }}
             chmod +x dist/${bin}-${{ matrix.suffix }}
           done
@@ -117,7 +137,12 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist
-          foreach ($bin in @("appcontrol-backend", "appcontrol-gateway", "appcontrol-agent", "appctl")) {
+          # Package PostgreSQL backend (default)
+          Copy-Item "target/${{ matrix.target }}/release/postgres/appcontrol-backend.exe" "dist/appcontrol-backend-${{ matrix.suffix }}.exe"
+          # Package SQLite backend (standalone)
+          Copy-Item "target/${{ matrix.target }}/release/sqlite/appcontrol-backend.exe" "dist/appcontrol-backend-sqlite-${{ matrix.suffix }}.exe"
+          # Package other binaries
+          foreach ($bin in @("appcontrol-gateway", "appcontrol-agent", "appctl")) {
             Copy-Item "target/${{ matrix.target }}/release/${bin}.exe" "dist/${bin}-${{ matrix.suffix }}.exe"
           }
 

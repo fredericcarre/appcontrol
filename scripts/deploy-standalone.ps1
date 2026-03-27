@@ -212,10 +212,18 @@ function Download-AppControlBinaries {
     $releases = "https://github.com/fredericcarre/appcontrol/releases/latest/download"
     $binDir = "$InstallDir\bin"
 
-    # Backend (dual-mode: supports both PostgreSQL and SQLite via DATABASE_TYPE env var)
+    # Backend - download the appropriate binary based on database mode
+    # SQLite mode: appcontrol-backend-sqlite-* (lightweight, no PostgreSQL dependencies)
+    # PostgreSQL mode: appcontrol-backend-* (default, requires PostgreSQL)
     if (-not (Test-Path "$binDir\appcontrol-backend.exe")) {
         try {
-            Download-File -Url "$releases/appcontrol-backend-windows-amd64.exe" -Output "$binDir\appcontrol-backend.exe"
+            if ($DbMode -eq "sqlite") {
+                Write-Status "Downloading SQLite backend binary..."
+                Download-File -Url "$releases/appcontrol-backend-sqlite-windows-amd64.exe" -Output "$binDir\appcontrol-backend.exe"
+            } else {
+                Write-Status "Downloading PostgreSQL backend binary..."
+                Download-File -Url "$releases/appcontrol-backend-windows-amd64.exe" -Output "$binDir\appcontrol-backend.exe"
+            }
         } catch {
             Write-Status "Backend not available for download yet - will need manual copy" "WARNING"
         }

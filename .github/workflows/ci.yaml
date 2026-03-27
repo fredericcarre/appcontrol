@@ -98,10 +98,43 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-sqlite-
 
       - name: Build backend with SQLite feature
-        run: cargo build --package appcontrol-backend --no-default-features --features sqlite
+        run: cargo build --release --package appcontrol-backend --no-default-features --features sqlite
 
       - name: Run unit tests with SQLite feature
         run: cargo test --package appcontrol-backend --no-default-features --features sqlite -- --nocapture
+
+      - name: Test SQLite backend startup
+        run: |
+          # Start the backend with SQLite in the background
+          mkdir -p /tmp/appcontrol
+          DATABASE_TYPE=sqlite \
+          DATABASE_URL=sqlite:/tmp/appcontrol/test.db \
+          JWT_SECRET=test-secret \
+          LOCAL_AUTH_ENABLED=true \
+          SEED_ENABLED=true \
+          SEED_ADMIN_EMAIL=admin@test.local \
+          SEED_ADMIN_PASSWORD=admin \
+          SEED_ORG_NAME=TestOrg \
+          SEED_ORG_SLUG=test \
+          timeout 30 ./target/release/appcontrol-backend &
+          BACKEND_PID=$!
+
+          # Wait for backend to start
+          sleep 5
+
+          # Check if backend is healthy
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
+              echo "Backend healthy after $((i))s"
+              kill $BACKEND_PID 2>/dev/null || true
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Backend failed to start within 20s"
+          kill $BACKEND_PID 2>/dev/null || true
+          exit 1
 
   # ---------------------------------------------------------------------------
   # E2E Integration Tests — in-process backend + real PostgreSQL
