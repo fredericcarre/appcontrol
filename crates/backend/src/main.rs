@@ -695,8 +695,11 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
     .await?;
 
     // Find migration files.
-    // Try multiple locations: CARGO_MANIFEST_DIR-relative (dev), /app/migrations (Docker),
-    // and MIGRATIONS_DIR env var (custom deployments).
+    // Try multiple locations in priority order:
+    // 1. MIGRATIONS_DIR env var (custom deployments)
+    // 2. CARGO_MANIFEST_DIR-relative (dev builds)
+    // 3. Executable-relative (standalone Windows deployment)
+    // 4. /app/migrations (Docker)
     // For dual-database support, look in the database-specific subdirectory.
     let cargo_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../migrations")
@@ -706,10 +709,21 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
         .ok()
         .map(|p| std::path::PathBuf::from(p).join(db_subdir));
 
+    // Executable-relative paths for standalone deployment (e.g., Windows .exe next to migrations/)
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let exe_sub = exe_dir.as_ref().map(|d| d.join("migrations").join(db_subdir));
+    let exe_root = exe_dir.as_ref().map(|d| d.join("migrations"));
+
     // Also check the root migrations directory (for backwards compatibility)
     let cargo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
     // Docker root fallback for PostgreSQL (migrations are in /app/migrations/, not /app/migrations/postgres/)
     let docker_root = std::path::PathBuf::from("/app/migrations");
+
+    // Current working directory fallback (user runs exe from project root)
+    let cwd_sub = std::path::PathBuf::from("migrations").join(db_subdir);
+    let cwd_root = std::path::PathBuf::from("migrations");
 
     let migrations_dir = env_dir
         .filter(|p| p.exists())
@@ -717,13 +731,18 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
             if cargo_dir.exists() {
                 Some(cargo_dir.clone())
             } else if cargo_root.exists() {
-                // Fallback to root for backwards compatibility (PostgreSQL-only setups)
                 Some(cargo_root)
+            } else if exe_sub.as_ref().is_some_and(|p| p.exists()) {
+                exe_sub
+            } else if exe_root.as_ref().is_some_and(|p| p.exists()) {
+                exe_root
+            } else if cwd_sub.exists() {
+                Some(cwd_sub)
+            } else if cwd_root.exists() {
+                Some(cwd_root)
             } else if docker_dir.exists() {
-                // Docker: database-specific subdirectory exists
                 Some(docker_dir.clone())
             } else if docker_root.exists() {
-                // Docker fallback: root directory (for PostgreSQL when postgres/ subdir doesn't exist)
                 Some(docker_root)
             } else {
                 None

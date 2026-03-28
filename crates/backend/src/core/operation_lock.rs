@@ -259,11 +259,26 @@ impl OperationLock {
 
     /// Clean up a stale lock (heartbeat older than threshold).
     async fn cleanup_stale_lock(&self, app_id: Uuid) -> Result<(), LockError> {
+        #[cfg(feature = "postgres")]
         let result = sqlx::query(
             r#"
             DELETE FROM operation_locks
             WHERE app_id = $1
               AND last_heartbeat < NOW() - INTERVAL '1 second' * $2
+            "#,
+        )
+        .bind(app_id)
+        .bind(STALE_THRESHOLD_SECONDS)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LockError::Database(e.to_string()))?;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let result = sqlx::query(
+            r#"
+            DELETE FROM operation_locks
+            WHERE app_id = $1
+              AND last_heartbeat < datetime('now', '-' || $2 || ' seconds')
             "#,
         )
         .bind(app_id)
@@ -286,10 +301,23 @@ impl OperationLock {
     /// Clean up all stale locks across all applications.
     /// Call this periodically (e.g., on backend startup and every minute).
     pub async fn cleanup_all_stale_locks(&self) -> Result<u64, LockError> {
+        #[cfg(feature = "postgres")]
         let result = sqlx::query(
             r#"
             DELETE FROM operation_locks
             WHERE last_heartbeat < NOW() - INTERVAL '1 second' * $1
+            "#,
+        )
+        .bind(STALE_THRESHOLD_SECONDS)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LockError::Database(e.to_string()))?;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let result = sqlx::query(
+            r#"
+            DELETE FROM operation_locks
+            WHERE last_heartbeat < datetime('now', '-' || $1 || ' seconds')
             "#,
         )
         .bind(STALE_THRESHOLD_SECONDS)
@@ -374,9 +402,11 @@ async fn heartbeat_loop(
         tokio::select! {
             _ = tokio::time::sleep(interval) => {
                 // Update heartbeat
-                if let Err(e) = sqlx::query(
-                    "UPDATE operation_locks SET last_heartbeat = NOW() WHERE app_id = $1"
-                )
+                #[cfg(feature = "postgres")]
+                let hb_sql = "UPDATE operation_locks SET last_heartbeat = NOW() WHERE app_id = $1";
+                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+                let hb_sql = "UPDATE operation_locks SET last_heartbeat = datetime('now') WHERE app_id = $1";
+                if let Err(e) = sqlx::query(hb_sql)
                 .bind(app_id)
                 .execute(&pool)
                 .await

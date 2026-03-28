@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use crate::config::{AppConfig, DatabaseType};
+use crate::config::AppConfig;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -28,93 +28,73 @@ pub type DbPool = sqlx::SqlitePool;
 /// - Uses SqlitePoolOptions with WAL mode for better concurrency
 /// - Creates the database file if it doesn't exist
 pub async fn create_pool(config: &AppConfig) -> Result<DbPool, sqlx::Error> {
-    match config.database_type {
-        #[cfg(feature = "postgres")]
-        DatabaseType::Postgres => {
-            tracing::info!(
-                max_connections = config.db_pool_size,
-                idle_timeout_secs = config.db_idle_timeout_secs,
-                connect_timeout_secs = config.db_connect_timeout_secs,
-                "Creating PostgreSQL connection pool"
-            );
+    #[cfg(feature = "postgres")]
+    {
+        tracing::info!(
+            max_connections = config.db_pool_size,
+            idle_timeout_secs = config.db_idle_timeout_secs,
+            connect_timeout_secs = config.db_connect_timeout_secs,
+            "Creating PostgreSQL connection pool"
+        );
 
-            sqlx::postgres::PgPoolOptions::new()
-                .max_connections(config.db_pool_size)
-                .idle_timeout(Some(Duration::from_secs(config.db_idle_timeout_secs)))
-                .acquire_timeout(Duration::from_secs(config.db_connect_timeout_secs))
-                .max_lifetime(Some(Duration::from_secs(1800))) // 30 min max lifetime
-                .connect(&config.database_url)
-                .await
-        }
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(config.db_pool_size)
+            .idle_timeout(Some(Duration::from_secs(config.db_idle_timeout_secs)))
+            .acquire_timeout(Duration::from_secs(config.db_connect_timeout_secs))
+            .max_lifetime(Some(Duration::from_secs(1800))) // 30 min max lifetime
+            .connect(&config.database_url)
+            .await
+    }
 
-        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        DatabaseType::Sqlite => {
-            tracing::info!(
-                url = %config.database_url,
-                "Creating SQLite connection pool with WAL mode"
-            );
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        tracing::info!(
+            url = %config.database_url,
+            "Creating SQLite connection pool with WAL mode"
+        );
 
-            // Extract path from sqlite:path URL format
-            let path = config
-                .database_url
-                .strip_prefix("sqlite:")
-                .unwrap_or(&config.database_url);
+        // Extract path from sqlite:path URL format
+        let path = config
+            .database_url
+            .strip_prefix("sqlite:")
+            .unwrap_or(&config.database_url);
 
-            // Ensure parent directory exists
-            if let Some(parent) = std::path::Path::new(path).parent() {
-                if !parent.as_os_str().is_empty() && !parent.exists() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        sqlx::Error::Configuration(
-                            format!("Failed to create database directory: {}", e).into(),
-                        )
-                    })?;
-                }
+        // Ensure parent directory exists
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    sqlx::Error::Configuration(
+                        format!("Failed to create database directory: {}", e).into(),
+                    )
+                })?;
             }
-
-            sqlx::sqlite::SqlitePoolOptions::new()
-                .max_connections(config.db_pool_size.min(16)) // SQLite doesn't benefit from many connections
-                .idle_timeout(Some(Duration::from_secs(config.db_idle_timeout_secs)))
-                .acquire_timeout(Duration::from_secs(config.db_connect_timeout_secs))
-                .after_connect(|conn, _meta| {
-                    Box::pin(async move {
-                        use sqlx::Executor;
-                        // Enable WAL mode for better concurrency
-                        conn.execute("PRAGMA journal_mode=WAL").await?;
-                        // Busy timeout for handling concurrent access
-                        conn.execute("PRAGMA busy_timeout=30000").await?;
-                        // Foreign keys enforcement (off by default in SQLite)
-                        conn.execute("PRAGMA foreign_keys=ON").await?;
-                        // Synchronous mode for durability (NORMAL is good balance)
-                        conn.execute("PRAGMA synchronous=NORMAL").await?;
-                        Ok(())
-                    })
-                })
-                .connect_with(
-                    config
-                        .database_url
-                        .parse::<sqlx::sqlite::SqliteConnectOptions>()?
-                        .create_if_missing(true),
-                )
-                .await
         }
 
-        #[cfg(all(feature = "sqlite", feature = "postgres"))]
-        DatabaseType::Sqlite => Err(sqlx::Error::Configuration(
-            "SQLite mode not supported when compiled with 'postgres' feature. \
-                 Use --features sqlite (without postgres) for SQLite support."
-                .into(),
-        )),
-
-        #[allow(unreachable_patterns)]
-        _ => Err(sqlx::Error::Configuration(
-            format!(
-                "Database type {:?} not supported. \
-                 Build with the appropriate feature flag: \
-                 --features postgres or --features sqlite",
-                config.database_type
+        sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(config.db_pool_size.min(16)) // SQLite doesn't benefit from many connections
+            .idle_timeout(Some(Duration::from_secs(config.db_idle_timeout_secs)))
+            .acquire_timeout(Duration::from_secs(config.db_connect_timeout_secs))
+            .after_connect(|conn, _meta| {
+                Box::pin(async move {
+                    use sqlx::Executor;
+                    // Enable WAL mode for better concurrency
+                    conn.execute("PRAGMA journal_mode=WAL").await?;
+                    // Busy timeout for handling concurrent access
+                    conn.execute("PRAGMA busy_timeout=30000").await?;
+                    // Foreign keys enforcement (off by default in SQLite)
+                    conn.execute("PRAGMA foreign_keys=ON").await?;
+                    // Synchronous mode for durability (NORMAL is good balance)
+                    conn.execute("PRAGMA synchronous=NORMAL").await?;
+                    Ok(())
+                })
+            })
+            .connect_with(
+                config
+                    .database_url
+                    .parse::<sqlx::sqlite::SqliteConnectOptions>()?
+                    .create_if_missing(true),
             )
-            .into(),
-        )),
+            .await
     }
 }
 

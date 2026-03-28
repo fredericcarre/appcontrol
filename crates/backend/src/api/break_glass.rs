@@ -173,13 +173,14 @@ pub async fn activate_break_glass(
     // Create session (APPEND-ONLY)
     let session_id = Uuid::new_v4();
     let session = sqlx::query_as::<_, BreakGlassSessionRow>(
-        r#"
-        INSERT INTO break_glass_sessions (
-            id, account_id, organization_id, activated_by_ip, reason, expires_at
-        ) VALUES ($1, $2, $3, $4, $5, now() + make_interval(mins => $6))
-        RETURNING id, account_id, organization_id, activated_by_ip, reason,
-                  started_at, expires_at, ended_at, actions_taken
-        "#,
+        &format!(
+            "INSERT INTO break_glass_sessions (
+                id, account_id, organization_id, activated_by_ip, reason, expires_at
+            ) VALUES ($1, $2, $3, $4, $5, {} + make_interval(mins => $6))
+            RETURNING id, account_id, organization_id, activated_by_ip, reason,
+                      started_at, expires_at, ended_at, actions_taken",
+            crate::db::sql::now()
+        ),
     )
     .bind(session_id)
     .bind(account_id)
@@ -192,10 +193,11 @@ pub async fn activate_break_glass(
 
     // Log the break-glass activation as a CRITICAL security event
     let _ = sqlx::query(
-        r#"
-        INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details, created_at)
-        VALUES ($1, $2, 'break_glass_activated', 'organization', $3, $4, now())
-        "#,
+        &format!(
+            "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details, created_at)
+             VALUES ($1, $2, 'break_glass_activated', 'organization', $3, $4, {})",
+            crate::db::sql::now()
+        ),
     )
     .bind(Uuid::new_v4())
     .bind(account_id)
@@ -258,8 +260,8 @@ pub async fn end_break_glass_session(
     }
 
     let result = sqlx::query(
-        "UPDATE break_glass_sessions SET ended_at = now() \
-         WHERE id = $1 AND organization_id = $2 AND ended_at IS NULL",
+        &format!("UPDATE break_glass_sessions SET ended_at = {} \
+         WHERE id = $1 AND organization_id = $2 AND ended_at IS NULL", crate::db::sql::now()),
     )
     .bind(session_id)
     .bind(user.organization_id)

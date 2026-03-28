@@ -7,10 +7,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
+#[cfg(feature = "postgres")]
 use crate::db::UuidArray;
 use crate::AppState;
 
 /// Row returned when querying for due schedules.
+#[cfg(feature = "postgres")]
 #[derive(Debug, sqlx::FromRow)]
 struct DueSchedule {
     id: Uuid,
@@ -22,6 +24,7 @@ struct DueSchedule {
 }
 
 /// Calculate next run time based on frequency.
+#[cfg(feature = "postgres")]
 fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
     use chrono::{Datelike, Duration, Timelike, Utc};
 
@@ -108,6 +111,7 @@ pub async fn run_snapshot_scheduler(_state: Arc<AppState>, check_interval: Durat
 }
 
 /// Find and execute all schedules that are due.
+#[cfg(feature = "postgres")]
 async fn execute_due_schedules(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // Find schedules where next_run_at <= now() and enabled = true
     let due_schedules = sqlx::query_as::<_, DueSchedule>(
@@ -145,6 +149,7 @@ async fn execute_due_schedules(state: &Arc<AppState>) -> Result<(), sqlx::Error>
 }
 
 /// Execute a single schedule: trigger discovery, store snapshot.
+#[cfg(feature = "postgres")]
 async fn execute_single_schedule(
     state: &Arc<AppState>,
     schedule: &DueSchedule,
@@ -242,6 +247,7 @@ async fn fetch_recent_report_ids(
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+#[allow(dead_code)] // Will be used when snapshot scheduler is fully implemented for SQLite
 async fn fetch_recent_report_ids(
     db: &crate::db::DbPool,
     agent_ids: &[Uuid],
@@ -299,6 +305,7 @@ async fn fetch_services_for_correlation(
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+#[allow(dead_code)] // Will be used when snapshot scheduler is fully implemented for SQLite
 async fn fetch_services_for_correlation(
     db: &crate::db::DbPool,
     report_ids: &[Uuid],
@@ -362,6 +369,7 @@ async fn update_schedule_after_run(
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+#[allow(dead_code)] // Will be used when snapshot scheduler is fully implemented for SQLite
 async fn update_schedule_after_run(
     db: &crate::db::DbPool,
     schedule_id: Uuid,
@@ -383,6 +391,7 @@ async fn update_schedule_after_run(
 }
 
 /// Clean up expired snapshots based on retention_days.
+#[cfg(feature = "postgres")]
 async fn cleanup_expired_snapshots(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     let result = sqlx::query(
         r#"

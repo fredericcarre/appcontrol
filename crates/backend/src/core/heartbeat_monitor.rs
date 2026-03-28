@@ -6,12 +6,15 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(feature = "postgres")]
 use uuid::Uuid;
 
 use crate::AppState;
+#[cfg(feature = "postgres")]
 use appcontrol_common::ComponentState;
 
 /// Row returned when querying for stale agents and their components.
+#[cfg(feature = "postgres")]
 #[derive(Debug, sqlx::FromRow)]
 struct StaleComponent {
     component_id: Uuid,
@@ -73,9 +76,11 @@ pub async fn run_heartbeat_monitor(_state: Arc<AppState>, check_interval: Durati
 
 /// Gateway heartbeat timeout in seconds (2 minutes).
 /// Gateways should send heartbeats every 60 seconds, so 2 minutes means we missed 2+.
+#[cfg(feature = "postgres")]
 const GATEWAY_HEARTBEAT_TIMEOUT_SECS: i64 = 120;
 
 /// Check for gateways that have missed heartbeats and mark them as suspended.
+#[cfg(feature = "postgres")]
 async fn check_stale_gateways(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // Find gateways with stale heartbeats that are still marked as 'active'
     // Mark them as 'suspended' (the valid status for unavailable gateways)
@@ -128,6 +133,7 @@ async fn check_stale_gateways(state: &Arc<AppState>) -> Result<(), sqlx::Error> 
 
 /// Check for agents that have missed their heartbeat timeout and transition
 /// their components to UNREACHABLE.
+#[cfg(feature = "postgres")]
 async fn check_stale_agents(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // Find components whose agent has exceeded the org-level heartbeat timeout
     // and that are NOT already in UNREACHABLE, STOPPED, or STOPPING state.
@@ -210,6 +216,7 @@ async fn check_stale_agents(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+#[cfg(feature = "postgres")]
 /// Transition a single component to UNREACHABLE, recording the previous state
 /// in the details for recovery when the agent reconnects.
 async fn transition_to_unreachable(
@@ -274,12 +281,14 @@ async fn transition_to_unreachable(
 }
 
 /// Agent with UNREACHABLE components that has a recent heartbeat.
+#[cfg(feature = "postgres")]
 #[derive(Debug, sqlx::FromRow)]
 struct AgentToResync {
     agent_id: Uuid,
     unreachable_count: i64,
 }
 
+#[cfg(feature = "postgres")]
 /// Detect agents that are active (recent heartbeat) but have UNREACHABLE components.
 /// This happens when an agent reconnects after a timeout period.
 /// We send RunChecksNow to trigger immediate health checks and resync state.
@@ -332,6 +341,7 @@ async fn resync_unreachable_components(state: &Arc<AppState>) -> Result<(), sqlx
 }
 
 #[cfg(test)]
+#[cfg(feature = "postgres")]
 mod tests {
     use super::*;
 

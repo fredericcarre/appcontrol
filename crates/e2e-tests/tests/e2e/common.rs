@@ -145,7 +145,7 @@ impl TestContext {
 
         let config = appcontrol_backend::config::AppConfig {
             database_url: db_url,
-            database_type: appcontrol_backend::config::DatabaseType::Postgres,
+
             port: addr.port(),
             jwt_secret: "test-jwt-secret".to_string(),
             jwt_issuer: "appcontrol-test".to_string(),
@@ -311,7 +311,7 @@ impl TestContext {
 
         let config = appcontrol_backend::config::AppConfig {
             database_url: db_url,
-            database_type: appcontrol_backend::config::DatabaseType::Postgres,
+
             port: addr.port(),
             jwt_secret: "test-jwt-secret".to_string(),
             jwt_issuer: "appcontrol-test".to_string(),
