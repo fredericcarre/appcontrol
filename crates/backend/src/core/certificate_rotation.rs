@@ -129,14 +129,12 @@ pub async fn start_rotation(
     let mut tx = pool.begin().await?;
 
     // Store pending CA
-    sqlx::query(
-        &format!(
-            "UPDATE organizations \
+    sqlx::query(&format!(
+        "UPDATE organizations \
              SET pending_ca_cert_pem = $2, pending_ca_key_pem = $3, rotation_started_at = {} \
              WHERE id = $1",
-            crate::db::sql::now()
-        ),
-    )
+        crate::db::sql::now()
+    ))
     .bind(org_id)
     .bind(new_ca_cert_pem)
     .bind(new_ca_key_pem)
@@ -303,14 +301,12 @@ async fn check_rotation_completion(
 
     if let Some((total_agents, total_gateways, migrated_agents, migrated_gateways)) = progress {
         if migrated_agents >= total_agents && migrated_gateways >= total_gateways {
-            sqlx::query(
-                &format!(
-                    "UPDATE rotation_progress \
+            sqlx::query(&format!(
+                "UPDATE rotation_progress \
                      SET status = 'ready', completed_at = {} \
                      WHERE organization_id = $1 AND rotation_id = $2 AND status = 'in_progress'",
-                    crate::db::sql::now()
-                ),
-            )
+                crate::db::sql::now()
+            ))
             .bind(org_id)
             .bind(rotation_id)
             .execute(pool)
@@ -462,14 +458,12 @@ pub async fn finalize_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiErr
     .await?;
 
     // Mark rotation as finalized
-    sqlx::query(
-        &format!(
-            "UPDATE rotation_progress \
+    sqlx::query(&format!(
+        "UPDATE rotation_progress \
              SET status = 'completed', finalized_at = {} \
              WHERE organization_id = $1 AND rotation_id = $2",
-            crate::db::sql::now()
-        ),
-    )
+        crate::db::sql::now()
+    ))
     .bind(org_id)
     .bind(rotation_id)
     .execute(&mut *tx)

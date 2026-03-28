@@ -209,16 +209,14 @@ pub async fn update_organization(
     .await
     .ok();
 
-    let org = sqlx::query_as::<_, OrgRow>(
-        &format!(
-            "UPDATE organizations SET
+    let org = sqlx::query_as::<_, OrgRow>(&format!(
+        "UPDATE organizations SET
                  name = COALESCE($2, name),
                  updated_at = {}
              WHERE id = $1
              RETURNING id, name, slug, created_at, updated_at",
-            crate::db::sql::now()
-        ),
-    )
+        crate::db::sql::now()
+    ))
     .bind(id)
     .bind(&req.name)
     .fetch_optional(&state.db)

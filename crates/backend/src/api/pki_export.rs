@@ -146,13 +146,11 @@ pub async fn issue_server_cert(
     .ok();
 
     // Log certificate event
-    sqlx::query(
-        &format!(
-            "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
+    sqlx::query(&format!(
+        "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
              VALUES ('issued', $1, $2, {now}, {now} + $3 * interval '1 day')",
-            now = crate::db::sql::now()
-        ),
-    )
+        now = crate::db::sql::now()
+    ))
     .bind(&fingerprint)
     .bind(&req.common_name)
     .bind(validity_days as i32)
@@ -478,13 +476,11 @@ pub async fn export_certs_to_volume_if_configured(
         );
 
         // Log certificate event
-        sqlx::query(
-            &format!(
-                "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
+        sqlx::query(&format!(
+            "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
                  VALUES ('issued', $1, $2, {now}, {now} + interval '365 days')",
-                now = crate::db::sql::now()
-            ),
-        )
+            now = crate::db::sql::now()
+        ))
         .bind(&fingerprint)
         .bind(&gateway_cn)
         .execute(pool)

@@ -1080,14 +1080,12 @@ pub async fn suspend_application(
     }
 
     // Suspend the application
-    sqlx::query(
-        &format!(
-            "UPDATE applications
+    sqlx::query(&format!(
+        "UPDATE applications
              SET is_suspended = true, suspended_at = {now}, suspended_by = $2, updated_at = {now}
              WHERE id = $1",
-            now = crate::db::sql::now()
-        ),
-    )
+        now = crate::db::sql::now()
+    ))
     .bind(id)
     .bind(user.user_id)
     .execute(&state.db)
@@ -1161,14 +1159,12 @@ pub async fn resume_application(
     }
 
     // Resume the application
-    sqlx::query(
-        &format!(
-            "UPDATE applications
+    sqlx::query(&format!(
+        "UPDATE applications
              SET is_suspended = false, suspended_at = NULL, suspended_by = NULL, updated_at = {}
              WHERE id = $1",
-            crate::db::sql::now()
-        ),
-    )
+        crate::db::sql::now()
+    ))
     .bind(id)
     .execute(&state.db)
     .await

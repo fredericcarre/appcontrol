@@ -508,9 +508,10 @@ pub async fn update_position(
     // Note: We don't log position updates to avoid spamming action_log during drag operations.
     // Position is not a critical operational parameter.
 
-    sqlx::query(
-        &format!("UPDATE components SET position_x = $2, position_y = $3, updated_at = {} WHERE id = $1", crate::db::sql::now()),
-    )
+    sqlx::query(&format!(
+        "UPDATE components SET position_x = $2, position_y = $3, updated_at = {} WHERE id = $1",
+        crate::db::sql::now()
+    ))
     .bind(id)
     .bind(body.x)
     .bind(body.y)

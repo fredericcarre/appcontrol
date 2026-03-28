@@ -813,15 +813,13 @@ pub async fn update_schedule(
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     // Update schedule
-    sqlx::query(
-        &format!(
-            "UPDATE operation_schedules
+    sqlx::query(&format!(
+        "UPDATE operation_schedules
              SET name = $2, description = $3, operation = $4, cron_expression = $5,
                  timezone = $6, is_enabled = $7, next_run_at = $8, updated_at = {}
              WHERE id = $1",
-            crate::db::sql::now()
-        ),
-    )
+        crate::db::sql::now()
+    ))
     .bind(schedule_id)
     .bind(&name)
     .bind(&description)
@@ -996,14 +994,12 @@ pub async fn toggle_schedule(
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     // Update
-    sqlx::query(
-        &format!(
-            "UPDATE operation_schedules
+    sqlx::query(&format!(
+        "UPDATE operation_schedules
              SET is_enabled = $2, next_run_at = $3, updated_at = {}
              WHERE id = $1",
-            crate::db::sql::now()
-        ),
-    )
+        crate::db::sql::now()
+    ))
     .bind(schedule_id)
     .bind(new_enabled)
     .bind(next_run_at)
@@ -1055,14 +1051,12 @@ pub async fn run_schedule_now(
     }
 
     // Set next_run_at to now - the scheduler will pick it up on next tick
-    sqlx::query(
-        &format!(
-            "UPDATE operation_schedules
+    sqlx::query(&format!(
+        "UPDATE operation_schedules
              SET next_run_at = {now}, updated_at = {now}
              WHERE id = $1",
-            now = crate::db::sql::now()
-        ),
-    )
+        now = crate::db::sql::now()
+    ))
     .bind(schedule_id)
     .execute(&state.db)
     .await

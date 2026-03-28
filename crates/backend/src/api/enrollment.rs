@@ -168,14 +168,12 @@ pub async fn revoke_enrollment_token(
     .await
     .ok();
 
-    let result = sqlx::query(
-        &format!(
-            "UPDATE enrollment_tokens
+    let result = sqlx::query(&format!(
+        "UPDATE enrollment_tokens
              SET revoked_at = {}, revoked_by = $3
              WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL",
-            crate::db::sql::now()
-        ),
-    )
+        crate::db::sql::now()
+    ))
     .bind(token_id)
     .bind(user.organization_id)
     .bind(user.user_id)

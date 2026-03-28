@@ -153,18 +153,16 @@ pub async fn create_approval_request(
     )
     .await?;
 
-    let row = sqlx::query_as::<_, ApprovalRow>(
-        &format!(
-            "INSERT INTO approval_requests (
+    let row = sqlx::query_as::<_, ApprovalRow>(&format!(
+        "INSERT INTO approval_requests (
                 id, organization_id, operation_type, resource_type, resource_id,
                 risk_level, requested_by, request_payload, required_approvals, expires_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, {} + make_interval(mins => $10))
             RETURNING id, organization_id, operation_type, resource_type, resource_id,
                       risk_level, requested_by, request_payload, status, required_approvals,
                       created_at, expires_at, resolved_at",
-            crate::db::sql::now()
-        ),
-    )
+        crate::db::sql::now()
+    ))
     .bind(request_id)
     .bind(user.organization_id)
     .bind(&body.operation_type)
@@ -257,9 +255,10 @@ pub async fn decide_approval(
 
     // Check if expired
     if request.expires_at < chrono::Utc::now() {
-        let _ = sqlx::query(
-            &format!("UPDATE approval_requests SET status = 'expired', resolved_at = {} WHERE id = $1", crate::db::sql::now()),
-        )
+        let _ = sqlx::query(&format!(
+            "UPDATE approval_requests SET status = 'expired', resolved_at = {} WHERE id = $1",
+            crate::db::sql::now()
+        ))
         .bind(request_id)
         .execute(&state.db)
         .await;
@@ -311,11 +310,14 @@ pub async fn decide_approval(
     };
 
     if new_status != "pending" {
-        sqlx::query(&format!("UPDATE approval_requests SET status = $2, resolved_at = {} WHERE id = $1", crate::db::sql::now()))
-            .bind(request_id)
-            .bind(new_status)
-            .execute(&state.db)
-            .await?;
+        sqlx::query(&format!(
+            "UPDATE approval_requests SET status = $2, resolved_at = {} WHERE id = $1",
+            crate::db::sql::now()
+        ))
+        .bind(request_id)
+        .bind(new_status)
+        .execute(&state.db)
+        .await?;
     }
 
     log_action(

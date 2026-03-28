@@ -138,17 +138,15 @@ pub async fn update_team(
     )
     .await?;
 
-    let team = sqlx::query_as::<_, TeamRow>(
-        &format!(
-            "UPDATE teams SET
+    let team = sqlx::query_as::<_, TeamRow>(&format!(
+        "UPDATE teams SET
                 name = COALESCE($2, name),
                 description = COALESCE($3, description),
                 updated_at = {}
             WHERE id = $1
             RETURNING id, organization_id, name, description, created_at, updated_at",
-            crate::db::sql::now()
-        ),
-    )
+        crate::db::sql::now()
+    ))
     .bind(id)
     .bind(&body.name)
     .bind(&body.description)

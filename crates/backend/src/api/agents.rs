@@ -314,15 +314,13 @@ pub async fn get_agent_metrics(
     // Clamp minutes to valid range
     let minutes = params.minutes.clamp(1, 1440);
 
-    let metrics = sqlx::query_as::<_, MetricPoint>(
-        &format!(
-            "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
+    let metrics = sqlx::query_as::<_, MetricPoint>(&format!(
+        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
              FROM agent_metrics
              WHERE agent_id = $1 AND created_at > {} - ($2 || ' minutes')::interval
              ORDER BY created_at ASC",
-            crate::db::sql::now()
-        ),
-    )
+        crate::db::sql::now()
+    ))
     .bind(agent_id)
     .bind(minutes)
     .fetch_all(&state.db)

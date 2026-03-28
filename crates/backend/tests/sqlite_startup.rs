@@ -26,8 +26,8 @@ async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) {
     .await
     .expect("Failed to create _migrations table");
 
-    let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../migrations/sqlite");
+    let migrations_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
     let migrations_dir = migrations_dir
         .canonicalize()
         .unwrap_or_else(|_| panic!("Cannot find SQLite migrations at {:?}", migrations_dir));
@@ -37,7 +37,9 @@ async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) {
         let entry = entry.unwrap();
         let filename = entry.file_name().to_string_lossy().to_string();
         if filename.ends_with(".sql") && filename.starts_with('V') {
-            if let Some(version_str) = filename.strip_prefix('V').and_then(|s| s.split("__").next())
+            if let Some(version_str) = filename
+                .strip_prefix('V')
+                .and_then(|s| s.split("__").next())
             {
                 if let Ok(version) = version_str.parse::<i32>() {
                     entries.push((version, filename, entry.path()));
@@ -55,11 +57,12 @@ async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) {
 
     for (version, name, path) in &entries {
         // Skip already applied
-        let applied: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM _migrations WHERE version = $1")
-            .bind(version)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(false);
+        let applied: bool =
+            sqlx::query_scalar("SELECT COUNT(*) > 0 FROM _migrations WHERE version = $1")
+                .bind(version)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(false);
 
         if applied {
             continue;
@@ -68,9 +71,10 @@ async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) {
         let sql = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Cannot read migration: {}", path.display()));
 
-        sqlx::raw_sql(&sql).execute(pool).await.unwrap_or_else(|e| {
-            panic!("Migration {} failed: {}", name, e)
-        });
+        sqlx::raw_sql(&sql)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("Migration {} failed: {}", name, e));
 
         sqlx::query("INSERT INTO _migrations (version, name) VALUES ($1, $2)")
             .bind(version)
@@ -116,7 +120,11 @@ async fn verify_tables_exist(pool: &sqlx::SqlitePool) {
         .await
         .unwrap_or(false);
 
-        assert!(exists, "Critical table '{}' not found after migrations", table);
+        assert!(
+            exists,
+            "Critical table '{}' not found after migrations",
+            table
+        );
     }
 }
 
@@ -128,7 +136,11 @@ async fn verify_startup_queries(pool: &sqlx::SqlitePool) {
     )
     .execute(pool)
     .await;
-    assert!(result.is_ok(), "Operation lock cleanup query failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Operation lock cleanup query failed: {:?}",
+        result.err()
+    );
 
     // 2. Heartbeat update
     let result = sqlx::query(
@@ -137,7 +149,11 @@ async fn verify_startup_queries(pool: &sqlx::SqlitePool) {
     .bind(uuid::Uuid::new_v4().to_string())
     .execute(pool)
     .await;
-    assert!(result.is_ok(), "Heartbeat update query failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Heartbeat update query failed: {:?}",
+        result.err()
+    );
 
     // 3. Audit log queries
     let result = sqlx::query(
@@ -146,7 +162,11 @@ async fn verify_startup_queries(pool: &sqlx::SqlitePool) {
     .bind(uuid::Uuid::new_v4().to_string())
     .execute(pool)
     .await;
-    assert!(result.is_ok(), "Audit log update query failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Audit log update query failed: {:?}",
+        result.err()
+    );
 
     // 4. Permission queries with expiry check
     let result = sqlx::query_scalar::<_, String>(
@@ -158,13 +178,21 @@ async fn verify_startup_queries(pool: &sqlx::SqlitePool) {
     .bind(uuid::Uuid::new_v4().to_string())
     .fetch_optional(pool)
     .await;
-    assert!(result.is_ok(), "Permission expiry query failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Permission expiry query failed: {:?}",
+        result.err()
+    );
 
     // 5. Token revocation cleanup
     let result = sqlx::query("DELETE FROM revoked_tokens WHERE expires_at < datetime('now')")
         .execute(pool)
         .await;
-    assert!(result.is_ok(), "Token revocation cleanup failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Token revocation cleanup failed: {:?}",
+        result.err()
+    );
 
     // 6. Rate limit cleanup
     let result = sqlx::query(
@@ -172,7 +200,11 @@ async fn verify_startup_queries(pool: &sqlx::SqlitePool) {
     )
     .execute(pool)
     .await;
-    assert!(result.is_ok(), "Rate limit cleanup failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Rate limit cleanup failed: {:?}",
+        result.err()
+    );
 
     // 7. Seed organization (ON CONFLICT)
     let org_id = uuid::Uuid::new_v4();
@@ -185,7 +217,11 @@ async fn verify_startup_queries(pool: &sqlx::SqlitePool) {
     .bind("test-org")
     .execute(pool)
     .await;
-    assert!(result.is_ok(), "Organization seed failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Organization seed failed: {:?}",
+        result.err()
+    );
 
     // 8. Seed user (ON CONFLICT)
     let user_id = uuid::Uuid::new_v4();
@@ -204,17 +240,19 @@ async fn verify_startup_queries(pool: &sqlx::SqlitePool) {
     assert!(result.is_ok(), "User seed failed: {:?}", result.err());
 
     // 9. Webhook update (now())
-    let result = sqlx::query(
-        &format!(
-            "UPDATE webhook_endpoints SET last_triggered_at = {}, last_status_code = $2 WHERE id = $1",
-            appcontrol_backend::db::sql::now()
-        ),
-    )
+    let result = sqlx::query(&format!(
+        "UPDATE webhook_endpoints SET last_triggered_at = {}, last_status_code = $2 WHERE id = $1",
+        appcontrol_backend::db::sql::now()
+    ))
     .bind(uuid::Uuid::new_v4().to_string())
     .bind(200i32)
     .execute(pool)
     .await;
-    assert!(result.is_ok(), "Webhook update query failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Webhook update query failed: {:?}",
+        result.err()
+    );
 }
 
 /// Full SQLite startup integration test.
@@ -290,8 +328,7 @@ async fn test_sqlite_startup_full() {
         public_backend_url: None,
     };
 
-    let operation_lock =
-        appcontrol_backend::core::operation_lock::OperationLock::new(pool.clone());
+    let operation_lock = appcontrol_backend::core::operation_lock::OperationLock::new(pool.clone());
 
     // Verify operation lock cleanup works at startup (this was failing before)
     let cleanup_result = operation_lock.cleanup_all_stale_locks().await;

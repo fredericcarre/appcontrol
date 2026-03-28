@@ -713,7 +713,9 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-    let exe_sub = exe_dir.as_ref().map(|d| d.join("migrations").join(db_subdir));
+    let exe_sub = exe_dir
+        .as_ref()
+        .map(|d| d.join("migrations").join(db_subdir));
     let exe_root = exe_dir.as_ref().map(|d| d.join("migrations"));
 
     // Also check the root migrations directory (for backwards compatibility)

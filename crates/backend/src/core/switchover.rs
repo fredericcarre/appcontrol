@@ -458,12 +458,15 @@ async fn execute_start_target(
         );
 
         // Update application's site_id to the target site (only for FULL mode)
-        sqlx::query(&format!("UPDATE applications SET site_id = $2, updated_at = {} WHERE id = $1", crate::db::sql::now()))
-            .bind(app_id)
-            .bind(target_site_id)
-            .execute(&state.db)
-            .await
-            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+        sqlx::query(&format!(
+            "UPDATE applications SET site_id = $2, updated_at = {} WHERE id = $1",
+            crate::db::sql::now()
+        ))
+        .bind(app_id)
+        .bind(target_site_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
     }
 
     // 3. Get mappings from the target profile and update components
@@ -551,18 +554,16 @@ async fn execute_start_target(
                 cmd_overrides.unwrap_or((None, None, None));
 
             // Update component with new agent and optional command overrides
-            sqlx::query(
-                &format!(
-                    "UPDATE components SET \
+            sqlx::query(&format!(
+                "UPDATE components SET \
                         agent_id = $2, \
                         check_cmd = COALESCE($3, check_cmd), \
                         start_cmd = COALESCE($4, start_cmd), \
                         stop_cmd = COALESCE($5, stop_cmd), \
                         updated_at = {} \
                     WHERE id = $1",
-                    crate::db::sql::now()
-                ),
-            )
+                crate::db::sql::now()
+            ))
             .bind(comp_id)
             .bind(new_agent_id)
             .bind(&check_override)
