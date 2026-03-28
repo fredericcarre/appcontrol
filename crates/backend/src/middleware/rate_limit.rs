@@ -137,10 +137,22 @@ async fn check_rate_limit(
 }
 
 /// Cleanup expired rate limit counters (called periodically from background task).
+#[cfg(feature = "postgres")]
 pub async fn cleanup_rate_limit_counters(pool: &crate::db::DbPool) {
     // Remove counters older than 2 minutes (window is 60s, 2x buffer)
     let _ = sqlx::query(
         "DELETE FROM rate_limit_counters WHERE window_start < now() - interval '2 minutes'",
+    )
+    .execute(pool)
+    .await;
+}
+
+/// Cleanup expired rate limit counters (SQLite version).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn cleanup_rate_limit_counters(pool: &crate::db::DbPool) {
+    // Remove counters older than 2 minutes (window is 60s, 2x buffer)
+    let _ = sqlx::query(
+        "DELETE FROM rate_limit_counters WHERE window_start < datetime('now', '-2 minutes')",
     )
     .execute(pool)
     .await;

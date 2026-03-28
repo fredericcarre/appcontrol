@@ -28,6 +28,9 @@ struct StaleComponent {
 /// exceeds the organization's configured timeout, and transitions their components
 /// to UNREACHABLE. Also monitors gateway heartbeats and marks them disconnected.
 /// When agents reconnect with UNREACHABLE components, triggers resync.
+///
+/// NOTE: Currently only implemented for PostgreSQL. SQLite support is pending.
+#[cfg(feature = "postgres")]
 pub async fn run_heartbeat_monitor(state: Arc<AppState>, check_interval: Duration) {
     let mut interval = tokio::time::interval(check_interval);
 
@@ -47,6 +50,24 @@ pub async fn run_heartbeat_monitor(state: Arc<AppState>, check_interval: Duratio
         if let Err(e) = resync_unreachable_components(&state).await {
             tracing::error!("Resync unreachable components error: {}", e);
         }
+    }
+}
+
+/// SQLite stub: heartbeat monitoring not yet implemented for SQLite.
+/// Components won't transition to UNREACHABLE automatically.
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn run_heartbeat_monitor(_state: Arc<AppState>, check_interval: Duration) {
+    // Log once at startup that this feature is not available
+    tracing::warn!(
+        "Heartbeat monitor disabled: not yet implemented for SQLite backend. \
+         Components will not automatically transition to UNREACHABLE on agent timeout."
+    );
+
+    // Sleep forever to keep the task alive but do nothing
+    let mut interval = tokio::time::interval(check_interval);
+    loop {
+        interval.tick().await;
+        // No-op for SQLite
     }
 }
 

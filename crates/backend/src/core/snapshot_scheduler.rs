@@ -72,6 +72,9 @@ fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
 /// Start the snapshot scheduler background task.
 /// Runs every `check_interval`, queries for schedules whose next_run_at has passed,
 /// and executes them.
+///
+/// NOTE: Currently only fully implemented for PostgreSQL. SQLite support is partial.
+#[cfg(feature = "postgres")]
 pub async fn run_snapshot_scheduler(state: Arc<AppState>, check_interval: Duration) {
     let mut interval = tokio::time::interval(check_interval);
 
@@ -85,6 +88,22 @@ pub async fn run_snapshot_scheduler(state: Arc<AppState>, check_interval: Durati
         if let Err(e) = cleanup_expired_snapshots(&state).await {
             tracing::error!("Snapshot cleanup error: {}", e);
         }
+    }
+}
+
+/// SQLite stub: snapshot scheduling not yet fully implemented for SQLite.
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn run_snapshot_scheduler(_state: Arc<AppState>, check_interval: Duration) {
+    tracing::warn!(
+        "Snapshot scheduler disabled: not yet implemented for SQLite backend. \
+         Scheduled discovery snapshots will not run automatically."
+    );
+
+    // Sleep forever to keep the task alive but do nothing
+    let mut interval = tokio::time::interval(check_interval);
+    loop {
+        interval.tick().await;
+        // No-op for SQLite
     }
 }
 
