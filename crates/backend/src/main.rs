@@ -1,6 +1,12 @@
 #[cfg(windows)]
 mod win_service;
 
+/// SQLite migrations embedded at compile time for standalone deployment.
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+mod embedded_sqlite {
+    include!(concat!(env!("OUT_DIR"), "/embedded_sqlite_migrations.rs"));
+}
+
 use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -791,9 +797,12 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
         );
     }
 
-    let mut entries: Vec<(i32, String, std::path::PathBuf)> = Vec::new();
+    // Collect migrations — either from filesystem or embedded in binary.
+    // Each entry is (version, name, sql_content).
+    let mut migration_entries: Vec<(i32, String, String)> = Vec::new();
 
     if migrations_dir.exists() {
+        let mut file_entries: Vec<(i32, String, std::path::PathBuf)> = Vec::new();
         for entry in std::fs::read_dir(&migrations_dir)? {
             let entry = entry?;
             let filename = entry.file_name().to_string_lossy().to_string();
@@ -804,14 +813,32 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
                     .and_then(|s| s.split("__").next())
                 {
                     if let Ok(version) = version_str.parse::<i32>() {
-                        entries.push((version, filename, entry.path()));
+                        file_entries.push((version, filename, entry.path()));
                     }
                 }
             }
         }
+        file_entries.sort_by_key(|(v, _, _)| *v);
+        for (version, name, path) in &file_entries {
+            let sql = std::fs::read_to_string(path)?;
+            migration_entries.push((*version, name.clone(), sql));
+        }
     }
 
-    entries.sort_by_key(|(v, _, _)| *v);
+    // SQLite: if no files found on disk, use migrations embedded in the binary.
+    // This makes the standalone Windows .exe fully self-contained.
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    if migration_entries.is_empty() {
+        tracing::info!(
+            "Using {} embedded SQLite migrations (no files found on disk)",
+            embedded_sqlite::MIGRATIONS.len()
+        );
+        for &(version, name, sql) in embedded_sqlite::MIGRATIONS {
+            migration_entries.push((version, name.to_string(), sql.to_string()));
+        }
+    }
+
+    migration_entries.sort_by_key(|(v, _, _)| *v);
 
     // Get already applied versions
     let applied: Vec<i32> = sqlx::query_scalar("SELECT version FROM _migrations ORDER BY version")
@@ -819,12 +846,11 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
         .await?;
 
     let mut applied_count = 0;
-    for (version, name, path) in &entries {
+    for (version, name, sql) in &migration_entries {
         if applied.contains(version) {
             continue;
         }
 
-        let sql = std::fs::read_to_string(path)?;
         tracing::info!("Applying migration V{:03}: {}", version, name);
 
         // Execute migration in a transaction.
@@ -867,7 +893,7 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
 
     if applied_count > 0 {
         tracing::info!("Applied {} new migration(s)", applied_count);
-    } else if entries.is_empty() {
+    } else if migration_entries.is_empty() {
         tracing::warn!(
             "No migration files found in {} - check MIGRATIONS_DIR or ensure migrations are present",
             migrations_dir.display()
