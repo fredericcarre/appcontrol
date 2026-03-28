@@ -249,7 +249,7 @@ jobs:
           # Wait for gateway
           sleep 3
 
-      - name: Test authentication flow
+      - name: Test authentication and API endpoints
         run: |
           # Login and get token
           LOGIN_RESPONSE=$(curl -sf -X POST http://localhost:3000/api/v1/auth/login \
@@ -263,24 +263,26 @@ jobs:
             exit 1
           fi
           echo "Got auth token: ${TOKEN:0:20}..."
-          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
 
-      - name: Test API endpoints
-        run: |
           # Test apps endpoint
+          echo "Testing /api/v1/apps..."
           APPS=$(curl -sf http://localhost:3000/api/v1/apps \
             -H "Authorization: Bearer $TOKEN")
           echo "Apps: $APPS"
 
           # Test agents endpoint
+          echo "Testing /api/v1/agents..."
           AGENTS=$(curl -sf http://localhost:3000/api/v1/agents \
             -H "Authorization: Bearer $TOKEN")
           echo "Agents: $AGENTS"
 
           # Test schedules presets endpoint
+          echo "Testing /api/v1/schedules/presets..."
           PRESETS=$(curl -sf http://localhost:3000/api/v1/schedules/presets \
             -H "Authorization: Bearer $TOKEN")
           echo "Schedule presets: $PRESETS"
+
+          echo "All API tests passed!"
 
       - name: Verify database file exists
         run: |
