@@ -1,5 +1,6 @@
 # Rust
 /target/
+/target-sqlite/
 **/*.rs.bk
 
 # Node
