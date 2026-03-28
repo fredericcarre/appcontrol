@@ -709,23 +709,34 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
         .ok()
         .map(|p| std::path::PathBuf::from(p).join(db_subdir));
 
-    // Executable-relative paths for standalone deployment (e.g., Windows .exe next to migrations/)
+    // Executable-relative paths for standalone deployment (e.g., Windows .exe in bin/ next to migrations/)
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    // <exe_dir>/migrations/sqlite — exe sits next to migrations/
     let exe_sub = exe_dir
         .as_ref()
         .map(|d| d.join("migrations").join(db_subdir));
     let exe_root = exe_dir.as_ref().map(|d| d.join("migrations"));
+    // <exe_dir>/../migrations/sqlite — exe is in bin/ subdirectory
+    let exe_parent_sub = exe_dir
+        .as_ref()
+        .and_then(|d| d.parent().map(|p| p.join("migrations").join(db_subdir)));
+    let exe_parent_root = exe_dir
+        .as_ref()
+        .and_then(|d| d.parent().map(|p| p.join("migrations")));
 
     // Also check the root migrations directory (for backwards compatibility)
     let cargo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
     // Docker root fallback for PostgreSQL (migrations are in /app/migrations/, not /app/migrations/postgres/)
     let docker_root = std::path::PathBuf::from("/app/migrations");
 
-    // Current working directory fallback (user runs exe from project root)
+    // Current working directory fallback (user runs exe from project root or bin/)
     let cwd_sub = std::path::PathBuf::from("migrations").join(db_subdir);
     let cwd_root = std::path::PathBuf::from("migrations");
+    // CWD parent — user is in bin/ subdirectory
+    let cwd_parent_sub = std::path::PathBuf::from("../migrations").join(db_subdir);
+    let cwd_parent_root = std::path::PathBuf::from("../migrations");
 
     let migrations_dir = env_dir
         .filter(|p| p.exists())
@@ -738,10 +749,18 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
                 exe_sub
             } else if exe_root.as_ref().is_some_and(|p| p.exists()) {
                 exe_root
+            } else if exe_parent_sub.as_ref().is_some_and(|p| p.exists()) {
+                exe_parent_sub
+            } else if exe_parent_root.as_ref().is_some_and(|p| p.exists()) {
+                exe_parent_root
             } else if cwd_sub.exists() {
                 Some(cwd_sub)
             } else if cwd_root.exists() {
                 Some(cwd_root)
+            } else if cwd_parent_sub.exists() {
+                Some(cwd_parent_sub)
+            } else if cwd_parent_root.exists() {
+                Some(cwd_parent_root)
             } else if docker_dir.exists() {
                 Some(docker_dir.clone())
             } else if docker_root.exists() {
@@ -757,6 +776,20 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
         migrations_dir.display(),
         migrations_dir.exists()
     );
+
+    if !migrations_dir.exists() {
+        // Log all paths tried to help diagnose deployment issues
+        tracing::warn!(
+            "No migration files found in {} — check MIGRATIONS_DIR or ensure migrations are present. \
+             Paths tried: CARGO_MANIFEST_DIR={}, exe_dir={:?}, exe_parent={:?}, cwd=migrations/{}, cwd_parent=../migrations/{}",
+            migrations_dir.display(),
+            cargo_dir.display(),
+            exe_dir.as_ref().map(|d| d.join("migrations").join(db_subdir)),
+            exe_dir.as_ref().and_then(|d| d.parent().map(|p| p.join("migrations").join(db_subdir))),
+            db_subdir,
+            db_subdir,
+        );
+    }
 
     let mut entries: Vec<(i32, String, std::path::PathBuf)> = Vec::new();
 
