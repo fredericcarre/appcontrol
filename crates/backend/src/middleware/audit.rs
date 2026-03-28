@@ -1,4 +1,4 @@
-use crate::db::DbPool;
+use crate::db::{self, DbPool};
 use uuid::Uuid;
 
 /// Log an action to the action_log table BEFORE the action executes.
@@ -32,16 +32,11 @@ pub async fn log_action(
 
 /// Mark an action as successfully completed.
 pub async fn complete_action_success(pool: &DbPool, action_id: Uuid) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"
-        UPDATE action_log
-        SET status = 'success', completed_at = now()
-        WHERE id = $1
-        "#,
-    )
-    .bind(action_id)
-    .execute(pool)
-    .await?;
+    let sql = format!(
+        "UPDATE action_log SET status = 'success', completed_at = {} WHERE id = $1",
+        db::sql::now()
+    );
+    sqlx::query(&sql).bind(action_id).execute(pool).await?;
 
     Ok(())
 }
@@ -52,33 +47,26 @@ pub async fn complete_action_failed(
     action_id: Uuid,
     error_message: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"
-        UPDATE action_log
-        SET status = 'failed', error_message = $2, completed_at = now()
-        WHERE id = $1
-        "#,
-    )
-    .bind(action_id)
-    .bind(error_message)
-    .execute(pool)
-    .await?;
+    let sql = format!(
+        "UPDATE action_log SET status = 'failed', error_message = $2, completed_at = {} WHERE id = $1",
+        db::sql::now()
+    );
+    sqlx::query(&sql)
+        .bind(action_id)
+        .bind(error_message)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
 
 /// Mark an action as cancelled.
 pub async fn complete_action_cancelled(pool: &DbPool, action_id: Uuid) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"
-        UPDATE action_log
-        SET status = 'cancelled', completed_at = now()
-        WHERE id = $1
-        "#,
-    )
-    .bind(action_id)
-    .execute(pool)
-    .await?;
+    let sql = format!(
+        "UPDATE action_log SET status = 'cancelled', completed_at = {} WHERE id = $1",
+        db::sql::now()
+    );
+    sqlx::query(&sql).bind(action_id).execute(pool).await?;
 
     Ok(())
 }

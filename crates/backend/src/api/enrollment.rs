@@ -135,11 +135,14 @@ pub async fn list_enrollment_tokens(
 ) -> Result<Json<Value>, ApiError> {
     // Hide revoked tokens after 24 hours - they serve no purpose and clutter the UI
     let tokens = sqlx::query_as::<_, EnrollmentTokenRow>(
-        r#"SELECT id, token_prefix, name, max_uses, current_uses, expires_at, scope, created_at, revoked_at
-           FROM enrollment_tokens
-           WHERE organization_id = $1
-             AND (revoked_at IS NULL OR revoked_at > now() - interval '24 hours')
-           ORDER BY created_at DESC"#,
+        &format!(
+            "SELECT id, token_prefix, name, max_uses, current_uses, expires_at, scope, created_at, revoked_at
+             FROM enrollment_tokens
+             WHERE organization_id = $1
+               AND (revoked_at IS NULL OR revoked_at > {} - interval '24 hours')
+             ORDER BY created_at DESC",
+            crate::db::sql::now()
+        ),
     )
     .bind(user.organization_id)
     .fetch_all(&state.db)
@@ -165,11 +168,12 @@ pub async fn revoke_enrollment_token(
     .await
     .ok();
 
-    let result = sqlx::query(
-        r#"UPDATE enrollment_tokens
-           SET revoked_at = now(), revoked_by = $3
-           WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL"#,
-    )
+    let result = sqlx::query(&format!(
+        "UPDATE enrollment_tokens
+             SET revoked_at = {}, revoked_by = $3
+             WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL",
+        crate::db::sql::now()
+    ))
     .bind(token_id)
     .bind(user.organization_id)
     .bind(user.user_id)
@@ -664,14 +668,19 @@ pub async fn enroll(
     .ok();
 
     // Log certificate event — link to the correct entity type
+    let now = crate::db::sql::now();
     let cert_event_sql = if scope == "gateway" {
-        r#"INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
-           VALUES ($1, 'issued', $2, $3, now(), now() + $4 * interval '1 day')"#
+        format!(
+            "INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
+             VALUES ($1, 'issued', $2, $3, {now}, {now} + $4 * interval '1 day')"
+        )
     } else {
-        r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn, issued_at, expires_at)
-           VALUES ($1, 'issued', $2, $3, now(), now() + $4 * interval '1 day')"#
+        format!(
+            "INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn, issued_at, expires_at)
+             VALUES ($1, 'issued', $2, $3, {now}, {now} + $4 * interval '1 day')"
+        )
     };
-    sqlx::query(cert_event_sql)
+    sqlx::query(&cert_event_sql)
         .bind(entity_id)
         .bind(&fingerprint)
         .bind(&req.hostname)

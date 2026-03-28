@@ -263,7 +263,7 @@ async fn deliver_webhook(
 
                 // Update last triggered timestamp
                 let _ = sqlx::query(
-                    "UPDATE webhook_endpoints SET last_triggered_at = now(), last_status_code = $2 WHERE id = $1",
+                    &format!("UPDATE webhook_endpoints SET last_triggered_at = {}, last_status_code = $2 WHERE id = $1", crate::db::sql::now()),
                 )
                 .bind(webhook_id)
                 .bind(status_code)

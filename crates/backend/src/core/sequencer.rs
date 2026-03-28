@@ -906,11 +906,12 @@ pub async fn record_command_result(
     } else {
         "failed"
     };
-    if let Err(e) = sqlx::query(
-        "UPDATE command_executions
-         SET exit_code = $2, stdout = $3, stderr = $4, status = $5, completed_at = now()
-         WHERE request_id = $1",
-    )
+    if let Err(e) = sqlx::query(&format!(
+        "UPDATE command_executions \
+             SET exit_code = $2, stdout = $3, stderr = $4, status = $5, completed_at = {} \
+             WHERE request_id = $1",
+        crate::db::sql::now()
+    ))
     .bind(request_id)
     .bind(exit_code as i16)
     .bind(stdout)

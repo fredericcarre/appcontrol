@@ -122,12 +122,13 @@ pub async fn grant_user_permission(
     .await?;
 
     let id = sqlx::query_scalar::<_, Uuid>(
-        r#"
-        INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (application_id, user_id) DO UPDATE SET permission_level = $3, expires_at = $5, updated_at = now()
-        RETURNING id
-        "#,
+        &format!(
+            "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (application_id, user_id) DO UPDATE SET permission_level = $3, expires_at = $5, updated_at = {}
+             RETURNING id",
+            crate::db::sql::now()
+        ),
     )
     .bind(app_id)
     .bind(body.user_id)
@@ -233,12 +234,13 @@ pub async fn grant_team_permission(
     .await?;
 
     let id = sqlx::query_scalar::<_, Uuid>(
-        r#"
-        INSERT INTO app_permissions_teams (application_id, team_id, permission_level, granted_by, expires_at)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (application_id, team_id) DO UPDATE SET permission_level = $3, expires_at = $5, updated_at = now()
-        RETURNING id
-        "#,
+        &format!(
+            "INSERT INTO app_permissions_teams (application_id, team_id, permission_level, granted_by, expires_at)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (application_id, team_id) DO UPDATE SET permission_level = $3, expires_at = $5, updated_at = {}
+             RETURNING id",
+            crate::db::sql::now()
+        ),
     )
     .bind(app_id)
     .bind(body.team_id)
@@ -514,17 +516,18 @@ pub async fn consume_share_link(
 
     // Grant permission to the user
     sqlx::query(
-        r#"
-        INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
-        VALUES ($1, $2, $3, $4, NULL)
-        ON CONFLICT (application_id, user_id) DO UPDATE SET
-            permission_level = CASE
-                WHEN EXCLUDED.permission_level > app_permissions_users.permission_level
-                THEN EXCLUDED.permission_level
-                ELSE app_permissions_users.permission_level
-            END,
-            updated_at = now()
-        "#,
+        &format!(
+            "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
+             VALUES ($1, $2, $3, $4, NULL)
+             ON CONFLICT (application_id, user_id) DO UPDATE SET
+                 permission_level = CASE
+                     WHEN EXCLUDED.permission_level > app_permissions_users.permission_level
+                     THEN EXCLUDED.permission_level
+                     ELSE app_permissions_users.permission_level
+                 END,
+                 updated_at = {}",
+            crate::db::sql::now()
+        ),
     )
     .bind(app_id)
     .bind(user.user_id)

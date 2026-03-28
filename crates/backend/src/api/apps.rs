@@ -585,16 +585,17 @@ pub async fn update_app(
     .await?;
 
     let app = sqlx::query_as::<_, AppRow>(
-        r#"
-        UPDATE applications SET
-            name = COALESCE($2, name),
-            description = COALESCE($3, description),
-            site_id = COALESCE($4, site_id),
-            tags = COALESCE($5, tags),
-            updated_at = now()
-        WHERE id = $1 AND organization_id = $6
-        RETURNING id, name, description, organization_id, site_id, tags, created_at, updated_at
-        "#,
+        &format!(
+            "UPDATE applications SET
+                name = COALESCE($2, name),
+                description = COALESCE($3, description),
+                site_id = COALESCE($4, site_id),
+                tags = COALESCE($5, tags),
+                updated_at = {}
+            WHERE id = $1 AND organization_id = $6
+            RETURNING id, name, description, organization_id, site_id, tags, created_at, updated_at",
+            crate::db::sql::now()
+        ),
     )
     .bind(id)
     .bind(&body.name)
@@ -1079,11 +1080,12 @@ pub async fn suspend_application(
     }
 
     // Suspend the application
-    sqlx::query(
+    sqlx::query(&format!(
         "UPDATE applications
-         SET is_suspended = true, suspended_at = now(), suspended_by = $2, updated_at = now()
-         WHERE id = $1",
-    )
+             SET is_suspended = true, suspended_at = {now}, suspended_by = $2, updated_at = {now}
+             WHERE id = $1",
+        now = crate::db::sql::now()
+    ))
     .bind(id)
     .bind(user.user_id)
     .execute(&state.db)
@@ -1157,11 +1159,12 @@ pub async fn resume_application(
     }
 
     // Resume the application
-    sqlx::query(
+    sqlx::query(&format!(
         "UPDATE applications
-         SET is_suspended = false, suspended_at = NULL, suspended_by = NULL, updated_at = now()
-         WHERE id = $1",
-    )
+             SET is_suspended = false, suspended_at = NULL, suspended_by = NULL, updated_at = {}
+             WHERE id = $1",
+        crate::db::sql::now()
+    ))
     .bind(id)
     .execute(&state.db)
     .await

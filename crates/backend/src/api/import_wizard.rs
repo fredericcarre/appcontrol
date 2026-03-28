@@ -623,7 +623,7 @@ pub async fn execute_import(
     let tags_json = serde_json::to_value(&import_data.application.tags).unwrap_or(Value::Null);
     if is_update {
         sqlx::query(
-            "UPDATE applications SET description = $1, site_id = $2, tags = $3, updated_at = now() WHERE id = $4",
+            &format!("UPDATE applications SET description = $1, site_id = $2, tags = $3, updated_at = {} WHERE id = $4", crate::db::sql::now()),
         )
         .bind(&import_data.application.description)
         .bind(site_id)

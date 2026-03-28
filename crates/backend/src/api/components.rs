@@ -359,35 +359,36 @@ pub async fn update_component(
     // Fields that should always have a value use COALESCE to keep existing if not provided.
     // Special case: host and agent_id use COALESCE to preserve existing if not explicitly provided.
     let component = sqlx::query_as::<_, ComponentRow>(
-        r#"
-        UPDATE components SET
-            name = COALESCE($2, name),
-            component_type = COALESCE($3, component_type),
-            display_name = $4,
-            description = $5,
-            icon = COALESCE($6, icon),
-            group_id = $7,
-            host = COALESCE($8, host),
-            agent_id = COALESCE($9, agent_id),
-            check_cmd = $10,
-            start_cmd = $11,
-            stop_cmd = $12,
-            check_interval_seconds = COALESCE($13, check_interval_seconds),
-            start_timeout_seconds = COALESCE($14, start_timeout_seconds),
-            stop_timeout_seconds = COALESCE($15, stop_timeout_seconds),
-            is_optional = COALESCE($16, is_optional),
-            position_x = COALESCE($17, position_x),
-            position_y = COALESCE($18, position_y),
-            cluster_size = $19,
-            cluster_nodes = $20,
-            referenced_app_id = $21,
-            updated_at = now()
-        WHERE id = $1
-        RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
-               host, agent_id, check_cmd, start_cmd, stop_cmd,
-               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
-        "#,
+        &format!(
+            "UPDATE components SET
+                name = COALESCE($2, name),
+                component_type = COALESCE($3, component_type),
+                display_name = $4,
+                description = $5,
+                icon = COALESCE($6, icon),
+                group_id = $7,
+                host = COALESCE($8, host),
+                agent_id = COALESCE($9, agent_id),
+                check_cmd = $10,
+                start_cmd = $11,
+                stop_cmd = $12,
+                check_interval_seconds = COALESCE($13, check_interval_seconds),
+                start_timeout_seconds = COALESCE($14, start_timeout_seconds),
+                stop_timeout_seconds = COALESCE($15, stop_timeout_seconds),
+                is_optional = COALESCE($16, is_optional),
+                position_x = COALESCE($17, position_x),
+                position_y = COALESCE($18, position_y),
+                cluster_size = $19,
+                cluster_nodes = $20,
+                referenced_app_id = $21,
+                updated_at = {}
+            WHERE id = $1
+            RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
+                   host, agent_id, check_cmd, start_cmd, stop_cmd,
+                   check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
+                   position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at",
+            crate::db::sql::now()
+        ),
     )
     .bind(id)
     .bind(&body.name)
@@ -507,9 +508,10 @@ pub async fn update_position(
     // Note: We don't log position updates to avoid spamming action_log during drag operations.
     // Position is not a critical operational parameter.
 
-    sqlx::query(
-        "UPDATE components SET position_x = $2, position_y = $3, updated_at = now() WHERE id = $1",
-    )
+    sqlx::query(&format!(
+        "UPDATE components SET position_x = $2, position_y = $3, updated_at = {} WHERE id = $1",
+        crate::db::sql::now()
+    ))
     .bind(id)
     .bind(body.x)
     .bind(body.y)
@@ -560,7 +562,7 @@ pub async fn update_positions_batch(
     let mut tx = state.db.begin().await?;
 
     for pos in &body.positions {
-        sqlx::query("UPDATE components SET position_x = $2, position_y = $3, updated_at = now() WHERE id = $1 AND application_id = $4")
+        sqlx::query(&format!("UPDATE components SET position_x = $2, position_y = $3, updated_at = {} WHERE id = $1 AND application_id = $4", crate::db::sql::now()))
             .bind(pos.id)
             .bind(pos.x)
             .bind(pos.y)

@@ -336,17 +336,16 @@ pub async fn update_log_source(
     let is_sensitive = req.is_sensitive.unwrap_or(source.is_sensitive);
     let display_order = req.display_order.unwrap_or(source.display_order);
 
-    sqlx::query(
-        r#"
-        UPDATE component_log_sources SET
-            name = $2, description = $3, file_path = $4,
-            event_log_name = $5, event_log_source = $6, event_log_level = $7,
-            command = $8, command_timeout_seconds = $9,
-            max_lines = $10, max_age_hours = $11, is_sensitive = $12, display_order = $13,
-            updated_at = now()
-        WHERE id = $1
-        "#,
-    )
+    sqlx::query(&format!(
+        "UPDATE component_log_sources SET
+                name = $2, description = $3, file_path = $4,
+                event_log_name = $5, event_log_source = $6, event_log_level = $7,
+                command = $8, command_timeout_seconds = $9,
+                max_lines = $10, max_age_hours = $11, is_sensitive = $12, display_order = $13,
+                updated_at = {}
+            WHERE id = $1",
+        crate::db::sql::now()
+    ))
     .bind(source_id)
     .bind(&name)
     .bind(&description)

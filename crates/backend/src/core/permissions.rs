@@ -1,4 +1,4 @@
-use crate::db::DbPool;
+use crate::db::{self, DbPool};
 use uuid::Uuid;
 
 use appcontrol_common::PermissionLevel;
@@ -22,38 +22,37 @@ pub async fn effective_permission(
     }
 
     // 2. Direct user permission
-    let direct = sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT permission_level
-        FROM app_permissions_users
-        WHERE application_id = $1 AND user_id = $2
-          AND (expires_at IS NULL OR expires_at > now())
-        "#,
-    )
-    .bind(app_id)
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .and_then(|s| PermissionLevel::from_str_level(&s))
-    .unwrap_or(PermissionLevel::None);
+    let direct_sql = format!(
+        "SELECT permission_level FROM app_permissions_users \
+         WHERE application_id = $1 AND user_id = $2 \
+         AND (expires_at IS NULL OR expires_at > {})",
+        db::sql::now()
+    );
+    let direct = sqlx::query_scalar::<_, String>(&direct_sql)
+        .bind(app_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| PermissionLevel::from_str_level(&s))
+        .unwrap_or(PermissionLevel::None);
 
     // 3. Team permissions
-    let team_perms = sqlx::query_as::<_, (String,)>(
-        r#"
-        SELECT apt.permission_level
-        FROM app_permissions_teams apt
-        JOIN team_members tm ON tm.team_id = apt.team_id
-        WHERE apt.application_id = $1 AND tm.user_id = $2
-          AND (apt.expires_at IS NULL OR apt.expires_at > now())
-        "#,
-    )
-    .bind(app_id)
-    .bind(user_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    let team_sql = format!(
+        "SELECT apt.permission_level \
+         FROM app_permissions_teams apt \
+         JOIN team_members tm ON tm.team_id = apt.team_id \
+         WHERE apt.application_id = $1 AND tm.user_id = $2 \
+         AND (apt.expires_at IS NULL OR apt.expires_at > {})",
+        db::sql::now()
+    );
+    let team_perms = sqlx::query_as::<_, (String,)>(&team_sql)
+        .bind(app_id)
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
 
     let max_team = team_perms
         .iter()

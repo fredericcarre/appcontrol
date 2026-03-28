@@ -223,7 +223,7 @@ pub async fn push_update_to_agent(
                     "Failed to send binary chunk — agent unreachable"
                 );
                 let _ = sqlx::query(
-                    "UPDATE agent_update_tasks SET status = 'failed', error = 'Agent unreachable', completed_at = now() WHERE id = $1",
+                    &format!("UPDATE agent_update_tasks SET status = 'failed', error = 'Agent unreachable', completed_at = {} WHERE id = $1", crate::db::sql::now()),
                 )
                 .bind(update_id)
                 .execute(&state_clone.db)

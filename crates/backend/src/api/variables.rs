@@ -167,15 +167,16 @@ pub async fn update_variable(
     .await?;
 
     let variable = sqlx::query_as::<_, VariableRow>(
-        r#"
-        UPDATE app_variables SET
-            value = COALESCE($3, value),
-            description = COALESCE($4, description),
-            is_secret = COALESCE($5, is_secret),
-            updated_at = now()
-        WHERE id = $2 AND application_id = $1
-        RETURNING id, application_id, name, value, description, is_secret, created_at, updated_at
-        "#,
+        &format!(
+            "UPDATE app_variables SET
+                value = COALESCE($3, value),
+                description = COALESCE($4, description),
+                is_secret = COALESCE($5, is_secret),
+                updated_at = {}
+            WHERE id = $2 AND application_id = $1
+            RETURNING id, application_id, name, value, description, is_secret, created_at, updated_at",
+            crate::db::sql::now()
+        ),
     )
     .bind(app_id)
     .bind(var_id)
