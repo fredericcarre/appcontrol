@@ -105,10 +105,19 @@ jobs:
           mkdir -p target/${{ matrix.target }}/release/postgres
           cp target/${{ matrix.target }}/release/appcontrol-backend* target/${{ matrix.target }}/release/postgres/ 2>/dev/null || true
 
-          # Build backend with SQLite support (for standalone Windows deployment)
-          # IMPORTANT: --no-default-features is required because default=["postgres"]
-          # IMPORTANT: Build from crate directory to avoid workspace feature unification
-          # (e2e-tests depends on sqlx with postgres, which would pollute the SQLite build)
+          # ============================================================================
+          # SQLite Backend Build - CRITICAL: DO NOT MODIFY WITHOUT READING DOCS
+          # ============================================================================
+          # MUST build from crates/backend/ directory, NOT workspace root!
+          #
+          # Why? Cargo workspace feature unification causes e2e-tests' sqlx/postgres
+          # dependency to contaminate the SQLite build when building from workspace root.
+          # The resulting binary fails with "SQLite mode not supported when compiled
+          # with 'postgres' feature".
+          #
+          # This bug took 6 releases to fix (v1.3.4 → v1.3.9). See docs/SQLITE_IMPLEMENTATION.md
+          # for full explanation and verification steps.
+          # ============================================================================
           export CARGO_TARGET_DIR=$PWD/target-sqlite
           cd crates/backend
           if [ "${USE_CROSS:-}" = "true" ]; then

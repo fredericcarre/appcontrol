@@ -74,7 +74,10 @@ jobs:
           retention-days: 5
 
   # ---------------------------------------------------------------------------
-  # SQLite Build Verification — ensure dual-mode backend compiles
+  # SQLite Build Verification — ensure dual-mode backend compiles correctly
+  # ---------------------------------------------------------------------------
+  # CRITICAL: This job must build from crates/backend/ directory, NOT workspace root!
+  # See docs/SQLITE_IMPLEMENTATION.md for explanation of Cargo feature unification issue.
   # ---------------------------------------------------------------------------
   sqlite-build:
     name: SQLite Build
@@ -93,15 +96,37 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            target/
+            target-sqlite/
           key: ${{ runner.os }}-cargo-sqlite-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-sqlite-
 
-      - name: Build backend with SQLite feature
-        run: cargo build --release --package appcontrol-backend --no-default-features --features sqlite
+      # CRITICAL: Build from crate directory to avoid workspace feature unification!
+      # Building from workspace root causes e2e-tests' sqlx/postgres to contaminate the build.
+      - name: Build backend with SQLite feature (from crate directory)
+        run: |
+          export CARGO_TARGET_DIR=$PWD/target-sqlite
+          cd crates/backend
+          cargo build --release --no-default-features --features sqlite
+
+      # Regression check: verify the binary doesn't contain the postgres error message
+      # This catches the Cargo workspace feature unification bug that took 6 releases to fix.
+      - name: Verify SQLite binary is clean (no postgres contamination)
+        run: |
+          POSTGRES_ERRORS=$(strings target-sqlite/release/appcontrol-backend | grep -c "sqlite mode not supported" || true)
+          if [ "$POSTGRES_ERRORS" != "0" ]; then
+            echo "::error::SQLite binary contains postgres error message ($POSTGRES_ERRORS occurrences)!"
+            echo "::error::This indicates Cargo workspace feature unification contaminated the build."
+            echo "::error::The SQLite build MUST be done from crates/backend/ directory, not workspace root."
+            echo "::error::See docs/SQLITE_IMPLEMENTATION.md for details."
+            exit 1
+          fi
+          echo "✓ SQLite binary is clean (no postgres contamination)"
 
       - name: Run unit tests with SQLite feature
-        run: cargo test --package appcontrol-backend --no-default-features --features sqlite -- --nocapture
+        run: |
+          export CARGO_TARGET_DIR=$PWD/target-sqlite
+          cd crates/backend
+          cargo test --no-default-features --features sqlite -- --nocapture
 
       - name: Test SQLite backend startup
         run: |
@@ -116,7 +141,7 @@ jobs:
           SEED_ADMIN_PASSWORD=admin \
           SEED_ORG_NAME=TestOrg \
           SEED_ORG_SLUG=test \
-          timeout 30 ./target/release/appcontrol-backend &
+          timeout 30 ./target-sqlite/release/appcontrol-backend &
           BACKEND_PID=$!
 
           # Wait for backend to start

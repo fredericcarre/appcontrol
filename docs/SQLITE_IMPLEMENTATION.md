@@ -227,6 +227,73 @@ export SQLITE_PATH=./appcontrol.db
 export DATABASE_URL=sqlite:./appcontrol.db
 ```
 
+## CI/CD Build Process (CRITICAL)
+
+### The Problem: Cargo Workspace Feature Unification
+
+When building from the workspace root, Cargo unifies features across all workspace members.
+The `e2e-tests` crate depends on `sqlx` with the `postgres` feature:
+
+```toml
+# crates/e2e-tests/Cargo.toml
+[dependencies]
+sqlx = { version = "0.7", features = ["postgres", ...] }
+```
+
+This causes the `postgres` feature to "contaminate" the SQLite build, even with `--no-default-features --features sqlite`.
+The resulting binary contains both drivers and fails at runtime with:
+```
+"SQLite mode not supported when compiled with 'postgres' feature"
+```
+
+### The Solution: Build from Crate Directory
+
+The SQLite backend MUST be built from `crates/backend/` directory, NOT from the workspace root.
+This bypasses Cargo's workspace feature unification:
+
+```bash
+# ❌ WRONG - builds from workspace root, gets contaminated
+cargo build --release --package appcontrol-backend --no-default-features --features sqlite
+
+# ✅ CORRECT - builds from crate directory, isolated from workspace
+cd crates/backend
+cargo build --release --no-default-features --features sqlite
+```
+
+### Verification
+
+After building, verify the binary has the correct driver:
+
+```bash
+# Should return 0 - no postgres error message
+strings appcontrol-backend | grep -c "sqlite mode not supported"
+
+# Should show sqlx-sqlite, NOT sqlx-postgres
+cargo tree -p appcontrol-backend --no-default-features --features sqlite | grep sqlx
+```
+
+### Release Workflow
+
+The `.github/workflows/release.yaml` implements this correctly:
+
+```yaml
+# Build SQLite from crate directory to avoid workspace feature unification
+export CARGO_TARGET_DIR=$PWD/target-sqlite
+cd crates/backend
+cargo build --release --target ${{ matrix.target }} --no-default-features --features sqlite
+cd ../..
+```
+
+**DO NOT** change this to build from the workspace root - it will break SQLite standalone deployment.
+
+### History
+
+This issue took multiple releases to diagnose and fix (v1.3.4 → v1.3.9). The root cause
+was not obvious because:
+1. Local builds from crate directory worked fine
+2. The error message appeared in the binary but was never triggered during CI testing
+3. Cargo's feature unification is silent and happens implicitly
+
 ## Key Files
 
 - `crates/backend/Cargo.toml` - Feature flags
@@ -235,3 +302,4 @@ export DATABASE_URL=sqlite:./appcontrol.db
 - `crates/backend/src/lib.rs` - AppState type change
 - `crates/backend/src/main.rs` - Conditional logic
 - `migrations/sqlite/V001-V041.sql` - Complete SQLite schema
+- `.github/workflows/release.yaml` - Build process (see CI/CD section above)
