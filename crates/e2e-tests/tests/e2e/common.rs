@@ -145,6 +145,7 @@ impl TestContext {
 
         let config = appcontrol_backend::config::AppConfig {
             database_url: db_url,
+            database_type: appcontrol_backend::config::DatabaseType::Postgres,
             port: addr.port(),
             jwt_secret: "test-jwt-secret".to_string(),
             jwt_issuer: "appcontrol-test".to_string(),
@@ -186,6 +187,7 @@ impl TestContext {
             ),
             terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
             log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),
+            pending_log_requests: appcontrol_backend::websocket::PendingLogRequests::new(),
         });
 
         let app = appcontrol_backend::create_router(state);
@@ -309,6 +311,7 @@ impl TestContext {
 
         let config = appcontrol_backend::config::AppConfig {
             database_url: db_url,
+            database_type: appcontrol_backend::config::DatabaseType::Postgres,
             port: addr.port(),
             jwt_secret: "test-jwt-secret".to_string(),
             jwt_issuer: "appcontrol-test".to_string(),
@@ -360,6 +363,7 @@ impl TestContext {
             ),
             terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
             log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),
+            pending_log_requests: appcontrol_backend::websocket::PendingLogRequests::new(),
         });
 
         let app = appcontrol_backend::create_router(state);

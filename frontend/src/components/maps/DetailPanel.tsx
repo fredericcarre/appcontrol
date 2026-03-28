@@ -10,6 +10,7 @@ import { Component, useComponentMetrics } from '@/api/apps';
 import { useStateTransitions, useCommandExecutions, useCheckEvents, CommandExecution, CheckEvent } from '@/api/components';
 import { MetricsWidgets } from './MetricsWidgets';
 import { ScheduleList } from '@/components/schedules';
+import { LogSourcesPanel } from '@/components/logs/LogSourcesPanel';
 
 interface DetailPanelProps {
   component: Component;
@@ -138,6 +139,7 @@ export function DetailPanel({
         <TabsList className="mx-4 mt-2">
           <TabsTrigger value="metrics">Metrics</TabsTrigger>
           <TabsTrigger value="info">Info</TabsTrigger>
+          <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="commands">Commands</TabsTrigger>
           <TabsTrigger value="events">Events</TabsTrigger>
           <TabsTrigger value="schedules">Schedules</TabsTrigger>
@@ -171,6 +173,10 @@ export function DetailPanel({
           {component.check_cmd && <InfoRow icon={Terminal} label="Check CMD" value={component.check_cmd} />}
           {component.start_cmd && <InfoRow icon={Play} label="Start CMD" value={component.start_cmd} />}
           {component.stop_cmd && <InfoRow icon={Square} label="Stop CMD" value={component.stop_cmd} />}
+        </TabsContent>
+
+        <TabsContent value="logs" className="flex-1 min-h-0">
+          <LogSourcesPanel componentId={component.id} componentName={component.name} />
         </TabsContent>
 
         <TabsContent value="commands" className="flex-1 overflow-auto p-4">

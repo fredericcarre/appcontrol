@@ -128,6 +128,48 @@ pub enum AgentMessage {
         agent_id: Uuid,
         entries: Vec<LogEntry>,
     },
+    /// Response to GetComponentLogs request.
+    ComponentLogs {
+        request_id: Uuid,
+        component_id: Uuid,
+        source_type: String,
+        source_name: String,
+        entries: Vec<ComponentLogEntry>,
+        total_lines: i32,
+        truncated: bool,
+    },
+    /// Response to GetFileLogs request.
+    FileLogs {
+        request_id: Uuid,
+        component_id: Uuid,
+        file_path: String,
+        entries: Vec<ComponentLogEntry>,
+        total_lines: i32,
+        truncated: bool,
+        #[serde(default)]
+        error: Option<String>,
+    },
+    /// Response to GetEventLogs request (Windows only).
+    EventLogs {
+        request_id: Uuid,
+        component_id: Uuid,
+        log_name: String,
+        entries: Vec<ComponentLogEntry>,
+        total_lines: i32,
+        truncated: bool,
+        #[serde(default)]
+        error: Option<String>,
+    },
+    /// Response to ExecuteDiagnosticCommand request.
+    DiagnosticCommandResult {
+        request_id: Uuid,
+        component_id: Uuid,
+        command_name: String,
+        exit_code: i32,
+        stdout: String,
+        stderr: String,
+        duration_ms: u32,
+    },
 }
 
 /// A single log entry from an agent or gateway.
@@ -146,6 +188,19 @@ pub struct LogEntry {
     pub fields: Option<serde_json::Value>,
 }
 
+/// A log entry from component process output, file, or event log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentLogEntry {
+    /// Timestamp (may be parsed from log or file mtime)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<DateTime<Utc>>,
+    /// Log level if detected (ERROR, WARN, INFO, DEBUG)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    /// The actual log content
+    pub content: String,
+}
+
 impl AgentMessage {
     /// Get the QoS priority for this message type.
     pub fn priority(&self) -> MessagePriority {
@@ -161,6 +216,10 @@ impl AgentMessage {
             AgentMessage::TerminalOutput { .. } => MessagePriority::High,
             AgentMessage::TerminalExit { .. } => MessagePriority::High,
             AgentMessage::LogEntries { .. } => MessagePriority::Low,
+            AgentMessage::ComponentLogs { .. } => MessagePriority::Normal,
+            AgentMessage::FileLogs { .. } => MessagePriority::Normal,
+            AgentMessage::EventLogs { .. } => MessagePriority::Normal,
+            AgentMessage::DiagnosticCommandResult { .. } => MessagePriority::High,
         }
     }
 }
@@ -275,6 +334,55 @@ pub enum BackendMessage {
     RunChecksNow {
         request_id: Uuid,
     },
+    /// Request process stdout/stderr logs from agent's ring buffer.
+    GetProcessLogs {
+        request_id: Uuid,
+        component_id: Uuid,
+        /// Number of lines to return (default 100)
+        #[serde(default)]
+        lines: Option<i32>,
+        /// Text filter pattern
+        #[serde(default)]
+        filter: Option<String>,
+        /// Time range: "1h", "6h", "24h", "7d"
+        #[serde(default)]
+        since: Option<String>,
+    },
+    /// Request file logs from agent.
+    GetFileLogs {
+        request_id: Uuid,
+        component_id: Uuid,
+        file_path: String,
+        #[serde(default)]
+        lines: Option<i32>,
+        #[serde(default)]
+        filter: Option<String>,
+        #[serde(default)]
+        since: Option<String>,
+    },
+    /// Request Windows Event Log entries (Windows agents only).
+    GetEventLogs {
+        request_id: Uuid,
+        component_id: Uuid,
+        log_name: String,
+        #[serde(default)]
+        source: Option<String>,
+        #[serde(default)]
+        level: Option<String>,
+        #[serde(default)]
+        lines: Option<i32>,
+        #[serde(default)]
+        since: Option<String>,
+    },
+    /// Execute a diagnostic command and return output.
+    ExecuteDiagnosticCommand {
+        request_id: Uuid,
+        component_id: Uuid,
+        command_name: String,
+        command: String,
+        #[serde(default)]
+        timeout_seconds: Option<u32>,
+    },
 }
 
 impl BackendMessage {
@@ -296,6 +404,10 @@ impl BackendMessage {
             BackendMessage::TerminalResize { .. } => MessagePriority::Normal,
             BackendMessage::TerminalClose { .. } => MessagePriority::High,
             BackendMessage::RunChecksNow { .. } => MessagePriority::High,
+            BackendMessage::GetProcessLogs { .. } => MessagePriority::Normal,
+            BackendMessage::GetFileLogs { .. } => MessagePriority::Normal,
+            BackendMessage::GetEventLogs { .. } => MessagePriority::Normal,
+            BackendMessage::ExecuteDiagnosticCommand { .. } => MessagePriority::High,
         }
     }
 }

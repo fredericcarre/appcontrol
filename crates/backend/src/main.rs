@@ -141,6 +141,7 @@ async fn main() -> anyhow::Result<()> {
         operation_lock,
         terminal_sessions,
         log_subscriptions,
+        pending_log_requests: websocket::PendingLogRequests::new(),
     });
 
     // Store prometheus handle in a leaked box for the metrics handler

@@ -4,6 +4,7 @@ mod connection;
 mod discovery;
 mod enroll;
 mod executor;
+mod log_buffer;
 mod native_commands;
 mod platform;
 mod scheduler;
@@ -130,6 +131,9 @@ async fn main() -> anyhow::Result<()> {
     let (msg_tx, msg_rx) = tokio::sync::mpsc::unbounded_channel();
     let check_scheduler = Arc::new(scheduler::CheckScheduler::new(agent_id, msg_tx.clone()));
 
+    // Initialize log buffer manager for capturing process output
+    let log_buffer = Arc::new(log_buffer::LogBufferManager::new());
+
     // Initialize connection manager with multi-gateway failover support
     let gateway_urls = config.gateway_urls();
     let advisory = config.is_advisory();
@@ -146,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
         config.tls.as_ref(),
         advisory,
         config.gateway.tls_insecure,
+        log_buffer.clone(),
     );
 
     if advisory {

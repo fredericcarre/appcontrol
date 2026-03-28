@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::buffer::OfflineBuffer;
 use crate::config::TlsSection;
+use crate::log_buffer::LogBufferManager;
 use crate::scheduler::CheckScheduler;
 use crate::terminal::TerminalManager;
 use appcontrol_common::{AgentMessage, BackendMessage};
@@ -90,6 +91,8 @@ pub struct ConnectionManager {
     tls_insecure: bool,
     /// TLS configuration (cert/key/ca paths) for mTLS insecure mode.
     tls_config: Option<TlsSection>,
+    /// Log buffer manager for capturing and storing process output.
+    log_buffer: Arc<LogBufferManager>,
 }
 
 impl ConnectionManager {
@@ -106,6 +109,7 @@ impl ConnectionManager {
         tls_config: Option<&TlsSection>,
         advisory_mode: bool,
         tls_insecure: bool,
+        log_buffer: Arc<LogBufferManager>,
     ) -> Self {
         let (tls_connector, cert_fingerprint) = match tls_config {
             Some(tls) if tls.enabled => {
@@ -152,6 +156,7 @@ impl ConnectionManager {
             terminal_manager,
             tls_insecure,
             tls_config: tls_config.cloned(),
+            log_buffer,
         }
     }
 
@@ -177,6 +182,7 @@ impl ConnectionManager {
             None,
             false,
             false, // tls_insecure
+            Arc::new(LogBufferManager::new()),
         );
         mgr.tls_config = None;
         mgr
@@ -1028,6 +1034,191 @@ impl ConnectionManager {
                 let scheduler = self.scheduler.clone();
                 tokio::spawn(async move {
                     scheduler.run_all_checks_now().await;
+                });
+            }
+            BackendMessage::GetProcessLogs {
+                request_id,
+                component_id,
+                lines,
+                filter,
+                since,
+            } => {
+                tracing::info!(
+                    request_id = %request_id,
+                    component_id = %component_id,
+                    "Received GetProcessLogs request"
+                );
+
+                let log_buffer = self.log_buffer.clone();
+                let msg_tx = self.msg_tx.clone();
+
+                tokio::spawn(async move {
+                    let entries: Vec<appcontrol_common::protocol::ComponentLogEntry> = log_buffer
+                        .get_logs(component_id, lines, filter.as_deref(), since.as_deref())
+                        .await;
+
+                    let total_lines = entries.len() as i32;
+                    let truncated = total_lines >= lines.unwrap_or(100);
+
+                    let _ = msg_tx.send(AgentMessage::ComponentLogs {
+                        request_id,
+                        component_id,
+                        source_type: "process".to_string(),
+                        source_name: "Console output".to_string(),
+                        entries,
+                        total_lines,
+                        truncated,
+                    });
+                });
+            }
+            BackendMessage::GetFileLogs {
+                request_id,
+                component_id,
+                file_path,
+                lines,
+                filter,
+                since,
+            } => {
+                tracing::info!(
+                    request_id = %request_id,
+                    component_id = %component_id,
+                    file_path = %file_path,
+                    "Received GetFileLogs request"
+                );
+
+                let msg_tx = self.msg_tx.clone();
+
+                tokio::spawn(async move {
+                    match crate::log_buffer::read_file_tail(
+                        &file_path,
+                        lines,
+                        filter.as_deref(),
+                        since.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok((entries, truncated)) => {
+                            let total_lines = entries.len() as i32;
+                            let _ = msg_tx.send(AgentMessage::FileLogs {
+                                request_id,
+                                component_id,
+                                file_path,
+                                entries,
+                                total_lines,
+                                truncated,
+                                error: None,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = msg_tx.send(AgentMessage::FileLogs {
+                                request_id,
+                                component_id,
+                                file_path,
+                                entries: vec![],
+                                total_lines: 0,
+                                truncated: false,
+                                error: Some(e),
+                            });
+                        }
+                    }
+                });
+            }
+            BackendMessage::GetEventLogs {
+                request_id,
+                component_id,
+                log_name,
+                source,
+                level,
+                lines,
+                since,
+            } => {
+                tracing::info!(
+                    request_id = %request_id,
+                    component_id = %component_id,
+                    log_name = %log_name,
+                    "Received GetEventLogs request"
+                );
+
+                let msg_tx = self.msg_tx.clone();
+
+                tokio::spawn(async move {
+                    match crate::log_buffer::read_event_log(
+                        &log_name,
+                        source.as_deref(),
+                        level.as_deref(),
+                        lines,
+                        since.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok((entries, truncated)) => {
+                            let total_lines = entries.len() as i32;
+                            let _ = msg_tx.send(AgentMessage::EventLogs {
+                                request_id,
+                                component_id,
+                                log_name,
+                                entries,
+                                total_lines,
+                                truncated,
+                                error: None,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = msg_tx.send(AgentMessage::EventLogs {
+                                request_id,
+                                component_id,
+                                log_name,
+                                entries: vec![],
+                                total_lines: 0,
+                                truncated: false,
+                                error: Some(e),
+                            });
+                        }
+                    }
+                });
+            }
+            BackendMessage::ExecuteDiagnosticCommand {
+                request_id,
+                component_id,
+                command_name,
+                command,
+                timeout_seconds,
+            } => {
+                tracing::info!(
+                    request_id = %request_id,
+                    component_id = %component_id,
+                    command_name = %command_name,
+                    "Received ExecuteDiagnosticCommand request"
+                );
+
+                let msg_tx = self.msg_tx.clone();
+                let timeout = std::time::Duration::from_secs(timeout_seconds.unwrap_or(30) as u64);
+
+                tokio::spawn(async move {
+                    match crate::executor::execute_sync(&command, timeout).await {
+                        Ok(result) => {
+                            let _ = msg_tx.send(AgentMessage::DiagnosticCommandResult {
+                                request_id,
+                                component_id,
+                                command_name,
+                                exit_code: result.exit_code,
+                                stdout: result.stdout,
+                                stderr: result.stderr,
+                                duration_ms: result.duration_ms,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = msg_tx.send(AgentMessage::DiagnosticCommandResult {
+                                request_id,
+                                component_id,
+                                command_name,
+                                exit_code: -1,
+                                stdout: String::new(),
+                                stderr: format!("Execution error: {}", e),
+                                duration_ms: 0,
+                            });
+                        }
+                    }
                 });
             }
         }

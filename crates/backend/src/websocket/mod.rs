@@ -1,8 +1,10 @@
 pub mod hub;
 pub mod log_subscriptions;
+pub mod pending_requests;
 
 pub use hub::Hub;
 pub use log_subscriptions::LogSubscriptionManager;
+pub use pending_requests::PendingLogRequests;
 
 use axum::{
     extract::{ws, Query, State},
@@ -1523,6 +1525,126 @@ async fn process_agent_message(
                     }
                 }
             }
+        }
+        // Log retrieval responses from agent - store in pending request for API response
+        appcontrol_common::AgentMessage::ComponentLogs {
+            request_id,
+            component_id,
+            source_type,
+            source_name,
+            entries,
+            total_lines,
+            truncated,
+        } => {
+            tracing::debug!(
+                request_id = %request_id,
+                component_id = %component_id,
+                source_type = %source_type,
+                entry_count = entries.len(),
+                "Received ComponentLogs from agent"
+            );
+            // Store response for pending API request
+            state.pending_log_requests.complete(
+                request_id,
+                Ok(serde_json::json!({
+                    "source_type": source_type,
+                    "source_name": source_name,
+                    "entries": entries,
+                    "total_lines": total_lines,
+                    "truncated": truncated,
+                })),
+            );
+        }
+        appcontrol_common::AgentMessage::FileLogs {
+            request_id,
+            component_id,
+            file_path,
+            entries,
+            total_lines,
+            truncated,
+            error,
+        } => {
+            tracing::debug!(
+                request_id = %request_id,
+                component_id = %component_id,
+                file_path = %file_path,
+                entry_count = entries.len(),
+                has_error = error.is_some(),
+                "Received FileLogs from agent"
+            );
+            if let Some(err) = error {
+                state.pending_log_requests.complete(request_id, Err(err));
+            } else {
+                state.pending_log_requests.complete(
+                    request_id,
+                    Ok(serde_json::json!({
+                        "source_type": "file",
+                        "source_name": file_path,
+                        "entries": entries,
+                        "total_lines": total_lines,
+                        "truncated": truncated,
+                    })),
+                );
+            }
+        }
+        appcontrol_common::AgentMessage::EventLogs {
+            request_id,
+            component_id,
+            log_name,
+            entries,
+            total_lines,
+            truncated,
+            error,
+        } => {
+            tracing::debug!(
+                request_id = %request_id,
+                component_id = %component_id,
+                log_name = %log_name,
+                entry_count = entries.len(),
+                has_error = error.is_some(),
+                "Received EventLogs from agent"
+            );
+            if let Some(err) = error {
+                state.pending_log_requests.complete(request_id, Err(err));
+            } else {
+                state.pending_log_requests.complete(
+                    request_id,
+                    Ok(serde_json::json!({
+                        "source_type": "event_log",
+                        "source_name": log_name,
+                        "entries": entries,
+                        "total_lines": total_lines,
+                        "truncated": truncated,
+                    })),
+                );
+            }
+        }
+        appcontrol_common::AgentMessage::DiagnosticCommandResult {
+            request_id,
+            component_id,
+            command_name,
+            exit_code,
+            stdout,
+            stderr,
+            duration_ms,
+        } => {
+            tracing::debug!(
+                request_id = %request_id,
+                component_id = %component_id,
+                command_name = %command_name,
+                exit_code = exit_code,
+                "Received DiagnosticCommandResult from agent"
+            );
+            state.pending_log_requests.complete(
+                request_id,
+                Ok(serde_json::json!({
+                    "command_name": command_name,
+                    "exit_code": exit_code,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "duration_ms": duration_ms,
+                })),
+            );
         }
     }
 }

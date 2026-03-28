@@ -29,6 +29,7 @@ pub struct AppState {
     pub operation_lock: core::operation_lock::OperationLock,
     pub terminal_sessions: terminal::TerminalSessionManager,
     pub log_subscriptions: websocket::LogSubscriptionManager,
+    pub pending_log_requests: websocket::PendingLogRequests,
 }
 
 /// Build a CORS layer based on configuration.

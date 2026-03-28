@@ -234,6 +234,9 @@ fn run_service(_arguments: Vec<OsString>) -> anyhow::Result<()> {
             msg_tx.clone(),
         ));
 
+        // Initialize log buffer manager for capturing process output
+        let log_buffer = std::sync::Arc::new(crate::log_buffer::LogBufferManager::new());
+
         let gateway_urls = config.gateway_urls();
         let connection = crate::connection::ConnectionManager::new(
             gateway_urls,
@@ -247,6 +250,7 @@ fn run_service(_arguments: Vec<OsString>) -> anyhow::Result<()> {
             config.tls.as_ref(),
             config.is_advisory(),
             config.gateway.tls_insecure,
+            log_buffer,
         );
 
         let conn_handle = tokio::spawn(connection.run(msg_rx));
