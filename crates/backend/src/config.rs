@@ -1,21 +1,31 @@
 use crate::auth::oidc::OidcConfig;
 use crate::auth::saml::SamlConfig;
 
-/// Database type for runtime selection
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Database type - determined at compile time by feature flags.
+/// - `--features postgres` (default): PostgreSQL
+/// - `--features sqlite --no-default-features`: SQLite
+///
+/// There is no runtime selection - the binary only supports one database type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatabaseType {
-    #[default]
     Postgres,
     Sqlite,
 }
 
 impl DatabaseType {
-    /// Parse a database type from a string.
-    /// Returns Postgres as the default for any unrecognized input.
-    pub fn parse(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "sqlite" => DatabaseType::Sqlite,
-            _ => DatabaseType::Postgres,
+    /// Get the database type for this binary (compile-time determined).
+    pub fn compiled() -> Self {
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        {
+            DatabaseType::Sqlite
+        }
+        #[cfg(feature = "postgres")]
+        {
+            DatabaseType::Postgres
+        }
+        #[cfg(not(any(feature = "postgres", feature = "sqlite")))]
+        {
+            compile_error!("Either 'postgres' or 'sqlite' feature must be enabled");
         }
     }
 
@@ -124,10 +134,13 @@ impl AppConfig {
         let app_env = std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
         let is_production = app_env == "production";
 
-        // DATABASE_TYPE: postgres (default) or sqlite
-        let database_type = std::env::var("DATABASE_TYPE")
-            .map(|s| DatabaseType::parse(&s))
-            .unwrap_or_default();
+        // Database type is determined at compile time by feature flags.
+        // There is no DATABASE_TYPE env var - the binary only supports one database.
+        let database_type = DatabaseType::compiled();
+        tracing::info!(
+            database_type = ?database_type,
+            "Database type (compile-time)"
+        );
 
         // JWT_SECRET: required in production, fallback in dev
         let jwt_secret = match std::env::var("JWT_SECRET") {

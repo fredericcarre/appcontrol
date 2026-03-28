@@ -131,8 +131,8 @@ jobs:
       - name: Test SQLite backend startup
         run: |
           # Start the backend with SQLite in the background
+          # Note: DATABASE_TYPE is not needed - the binary knows its database type at compile time
           mkdir -p /tmp/appcontrol
-          DATABASE_TYPE=sqlite \
           DATABASE_URL=sqlite:/tmp/appcontrol/test.db \
           JWT_SECRET=test-secret \
           LOCAL_AUTH_ENABLED=true \
@@ -160,6 +160,152 @@ jobs:
           echo "Backend failed to start within 20s"
           kill $BACKEND_PID 2>/dev/null || true
           exit 1
+
+  # ---------------------------------------------------------------------------
+  # SQLite Full Stack E2E Test — backend + gateway + agent + API
+  # ---------------------------------------------------------------------------
+  sqlite-e2e:
+    name: SQLite E2E Test
+    runs-on: ubuntu-latest
+    needs: [sqlite-build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target-sqlite/
+          key: ${{ runner.os }}-cargo-sqlite-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-sqlite-
+
+      - name: Build SQLite backend
+        run: |
+          export CARGO_TARGET_DIR=$PWD/target-sqlite
+          cd crates/backend
+          cargo build --release --no-default-features --features sqlite
+
+      - name: Build gateway and agent
+        run: cargo build --release -p appcontrol-gateway -p appcontrol-agent
+
+      - name: Setup test environment
+        run: |
+          mkdir -p /tmp/appcontrol/{data,logs,certs}
+
+          # Generate self-signed certs for gateway
+          openssl req -x509 -newkey rsa:2048 -keyout /tmp/appcontrol/certs/gateway.key \
+            -out /tmp/appcontrol/certs/gateway.crt -days 1 -nodes \
+            -subj "/CN=localhost" 2>/dev/null
+
+          # Create a simple CA cert for testing
+          cp /tmp/appcontrol/certs/gateway.crt /tmp/appcontrol/certs/ca.crt
+
+      - name: Start SQLite backend
+        run: |
+          DATABASE_URL=sqlite:/tmp/appcontrol/data/appcontrol.db \
+          JWT_SECRET=e2e-test-secret-for-sqlite-ci-pipeline \
+          LOCAL_AUTH_ENABLED=true \
+          SEED_ENABLED=true \
+          SEED_ADMIN_EMAIL=admin@test.local \
+          SEED_ADMIN_PASSWORD=testpassword123 \
+          SEED_ORG_NAME=TestOrg \
+          SEED_ORG_SLUG=test \
+          RUST_LOG=info \
+          ./target-sqlite/release/appcontrol-backend > /tmp/appcontrol/logs/backend.log 2>&1 &
+          echo $! > /tmp/appcontrol/backend.pid
+
+          # Wait for backend
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
+              echo "Backend healthy after $((i))s"
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "Backend failed to start"
+              cat /tmp/appcontrol/logs/backend.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Start gateway
+        run: |
+          BACKEND_URL=ws://localhost:3000/ws/gateway \
+          GATEWAY_LISTEN=0.0.0.0:4443 \
+          GATEWAY_TLS_CERT=/tmp/appcontrol/certs/gateway.crt \
+          GATEWAY_TLS_KEY=/tmp/appcontrol/certs/gateway.key \
+          GATEWAY_ZONE=test \
+          RUST_LOG=info \
+          ./target/release/appcontrol-gateway > /tmp/appcontrol/logs/gateway.log 2>&1 &
+          echo $! > /tmp/appcontrol/gateway.pid
+
+          # Wait for gateway
+          sleep 3
+
+      - name: Test authentication flow
+        run: |
+          # Login and get token
+          LOGIN_RESPONSE=$(curl -sf -X POST http://localhost:3000/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"email":"admin@test.local","password":"testpassword123"}')
+          echo "Login response: $LOGIN_RESPONSE"
+
+          TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.token // empty')
+          if [ -z "$TOKEN" ]; then
+            echo "Failed to get auth token"
+            exit 1
+          fi
+          echo "Got auth token: ${TOKEN:0:20}..."
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: Test API endpoints
+        run: |
+          # Test apps endpoint
+          APPS=$(curl -sf http://localhost:3000/api/v1/apps \
+            -H "Authorization: Bearer $TOKEN")
+          echo "Apps: $APPS"
+
+          # Test agents endpoint
+          AGENTS=$(curl -sf http://localhost:3000/api/v1/agents \
+            -H "Authorization: Bearer $TOKEN")
+          echo "Agents: $AGENTS"
+
+          # Test schedules presets endpoint
+          PRESETS=$(curl -sf http://localhost:3000/api/v1/schedules/presets \
+            -H "Authorization: Bearer $TOKEN")
+          echo "Schedule presets: $PRESETS"
+
+      - name: Verify database file exists
+        run: |
+          ls -la /tmp/appcontrol/data/
+          if [ ! -f "/tmp/appcontrol/data/appcontrol.db" ]; then
+            echo "SQLite database file not created!"
+            exit 1
+          fi
+          echo "SQLite database file exists"
+          # Check tables were created
+          sqlite3 /tmp/appcontrol/data/appcontrol.db ".tables" | head -5
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Backend logs ==="
+          cat /tmp/appcontrol/logs/backend.log | tail -50 || true
+          echo "=== Gateway logs ==="
+          cat /tmp/appcontrol/logs/gateway.log | tail -50 || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kill $(cat /tmp/appcontrol/backend.pid 2>/dev/null) 2>/dev/null || true
+          kill $(cat /tmp/appcontrol/gateway.pid 2>/dev/null) 2>/dev/null || true
 
   # ---------------------------------------------------------------------------
   # E2E Integration Tests — in-process backend + real PostgreSQL
