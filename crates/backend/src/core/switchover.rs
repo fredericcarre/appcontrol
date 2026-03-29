@@ -547,7 +547,7 @@ async fn execute_start_target(
         let comp_info = sqlx::query_as::<_, (DbUuid, Option<DbUuid>, Option<String>, Option<String>, Option<String>)>(
             "SELECT id, agent_id, check_cmd, start_cmd, stop_cmd FROM components WHERE application_id = $1 AND name = $2",
         )
-        .bind(app_id)
+        .bind(DbUuid::from(app_id))
         .bind(comp_name)
         .fetch_optional(&state.db)
         .await
@@ -593,8 +593,8 @@ async fn execute_start_target(
                 WHERE component_id = $1 AND site_id = $2
                 "#,
                 )
-                .bind(comp_id)
-                .bind(target_site_id)
+                .bind(&comp_id)
+                .bind(DbUuid::from(target_site_id))
                 .fetch_optional(&state.db)
                 .await
                 .map_err(|e| SwitchoverError::Database(e.to_string()))?;
