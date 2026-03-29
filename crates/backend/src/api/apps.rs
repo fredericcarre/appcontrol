@@ -310,12 +310,24 @@ pub async fn get_app(
         return Err(ApiError::Forbidden);
     }
 
+    #[cfg(feature = "postgres")]
     let app = sqlx::query_as::<_, AppRow>(
         "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
          FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(id)
     .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let app = sqlx::query_as::<_, AppRow>(
+        "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
+         FROM applications WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(DbUuid::from(id))
+    .bind(DbUuid::from(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -356,6 +368,7 @@ pub async fn get_app(
         last_check_metrics: Option<Value>,
     }
 
+    #[cfg(feature = "postgres")]
     let components = sqlx::query_as::<_, ComponentWithAgent>(
         r#"SELECT c.id, c.application_id, c.name, c.display_name, c.description, c.icon, c.group_id,
                   c.component_type, c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd,
@@ -372,6 +385,26 @@ pub async fn get_app(
            WHERE c.application_id = $1 ORDER BY c.name"#,
     )
     .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let components = sqlx::query_as::<_, ComponentWithAgent>(
+        r#"SELECT c.id, c.application_id, c.name, c.display_name, c.description, c.icon, c.group_id,
+                  c.component_type, c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd,
+                  c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
+                  c.is_optional, c.current_state, c.position_x, c.position_y,
+                  c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at,
+                  a.hostname as agent_hostname, a.gateway_id, g.name as gateway_name,
+                  (SELECT ce.metrics FROM check_events ce
+                   WHERE ce.component_id = c.id AND ce.metrics IS NOT NULL
+                   ORDER BY ce.created_at DESC LIMIT 1) as last_check_metrics
+           FROM components c
+           LEFT JOIN agents a ON c.agent_id = a.id
+           LEFT JOIN gateways g ON a.gateway_id = g.id
+           WHERE c.application_id = $1 ORDER BY c.name"#,
+    )
+    .bind(DbUuid::from(id))
     .fetch_all(&state.db)
     .await?;
 
@@ -402,11 +435,21 @@ pub async fn get_app(
     }
 
     // Fetch dependencies
+    #[cfg(feature = "postgres")]
     let dependencies = sqlx::query_as::<_, DependencyRow>(
         "SELECT id, from_component_id, to_component_id FROM dependencies \
          WHERE from_component_id IN (SELECT id FROM components WHERE application_id = $1)",
     )
     .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let dependencies = sqlx::query_as::<_, DependencyRow>(
+        "SELECT id, from_component_id, to_component_id FROM dependencies \
+         WHERE from_component_id IN (SELECT id FROM components WHERE application_id = $1)",
+    )
+    .bind(DbUuid::from(id))
     .fetch_all(&state.db)
     .await?;
 
@@ -522,6 +565,7 @@ pub async fn create_app(
         Some(id) => id,
         None => {
             // Find default site for organization (prefer 'primary' type)
+            #[cfg(feature = "postgres")]
             let site: Option<(Uuid,)> = sqlx::query_as(
                 "SELECT id FROM sites WHERE organization_id = $1 AND is_active = true \
                  ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
@@ -530,11 +574,24 @@ pub async fn create_app(
             .fetch_optional(&state.db)
             .await?;
 
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let site: Option<(DbUuid,)> = sqlx::query_as(
+                "SELECT id FROM sites WHERE organization_id = $1 AND is_active = 1 \
+                 ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
+            )
+            .bind(DbUuid::from(user.organization_id))
+            .fetch_optional(&state.db)
+            .await?;
+
             match site {
+                #[cfg(feature = "postgres")]
                 Some((id,)) => id,
+                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+                Some((id,)) => id.into_inner(),
                 None => {
                     // Create a default site if none exists
                     let new_site_id = Uuid::new_v4();
+                    #[cfg(feature = "postgres")]
                     sqlx::query(
                         "INSERT INTO sites (id, organization_id, name, code, site_type) \
                          VALUES ($1, $2, $3, $4, $5)",
@@ -546,6 +603,20 @@ pub async fn create_app(
                     .bind("primary")
                     .execute(&state.db)
                     .await?;
+
+                    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+                    sqlx::query(
+                        "INSERT INTO sites (id, organization_id, name, code, site_type) \
+                         VALUES ($1, $2, $3, $4, $5)",
+                    )
+                    .bind(DbUuid::from(new_site_id))
+                    .bind(DbUuid::from(user.organization_id))
+                    .bind("Default Site")
+                    .bind("DEFAULT")
+                    .bind("primary")
+                    .execute(&state.db)
+                    .await?;
+
                     new_site_id
                 }
             }
@@ -564,6 +635,7 @@ pub async fn create_app(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let app = sqlx::query_as::<_, AppRow>(
         r#"
         INSERT INTO applications (id, name, description, organization_id, site_id, tags)
@@ -580,13 +652,49 @@ pub async fn create_app(
     .fetch_one(&state.db)
     .await?;
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let app = {
+        let tags_val = body.tags.as_ref().unwrap_or(&json!([])).clone();
+        sqlx::query(
+            "INSERT INTO applications (id, name, description, organization_id, site_id, tags) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(DbUuid::from(app_id))
+        .bind(&body.name)
+        .bind(&body.description)
+        .bind(DbUuid::from(user.organization_id))
+        .bind(DbUuid::from(site_id))
+        .bind(serde_json::to_string(&tags_val).unwrap_or_else(|_| "[]".to_string()))
+        .execute(&state.db)
+        .await?;
+
+        sqlx::query_as::<_, AppRow>(
+            "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
+             FROM applications WHERE id = $1",
+        )
+        .bind(DbUuid::from(app_id))
+        .fetch_one(&state.db)
+        .await?
+    };
+
     // Grant owner permission to creator
+    #[cfg(feature = "postgres")]
     let _ = sqlx::query(
         "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) \
          VALUES ($1, $2, 'owner', $2)",
     )
     .bind(app_id)
     .bind(user.user_id)
+    .execute(&state.db)
+    .await;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let _ = sqlx::query(
+        "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) \
+         VALUES ($1, $2, 'owner', $2)",
+    )
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(user.user_id))
     .execute(&state.db)
     .await;
 
@@ -620,6 +728,7 @@ pub async fn update_app(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let app = sqlx::query_as::<_, AppRow>(
         &format!(
             "UPDATE applications SET
@@ -642,6 +751,40 @@ pub async fn update_app(
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let app = {
+        sqlx::query(
+            &format!(
+                "UPDATE applications SET
+                    name = COALESCE($2, name),
+                    description = COALESCE($3, description),
+                    site_id = COALESCE($4, site_id),
+                    tags = COALESCE($5, tags),
+                    updated_at = {}
+                WHERE id = $1 AND organization_id = $6",
+                crate::db::sql::now()
+            ),
+        )
+        .bind(DbUuid::from(id))
+        .bind(&body.name)
+        .bind(&body.description)
+        .bind(body.site_id.map(DbUuid::from))
+        .bind(&body.tags)
+        .bind(DbUuid::from(user.organization_id))
+        .execute(&state.db)
+        .await?;
+
+        sqlx::query_as::<_, AppRow>(
+            "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
+             FROM applications WHERE id = $1 AND organization_id = $2",
+        )
+        .bind(DbUuid::from(id))
+        .bind(DbUuid::from(user.organization_id))
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?
+    };
 
     Ok(Json(json!(app)))
 }
@@ -666,9 +809,17 @@ pub async fn delete_app(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
         .bind(id)
         .bind(user.organization_id)
+        .execute(&state.db)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
+        .bind(DbUuid::from(id))
+        .bind(DbUuid::from(user.organization_id))
         .execute(&state.db)
         .await?;
 
@@ -906,13 +1057,25 @@ pub async fn start_branch(
     let target_component_ids: Vec<DbUuid> = if let Some(cid) = body.component_id {
         vec![cid]
     } else {
-        sqlx::query_scalar::<_, DbUuid>(
+        #[cfg(feature = "postgres")]
+        let ids = sqlx::query_scalar::<_, DbUuid>(
             "SELECT id FROM components WHERE application_id = $1 AND current_state = 'FAILED'",
         )
         .bind(id)
         .fetch_all(&state.db)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let ids = sqlx::query_scalar::<_, DbUuid>(
+            "SELECT id FROM components WHERE application_id = $1 AND current_state = 'FAILED'",
+        )
+        .bind(DbUuid::from(id))
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        ids
     };
 
     if target_component_ids.is_empty() {
@@ -1034,9 +1197,19 @@ pub async fn start_to(
         for level in &levels {
             let mut level_info = Vec::new();
             for &comp_id in level {
+                #[cfg(feature = "postgres")]
                 let name =
                     sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
                         .bind(comp_id)
+                        .fetch_optional(&state.db)
+                        .await
+                        .map_err(|e| ApiError::Internal(e.to_string()))?
+                        .unwrap_or_else(|| comp_id.to_string());
+
+                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+                let name =
+                    sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
+                        .bind(DbUuid::from(comp_id))
                         .fetch_optional(&state.db)
                         .await
                         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -1101,9 +1274,19 @@ pub async fn suspend_application(
     }
 
     // Check if already suspended
+    #[cfg(feature = "postgres")]
     let is_suspended: bool =
         sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
             .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .unwrap_or(false);
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let is_suspended: bool =
+        sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
+            .bind(DbUuid::from(id))
             .fetch_optional(&state.db)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -1116,6 +1299,7 @@ pub async fn suspend_application(
     }
 
     // Suspend the application
+    #[cfg(feature = "postgres")]
     sqlx::query(&format!(
         "UPDATE applications
              SET is_suspended = true, suspended_at = {now}, suspended_by = $2, updated_at = {now}
@@ -1124,6 +1308,19 @@ pub async fn suspend_application(
     ))
     .bind(id)
     .bind(user.user_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(&format!(
+        "UPDATE applications
+             SET is_suspended = 1, suspended_at = {now}, suspended_by = $2, updated_at = {now}
+             WHERE id = $1",
+        now = crate::db::sql::now()
+    ))
+    .bind(DbUuid::from(id))
+    .bind(DbUuid::from(user.user_id))
     .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1143,8 +1340,16 @@ pub async fn suspend_application(
     crate::websocket::push_config_to_affected_agents(&state, Some(id), None, None).await;
 
     // Get app name for response
+    #[cfg(feature = "postgres")]
     let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
         .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
+        .bind(DbUuid::from(id))
         .fetch_one(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1180,9 +1385,19 @@ pub async fn resume_application(
     }
 
     // Check if suspended
+    #[cfg(feature = "postgres")]
     let is_suspended: bool =
         sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
             .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .unwrap_or(false);
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let is_suspended: bool =
+        sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
+            .bind(DbUuid::from(id))
             .fetch_optional(&state.db)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -1195,6 +1410,7 @@ pub async fn resume_application(
     }
 
     // Resume the application
+    #[cfg(feature = "postgres")]
     sqlx::query(&format!(
         "UPDATE applications
              SET is_suspended = false, suspended_at = NULL, suspended_by = NULL, updated_at = {}
@@ -1202,6 +1418,18 @@ pub async fn resume_application(
         crate::db::sql::now()
     ))
     .bind(id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(&format!(
+        "UPDATE applications
+             SET is_suspended = 0, suspended_at = NULL, suspended_by = NULL, updated_at = {}
+             WHERE id = $1",
+        crate::db::sql::now()
+    ))
+    .bind(DbUuid::from(id))
     .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1221,8 +1449,16 @@ pub async fn resume_application(
     crate::websocket::push_config_to_affected_agents(&state, Some(id), None, None).await;
 
     // Get app name for response
+    #[cfg(feature = "postgres")]
     let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
         .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
+        .bind(DbUuid::from(id))
         .fetch_one(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1263,11 +1499,22 @@ pub async fn get_site_overrides(
     }
 
     // Verify app belongs to org
+    #[cfg(feature = "postgres")]
     let _app = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(app_id)
     .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let _app = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -1281,6 +1528,7 @@ pub async fn get_site_overrides(
         site_type: String,
     }
 
+    #[cfg(feature = "postgres")]
     let primary_site = sqlx::query_as::<_, AppSiteInfo>(
         r#"
         SELECT a.site_id, s.name as site_name, s.code as site_code, s.site_type
@@ -1290,6 +1538,19 @@ pub async fn get_site_overrides(
         "#,
     )
     .bind(app_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let primary_site = sqlx::query_as::<_, AppSiteInfo>(
+        r#"
+        SELECT a.site_id, s.name as site_name, s.code as site_code, s.site_type
+        FROM applications a
+        JOIN sites s ON a.site_id = s.id
+        WHERE a.id = $1
+        "#,
+    )
+    .bind(DbUuid::from(app_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -1313,6 +1574,7 @@ pub async fn get_site_overrides(
         site_type: String,
     }
 
+    #[cfg(feature = "postgres")]
     let bindings = sqlx::query_as::<_, BindingRow>(
         r#"
         SELECT DISTINCT ON (c.id, s.id)
@@ -1345,6 +1607,39 @@ pub async fn get_site_overrides(
     .fetch_all(&state.db)
     .await?;
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let bindings = sqlx::query_as::<_, BindingRow>(
+        r#"
+        SELECT
+            c.id as component_id,
+            c.name as component_name,
+            c.host as component_host,
+            bp.id as profile_id,
+            bp.name as profile_name,
+            bp.profile_type,
+            (c.agent_id = bpm.agent_id) as is_active,
+            bpm.agent_id,
+            a.hostname as agent_hostname,
+            s.id as site_id,
+            s.name as site_name,
+            s.code as site_code,
+            s.site_type
+        FROM components c
+        JOIN binding_profile_mappings bpm ON bpm.component_name = c.name
+        JOIN binding_profiles bp ON bpm.profile_id = bp.id AND bp.application_id = c.application_id
+        JOIN agents a ON bpm.agent_id = a.id
+        JOIN gateways g ON a.gateway_id = g.id
+        JOIN sites s ON g.site_id = s.id
+        WHERE c.application_id = $1
+        GROUP BY c.id, s.id
+        HAVING (c.agent_id = bpm.agent_id) = MAX(c.agent_id = bpm.agent_id)
+        ORDER BY c.id, s.id
+        "#,
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_all(&state.db)
+    .await?;
+
     // Fetch command overrides from site_overrides table
     #[derive(Debug, sqlx::FromRow)]
     struct CmdOverrideRow {
@@ -1357,6 +1652,7 @@ pub async fn get_site_overrides(
         env_vars_override: Option<Value>,
     }
 
+    #[cfg(feature = "postgres")]
     let cmd_overrides = sqlx::query_as::<_, CmdOverrideRow>(
         r#"
         SELECT component_id, site_id, check_cmd_override, start_cmd_override,
@@ -1366,6 +1662,19 @@ pub async fn get_site_overrides(
         "#,
     )
     .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let cmd_overrides = sqlx::query_as::<_, CmdOverrideRow>(
+        r#"
+        SELECT component_id, site_id, check_cmd_override, start_cmd_override,
+               stop_cmd_override, rebuild_cmd_override, env_vars_override
+        FROM site_overrides
+        WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
+        "#,
+    )
+    .bind(DbUuid::from(app_id))
     .fetch_all(&state.db)
     .await?;
 

@@ -91,10 +91,20 @@ pub async fn get_organization(
         return Err(ApiError::Forbidden);
     }
 
+    #[cfg(feature = "postgres")]
     let org = sqlx::query_as::<_, OrgRow>(
         "SELECT id, name, slug, created_at, updated_at FROM organizations WHERE id = $1",
     )
     .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let org = sqlx::query_as::<_, OrgRow>(
+        "SELECT id, name, slug, created_at, updated_at FROM organizations WHERE id = $1",
+    )
+    .bind(DbUuid::from(id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -210,15 +220,26 @@ pub async fn update_organization(
     .await
     .ok();
 
-    let org = sqlx::query_as::<_, OrgRow>(&format!(
+    let update_org_sql = format!(
         "UPDATE organizations SET
                  name = COALESCE($2, name),
                  updated_at = {}
              WHERE id = $1
              RETURNING id, name, slug, created_at, updated_at",
         crate::db::sql::now()
-    ))
+    );
+
+    #[cfg(feature = "postgres")]
+    let org = sqlx::query_as::<_, OrgRow>(&update_org_sql)
     .bind(id)
+    .bind(&req.name)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let org = sqlx::query_as::<_, OrgRow>(&update_org_sql)
+    .bind(DbUuid::from(id))
     .bind(&req.name)
     .fetch_optional(&state.db)
     .await?

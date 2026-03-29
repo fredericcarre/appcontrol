@@ -214,15 +214,21 @@ async fn execute_start_internal(
                     degraded: i64,
                     failed: i64,
                 }
-                let counts: StateCount = sqlx::query_as(
-                    "SELECT
-                        COUNT(*) as total,
-                        COUNT(*) FILTER (WHERE current_state = 'RUNNING') as running,
-                        COUNT(*) FILTER (WHERE current_state = 'DEGRADED') as degraded,
-                        COUNT(*) FILTER (WHERE current_state = 'FAILED') as failed
-                     FROM components
-                     WHERE application_id = $1",
-                )
+                #[cfg(feature = "postgres")]
+                let count_sql = "SELECT \
+                        COUNT(*) as total, \
+                        COUNT(*) FILTER (WHERE current_state = 'RUNNING') as running, \
+                        COUNT(*) FILTER (WHERE current_state = 'DEGRADED') as degraded, \
+                        COUNT(*) FILTER (WHERE current_state = 'FAILED') as failed \
+                     FROM components WHERE application_id = $1";
+                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+                let count_sql = "SELECT \
+                        COUNT(*) as total, \
+                        SUM(CASE WHEN current_state = 'RUNNING' THEN 1 ELSE 0 END) as running, \
+                        SUM(CASE WHEN current_state = 'DEGRADED' THEN 1 ELSE 0 END) as degraded, \
+                        SUM(CASE WHEN current_state = 'FAILED' THEN 1 ELSE 0 END) as failed \
+                     FROM components WHERE application_id = $1";
+                let counts: StateCount = sqlx::query_as(count_sql)
                 .bind(ref_app_id)
                 .fetch_one(&state.db)
                 .await

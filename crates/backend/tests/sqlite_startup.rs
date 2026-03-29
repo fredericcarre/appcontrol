@@ -334,10 +334,14 @@ async fn create_test_pool(db_url: &str) -> sqlx::SqlitePool {
         .expect("Failed to create SQLite pool")
 }
 
-/// Helper: seed an org + admin user with a bcrypt-hashed password for login testing.
+/// Helper: seed an org + site + admin user with a bcrypt-hashed password for login testing.
+/// Uses DbUuid for all UUID binds to ensure consistent TEXT encoding.
 async fn seed_test_user(pool: &sqlx::SqlitePool) -> (uuid::Uuid, uuid::Uuid, String, String) {
+    use appcontrol_backend::db::DbUuid;
+
     let org_id = uuid::Uuid::new_v4();
     let user_id = uuid::Uuid::new_v4();
+    let site_id = uuid::Uuid::new_v4();
     let email = "admin@test.local".to_string();
     let password = "testpassword123".to_string();
     let password_hash = bcrypt::hash(&password, 4).expect("Failed to hash password");
@@ -345,17 +349,28 @@ async fn seed_test_user(pool: &sqlx::SqlitePool) -> (uuid::Uuid, uuid::Uuid, Str
     sqlx::query(
         "INSERT INTO organizations (id, name, slug) VALUES ($1, 'E2E Test Org', 'e2e-test')",
     )
-    .bind(org_id.to_string())
+    .bind(DbUuid::from(org_id))
     .execute(pool)
     .await
     .expect("Failed to seed org");
+
+    // Create a default site (required for app creation)
+    sqlx::query(
+        "INSERT INTO sites (id, organization_id, name, code, site_type) \
+         VALUES ($1, $2, 'Default Site', 'DEFAULT', 'primary')",
+    )
+    .bind(DbUuid::from(site_id))
+    .bind(DbUuid::from(org_id))
+    .execute(pool)
+    .await
+    .expect("Failed to seed site");
 
     sqlx::query(
         "INSERT INTO users (id, organization_id, external_id, email, display_name, role, platform_role, auth_provider, password_hash) \
          VALUES ($1, $2, 'e2e-admin', $3, 'E2E Admin', 'admin', 'super_admin', 'local', $4)",
     )
-    .bind(user_id.to_string())
-    .bind(org_id.to_string())
+    .bind(DbUuid::from(user_id))
+    .bind(DbUuid::from(org_id))
     .bind(&email)
     .bind(&password_hash)
     .execute(pool)
