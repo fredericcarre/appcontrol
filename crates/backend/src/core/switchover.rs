@@ -117,11 +117,11 @@ async fn execute_validate(
         LIMIT 1
         "#;
     let target_profile = sqlx::query_as::<_, (DbUuid, String, i64)>(profile_sql)
-    .bind(DbUuid::from(app_id))
-    .bind(DbUuid::from(target_site_id))
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+        .bind(DbUuid::from(app_id))
+        .bind(DbUuid::from(target_site_id))
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     let (target_profile_id, target_profile_name) = match target_profile {
         Some((id, name, count)) => {
@@ -289,7 +289,10 @@ async fn execute_stop_source(
                 let current_details = get_switchover_details(&state.db, switchover_id).await?;
                 let mut merged = current_details;
                 if let Some(obj) = merged.as_object_mut() {
-                    obj.insert("impacted_component_ids".to_string(), serde_json::json!(impacted_ids));
+                    obj.insert(
+                        "impacted_component_ids".to_string(),
+                        serde_json::json!(impacted_ids),
+                    );
                 }
                 sqlx::query(
                     r#"
@@ -331,10 +334,10 @@ async fn execute_stop_source(
         WHERE application_id = $1 AND is_optional = 0 AND current_state NOT IN ('STOPPED', 'UNKNOWN')";
 
     let still_running = sqlx::query_scalar::<_, i64>(running_sql)
-    .bind(DbUuid::from(app_id))
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+        .bind(DbUuid::from(app_id))
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     Ok(serde_json::json!({
         "source_stopped": true,
@@ -441,31 +444,33 @@ async fn execute_start_target(
         LIMIT 1
         "#;
     let target_profile = sqlx::query_as::<_, (DbUuid, String)>(target_profile_sql)
-    .bind(DbUuid::from(app_id))
-    .bind(DbUuid::from(target_site_id))
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?
-    .ok_or_else(|| {
-        SwitchoverError::ValidationFailed(format!(
-            "No binding profile found for target site {}",
-            target_site_id
-        ))
-    })?;
+        .bind(DbUuid::from(app_id))
+        .bind(DbUuid::from(target_site_id))
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?
+        .ok_or_else(|| {
+            SwitchoverError::ValidationFailed(format!(
+                "No binding profile found for target site {}",
+                target_site_id
+            ))
+        })?;
 
     let (target_profile_id, target_profile_name) = target_profile;
 
     // 2. Get current active profile for snapshot
     #[cfg(feature = "postgres")]
-    let active_sql: &str = "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = true";
+    let active_sql: &str =
+        "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = true";
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let active_sql: &str = "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = 1";
+    let active_sql: &str =
+        "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = 1";
 
     let current_profile = sqlx::query_as::<_, (DbUuid, String)>(active_sql)
-    .bind(DbUuid::from(app_id))
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+        .bind(DbUuid::from(app_id))
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     let source_profile_name = current_profile
         .as_ref()
@@ -477,9 +482,11 @@ async fn execute_start_target(
     if mode == "FULL" {
         // Deactivate all profiles for this app
         #[cfg(feature = "postgres")]
-        let deactivate_sql: &str = "UPDATE binding_profiles SET is_active = false WHERE application_id = $1";
+        let deactivate_sql: &str =
+            "UPDATE binding_profiles SET is_active = false WHERE application_id = $1";
         #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        let deactivate_sql: &str = "UPDATE binding_profiles SET is_active = 0 WHERE application_id = $1";
+        let deactivate_sql: &str =
+            "UPDATE binding_profiles SET is_active = 0 WHERE application_id = $1";
 
         sqlx::query(deactivate_sql)
             .bind(DbUuid::from(app_id))

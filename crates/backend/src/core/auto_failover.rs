@@ -109,9 +109,7 @@ async fn check_and_failover(
         WHERE active.profile_type = 'primary'
         "#;
 
-    let candidates: Vec<FailoverCandidate> = sqlx::query_as(candidates_sql)
-    .fetch_all(pool)
-    .await?;
+    let candidates: Vec<FailoverCandidate> = sqlx::query_as(candidates_sql).fetch_all(pool).await?;
 
     for candidate in candidates {
         if let Err(e) = check_profile_health_and_failover(
@@ -244,7 +242,7 @@ async fn check_profile_health_and_failover(
                 "#
             )
             .bind(DbUuid::from(*active_profile_id))
-            .bind(&agent.agent_id)
+            .bind(agent.agent_id)
             .bind(is_reachable_int)
             .bind(now)
             .execute(pool)
@@ -273,10 +271,10 @@ async fn check_profile_health_and_failover(
             "#;
 
         let all_unreachable_long_enough: bool = sqlx::query_scalar(unreachable_sql)
-        .bind(DbUuid::from(*active_profile_id))
-        .bind(threshold)
-        .fetch_one(pool)
-        .await?;
+            .bind(DbUuid::from(*active_profile_id))
+            .bind(threshold)
+            .fetch_one(pool)
+            .await?;
 
         if all_unreachable_long_enough {
             tracing::warn!(

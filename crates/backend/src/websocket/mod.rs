@@ -707,24 +707,26 @@ async fn process_gateway_message(
             } else if let Some(ref z) = zone {
                 // Backward compat: look up site by code matching zone
                 #[cfg(feature = "postgres")]
-                let result: Option<uuid::Uuid> =
-                    sqlx::query_scalar("SELECT id FROM sites WHERE organization_id = $1 AND code = $2")
-                        .bind(org_id)
-                        .bind(z)
-                        .fetch_optional(&state.db)
-                        .await
-                        .ok()
-                        .flatten();
+                let result: Option<uuid::Uuid> = sqlx::query_scalar(
+                    "SELECT id FROM sites WHERE organization_id = $1 AND code = $2",
+                )
+                .bind(org_id)
+                .bind(z)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
                 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
                 let result: Option<uuid::Uuid> = {
-                    let row: Option<DbUuid> =
-                        sqlx::query_scalar("SELECT id FROM sites WHERE organization_id = $1 AND code = $2")
-                            .bind(DbUuid::from(org_id))
-                            .bind(z)
-                            .fetch_optional(&state.db)
-                            .await
-                            .ok()
-                            .flatten();
+                    let row: Option<DbUuid> = sqlx::query_scalar(
+                        "SELECT id FROM sites WHERE organization_id = $1 AND code = $2",
+                    )
+                    .bind(DbUuid::from(org_id))
+                    .bind(z)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten();
                     row.map(|u| u.into_inner())
                 };
                 result
@@ -1112,8 +1114,7 @@ async fn process_gateway_message(
             .bind(DbUuid::from(gateway_id))
             .execute(&state.db)
             .await;
-            if let Err(e) = gw_hb_result
-            {
+            if let Err(e) = gw_hb_result {
                 tracing::warn!(
                     gateway_id = %gateway_id,
                     "Failed to update gateway heartbeat: {}", e
@@ -1380,8 +1381,7 @@ async fn process_agent_message(
             .bind(disk)
             .execute(&state.db)
             .await;
-            if let Err(e) = metrics_result
-            {
+            if let Err(e) = metrics_result {
                 // Don't fail on metrics insert - just log warning
                 tracing::warn!(agent_id = %agent_id, "Failed to insert agent metrics: {}", e);
             }
@@ -1583,8 +1583,7 @@ async fn process_agent_message(
             .bind(scanned_at.to_rfc3339())
             .execute(&state.db)
             .await;
-            if let Err(e) = disc_result
-            {
+            if let Err(e) = disc_result {
                 tracing::warn!(
                     agent_id = %agent_id,
                     "Failed to store discovery report: {}", e
@@ -2112,8 +2111,7 @@ async fn mark_agent_components_unreachable(
     .bind(DbUuid::from(agent_id))
     .fetch_all(&state.db)
     .await;
-    let components = match components_result
-    {
+    let components = match components_result {
         Ok(comps) => comps,
         Err(e) => {
             tracing::error!(
@@ -2173,8 +2171,7 @@ async fn mark_agent_components_unreachable(
             .execute(&state.db)
             .await
         };
-        if let Err(e) = trans_result
-        {
+        if let Err(e) = trans_result {
             tracing::warn!(
                 component_id = %comp.id,
                 "Failed to insert state_transition to UNREACHABLE: {}", e
@@ -2364,12 +2361,12 @@ async fn validate_gateway_enrollment_token(
     let token_row = sqlx::query_as::<
         _,
         (
-            DbUuid,       // id
-            DbUuid,       // organization_id
-            String,       // scope
-            Option<i32>,  // max_uses
-            i32,          // current_uses
-            String,       // expires_at as TEXT
+            DbUuid,      // id
+            DbUuid,      // organization_id
+            String,      // scope
+            Option<i32>, // max_uses
+            i32,         // current_uses
+            String,      // expires_at as TEXT
         ),
     >(
         r#"SELECT id, organization_id, scope, max_uses, current_uses, expires_at

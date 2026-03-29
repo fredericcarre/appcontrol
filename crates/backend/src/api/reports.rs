@@ -481,7 +481,9 @@ pub async fn drp_report(
 
     // Fetch components for the topology graph
     // position_x/y are `real` (f32) in Postgres, cast to float8 for f64 compatibility
-    let components = fetch_topology_components(&state.db, app_id).await.unwrap_or_default();
+    let components = fetch_topology_components(&state.db, app_id)
+        .await
+        .unwrap_or_default();
 
     let component_list: Vec<Value> = components
         .into_iter()
@@ -1564,8 +1566,26 @@ async fn fetch_availability_stats(
 async fn fetch_switchover_logs(
     db: &crate::db::DbPool,
     app_id: Uuid,
-) -> Result<Vec<(DbUuid, String, String, String, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
-    sqlx::query_as::<_, (DbUuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
+) -> Result<
+    Vec<(
+        DbUuid,
+        String,
+        String,
+        String,
+        chrono::DateTime<chrono::Utc>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            String,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         r#"
         SELECT id, phase, status, details::text, created_at
         FROM switchover_log
@@ -1583,8 +1603,26 @@ async fn fetch_switchover_logs(
 async fn fetch_switchover_logs(
     db: &crate::db::DbPool,
     app_id: Uuid,
-) -> Result<Vec<(DbUuid, String, String, String, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
-    sqlx::query_as::<_, (DbUuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
+) -> Result<
+    Vec<(
+        DbUuid,
+        String,
+        String,
+        String,
+        chrono::DateTime<chrono::Utc>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            String,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         r#"
         SELECT id, phase, status, CAST(details AS TEXT), created_at
         FROM switchover_log
@@ -1727,10 +1765,25 @@ async fn fetch_mttr_recoveries(
     app_id: Uuid,
     from: chrono::DateTime<chrono::Utc>,
     to: chrono::DateTime<chrono::Utc>,
-) -> Result<Vec<(Uuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        Uuid,
+        String,
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+        i64,
+    )>,
+    sqlx::Error,
+> {
     sqlx::query_as::<
         _,
-        (Uuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64),
+        (
+            Uuid,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            i64,
+        ),
     >(
         r#"
         WITH failed_events AS (
@@ -1790,7 +1843,16 @@ async fn fetch_mttr_recoveries(
     app_id: Uuid,
     from: chrono::DateTime<chrono::Utc>,
     to: chrono::DateTime<chrono::Utc>,
-) -> Result<Vec<(Uuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        Uuid,
+        String,
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+        i64,
+    )>,
+    sqlx::Error,
+> {
     sqlx::query_as::<
         _,
         (Uuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64),

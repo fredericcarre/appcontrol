@@ -161,12 +161,11 @@ pub async fn delete_api_key(
             .await?;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let result =
-        sqlx::query("UPDATE api_keys SET is_active = 0 WHERE id = $1 AND user_id = $2")
-            .bind(DbUuid::from(id))
-            .bind(DbUuid::from(user.user_id))
-            .execute(&state.db)
-            .await?;
+    let result = sqlx::query("UPDATE api_keys SET is_active = 0 WHERE id = $1 AND user_id = $2")
+        .bind(DbUuid::from(id))
+        .bind(DbUuid::from(user.user_id))
+        .execute(&state.db)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound);

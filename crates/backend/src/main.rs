@@ -462,7 +462,7 @@ async fn auto_init_pki(pool: &crate::db::DbPool) {
                 if let Err(e) = sqlx::query(
                     "UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1",
                 )
-                .bind(&org_id)
+                .bind(org_id)
                 .bind(&ca.cert_pem)
                 .bind(&ca.key_pem)
                 .execute(pool)

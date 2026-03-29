@@ -247,9 +247,9 @@ pub async fn suggest_dr_hostname(
         ORDER BY priority DESC";
 
     let rules: Vec<PatternRuleRow> = sqlx::query_as(rules_sql)
-    .bind(org_id)
-    .fetch_all(pool)
-    .await?;
+        .bind(org_id)
+        .fetch_all(pool)
+        .await?;
 
     for rule in rules {
         if let Ok(regex) = regex::Regex::new(&rule.search_pattern) {
