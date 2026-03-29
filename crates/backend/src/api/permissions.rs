@@ -639,11 +639,20 @@ pub async fn revoke_share_link(
         return Err(ApiError::Forbidden);
     }
 
+    #[cfg(feature = "postgres")]
     let result = sqlx::query(
         "UPDATE app_share_links SET is_active = false WHERE id = $1 AND application_id = $2",
     )
     .bind(link_id)
     .bind(app_id)
+    .execute(&state.db)
+    .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query(
+        "UPDATE app_share_links SET is_active = 0 WHERE id = $1 AND application_id = $2",
+    )
+    .bind(DbUuid::from(link_id))
+    .bind(DbUuid::from(app_id))
     .execute(&state.db)
     .await?;
 
@@ -745,12 +754,26 @@ pub async fn get_share_link_info(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
+    #[cfg(feature = "postgres")]
     let link = sqlx::query_as::<_, (DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32, String)>(
         r#"
         SELECT sl.application_id, sl.permission_level, sl.expires_at, sl.max_uses, sl.use_count, a.name
         FROM app_share_links sl
         JOIN applications a ON a.id = sl.application_id
         WHERE sl.token = $1 AND sl.is_active = true
+        "#,
+    )
+    .bind(&token)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let link = sqlx::query_as::<_, (DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32, String)>(
+        r#"
+        SELECT sl.application_id, sl.permission_level, sl.expires_at, sl.max_uses, sl.use_count, a.name
+        FROM app_share_links sl
+        JOIN applications a ON a.id = sl.application_id
+        WHERE sl.token = $1 AND sl.is_active = 1
         "#,
     )
     .bind(&token)

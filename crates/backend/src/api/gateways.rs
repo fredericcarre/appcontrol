@@ -1038,8 +1038,18 @@ pub async fn verify_agent_cert_pinning(
     agent_id: DbUuid,
     presented_fingerprint: &str,
 ) -> bool {
+    #[cfg(feature = "postgres")]
     let stored: Option<Option<String>> = sqlx::query_scalar(
         "SELECT certificate_fingerprint FROM agents WHERE id = $1 AND is_active = true AND identity_verified = true",
+    )
+    .bind(agent_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let stored: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT certificate_fingerprint FROM agents WHERE id = $1 AND is_active = 1 AND identity_verified = 1",
     )
     .bind(agent_id)
     .fetch_optional(db)
