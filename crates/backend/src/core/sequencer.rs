@@ -229,15 +229,15 @@ async fn execute_start_internal(
                         SUM(CASE WHEN current_state = 'FAILED' THEN 1 ELSE 0 END) as failed \
                      FROM components WHERE application_id = $1";
                 let counts: StateCount = sqlx::query_as(count_sql)
-                .bind(ref_app_id)
-                .fetch_one(&state.db)
-                .await
-                .unwrap_or(StateCount {
-                    total: 0,
-                    running: 0,
-                    degraded: 0,
-                    failed: 0,
-                });
+                    .bind(ref_app_id)
+                    .fetch_one(&state.db)
+                    .await
+                    .unwrap_or(StateCount {
+                        total: 0,
+                        running: 0,
+                        degraded: 0,
+                        failed: 0,
+                    });
 
                 // Aggregate state logic:
                 // - FAILED if any component is FAILED

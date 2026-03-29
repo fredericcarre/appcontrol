@@ -754,18 +754,16 @@ pub async fn update_app(
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let app = {
-        sqlx::query(
-            &format!(
-                "UPDATE applications SET
+        sqlx::query(&format!(
+            "UPDATE applications SET
                     name = COALESCE($2, name),
                     description = COALESCE($3, description),
                     site_id = COALESCE($4, site_id),
                     tags = COALESCE($5, tags),
                     updated_at = {}
                 WHERE id = $1 AND organization_id = $6",
-                crate::db::sql::now()
-            ),
-        )
+            crate::db::sql::now()
+        ))
         .bind(DbUuid::from(id))
         .bind(&body.name)
         .bind(&body.description)

@@ -14,20 +14,37 @@ pub async fn log_action(
 ) -> Result<Uuid, sqlx::Error> {
     let user_id: Uuid = user_id.into();
     let resource_id: Uuid = resource_id.into();
+
+    #[cfg(feature = "postgres")]
     let row = sqlx::query_scalar::<_, DbUuid>(
-        r#"
-        INSERT INTO action_log (user_id, action, resource_type, resource_id, details, status)
-        VALUES ($1, $2, $3, $4, $5, 'in_progress')
-        RETURNING id
-        "#,
+        "INSERT INTO action_log (user_id, action, resource_type, resource_id, details, status) \
+         VALUES ($1, $2, $3, $4, $5, 'in_progress') RETURNING id",
     )
     .bind(user_id)
     .bind(action)
     .bind(resource_type)
     .bind(resource_id)
-    .bind(details)
+    .bind(&details)
     .fetch_one(pool)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let row = {
+        let id = DbUuid::from(Uuid::new_v4());
+        sqlx::query(
+            "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details, status) \
+             VALUES ($1, $2, $3, $4, $5, $6, 'in_progress')",
+        )
+        .bind(id)
+        .bind(DbUuid::from(user_id))
+        .bind(action)
+        .bind(resource_type)
+        .bind(DbUuid::from(resource_id))
+        .bind(serde_json::to_string(&details).unwrap_or_else(|_| "{}".to_string()))
+        .execute(pool)
+        .await?;
+        id
+    };
 
     Ok(row.into_inner())
 }
@@ -42,7 +59,10 @@ pub async fn complete_action_success(
         "UPDATE action_log SET status = 'success', completed_at = {} WHERE id = $1",
         db::sql::now()
     );
-    sqlx::query(&sql).bind(action_id).execute(pool).await?;
+    sqlx::query(&sql)
+        .bind(DbUuid::from(action_id))
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
@@ -59,7 +79,7 @@ pub async fn complete_action_failed(
         db::sql::now()
     );
     sqlx::query(&sql)
-        .bind(action_id)
+        .bind(DbUuid::from(action_id))
         .bind(error_message)
         .execute(pool)
         .await?;
@@ -77,7 +97,10 @@ pub async fn complete_action_cancelled(
         "UPDATE action_log SET status = 'cancelled', completed_at = {} WHERE id = $1",
         db::sql::now()
     );
-    sqlx::query(&sql).bind(action_id).execute(pool).await?;
+    sqlx::query(&sql)
+        .bind(DbUuid::from(action_id))
+        .execute(pool)
+        .await?;
 
     Ok(())
 }

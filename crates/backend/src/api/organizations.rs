@@ -231,19 +231,19 @@ pub async fn update_organization(
 
     #[cfg(feature = "postgres")]
     let org = sqlx::query_as::<_, OrgRow>(&update_org_sql)
-    .bind(id)
-    .bind(&req.name)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+        .bind(id)
+        .bind(&req.name)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let org = sqlx::query_as::<_, OrgRow>(&update_org_sql)
-    .bind(DbUuid::from(id))
-    .bind(&req.name)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+        .bind(DbUuid::from(id))
+        .bind(&req.name)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
 
     Ok(Json(json!(org)))
 }

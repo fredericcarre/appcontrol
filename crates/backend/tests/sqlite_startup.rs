@@ -580,18 +580,21 @@ async fn test_sqlite_startup_full() {
     let components = vec![
         (
             "Oracle-DB",
+            "database",
             "check_oracle.sh",
             "start_oracle.sh",
             "stop_oracle.sh",
         ),
         (
             "Tomcat-App",
+            "appserver",
             "check_tomcat.sh",
             "start_tomcat.sh",
             "stop_tomcat.sh",
         ),
         (
             "Apache-Front",
+            "webfront",
             "check_apache.sh",
             "start_apache.sh",
             "stop_apache.sh",
@@ -601,12 +604,13 @@ async fn test_sqlite_startup_full() {
     let mut component_ids: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
 
-    for (name, check, start, stop) in &components {
+    for (name, comp_type, check, start, stop) in &components {
         let resp = client
             .post(format!("{}/api/v1/apps/{}/components", api_url, app_id))
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({
                 "name": name,
+                "component_type": comp_type,
                 "hostname": format!("srv-{}", name.to_lowercase().replace('-', "")),
                 "check_cmd": check,
                 "start_cmd": start,

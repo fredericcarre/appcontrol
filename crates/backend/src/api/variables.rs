@@ -208,25 +208,25 @@ pub async fn update_variable(
 
     #[cfg(feature = "postgres")]
     let variable = sqlx::query_as::<_, VariableRow>(&update_var_sql)
-    .bind(app_id)
-    .bind(var_id)
-    .bind(&body.value)
-    .bind(&body.description)
-    .bind(body.is_secret)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+        .bind(app_id)
+        .bind(var_id)
+        .bind(&body.value)
+        .bind(&body.description)
+        .bind(body.is_secret)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let variable = sqlx::query_as::<_, VariableRow>(&update_var_sql)
-    .bind(DbUuid::from(app_id))
-    .bind(DbUuid::from(var_id))
-    .bind(&body.value)
-    .bind(&body.description)
-    .bind(body.is_secret)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+        .bind(DbUuid::from(app_id))
+        .bind(DbUuid::from(var_id))
+        .bind(&body.value)
+        .bind(&body.description)
+        .bind(body.is_secret)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
 
     Ok(Json(json!(variable)))
 }
