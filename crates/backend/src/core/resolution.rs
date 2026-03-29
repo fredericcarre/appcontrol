@@ -235,14 +235,18 @@ pub async fn suggest_dr_hostname(
     org_id: DbUuid,
     primary_hostname: &str,
 ) -> Result<Option<String>, sqlx::Error> {
-    let rules: Vec<PatternRuleRow> = sqlx::query_as(
-        r#"
-        SELECT search_pattern, replace_pattern
-        FROM dr_pattern_rules
-        WHERE organization_id = $1 AND is_active = true
-        ORDER BY priority DESC
-        "#,
-    )
+    #[cfg(feature = "postgres")]
+    let rules_sql: &str = "SELECT search_pattern, replace_pattern \
+        FROM dr_pattern_rules \
+        WHERE organization_id = $1 AND is_active = true \
+        ORDER BY priority DESC";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let rules_sql: &str = "SELECT search_pattern, replace_pattern \
+        FROM dr_pattern_rules \
+        WHERE organization_id = $1 AND is_active = 1 \
+        ORDER BY priority DESC";
+
+    let rules: Vec<PatternRuleRow> = sqlx::query_as(rules_sql)
     .bind(org_id)
     .fetch_all(pool)
     .await?;

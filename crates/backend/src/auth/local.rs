@@ -88,10 +88,17 @@ async fn demo_login(
     state: &AppState,
     req: &LoginRequest,
 ) -> Result<Json<LoginResponse>, (StatusCode, Json<ErrorResponse>)> {
+    #[cfg(feature = "postgres")]
+    let is_active_check: &str = "u.is_active = true";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let is_active_check: &str = "u.is_active = 1";
+
     let user: Option<(Uuid, Uuid, String, String, String)> = sqlx::query_as(
-        r#"SELECT u.id, u.organization_id, u.display_name, u.role, o.name
-           FROM users u JOIN organizations o ON o.id = u.organization_id
-           WHERE u.email = $1 AND u.is_active = true"#,
+        &format!(
+            "SELECT u.id, u.organization_id, u.display_name, u.role, o.name \
+             FROM users u JOIN organizations o ON o.id = u.organization_id \
+             WHERE u.email = $1 AND {is_active_check}"
+        ),
     )
     .bind(&req.email)
     .fetch_optional(&state.db)
@@ -237,9 +244,12 @@ pub async fn demo_users(State(state): State<Arc<AppState>>) -> Result<impl IntoR
     }
 
     // Return users from DB instead of hardcoded list
-    let users: Vec<(String, String)> = sqlx::query_as(
-        "SELECT email, role FROM users WHERE is_active = true ORDER BY role",
-    )
+    #[cfg(feature = "postgres")]
+    let q = "SELECT email, role FROM users WHERE is_active = true ORDER BY role";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let q = "SELECT email, role FROM users WHERE is_active = 1 ORDER BY role";
+
+    let users: Vec<(String, String)> = sqlx::query_as(q)
     .fetch_all(&state.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

@@ -1632,8 +1632,19 @@ pub async fn list_check_events(
 /// share an IP, the first one (by created_at) wins.
 pub async fn resolve_host_to_agent(pool: &crate::db::DbPool, host: &str) -> Option<Uuid> {
     // 1. Try exact hostname match
+    #[cfg(feature = "postgres")]
     let by_hostname = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM agents WHERE hostname = $1 AND is_active = true ORDER BY created_at LIMIT 1",
+    )
+    .bind(host)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let by_hostname = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT id FROM agents WHERE hostname = $1 AND is_active = 1 ORDER BY created_at LIMIT 1",
     )
     .bind(host)
     .fetch_optional(pool)
@@ -1646,15 +1657,27 @@ pub async fn resolve_host_to_agent(pool: &crate::db::DbPool, host: &str) -> Opti
     }
 
     // 2. Try IP address match in JSONB array
-    sqlx::query_scalar::<_, DbUuid>(
+    #[cfg(feature = "postgres")]
+    let by_ip = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM agents WHERE ip_addresses ? $1 AND is_active = true ORDER BY created_at LIMIT 1",
     )
     .bind(host)
     .fetch_optional(pool)
     .await
     .ok()
-    .flatten()
-    .map(|x| x.into_inner())
+    .flatten();
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let by_ip = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT id FROM agents WHERE EXISTS(SELECT 1 FROM json_each(ip_addresses) WHERE value = $1) AND is_active = 1 ORDER BY created_at LIMIT 1",
+    )
+    .bind(host)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    by_ip.map(|x| x.into_inner())
 }
 
 /// Called when an agent registers: resolve all components that reference

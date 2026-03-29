@@ -170,10 +170,19 @@ pub async fn trigger_all(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let agent_ids = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM agents WHERE organization_id = $1 AND is_active = true",
     )
     .bind(user.organization_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let agent_ids = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT id FROM agents WHERE organization_id = $1 AND is_active = 1",
+    )
+    .bind(DbUuid::from(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -252,8 +261,17 @@ pub async fn correlate(
         std::collections::HashMap::new();
     for (agent_id, hostname, _) in &reports {
         agent_hostnames.insert(agent_id.into_inner(), hostname.clone());
+        #[cfg(feature = "postgres")]
         let ips = sqlx::query_scalar::<_, serde_json::Value>(
             "SELECT COALESCE(ip_addresses, '[]'::jsonb) FROM agents WHERE id = $1",
+        )
+        .bind(agent_id)
+        .fetch_optional(&state.db)
+        .await?;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let ips = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT COALESCE(ip_addresses, '[]') FROM agents WHERE id = $1",
         )
         .bind(agent_id)
         .fetch_optional(&state.db)
@@ -1076,6 +1094,7 @@ pub async fn get_draft(
     let (id, name, status, inferred_at) = draft.ok_or(ApiError::NotFound)?;
 
     #[allow(clippy::type_complexity)]
+    #[cfg(feature = "postgres")]
     let components = sqlx::query_as::<
         _,
         (
@@ -1101,6 +1120,40 @@ pub async fn get_draft(
                 command_confidence, command_source,
                 COALESCE(config_files, '[]'::jsonb),
                 COALESCE(log_files, '[]'::jsonb),
+                matched_service
+         FROM discovery_draft_components WHERE draft_id = $1",
+    )
+    .bind(draft_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[allow(clippy::type_complexity)]
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let components = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            serde_json::Value,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            serde_json::Value,
+            serde_json::Value,
+            Option<String>,
+        ),
+    >(
+        "SELECT id, suggested_name, process_name, host, component_type, metadata,
+                check_cmd, start_cmd, stop_cmd, restart_cmd,
+                command_confidence, command_source,
+                COALESCE(config_files, '[]'),
+                COALESCE(log_files, '[]'),
                 matched_service
          FROM discovery_draft_components WHERE draft_id = $1",
     )
@@ -1532,6 +1585,7 @@ pub async fn apply_draft(
 
     // Create components WITH operational commands
     #[allow(clippy::type_complexity)]
+    #[cfg(feature = "postgres")]
     let draft_comps = sqlx::query_as::<
         _,
         (
@@ -1552,6 +1606,34 @@ pub async fn apply_draft(
                 check_cmd, start_cmd, stop_cmd,
                 COALESCE(config_files, '[]'::jsonb),
                 COALESCE(log_files, '[]'::jsonb)
+         FROM discovery_draft_components WHERE draft_id = $1",
+    )
+    .bind(draft_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[allow(clippy::type_complexity)]
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let draft_comps = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            serde_json::Value,
+            serde_json::Value,
+        ),
+    >(
+        "SELECT id, suggested_name, process_name, host, component_type, agent_id,
+                check_cmd, start_cmd, stop_cmd,
+                COALESCE(config_files, '[]'),
+                COALESCE(log_files, '[]')
          FROM discovery_draft_components WHERE draft_id = $1",
     )
     .bind(draft_id)
@@ -2107,6 +2189,7 @@ pub async fn compare_snapshots(
     }
 
     // Fetch both snapshots' correlation results
+    #[cfg(feature = "postgres")]
     let snap1 = sqlx::query_as::<_, (serde_json::Value,)>(
         "SELECT COALESCE(correlation_result, '{}'::jsonb)
          FROM scheduled_snapshots
@@ -2117,8 +2200,31 @@ pub async fn compare_snapshots(
     .fetch_optional(&state.db)
     .await?;
 
+    #[cfg(feature = "postgres")]
     let snap2 = sqlx::query_as::<_, (serde_json::Value,)>(
         "SELECT COALESCE(correlation_result, '{}'::jsonb)
+         FROM scheduled_snapshots
+         WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(body.snapshot_id_2)
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let snap1 = sqlx::query_as::<_, (serde_json::Value,)>(
+        "SELECT COALESCE(correlation_result, '{}')
+         FROM scheduled_snapshots
+         WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(body.snapshot_id_1)
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let snap2 = sqlx::query_as::<_, (serde_json::Value,)>(
+        "SELECT COALESCE(correlation_result, '{}')
          FROM scheduled_snapshots
          WHERE id = $1 AND organization_id = $2",
     )

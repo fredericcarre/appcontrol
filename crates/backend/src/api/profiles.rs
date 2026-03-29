@@ -371,10 +371,19 @@ pub async fn activate_profile(
     }
 
     // Get currently active profile name for logging
+    #[cfg(feature = "postgres")]
     let current_active: Option<(String,)> = sqlx::query_as(
         "SELECT name FROM binding_profiles WHERE application_id = $1 AND is_active = true",
     )
     .bind(app_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let current_active: Option<(String,)> = sqlx::query_as(
+        "SELECT name FROM binding_profiles WHERE application_id = $1 AND is_active = 1",
+    )
+    .bind(DbUuid::from(app_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -394,13 +403,27 @@ pub async fn activate_profile(
     .await?;
 
     // Deactivate all profiles
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE binding_profiles SET is_active = false WHERE application_id = $1")
         .bind(app_id)
         .execute(&state.db)
         .await?;
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE binding_profiles SET is_active = 0 WHERE application_id = $1")
+        .bind(DbUuid::from(app_id))
+        .execute(&state.db)
+        .await?;
+
     // Activate the selected profile
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE binding_profiles SET is_active = true WHERE id = $1")
+        .bind(profile.id)
+        .execute(&state.db)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE binding_profiles SET is_active = 1 WHERE id = $1")
         .bind(profile.id)
         .execute(&state.db)
         .await?;

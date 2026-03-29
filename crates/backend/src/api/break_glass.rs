@@ -156,9 +156,21 @@ pub async fn activate_break_glass(
     let password_hash = hash_password(&body.password);
 
     // Validate credentials
+    #[cfg(feature = "postgres")]
     let account = sqlx::query_as::<_, (DbUuid, DbUuid)>(
         "SELECT id, organization_id FROM break_glass_accounts \
          WHERE username = $1 AND password_hash = $2 AND is_active = true",
+    )
+    .bind(&body.username)
+    .bind(&password_hash)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::Unauthorized)?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let account = sqlx::query_as::<_, (DbUuid, DbUuid)>(
+        "SELECT id, organization_id FROM break_glass_accounts \
+         WHERE username = $1 AND password_hash = $2 AND is_active = 1",
     )
     .bind(&body.username)
     .bind(&password_hash)

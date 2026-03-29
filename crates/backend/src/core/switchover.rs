@@ -2,7 +2,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::db::DbUuid;
+use crate::db::{DbJson, DbUuid};
 use crate::AppState;
 
 #[derive(Debug, thiserror::Error)]

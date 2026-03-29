@@ -110,6 +110,35 @@ pub async fn dispatch_event(
 
     // Find all enabled webhook endpoints that subscribe to this event type,
     // scoped to the application's organization or the specific application.
+    #[cfg(feature = "postgres")]
+    let webhook_sql: &str = r#"
+        SELECT w.id, w.url, w.secret, w.headers
+        FROM webhook_endpoints w
+        JOIN applications a ON a.organization_id = w.organization_id
+        WHERE a.id = $1
+          AND w.is_enabled = true
+          AND (w.application_id IS NULL OR w.application_id = $1)
+          AND w.event_types @> $2::jsonb
+        "#;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let webhook_sql: &str = r#"
+        SELECT w.id, w.url, w.secret, w.headers
+        FROM webhook_endpoints w
+        JOIN applications a ON a.organization_id = w.organization_id
+        WHERE a.id = $1
+          AND w.is_enabled = 1
+          AND (w.application_id IS NULL OR w.application_id = $1)
+          AND EXISTS (
+              SELECT 1 FROM json_each(w.event_types)
+              WHERE json_each.value = $2
+          )
+        "#;
+
+    #[cfg(feature = "postgres")]
+    let event_bind = serde_json::json!([&event_type]);
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let event_bind = serde_json::json!(&event_type);
+
     let webhooks = sqlx::query_as::<
         _,
         (
@@ -118,19 +147,9 @@ pub async fn dispatch_event(
             Option<String>,
             Option<sqlx::types::Json<serde_json::Value>>,
         ),
-    >(
-        r#"
-        SELECT w.id, w.url, w.secret, w.headers
-        FROM webhook_endpoints w
-        JOIN applications a ON a.organization_id = w.organization_id
-        WHERE a.id = $1
-          AND w.is_enabled = true
-          AND (w.application_id IS NULL OR w.application_id = $1)
-          AND w.event_types @> $2::jsonb
-        "#,
-    )
+    >(webhook_sql)
     .bind(app_id)
-    .bind(serde_json::json!([&event_type]))
+    .bind(event_bind)
     .fetch_all(pool)
     .await
     .map_err(|e| NotificationError::Database(e.to_string()))?;

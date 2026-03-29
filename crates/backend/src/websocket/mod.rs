@@ -631,6 +631,7 @@ async fn process_gateway_message(
 
             // ── Gateway active check ──
             // If the gateway is blocked (is_active = false), reject the connection.
+            #[cfg(feature = "postgres")]
             let is_active: bool =
                 sqlx::query_scalar("SELECT COALESCE(is_active, true) FROM gateways WHERE id = $1")
                     .bind(gateway_id)
@@ -639,6 +640,17 @@ async fn process_gateway_message(
                     .ok()
                     .flatten()
                     .unwrap_or(true); // Default to active if gateway doesn't exist (first-time registration)
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let is_active: bool = {
+                let val: Option<i32> =
+                    sqlx::query_scalar("SELECT COALESCE(is_active, 1) FROM gateways WHERE id = $1")
+                        .bind(DbUuid::from(gateway_id))
+                        .fetch_optional(&state.db)
+                        .await
+                        .ok()
+                        .flatten();
+                val.unwrap_or(1) != 0
+            };
 
             if !is_active {
                 tracing::warn!(
@@ -683,13 +695,28 @@ async fn process_gateway_message(
                 site_id
             } else if let Some(ref z) = zone {
                 // Backward compat: look up site by code matching zone
-                sqlx::query_scalar("SELECT id FROM sites WHERE organization_id = $1 AND code = $2")
-                    .bind(org_id)
-                    .bind(z)
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten()
+                #[cfg(feature = "postgres")]
+                let result: Option<uuid::Uuid> =
+                    sqlx::query_scalar("SELECT id FROM sites WHERE organization_id = $1 AND code = $2")
+                        .bind(org_id)
+                        .bind(z)
+                        .fetch_optional(&state.db)
+                        .await
+                        .ok()
+                        .flatten();
+                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+                let result: Option<uuid::Uuid> = {
+                    let row: Option<DbUuid> =
+                        sqlx::query_scalar("SELECT id FROM sites WHERE organization_id = $1 AND code = $2")
+                            .bind(DbUuid::from(org_id))
+                            .bind(z)
+                            .fetch_optional(&state.db)
+                            .await
+                            .ok()
+                            .flatten();
+                    row.map(|u| u.into_inner())
+                };
+                result
             } else {
                 None
             };
