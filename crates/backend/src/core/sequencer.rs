@@ -4,8 +4,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::dag::{self, Dag};
-use crate::AppState;
 use crate::db::DbUuid;
+use crate::AppState;
 use appcontrol_common::{BackendMessage, ComponentState};
 
 #[derive(Debug, thiserror::Error)]
@@ -77,7 +77,10 @@ pub async fn build_start_plan(
 /// - Component STOPPED/UNKNOWN → start normally
 /// - Components at the same level start in parallel
 /// - For application-type components, starts the referenced app first
-pub async fn execute_start(state: &Arc<AppState>, app_id: impl Into<Uuid>) -> Result<(), SequencerError> {
+pub async fn execute_start(
+    state: &Arc<AppState>,
+    app_id: impl Into<Uuid>,
+) -> Result<(), SequencerError> {
     let app_id: Uuid = app_id.into();
 
     // Use internal function with visited set to prevent infinite recursion on cyclic app references
@@ -318,7 +321,10 @@ async fn execute_start_internal(
 /// Execute a full stop sequence (reverse DAG order).
 /// Only stops components that are RUNNING or DEGRADED.
 /// For application-type components, propagates stop to the referenced app.
-pub async fn execute_stop(state: &Arc<AppState>, app_id: impl Into<Uuid>) -> Result<(), SequencerError> {
+pub async fn execute_stop(
+    state: &Arc<AppState>,
+    app_id: impl Into<Uuid>,
+) -> Result<(), SequencerError> {
     let app_id: Uuid = app_id.into();
 
     // Use internal function with visited set to prevent infinite recursion on cyclic app references
@@ -612,7 +618,10 @@ pub async fn start_single_component(
         // Revert to previous state since command couldn't be sent
         let _ = super::fsm::transition_component(state, component_id, ComponentState::Failed).await;
         let name = get_component_name(&state.db, component_id).await;
-        return Err(SequencerError::GatewayUnavailable { agent_id: *agent_id, name });
+        return Err(SequencerError::GatewayUnavailable {
+            agent_id: *agent_id,
+            name,
+        });
     }
 
     tracing::info!(
@@ -789,7 +798,10 @@ pub async fn stop_single_component(
         // Revert to previous state since command couldn't be sent
         let _ = super::fsm::transition_component(state, component_id, ComponentState::Failed).await;
         let name = get_component_name(&state.db, component_id).await;
-        return Err(SequencerError::GatewayUnavailable { agent_id: *agent_id, name });
+        return Err(SequencerError::GatewayUnavailable {
+            agent_id: *agent_id,
+            name,
+        });
     }
 
     tracing::info!(
@@ -1198,13 +1210,14 @@ pub async fn stop_with_dependents(
     component_id: Uuid,
 ) -> Result<(), SequencerError> {
     // Get the application ID for this component
-    let app_id: Uuid =
-        sqlx::query_scalar::<_, crate::db::DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
-            .fetch_one(&state.db)
-            .await
-            .map_err(|e| SequencerError::Database(e.to_string()))?
-            .into_inner();
+    let app_id: Uuid = sqlx::query_scalar::<_, crate::db::DbUuid>(
+        "SELECT application_id FROM components WHERE id = $1",
+    )
+    .bind(component_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| SequencerError::Database(e.to_string()))?
+    .into_inner();
 
     // Build the DAG for the application
     let dag = super::dag::build_dag(&state.db, app_id)

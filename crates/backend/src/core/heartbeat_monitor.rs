@@ -4,10 +4,10 @@
 //! This distinguishes "check failed" (FAILED — agent ran the check, it returned error)
 //! from "agent unavailable" (UNREACHABLE — no heartbeat, we don't know the real state).
 
-use std::sync::Arc;
-use std::time::Duration;
 #[cfg(feature = "postgres")]
 use crate::db::DbUuid;
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::AppState;
 

@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
+use crate::db::DbUuid;
 #[cfg(feature = "postgres")]
 use crate::db::UuidArray;
-use crate::db::DbUuid;
 use crate::AppState;
 
 /// Row returned when querying for due schedules.

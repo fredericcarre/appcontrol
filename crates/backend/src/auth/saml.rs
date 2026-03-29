@@ -55,8 +55,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::AuthUser;
-use crate::AppState;
 use crate::db::DbUuid;
+use crate::AppState;
 
 /// SAML SP configuration.
 #[derive(Debug, Clone)]

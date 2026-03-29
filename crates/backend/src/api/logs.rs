@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::middleware::audit;
 use crate::AppState;
@@ -149,8 +149,13 @@ pub async fn list_log_sources(
     Path(component_id): Path<Uuid>,
 ) -> Result<Json<Vec<LogSourceResponse>>, ApiError> {
     // Get component and check permission
-    let component =
-        get_component_with_permission(&state, &user, DbUuid::from(component_id), PermissionLevel::View).await?;
+    let component = get_component_with_permission(
+        &state,
+        &user,
+        DbUuid::from(component_id),
+        PermissionLevel::View,
+    )
+    .await?;
 
     let rows = sqlx::query_as::<_, LogSourceRow>(
         r#"
@@ -195,8 +200,13 @@ pub async fn create_log_source(
     Json(req): Json<CreateLogSourceRequest>,
 ) -> Result<(StatusCode, Json<LogSourceResponse>), ApiError> {
     // Check edit permission
-    let component =
-        get_component_with_permission(&state, &user, DbUuid::from(component_id), PermissionLevel::Edit).await?;
+    let component = get_component_with_permission(
+        &state,
+        &user,
+        DbUuid::from(component_id),
+        PermissionLevel::Edit,
+    )
+    .await?;
 
     // Validate source type
     if !["file", "event_log", "command"].contains(&req.source_type.as_str()) {
@@ -441,9 +451,13 @@ pub async fn get_component_logs(
     Query(query): Query<GetLogsQuery>,
 ) -> Result<Json<LogsResponse>, ApiError> {
     // Check operate permission (minimum for log access)
-    let component =
-        get_component_with_permission(&state, &user, DbUuid::from(component_id), PermissionLevel::Operate)
-            .await?;
+    let component = get_component_with_permission(
+        &state,
+        &user,
+        DbUuid::from(component_id),
+        PermissionLevel::Operate,
+    )
+    .await?;
 
     let source_type: String;
     let source_name: String;
@@ -511,7 +525,10 @@ pub async fn get_component_logs(
         &state,
         &user,
         DbUuid::from(component_id),
-        query.source.as_ref().and_then(|s| Uuid::parse_str(s).ok().map(DbUuid::from)),
+        query
+            .source
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok().map(DbUuid::from)),
         &source_type,
         &source_name,
         &query,
@@ -541,9 +558,13 @@ pub async fn run_diagnostic_command(
     Path((component_id, command_name)): Path<(Uuid, String)>,
 ) -> Result<Json<DiagnosticCommandResponse>, ApiError> {
     // Check operate permission
-    let component =
-        get_component_with_permission(&state, &user, DbUuid::from(component_id), PermissionLevel::Operate)
-            .await?;
+    let component = get_component_with_permission(
+        &state,
+        &user,
+        DbUuid::from(component_id),
+        PermissionLevel::Operate,
+    )
+    .await?;
 
     // Find the command source
     let source = sqlx::query_as::<_, LogSourceRow>(

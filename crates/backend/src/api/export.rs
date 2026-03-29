@@ -20,8 +20,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -378,7 +378,7 @@ pub async fn export_app_json(
             param_type: p.param_type,
             enum_values: p.enum_values.and_then(|v| serde_json::from_value(v).ok()),
         };
-        params_by_cmd.entry(p.command_id.into()).or_default().push(param);
+        params_by_cmd.entry(p.command_id).or_default().push(param);
     }
 
     // Group custom commands by component ID
@@ -392,7 +392,7 @@ pub async fn export_app_json(
             parameters: params_by_cmd.remove(&cmd.id).unwrap_or_default(),
         };
         cmds_by_comp
-            .entry(cmd.component_id.into())
+            .entry(cmd.component_id)
             .or_default()
             .push(custom_cmd);
     }
@@ -420,7 +420,7 @@ pub async fn export_app_json(
             link_type: link.link_type,
         };
         links_by_comp
-            .entry(link.component_id.into())
+            .entry(link.component_id)
             .or_default()
             .push(link_export);
     }

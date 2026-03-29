@@ -9,8 +9,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::{validate_length, ApiError, OptionExt};
 use crate::middleware::audit::log_action;
 use crate::AppState;
@@ -56,7 +56,10 @@ pub struct UpdateInputParamRequest {
 }
 
 /// Resolve the application_id for a command through the component chain.
-async fn app_id_for_command(db: &crate::db::DbPool, command_id: impl Into<Uuid>) -> Result<Uuid, ApiError> {
+async fn app_id_for_command(
+    db: &crate::db::DbPool,
+    command_id: impl Into<Uuid>,
+) -> Result<Uuid, ApiError> {
     let command_id: Uuid = command_id.into();
     let id = sqlx::query_scalar::<_, DbUuid>(
         "SELECT c.application_id FROM component_commands cc \
@@ -252,8 +255,8 @@ mod tests {
         regex: Option<&str>,
     ) -> InputParamRow {
         InputParamRow {
-            id: Uuid::new_v4(),
-            command_id: Uuid::new_v4(),
+            id: DbUuid::new_v4(),
+            command_id: DbUuid::new_v4(),
             name: name.to_string(),
             description: None,
             default_value: default.map(|s| s.to_string()),

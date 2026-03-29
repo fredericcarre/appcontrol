@@ -10,8 +10,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
@@ -41,19 +41,27 @@ pub struct PreflightResult {
 /// Check if all agents for an application are reachable before starting
 pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult {
     // Get all components with their agent information
-    let components =
-        sqlx::query_as::<_, (DbUuid, String, Option<DbUuid>, Option<String>, Option<DbUuid>)>(
-            r#"
+    let components = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            String,
+            Option<DbUuid>,
+            Option<String>,
+            Option<DbUuid>,
+        ),
+    >(
+        r#"
         SELECT c.id, c.name, c.agent_id, a.hostname, a.gateway_id
         FROM components c
         LEFT JOIN agents a ON c.agent_id = a.id
         WHERE c.application_id = $1 AND c.is_optional = false
         "#,
-        )
-        .bind(app_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
 
     // Get connected agents and gateways from WebSocket hub
     let connected_agents: HashSet<Uuid> = state.ws_hub.connected_agent_ids().into_iter().collect();

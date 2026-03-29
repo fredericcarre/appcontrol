@@ -3,6 +3,7 @@
 //! Only platform super-admins can create and manage organizations.
 //! Each organization is an isolated tenant with its own PKI, users, sites, and apps.
 
+use crate::db::DbUuid;
 use axum::{
     extract::{Extension, Path, State},
     response::Json,
@@ -11,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
-use crate::db::DbUuid;
 
 use crate::auth::AuthUser;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};

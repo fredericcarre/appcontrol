@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::AppState;
 use crate::db::DbUuid;
+use crate::AppState;
 use appcontrol_common::{is_valid_transition, ComponentState};
 
 #[derive(Debug, thiserror::Error)]
@@ -85,7 +85,11 @@ async fn fetch_component_states(
     let rows: Vec<(String, String)> = q.fetch_all(pool).await?;
     Ok(rows
         .into_iter()
-        .filter_map(|(id_str, state)| Uuid::parse_str(&id_str).ok().map(|id| (DbUuid::from(id), state)))
+        .filter_map(|(id_str, state)| {
+            Uuid::parse_str(&id_str)
+                .ok()
+                .map(|id| (DbUuid::from(id), state))
+        })
         .collect())
 }
 

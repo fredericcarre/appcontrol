@@ -2,8 +2,8 @@ use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::AppState;
 use crate::db::DbUuid;
+use crate::AppState;
 use appcontrol_common::BackendMessage;
 
 /// Default timeout for rebuild commands (5 minutes).

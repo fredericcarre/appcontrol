@@ -17,8 +17,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -75,7 +75,7 @@ pub async fn get_estimates(
     let mut stats_map: HashMap<DbUuid, HashMap<String, ComponentStats>> = HashMap::new();
     if let Ok(rows) = stats {
         for (comp_id, cmd_type, sample_count, avg_ms, p50_ms, p95_ms, max_ms) in rows {
-            stats_map.entry(comp_id.into()).or_default().insert(
+            stats_map.entry(comp_id).or_default().insert(
                 cmd_type,
                 ComponentStats {
                     sample_count,

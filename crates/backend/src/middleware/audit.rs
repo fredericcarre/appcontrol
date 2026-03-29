@@ -33,7 +33,10 @@ pub async fn log_action(
 }
 
 /// Mark an action as successfully completed.
-pub async fn complete_action_success(pool: &DbPool, action_id: impl Into<Uuid>) -> Result<(), sqlx::Error> {
+pub async fn complete_action_success(
+    pool: &DbPool,
+    action_id: impl Into<Uuid>,
+) -> Result<(), sqlx::Error> {
     let action_id: Uuid = action_id.into();
     let sql = format!(
         "UPDATE action_log SET status = 'success', completed_at = {} WHERE id = $1",
@@ -65,7 +68,10 @@ pub async fn complete_action_failed(
 }
 
 /// Mark an action as cancelled.
-pub async fn complete_action_cancelled(pool: &DbPool, action_id: impl Into<Uuid>) -> Result<(), sqlx::Error> {
+pub async fn complete_action_cancelled(
+    pool: &DbPool,
+    action_id: impl Into<Uuid>,
+) -> Result<(), sqlx::Error> {
     let action_id: Uuid = action_id.into();
     let sql = format!(
         "UPDATE action_log SET status = 'cancelled', completed_at = {} WHERE id = $1",

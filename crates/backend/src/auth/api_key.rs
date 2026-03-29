@@ -1,6 +1,5 @@
 use crate::db::{self, DbPool, DbUuid};
 
-
 use super::AuthUser;
 
 /// Validate an API key (format: ac_XXXXX) and return the associated user.

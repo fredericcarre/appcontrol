@@ -3,6 +3,7 @@
 //! Schedules allow automating start/stop/restart operations on applications or components
 //! based on cron expressions. Use case: stop app at night, restart every morning.
 
+use crate::db::DbUuid;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -11,7 +12,6 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::db::DbUuid;
 
 use crate::auth::AuthUser;
 use crate::core::operation_scheduler::{
@@ -193,7 +193,7 @@ async fn get_target_info(
                 .flatten();
         (
             "application".to_string(),
-            DbUuid::from(app_id),
+            app_id,
             name.unwrap_or_else(|| app_id.to_string()),
         )
     } else if let Some(comp_id) = component_id {
@@ -206,7 +206,7 @@ async fn get_target_info(
                 .flatten();
         (
             "component".to_string(),
-            DbUuid::from(comp_id),
+            comp_id,
             name.unwrap_or_else(|| comp_id.to_string()),
         )
     } else {
@@ -321,7 +321,14 @@ pub async fn list_app_schedules(
 
     let responses: Vec<ScheduleResponse> = rows
         .into_iter()
-        .map(|row| row_to_response(row, "application".to_string(), app_id.into(), target_name.clone()))
+        .map(|row| {
+            row_to_response(
+                row,
+                "application".to_string(),
+                app_id.into(),
+                target_name.clone(),
+            )
+        })
         .collect();
 
     Ok(Json(responses))
@@ -520,7 +527,14 @@ pub async fn list_component_schedules(
 
     let responses: Vec<ScheduleResponse> = rows
         .into_iter()
-        .map(|row| row_to_response(row, "component".to_string(), comp_id.into(), target_name.clone()))
+        .map(|row| {
+            row_to_response(
+                row,
+                "component".to_string(),
+                comp_id.into(),
+                target_name.clone(),
+            )
+        })
         .collect();
 
     Ok(Json(responses))

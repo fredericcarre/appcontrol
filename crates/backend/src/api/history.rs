@@ -19,8 +19,8 @@ use uuid::Uuid;
 use appcontrol_common::PermissionLevel;
 
 use crate::auth::AuthUser;
-use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::AppState;
 
@@ -334,7 +334,11 @@ async fn fetch_initial_states(
     let rows: Vec<(String, String)> = q.fetch_all(db).await?;
     Ok(rows
         .into_iter()
-        .filter_map(|(id_str, state)| Uuid::parse_str(&id_str).ok().map(|id| (DbUuid::from(id), state)))
+        .filter_map(|(id_str, state)| {
+            Uuid::parse_str(&id_str)
+                .ok()
+                .map(|id| (DbUuid::from(id), state))
+        })
         .collect())
 }
 
@@ -955,11 +959,11 @@ mod tests {
     fn test_calculate_snapshots_basic() {
         let components = vec![
             ComponentRow {
-                id: Uuid::new_v4(),
+                id: DbUuid::new_v4(),
                 name: "Database".to_string(),
             },
             ComponentRow {
-                id: Uuid::new_v4(),
+                id: DbUuid::new_v4(),
                 name: "Backend".to_string(),
             },
         ];

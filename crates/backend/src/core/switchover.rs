@@ -2,8 +2,8 @@ use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::AppState;
 use crate::db::DbUuid;
+use crate::AppState;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SwitchoverError {
@@ -629,8 +629,10 @@ async fn execute_start_target(
             }
         } else if !swapped_component_ids.is_empty() {
             // Fallback: just start swapped components if impacted_ids not found
-            let component_set: std::collections::HashSet<Uuid> =
-                swapped_component_ids.iter().map(|id| id.into_inner()).collect();
+            let component_set: std::collections::HashSet<Uuid> = swapped_component_ids
+                .iter()
+                .map(|id| id.into_inner())
+                .collect();
             super::sequencer::execute_start_subset(state, app_id, &component_set).await?;
         }
     } else {
@@ -655,7 +657,10 @@ async fn execute_start_target(
 
 /// Advance to the next phase with real orchestration.
 /// The phase that's currently "in_progress" is the one we execute.
-pub async fn advance_phase(state: &Arc<AppState>, app_id: impl Into<Uuid>) -> Result<Value, SwitchoverError> {
+pub async fn advance_phase(
+    state: &Arc<AppState>,
+    app_id: impl Into<Uuid>,
+) -> Result<Value, SwitchoverError> {
     let app_id: Uuid = app_id.into();
 
     let pool = &state.db;
@@ -786,7 +791,10 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: impl Into<Uuid>) -> Re
 }
 
 /// Rollback the switchover.
-pub async fn rollback(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Result<Value, SwitchoverError> {
+pub async fn rollback(
+    pool: &crate::db::DbPool,
+    app_id: impl Into<Uuid>,
+) -> Result<Value, SwitchoverError> {
     let app_id: Uuid = app_id.into();
 
     let current = sqlx::query_as::<_, (DbUuid, String)>(
@@ -828,7 +836,10 @@ pub async fn rollback(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Resu
 }
 
 /// Commit the switchover (final phase).
-pub async fn commit(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Result<Value, SwitchoverError> {
+pub async fn commit(
+    pool: &crate::db::DbPool,
+    app_id: impl Into<Uuid>,
+) -> Result<Value, SwitchoverError> {
     let app_id: Uuid = app_id.into();
 
     let current = sqlx::query_as::<_, (DbUuid, String)>(
@@ -871,7 +882,10 @@ pub async fn commit(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Result
 }
 
 /// Get switchover status.
-pub async fn get_status(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Result<Value, SwitchoverError> {
+pub async fn get_status(
+    pool: &crate::db::DbPool,
+    app_id: impl Into<Uuid>,
+) -> Result<Value, SwitchoverError> {
     let app_id: Uuid = app_id.into();
 
     let logs = sqlx::query_as::<_, (DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(

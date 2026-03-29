@@ -81,7 +81,6 @@ impl AsRef<Uuid> for DbUuid {
     }
 }
 
-
 impl std::str::FromStr for DbUuid {
     type Err = uuid::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {

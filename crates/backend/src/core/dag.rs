@@ -24,7 +24,7 @@ impl Dag {
     }
 
     pub fn add_node(&mut self, id: impl Into<Uuid>) {
-    let id: Uuid = id.into();
+        let id: Uuid = id.into();
 
         self.nodes.insert(id);
         self.adjacency.entry(id).or_default();
@@ -32,8 +32,8 @@ impl Dag {
 
     /// Add an edge: `from` depends on `to` (to must start before from).
     pub fn add_edge(&mut self, from: impl Into<Uuid>, to: impl Into<Uuid>) {
-    let from: Uuid = from.into();
-    let to: Uuid = to.into();
+        let from: Uuid = from.into();
+        let to: Uuid = to.into();
 
         self.nodes.insert(from);
         self.nodes.insert(to);
@@ -103,7 +103,7 @@ impl Dag {
     /// Returns the set of component IDs that `component_id` depends on (directly or transitively).
     /// Does NOT include `component_id` itself.
     pub fn find_all_dependencies(&self, component_id: impl Into<Uuid>) -> HashSet<Uuid> {
-    let component_id: Uuid = component_id.into();
+        let component_id: Uuid = component_id.into();
 
         let mut deps = HashSet::new();
         let mut stack = vec![component_id];
@@ -126,7 +126,7 @@ impl Dag {
     /// Does NOT include `component_id` itself.
     /// These are the components that must be stopped BEFORE stopping `component_id`.
     pub fn find_all_dependents(&self, component_id: impl Into<Uuid>) -> HashSet<Uuid> {
-    let component_id: Uuid = component_id.into();
+        let component_id: Uuid = component_id.into();
 
         // Build reverse adjacency: for each node, who depends on it?
         let mut reverse: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
@@ -173,8 +173,8 @@ impl Dag {
     /// Check if adding edge from->to (from depends on to) would create a cycle.
     /// A cycle exists if `to` can already reach `from` through existing dependency edges.
     pub fn would_create_cycle(&self, from: impl Into<Uuid>, to: impl Into<Uuid>) -> bool {
-    let from: Uuid = from.into();
-    let to: Uuid = to.into();
+        let from: Uuid = from.into();
+        let to: Uuid = to.into();
 
         // Check: can we reach `from` starting from `to` via the dependency graph?
         let mut visited = HashSet::new();
@@ -201,12 +201,13 @@ impl Dag {
 pub async fn build_dag(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Result<Dag, DagError> {
     let app_id: Uuid = app_id.into();
 
-    let components =
-        sqlx::query_as::<_, (crate::db::DbUuid,)>("SELECT id FROM components WHERE application_id = $1")
-            .bind(app_id)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| DagError::Database(e.to_string()))?;
+    let components = sqlx::query_as::<_, (crate::db::DbUuid,)>(
+        "SELECT id FROM components WHERE application_id = $1",
+    )
+    .bind(app_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| DagError::Database(e.to_string()))?;
 
     let deps = sqlx::query_as::<_, (crate::db::DbUuid, crate::db::DbUuid)>(
         "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",

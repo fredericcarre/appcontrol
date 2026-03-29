@@ -1,3 +1,4 @@
+use crate::db::DbUuid;
 use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
@@ -7,7 +8,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
-use crate::db::DbUuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::{can_access_site, effective_permission};
@@ -48,7 +48,15 @@ pub async fn list_user_permissions(
         return Err(ApiError::Forbidden);
     }
 
-    let perms = sqlx::query_as::<_, (DbUuid, DbUuid, String, Option<chrono::DateTime<chrono::Utc>>)>(
+    let perms = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            DbUuid,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
         r#"
         SELECT apu.id, apu.user_id, apu.permission_level, apu.expires_at
         FROM app_permissions_users apu
@@ -156,7 +164,15 @@ pub async fn list_team_permissions(
         return Err(ApiError::Forbidden);
     }
 
-    let perms = sqlx::query_as::<_, (DbUuid, DbUuid, String, Option<chrono::DateTime<chrono::Utc>>)>(
+    let perms = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            DbUuid,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
         r#"
         SELECT apt.id, apt.team_id, apt.permission_level, apt.expires_at
         FROM app_permissions_teams apt

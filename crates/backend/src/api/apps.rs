@@ -356,7 +356,10 @@ pub async fn get_app(
         std::collections::HashMap::new();
 
     if !referenced_app_ids.is_empty() {
-        let ref_ids: Vec<Uuid> = referenced_app_ids.iter().map(|id| id.into_inner()).collect();
+        let ref_ids: Vec<Uuid> = referenced_app_ids
+            .iter()
+            .map(|id| id.into_inner())
+            .collect();
         let status_rows = fetch_referenced_app_statuses(&state.db, &ref_ids).await?;
         for (app_id, app_name, counts) in status_rows {
             referenced_app_names.insert(app_id, app_name);
@@ -1335,10 +1338,11 @@ pub async fn get_site_overrides(
     .await?;
 
     // Create a lookup map for command overrides
-    let cmd_override_map: std::collections::HashMap<(DbUuid, DbUuid), &CmdOverrideRow> = cmd_overrides
-        .iter()
-        .map(|o| ((o.component_id, o.site_id), o))
-        .collect();
+    let cmd_override_map: std::collections::HashMap<(DbUuid, DbUuid), &CmdOverrideRow> =
+        cmd_overrides
+            .iter()
+            .map(|o| ((o.component_id, o.site_id), o))
+            .collect();
 
     // Build the response - group bindings by component
     let mut component_map: std::collections::HashMap<DbUuid, Vec<Value>> =

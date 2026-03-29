@@ -172,7 +172,7 @@ pub async fn list_gateways(
         };
 
         let item = GatewayListItem {
-            id: DbUuid::from(id),
+            id,
             name,
             zone: zone.clone().unwrap_or_default(),
             status,
@@ -183,14 +183,14 @@ pub async fn list_gateways(
             connected,
             version,
             last_heartbeat_at: last_heartbeat,
-            site_id: site_id.map(DbUuid::from),
+            site_id,
             site_name: site_name.clone(),
             site_code: site_code.clone(),
         };
 
         // Group by site - use "Unassigned" for gateways without a site
         let key = (
-            site_id.map(DbUuid::from),
+            site_id,
             site_name.unwrap_or_else(|| "Unassigned".to_string()),
             site_code.unwrap_or_else(|| "N/A".to_string()),
         );
@@ -477,16 +477,17 @@ pub async fn list_gateway_agents(
         return Err(ApiError::NotFound);
     }
 
-    let agents = sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
-        r#"SELECT id, hostname, is_active, last_heartbeat_at
+    let agents =
+        sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
+            r#"SELECT id, hostname, is_active, last_heartbeat_at
            FROM agents
            WHERE gateway_id = $1 AND organization_id = $2
            ORDER BY hostname"#,
-    )
-    .bind(gateway_id)
-    .bind(user.organization_id)
-    .fetch_all(&state.db)
-    .await?;
+        )
+        .bind(gateway_id)
+        .bind(user.organization_id)
+        .fetch_all(&state.db)
+        .await?;
 
     // Get live connection status from the WebSocket hub
     let connected_agents = state.ws_hub.connected_agent_ids();
@@ -714,8 +715,12 @@ pub async fn block_gateway(
     // 5. Transition all components of affected agents to UNREACHABLE
     let mut components_affected = 0;
     for agent_id in &agent_ids {
-        components_affected +=
-            transition_gateway_agent_components_to_unreachable(&state, DbUuid::from(*agent_id), DbUuid::from(gateway_id)).await;
+        components_affected += transition_gateway_agent_components_to_unreachable(
+            &state,
+            DbUuid::from(*agent_id),
+            DbUuid::from(gateway_id),
+        )
+        .await;
     }
 
     tx.commit().await?;

@@ -32,7 +32,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::{IntArray, UuidArray, DbUuid};
+use crate::db::{DbUuid, IntArray, UuidArray};
 use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;

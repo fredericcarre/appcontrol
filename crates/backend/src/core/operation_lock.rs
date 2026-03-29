@@ -70,7 +70,7 @@ impl OperationLock {
         operation: &str,
         user_id: Uuid,
     ) -> Result<OperationGuard, LockError> {
-    let app_id: Uuid = app_id.into();
+        let app_id: Uuid = app_id.into();
 
         // First, clean up any stale lock for this app
         self.cleanup_stale_lock(app_id).await?;
@@ -139,8 +139,11 @@ impl OperationLock {
     }
 
     /// Get information about an active operation on an application.
-    pub async fn get_active(&self, app_id: impl Into<Uuid>) -> Result<Option<ActiveOperation>, LockError> {
-    let app_id: Uuid = app_id.into();
+    pub async fn get_active(
+        &self,
+        app_id: impl Into<Uuid>,
+    ) -> Result<Option<ActiveOperation>, LockError> {
+        let app_id: Uuid = app_id.into();
 
         let row = sqlx::query_as::<
             _,
@@ -181,7 +184,7 @@ impl OperationLock {
     /// Check if an operation on an application has been cancelled.
     /// Returns true if status is 'cancelling' or 'cancelled'.
     pub fn is_cancelled(&self, app_id: impl Into<Uuid>) -> bool {
-    let app_id: Uuid = app_id.into();
+        let app_id: Uuid = app_id.into();
 
         // We need to query the database synchronously, but we're in an async context
         // Use a blocking task to avoid deadlocks
@@ -207,7 +210,7 @@ impl OperationLock {
 
     /// Check if an operation has been cancelled (async version).
     pub async fn is_cancelled_async(&self, app_id: impl Into<Uuid>) -> bool {
-    let app_id: Uuid = app_id.into();
+        let app_id: Uuid = app_id.into();
 
         sqlx::query_scalar::<_, String>("SELECT status FROM operation_locks WHERE app_id = $1")
             .bind(app_id)
@@ -223,7 +226,7 @@ impl OperationLock {
     /// Sets status to 'cancelling'. The running operation should check this and exit.
     /// Returns true if cancellation was requested, false if no operation was running.
     pub async fn request_cancel(&self, app_id: impl Into<Uuid>) -> Result<bool, LockError> {
-    let app_id: Uuid = app_id.into();
+        let app_id: Uuid = app_id.into();
 
         let result = sqlx::query(
             r#"
@@ -248,7 +251,7 @@ impl OperationLock {
     /// Force-release a lock. Use as last resort when normal cancellation doesn't work.
     /// This immediately deletes the lock, potentially leaving the operation orphaned.
     pub async fn force_unlock(&self, app_id: impl Into<Uuid>) -> Result<bool, LockError> {
-    let app_id: Uuid = app_id.into();
+        let app_id: Uuid = app_id.into();
 
         // First try to request cancellation
         let _ = self.request_cancel(app_id).await;

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -236,7 +236,16 @@ pub async fn switchovers(
         return Err(ApiError::Forbidden);
     }
 
-    let logs = sqlx::query_as::<_, (DbUuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
+    let logs = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            String,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         r#"
         SELECT id, phase, status, details::text, created_at
         FROM switchover_log
@@ -307,7 +316,7 @@ pub async fn drp_report(
 
     for (switchover_id, phase, status, details, created_at) in logs {
         switchovers_map
-            .entry(switchover_id.into())
+            .entry(switchover_id)
             .or_default()
             .push((phase, status, details, created_at));
     }
@@ -632,7 +641,16 @@ pub async fn audit(
         .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
-    let logs = sqlx::query_as::<_, (DbUuid, DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
+    let logs = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            DbUuid,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         r#"
         SELECT id, user_id, action, resource_type, created_at
         FROM action_log
@@ -1326,18 +1344,19 @@ pub async fn health_summary(
         .collect();
 
     // Agent status for this app
-    let agents = sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
-        r#"
+    let agents =
+        sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
+            r#"
         SELECT DISTINCT a.id, a.hostname, a.is_active, a.last_heartbeat_at
         FROM agents a
         JOIN components c ON c.agent_id = a.id
         WHERE c.application_id = $1
         ORDER BY a.hostname
         "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+        )
+        .bind(app_id)
+        .fetch_all(&state.db)
+        .await?;
 
     let agent_status: Vec<Value> = agents
         .iter()
@@ -1354,9 +1373,17 @@ pub async fn health_summary(
         .collect();
 
     // Recent incidents (last 10 FAILED transitions)
-    let recent_incidents =
-        sqlx::query_as::<_, (DbUuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
-            r#"
+    let recent_incidents = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            String,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        r#"
         SELECT st.component_id, c.name, st.from_state, st.to_state, st.created_at
         FROM state_transitions st
         JOIN components c ON c.id = st.component_id
@@ -1364,10 +1391,10 @@ pub async fn health_summary(
         ORDER BY st.created_at DESC
         LIMIT 10
         "#,
-        )
-        .bind(app_id)
-        .fetch_all(&state.db)
-        .await?;
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
 
     let incidents: Vec<Value> = recent_incidents
         .iter()

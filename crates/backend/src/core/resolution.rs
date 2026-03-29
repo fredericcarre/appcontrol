@@ -128,7 +128,7 @@ pub async fn resolve_host_with_options(
                 .map(|r| AgentCandidate {
                     agent_id: r.agent_id,
                     hostname: r.hostname,
-                    gateway_id: r.gateway_id.map(|g| g),
+                    gateway_id: r.gateway_id,
                     gateway_name: r.gateway_name,
                     ip_addresses: r.ip_addresses.0,
                     matched_via: ResolutionMethod::ExactHostname,

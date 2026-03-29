@@ -17,8 +17,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::AuthUser;
-use crate::AppState;
 use crate::db::DbUuid;
+use crate::AppState;
 
 /// OIDC provider configuration.
 #[derive(Debug, Clone)]
