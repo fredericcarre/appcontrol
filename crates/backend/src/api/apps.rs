@@ -191,6 +191,7 @@ pub async fn list_apps(
         unreachable_count: Option<i64>,
     }
 
+    #[cfg(feature = "postgres")]
     let apps = sqlx::query_as::<_, AppWithCounts>(
         r#"
         SELECT
@@ -216,6 +217,37 @@ pub async fn list_apps(
     .bind(user.organization_id)
     .bind(&params.search)
     .bind(params.site_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let apps = sqlx::query_as::<_, AppWithCounts>(
+        r#"
+        SELECT
+            a.id, a.name, a.description, a.organization_id, a.site_id, a.tags,
+            a.created_at, a.updated_at,
+            COUNT(c.id) as component_count,
+            SUM(CASE WHEN c.current_state = 'RUNNING' THEN 1 ELSE 0 END) as running_count,
+            SUM(CASE WHEN c.current_state = 'STARTING' THEN 1 ELSE 0 END) as starting_count,
+            SUM(CASE WHEN c.current_state = 'STOPPING' THEN 1 ELSE 0 END) as stopping_count,
+            SUM(CASE WHEN c.current_state = 'STOPPED' THEN 1 ELSE 0 END) as stopped_count,
+            SUM(CASE WHEN c.current_state = 'FAILED' THEN 1 ELSE 0 END) as failed_count,
+            SUM(CASE WHEN c.current_state = 'UNREACHABLE' THEN 1 ELSE 0 END) as unreachable_count
+        FROM applications a
+        LEFT JOIN components c ON c.application_id = a.id
+        WHERE a.organization_id = $1
+          AND ($2 IS NULL OR a.name LIKE '%' || $2 || '%')
+          AND ($3 IS NULL OR a.site_id = $3)
+        GROUP BY a.id, a.name, a.description, a.organization_id, a.site_id, a.tags, a.created_at, a.updated_at
+        ORDER BY a.name
+        LIMIT $4 OFFSET $5
+        "#,
+    )
+    .bind(DbUuid::from(user.organization_id))
+    .bind(&params.search)
+    .bind(params.site_id.map(DbUuid::from))
     .bind(limit)
     .bind(offset)
     .fetch_all(&state.db)

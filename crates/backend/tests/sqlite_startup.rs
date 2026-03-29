@@ -519,9 +519,7 @@ async fn test_sqlite_startup_full() {
         .expect("Login response should contain 'token' field");
     assert!(!token.is_empty(), "JWT token should not be empty");
 
-    // --- Authenticated API call ---
-    // Note: some list endpoints may return 500 due to Uuid type decoding in SQLite.
-    // The auth middleware accepting the JWT is what we're testing here.
+    // --- Authenticated API call — GET /api/v1/apps MUST return 200 ---
     let resp = client
         .get(format!("{}/api/v1/apps", api_url))
         .header("Authorization", format!("Bearer {}", token))
@@ -530,24 +528,197 @@ async fn test_sqlite_startup_full() {
         .expect("Authenticated apps request failed");
     let apps_status = resp.status().as_u16();
     let apps_body = resp.text().await.unwrap_or_default();
-    // 200 = query works, 500 = auth passed but query has SQLite type issue
-    // 401/403 would mean auth failed = real problem
-    assert!(
-        apps_status == 200 || apps_status == 500,
-        "GET /api/v1/apps should return 200 or 500 (auth should pass), got {} — body: {}",
+    assert_eq!(
+        apps_status,
+        200,
+        "GET /api/v1/apps MUST return 200 (parity with PostgreSQL), got {} — body: {}",
         apps_status,
         &apps_body[..apps_body.len().min(500)]
     );
-    assert_ne!(
-        apps_status, 401,
-        "GET /api/v1/apps should NOT return 401 — auth middleware should accept the JWT"
+
+    // --- Create application ---
+    let create_resp = client
+        .post(format!("{}/api/v1/apps", api_url))
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&serde_json::json!({
+            "name": "Paiements-SEPA",
+            "description": "SEPA payment processing",
+            "tags": ["payments", "critical"],
+        }))
+        .send()
+        .await
+        .expect("Create app request failed");
+    let create_status = create_resp.status().as_u16();
+    let create_body = create_resp.text().await.unwrap_or_default();
+    assert!(
+        create_status == 200 || create_status == 201,
+        "POST /api/v1/apps should return 200/201, got {} — body: {}",
+        create_status,
+        &create_body[..create_body.len().min(500)]
     );
-    if apps_status == 500 {
-        eprintln!(
-            "WARNING: GET /api/v1/apps returned 500 — likely SQLite UUID type decode issue: {}",
-            &apps_body[..apps_body.len().min(200)]
+
+    let app: serde_json::Value = serde_json::from_str(&create_body).unwrap();
+    let app_id = app["id"].as_str().expect("App should have 'id' field");
+    eprintln!("Created app: {} ({})", app["name"], app_id);
+
+    // --- Create components ---
+    let components = vec![
+        (
+            "Oracle-DB",
+            "check_oracle.sh",
+            "start_oracle.sh",
+            "stop_oracle.sh",
+        ),
+        (
+            "Tomcat-App",
+            "check_tomcat.sh",
+            "start_tomcat.sh",
+            "stop_tomcat.sh",
+        ),
+        (
+            "Apache-Front",
+            "check_apache.sh",
+            "start_apache.sh",
+            "stop_apache.sh",
+        ),
+    ];
+
+    let mut component_ids: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    for (name, check, start, stop) in &components {
+        let resp = client
+            .post(format!("{}/api/v1/apps/{}/components", api_url, app_id))
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({
+                "name": name,
+                "hostname": format!("srv-{}", name.to_lowercase().replace('-', "")),
+                "check_cmd": check,
+                "start_cmd": start,
+                "stop_cmd": stop,
+                "check_interval_seconds": 30,
+                "start_timeout_seconds": 120,
+                "stop_timeout_seconds": 60,
+            }))
+            .send()
+            .await
+            .expect("Create component request failed");
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        assert!(
+            status == 200 || status == 201,
+            "POST /api/v1/apps/{}/components ({}) should return 200/201, got {} — body: {}",
+            app_id,
+            name,
+            status,
+            &body[..body.len().min(500)]
         );
+        let comp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let comp_id = comp["id"].as_str().expect("Component should have 'id'");
+        component_ids.insert(name.to_string(), comp_id.to_string());
+        eprintln!("  Created component: {} ({})", name, comp_id);
     }
+
+    // --- Create dependencies: Oracle-DB → Tomcat-App → Apache-Front ---
+    let deps = [("Oracle-DB", "Tomcat-App"), ("Tomcat-App", "Apache-Front")];
+    for (from, to) in &deps {
+        let resp = client
+            .post(format!("{}/api/v1/apps/{}/dependencies", api_url, app_id))
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({
+                "from_component_id": component_ids[*from],
+                "to_component_id": component_ids[*to],
+            }))
+            .send()
+            .await
+            .expect("Create dependency request failed");
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        assert!(
+            status == 200 || status == 201,
+            "POST dependency {} → {} should return 200/201, got {} — body: {}",
+            from,
+            to,
+            status,
+            &body[..body.len().min(300)]
+        );
+        eprintln!("  Created dependency: {} → {}", from, to);
+    }
+
+    // --- Verify app topology ---
+    let resp = client
+        .get(format!("{}/api/v1/apps/{}", api_url, app_id))
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .expect("Get app request failed");
+    let app_status = resp.status().as_u16();
+    let app_body = resp.text().await.unwrap_or_default();
+    assert_eq!(
+        app_status,
+        200,
+        "GET /api/v1/apps/{} should return 200, got {} — body: {}",
+        app_id,
+        app_status,
+        &app_body[..app_body.len().min(500)]
+    );
+
+    let app_detail: serde_json::Value = serde_json::from_str(&app_body).unwrap();
+    let comp_count = app_detail["components"]
+        .as_array()
+        .map(|a| a.len())
+        .unwrap_or(0);
+    assert_eq!(
+        comp_count, 3,
+        "App should have 3 components, got {}",
+        comp_count
+    );
+    eprintln!("App has {} components with dependencies", comp_count);
+
+    // --- Start application (dry run) ---
+    // Dry run validates the DAG sequencing without executing commands
+    let resp = client
+        .post(format!("{}/api/v1/apps/{}/start", api_url, app_id))
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&serde_json::json!({ "dry_run": true }))
+        .send()
+        .await
+        .expect("Start dry-run request failed");
+    let start_status = resp.status().as_u16();
+    let start_body = resp.text().await.unwrap_or_default();
+    // 200 = success, 409 = lock conflict, 503 = gateway unavailable (expected in test — no real agents)
+    assert!(
+        start_status == 200 || start_status == 409 || start_status == 503,
+        "POST /api/v1/apps/{}/start (dry_run) should return 200/409/503, got {} — body: {}",
+        app_id,
+        start_status,
+        &start_body[..start_body.len().min(500)]
+    );
+    eprintln!(
+        "Start dry-run: HTTP {} — {}",
+        start_status,
+        &start_body[..start_body.len().min(200)]
+    );
+
+    // --- List apps (verify it's listed with components) ---
+    let resp = client
+        .get(format!("{}/api/v1/apps", api_url))
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .expect("List apps request failed");
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "GET /api/v1/apps should return 200"
+    );
+    let apps_list: serde_json::Value = resp.json().await.unwrap();
+    let apps_array = apps_list.as_array().expect("Apps should be an array");
+    assert!(
+        !apps_array.is_empty(),
+        "Apps list should not be empty after creating an app"
+    );
+    eprintln!("Apps list: {} app(s)", apps_array.len());
 
     // --- Gateway WebSocket connection ---
     // Connect to the gateway WebSocket endpoint and verify it accepts the connection.
