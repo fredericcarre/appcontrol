@@ -723,7 +723,7 @@ pub async fn advance_phase(
         LIMIT 1
         "#,
     )
-    .bind(app_id)
+    .bind(DbUuid::from(app_id))
     .fetch_optional(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?
@@ -762,13 +762,14 @@ pub async fn advance_phase(
             sqlx::query(
                 r#"
                 INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-                VALUES (gen_random_uuid(), $1, $2, $3, 'completed', $4::jsonb)
+                VALUES ($1, $2, $3, $4, 'completed', $5)
                 "#,
             )
-            .bind(switchover_id)
-            .bind(app_id)
+            .bind(DbUuid::new_v4())
+            .bind(&switchover_id)
+            .bind(DbUuid::from(app_id))
             .bind(&active_phase)
-            .bind(&details)
+            .bind(DbJson::from(details.clone()))
             .execute(pool)
             .await
             .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -778,12 +779,14 @@ pub async fn advance_phase(
                 sqlx::query(
                     r#"
                     INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-                    VALUES (gen_random_uuid(), $1, $2, $3, 'in_progress', '{}'::jsonb)
+                    VALUES ($1, $2, $3, $4, 'in_progress', $5)
                     "#,
                 )
-                .bind(switchover_id)
-                .bind(app_id)
+                .bind(DbUuid::new_v4())
+                .bind(&switchover_id)
+                .bind(DbUuid::from(app_id))
                 .bind(next)
+                .bind(DbJson::from(serde_json::json!({})))
                 .execute(pool)
                 .await
                 .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -823,13 +826,14 @@ pub async fn advance_phase(
             let _ = sqlx::query(
                 r#"
                 INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-                VALUES (gen_random_uuid(), $1, $2, $3, 'failed', $4::jsonb)
+                VALUES ($1, $2, $3, $4, 'failed', $5)
                 "#,
             )
-            .bind(switchover_id)
-            .bind(app_id)
+            .bind(DbUuid::new_v4())
+            .bind(&switchover_id)
+            .bind(DbUuid::from(app_id))
             .bind(&active_phase)
-            .bind(&error_details)
+            .bind(DbJson::from(error_details))
             .execute(pool)
             .await;
 
@@ -854,7 +858,7 @@ pub async fn rollback(
         LIMIT 1
         "#,
     )
-    .bind(app_id)
+    .bind(DbUuid::from(app_id))
     .fetch_optional(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?
@@ -865,13 +869,13 @@ pub async fn rollback(
     sqlx::query(
         r#"
         INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-        VALUES (gen_random_uuid(), $1, $2, 'ROLLBACK', 'completed',
-                $3::jsonb)
+        VALUES ($1, $2, $3, 'ROLLBACK', 'completed', $4)
         "#,
     )
-    .bind(switchover_id)
-    .bind(app_id)
-    .bind(serde_json::json!({"rolled_back_from": phase}))
+    .bind(DbUuid::new_v4())
+    .bind(&switchover_id)
+    .bind(DbUuid::from(app_id))
+    .bind(DbJson::from(serde_json::json!({"rolled_back_from": phase})))
     .execute(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -899,7 +903,7 @@ pub async fn commit(
         LIMIT 1
         "#,
     )
-    .bind(app_id)
+    .bind(DbUuid::from(app_id))
     .fetch_optional(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?
@@ -914,11 +918,13 @@ pub async fn commit(
     sqlx::query(
         r#"
         INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-        VALUES (gen_random_uuid(), $1, $2, 'COMMIT', 'completed', '{}'::jsonb)
+        VALUES ($1, $2, $3, 'COMMIT', 'completed', $4)
         "#,
     )
-    .bind(switchover_id)
-    .bind(app_id)
+    .bind(DbUuid::new_v4())
+    .bind(&switchover_id)
+    .bind(DbUuid::from(app_id))
+    .bind(DbJson::from(serde_json::json!({})))
     .execute(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -945,7 +951,7 @@ pub async fn get_status(
         LIMIT 20
         "#,
     )
-    .bind(app_id)
+    .bind(DbUuid::from(app_id))
     .fetch_all(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -973,7 +979,7 @@ async fn get_switchover_details(
     pool: &crate::db::DbPool,
     switchover_id: Uuid,
 ) -> Result<Value, SwitchoverError> {
-    sqlx::query_scalar::<_, Value>(
+    sqlx::query_scalar::<_, DbJson>(
         r#"
         SELECT details FROM switchover_log
         WHERE switchover_id = $1 AND phase = 'PREPARE'
@@ -981,9 +987,10 @@ async fn get_switchover_details(
         LIMIT 1
         "#,
     )
-    .bind(switchover_id)
+    .bind(DbUuid::from(switchover_id))
     .fetch_optional(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?
+    .map(|dj| dj.0)
     .ok_or(SwitchoverError::NoActiveSwitchover)
 }

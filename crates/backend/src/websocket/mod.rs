@@ -596,12 +596,23 @@ async fn process_gateway_message(
             } else {
                 // No token provided — check if dev mode (single org) or reject
                 // In dev mode with a single org, we allow unauthenticated gateway registration
+                #[cfg(feature = "postgres")]
                 let single_org: Option<uuid::Uuid> =
                     sqlx::query_scalar("SELECT id FROM organizations LIMIT 1")
                         .fetch_optional(&state.db)
                         .await
                         .ok()
                         .flatten();
+                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+                let single_org: Option<uuid::Uuid> = {
+                    let row: Option<DbUuid> =
+                        sqlx::query_scalar("SELECT id FROM organizations LIMIT 1")
+                            .fetch_optional(&state.db)
+                            .await
+                            .ok()
+                            .flatten();
+                    row.map(|u| u.into_inner())
+                };
 
                 if single_org.is_some() {
                     tracing::warn!(
@@ -1601,6 +1612,7 @@ async fn process_agent_message(
                 status = status_str,
                 "Agent update progress"
             );
+            #[cfg(feature = "postgres")]
             let _ = sqlx::query(&format!(
                 "UPDATE agent_update_tasks \
                  SET status = $2, error = $3, \
@@ -1609,6 +1621,19 @@ async fn process_agent_message(
                 crate::db::sql::now()
             ))
             .bind(update_id)
+            .bind(status_str)
+            .bind(error.as_deref())
+            .execute(&state.db)
+            .await;
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let _ = sqlx::query(&format!(
+                "UPDATE agent_update_tasks \
+                 SET status = $2, error = $3, \
+                     completed_at = CASE WHEN $2 IN ('complete', 'failed') THEN {} ELSE completed_at END \
+                 WHERE id = $1",
+                crate::db::sql::now()
+            ))
+            .bind(DbUuid::from(update_id))
             .bind(status_str)
             .bind(error.as_deref())
             .execute(&state.db)
@@ -1876,6 +1901,7 @@ async fn process_agent_message(
 ///
 /// Components belonging to suspended applications are excluded from the config.
 pub async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
+    #[cfg(feature = "postgres")]
     let rows = sqlx::query_as::<
         _,
         (
@@ -1908,6 +1934,39 @@ pub async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
     .bind(agent_id)
     .fetch_all(&state.db)
     .await;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let rows = sqlx::query_as::<
+        _,
+        (
+            DbUuid, // id
+            String, // name
+            Option<String>,
+            Option<String>,
+            Option<String>, // check, start, stop
+            Option<String>,
+            Option<String>,
+            Option<String>, // integrity, post_start, infra
+            Option<String>,
+            Option<String>, // rebuild, rebuild_infra
+            i32,
+            i32,
+            i32,    // intervals
+            String, // env_vars as TEXT
+        ),
+    >(
+        "SELECT c.id, c.name, c.check_cmd, c.start_cmd, c.stop_cmd,
+                c.integrity_check_cmd, c.post_start_check_cmd, c.infra_check_cmd,
+                c.rebuild_cmd, c.rebuild_infra_cmd,
+                c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
+                COALESCE(c.env_vars, '{}')
+         FROM components c
+         JOIN applications a ON c.application_id = a.id
+         WHERE c.agent_id = $1
+           AND a.is_suspended = 0",
+    )
+    .bind(DbUuid::from(agent_id))
+    .fetch_all(&state.db)
+    .await;
 
     let rows = match rows {
         Ok(r) => r,
@@ -1937,8 +1996,16 @@ pub async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
                 stop_to,
                 env,
             )| {
+                #[cfg(feature = "postgres")]
+                let (comp_id, env_vars) = (id, env);
+                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+                let (comp_id, env_vars) = (
+                    id.into_inner(),
+                    serde_json::from_str::<serde_json::Value>(&env)
+                        .unwrap_or(serde_json::json!({})),
+                );
                 appcontrol_common::ComponentConfig {
-                    component_id: id,
+                    component_id: comp_id,
                     name,
                     check_cmd: check,
                     start_cmd: start,
@@ -1951,7 +2018,7 @@ pub async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
                     check_interval_seconds: interval as u32,
                     start_timeout_seconds: start_to as u32,
                     stop_timeout_seconds: stop_to as u32,
-                    env_vars: env,
+                    env_vars,
                 }
             },
         )
@@ -2019,7 +2086,8 @@ async fn mark_agent_components_unreachable(
     }
 
     // Find components that should be transitioned to UNREACHABLE
-    let components = match sqlx::query_as::<_, ComponentInfo>(
+    #[cfg(feature = "postgres")]
+    let components_result = sqlx::query_as::<_, ComponentInfo>(
         r#"
         SELECT c.id, c.name, c.current_state, c.application_id, a.name AS app_name
         FROM components c
@@ -2030,7 +2098,21 @@ async fn mark_agent_components_unreachable(
     )
     .bind(agent_id)
     .fetch_all(&state.db)
-    .await
+    .await;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let components_result = sqlx::query_as::<_, ComponentInfo>(
+        r#"
+        SELECT c.id, c.name, c.current_state, c.application_id, a.name AS app_name
+        FROM components c
+        JOIN applications a ON a.id = c.application_id
+        WHERE c.agent_id = $1
+          AND c.current_state NOT IN ('UNREACHABLE', 'STOPPED', 'STOPPING', 'UNKNOWN')
+        "#,
+    )
+    .bind(DbUuid::from(agent_id))
+    .fetch_all(&state.db)
+    .await;
+    let components = match components_result
     {
         Ok(comps) => comps,
         Err(e) => {
@@ -2058,7 +2140,8 @@ async fn mark_agent_components_unreachable(
 
     for comp in components {
         // Insert state transition (append-only)
-        if let Err(e) = sqlx::query(
+        #[cfg(feature = "postgres")]
+        let trans_result = sqlx::query(
             r#"
             INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
             VALUES ($1, $2, 'UNREACHABLE', $3,
@@ -2070,7 +2153,27 @@ async fn mark_agent_components_unreachable(
         .bind(trigger)
         .bind(agent_id.to_string())
         .execute(&state.db)
-        .await
+        .await;
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let trans_result = {
+            let details = serde_json::json!({
+                "previous_state": &comp.current_state,
+                "agent_id": agent_id.to_string(),
+            });
+            sqlx::query(
+                r#"
+                INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
+                VALUES ($1, $2, 'UNREACHABLE', $3, $4)
+                "#,
+            )
+            .bind(comp.id)
+            .bind(&comp.current_state)
+            .bind(trigger)
+            .bind(serde_json::to_string(&details).unwrap_or_default())
+            .execute(&state.db)
+            .await
+        };
+        if let Err(e) = trans_result
         {
             tracing::warn!(
                 component_id = %comp.id,
@@ -2146,6 +2249,7 @@ pub async fn push_config_to_affected_agents(
 
     // Find agents affected by application
     if let Some(app_id) = application_id {
+        #[cfg(feature = "postgres")]
         let app_agents: Vec<uuid::Uuid> = sqlx::query_scalar(
             "SELECT DISTINCT agent_id FROM components
              WHERE application_id = $1 AND agent_id IS NOT NULL",
@@ -2154,6 +2258,18 @@ pub async fn push_config_to_affected_agents(
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let app_agents: Vec<uuid::Uuid> = {
+            let rows: Vec<DbUuid> = sqlx::query_scalar(
+                "SELECT DISTINCT agent_id FROM components
+                 WHERE application_id = $1 AND agent_id IS NOT NULL",
+            )
+            .bind(DbUuid::from(app_id))
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+            rows.into_iter().map(|u| u.into_inner()).collect()
+        };
         agent_ids.extend(app_agents);
     }
 
@@ -2223,6 +2339,7 @@ async fn validate_gateway_enrollment_token(
     // Hash the token and look it up
     let token_hash = hex::encode(sha2::Sha256::digest(token.as_bytes()));
 
+    #[cfg(feature = "postgres")]
     let token_row = sqlx::query_as::<
         _,
         (
@@ -2243,8 +2360,43 @@ async fn validate_gateway_enrollment_token(
     .fetch_optional(db)
     .await
     .map_err(|_| "Database error")?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let token_row = sqlx::query_as::<
+        _,
+        (
+            DbUuid,       // id
+            DbUuid,       // organization_id
+            String,       // scope
+            Option<i32>,  // max_uses
+            i32,          // current_uses
+            String,       // expires_at as TEXT
+        ),
+    >(
+        r#"SELECT id, organization_id, scope, max_uses, current_uses, expires_at
+           FROM enrollment_tokens
+           WHERE token_hash = $1
+           AND revoked_at IS NULL"#,
+    )
+    .bind(&token_hash)
+    .fetch_optional(db)
+    .await
+    .map_err(|_| "Database error")?;
 
-    let (token_id, org_id, scope, max_uses, current_uses, expires_at) = match token_row {
+    #[cfg(feature = "postgres")]
+    let parsed_row = token_row.map(|(id, org, scope, max, cur, exp)| (id, org, scope, max, cur, exp));
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let parsed_row = token_row.map(|(id, org, scope, max, cur, exp_str)| {
+        let exp = chrono::DateTime::parse_from_rfc3339(&exp_str)
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(&exp_str, "%Y-%m-%d %H:%M:%S")
+                    .map(|ndt| ndt.and_utc())
+            })
+            .unwrap_or_else(|_| chrono::Utc::now());
+        (id.into_inner(), org.into_inner(), scope, max, cur, exp)
+    });
+
+    let (token_id, org_id, scope, max_uses, current_uses, expires_at) = match parsed_row {
         Some(row) => row,
         None => return Err("Invalid or revoked token"),
     };
@@ -2274,7 +2426,7 @@ async fn validate_gateway_enrollment_token(
     // Increment usage count
     let _ =
         sqlx::query("UPDATE enrollment_tokens SET current_uses = current_uses + 1 WHERE id = $1")
-            .bind(token_id)
+            .bind(DbUuid::from(token_id))
             .execute(db)
             .await;
 
