@@ -190,7 +190,7 @@ async fn execute_validate(
         WHERE bpm.profile_id = $1
         "#,
     )
-    .bind(&target_profile_id)
+    .bind(target_profile_id)
     .fetch_all(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -494,7 +494,7 @@ async fn execute_start_target(
         let activate_sql: &str = "UPDATE binding_profiles SET is_active = 1 WHERE id = $1";
 
         sqlx::query(activate_sql)
-            .bind(&target_profile_id)
+            .bind(target_profile_id)
             .execute(&state.db)
             .await
             .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -522,7 +522,7 @@ async fn execute_start_target(
     let mappings = sqlx::query_as::<_, (String, DbUuid)>(
         "SELECT component_name, agent_id FROM binding_profile_mappings WHERE profile_id = $1",
     )
-    .bind(&target_profile_id)
+    .bind(target_profile_id)
     .fetch_all(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -593,7 +593,7 @@ async fn execute_start_target(
                 WHERE component_id = $1 AND site_id = $2
                 "#,
                 )
-                .bind(&comp_id)
+                .bind(comp_id)
                 .bind(DbUuid::from(target_site_id))
                 .fetch_optional(&state.db)
                 .await
@@ -613,7 +613,7 @@ async fn execute_start_target(
                     WHERE id = $1",
                 crate::db::sql::now()
             ))
-            .bind(&comp_id)
+            .bind(comp_id)
             .bind(new_agent_id)
             .bind(&check_override)
             .bind(&start_override)
@@ -637,7 +637,7 @@ async fn execute_start_target(
                 VALUES ('component_switchover', $1, $2, $3, $4)
                 "#,
             )
-            .bind(&comp_id)
+            .bind(comp_id)
             .bind(DbUuid::from(initiated_by))
             .bind(DbJson::from(before))
             .bind(DbJson::from(after))
