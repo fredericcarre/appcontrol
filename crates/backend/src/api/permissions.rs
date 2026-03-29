@@ -284,6 +284,7 @@ pub async fn list_share_links(
         return Err(ApiError::Forbidden);
     }
 
+    #[cfg(feature = "postgres")]
     let links = sqlx::query_as::<
         _,
         (
@@ -299,6 +300,27 @@ pub async fn list_share_links(
         SELECT id, token, permission_level, expires_at, max_uses, use_count
         FROM app_share_links
         WHERE application_id = $1 AND is_active = true
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let links = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            String,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<i32>,
+            i32,
+        ),
+    >(
+        r#"
+        SELECT id, token, permission_level, expires_at, max_uses, use_count
+        FROM app_share_links
+        WHERE application_id = $1 AND is_active = 1
         "#,
     )
     .bind(app_id)
@@ -426,7 +448,8 @@ pub async fn search_users(
 
     let users = if query.is_empty() {
         // Return users in the same organization
-        sqlx::query_as::<_, (DbUuid, String, Option<String>, String)>(
+        #[cfg(feature = "postgres")]
+        let result = sqlx::query_as::<_, (DbUuid, String, Option<String>, String)>(
             r#"
             SELECT id, email, display_name, role
             FROM users
@@ -438,7 +461,22 @@ pub async fn search_users(
         .bind(user.organization_id)
         .bind(limit)
         .fetch_all(&state.db)
-        .await?
+        .await?;
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let result = sqlx::query_as::<_, (DbUuid, String, Option<String>, String)>(
+            r#"
+            SELECT id, email, display_name, role
+            FROM users
+            WHERE organization_id = $1 AND is_active = 1
+            ORDER BY display_name, email
+            LIMIT $2
+            "#,
+        )
+        .bind(user.organization_id)
+        .bind(limit)
+        .fetch_all(&state.db)
+        .await?;
+        result
     } else {
         // Search by email or display name (case-insensitive)
         let pattern = format!("%{}%", query);
@@ -475,6 +513,7 @@ pub async fn consume_share_link(
     Json(body): Json<ConsumeShareLinkRequest>,
 ) -> Result<Json<Value>, ApiError> {
     // Look up the share link
+    #[cfg(feature = "postgres")]
     let link = sqlx::query_as::<
         _,
         (
@@ -490,6 +529,28 @@ pub async fn consume_share_link(
         SELECT id, application_id, permission_level, expires_at, max_uses, use_count
         FROM app_share_links
         WHERE token = $1 AND is_active = true
+        "#,
+    )
+    .bind(&body.token)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let link = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            DbUuid,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<i32>,
+            i32,
+        ),
+    >(
+        r#"
+        SELECT id, application_id, permission_level, expires_at, max_uses, use_count
+        FROM app_share_links
+        WHERE token = $1 AND is_active = 1
         "#,
     )
     .bind(&body.token)
