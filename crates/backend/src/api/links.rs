@@ -49,9 +49,18 @@ pub async fn list_links(
     Extension(user): Extension<AuthUser>,
     Path(component_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
+    #[cfg(feature = "postgres")]
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let app_id =
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(DbUuid::from(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -61,11 +70,21 @@ pub async fn list_links(
         return Err(ApiError::Forbidden);
     }
 
+    #[cfg(feature = "postgres")]
     let links = sqlx::query_as::<_, LinkRow>(
         "SELECT id, component_id, label, url, link_type, display_order, created_at \
          FROM component_links WHERE component_id = $1 ORDER BY display_order, label",
     )
     .bind(component_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let links = sqlx::query_as::<_, LinkRow>(
+        "SELECT id, component_id, label, url, link_type, display_order, created_at \
+         FROM component_links WHERE component_id = $1 ORDER BY display_order, label",
+    )
+    .bind(DbUuid::from(component_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -79,9 +98,18 @@ pub async fn create_link(
     Path(component_id): Path<Uuid>,
     Json(body): Json<CreateLinkRequest>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
+    #[cfg(feature = "postgres")]
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let app_id =
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(DbUuid::from(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -106,6 +134,7 @@ pub async fn create_link(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let link = sqlx::query_as::<_, LinkRow>(
         r#"
         INSERT INTO component_links (id, component_id, label, url, link_type, display_order)
@@ -115,6 +144,23 @@ pub async fn create_link(
     )
     .bind(link_id)
     .bind(component_id)
+    .bind(&body.label)
+    .bind(&body.url)
+    .bind(body.link_type.as_deref().unwrap_or("documentation"))
+    .bind(body.display_order.unwrap_or(0))
+    .fetch_one(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let link = sqlx::query_as::<_, LinkRow>(
+        r#"
+        INSERT INTO component_links (id, component_id, label, url, link_type, display_order)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, component_id, label, url, link_type, display_order, created_at
+        "#,
+    )
+    .bind(DbUuid::from(link_id))
+    .bind(DbUuid::from(component_id))
     .bind(&body.label)
     .bind(&body.url)
     .bind(body.link_type.as_deref().unwrap_or("documentation"))
