@@ -613,7 +613,7 @@ async fn execute_start_target(
                     WHERE id = $1",
                 crate::db::sql::now()
             ))
-            .bind(comp_id)
+            .bind(&comp_id)
             .bind(new_agent_id)
             .bind(&check_override)
             .bind(&start_override)
@@ -637,10 +637,10 @@ async fn execute_start_target(
                 VALUES ('component_switchover', $1, $2, $3, $4)
                 "#,
             )
-            .bind(comp_id)
-            .bind(initiated_by)
-            .bind(before)
-            .bind(after)
+            .bind(&comp_id)
+            .bind(DbUuid::from(initiated_by))
+            .bind(DbJson::from(before))
+            .bind(DbJson::from(after))
             .execute(&state.db)
             .await;
 

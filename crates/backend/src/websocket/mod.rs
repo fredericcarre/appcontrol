@@ -1550,7 +1550,8 @@ async fn process_agent_message(
             }))
             .unwrap_or_default();
 
-            if let Err(e) = sqlx::query(
+            #[cfg(feature = "postgres")]
+            let disc_result = sqlx::query(
                 "INSERT INTO discovery_reports (agent_id, hostname, report, scanned_at)
                  VALUES ($1, $2, $3, $4)",
             )
@@ -1559,7 +1560,19 @@ async fn process_agent_message(
             .bind(&report_json)
             .bind(scanned_at)
             .execute(&state.db)
-            .await
+            .await;
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let disc_result = sqlx::query(
+                "INSERT INTO discovery_reports (agent_id, hostname, report, scanned_at)
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(DbUuid::from(agent_id))
+            .bind(&hostname)
+            .bind(serde_json::to_string(&report_json).unwrap_or_default())
+            .bind(scanned_at.to_rfc3339())
+            .execute(&state.db)
+            .await;
+            if let Err(e) = disc_result
             {
                 tracing::warn!(
                     agent_id = %agent_id,
@@ -1690,9 +1703,19 @@ async fn process_agent_message(
             }
 
             // Look up agent hostname for display
+            #[cfg(feature = "postgres")]
             let agent_name: String =
                 sqlx::query_scalar("SELECT hostname FROM agents WHERE id = $1")
                     .bind(agent_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| agent_id.to_string());
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let agent_name: String =
+                sqlx::query_scalar("SELECT hostname FROM agents WHERE id = $1")
+                    .bind(DbUuid::from(agent_id))
                     .fetch_optional(&state.db)
                     .await
                     .ok()
