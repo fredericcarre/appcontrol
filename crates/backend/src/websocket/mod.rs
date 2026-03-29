@@ -701,6 +701,7 @@ async fn process_gateway_message(
             // - First gateway in a site becomes primary (is_primary=true, priority=0)
             // - Subsequent gateways are standby (is_primary=false, priority=N)
             // - Gateways without site_id are assigned priority 0 and not primary
+            #[cfg(feature = "postgres")]
             if let Err(e) = sqlx::query(
                 r#"
                 WITH site_info AS (
@@ -724,6 +725,27 @@ async fn process_gateway_message(
                     site_id = COALESCE(EXCLUDED.site_id, gateways.site_id),
                     last_heartbeat_at = now()
                 "#,
+            )
+            .bind(gateway_id)
+            .bind(org_id)
+            .bind(&display_name)
+            .bind(&zone)
+            .bind(resolved_site_id)
+            .execute(&state.db)
+            .await
+            {
+                tracing::warn!(gateway_id = %gateway_id, "Failed to upsert gateway record: {}", e);
+            }
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            if let Err(e) = sqlx::query(
+                "INSERT INTO gateways (id, organization_id, name, zone, site_id, is_active, last_heartbeat_at) \
+                 VALUES ($1, $2, $3, $4, $5, 1, datetime('now')) \
+                 ON CONFLICT (id) DO UPDATE SET \
+                     name = EXCLUDED.name, \
+                     zone = COALESCE(EXCLUDED.zone, gateways.zone), \
+                     site_id = COALESCE(EXCLUDED.site_id, gateways.site_id), \
+                     last_heartbeat_at = datetime('now')",
             )
             .bind(gateway_id)
             .bind(org_id)
@@ -967,11 +989,13 @@ async fn process_gateway_message(
             );
 
             // Update gateway's last heartbeat timestamp
-            if let Err(e) =
-                sqlx::query("UPDATE gateways SET last_heartbeat_at = now() WHERE id = $1")
-                    .bind(gateway_id)
-                    .execute(&state.db)
-                    .await
+            if let Err(e) = sqlx::query(&format!(
+                "UPDATE gateways SET last_heartbeat_at = {} WHERE id = $1",
+                crate::db::sql::now()
+            ))
+            .bind(gateway_id)
+            .execute(&state.db)
+            .await
             {
                 tracing::warn!(
                     gateway_id = %gateway_id,
@@ -1269,8 +1293,8 @@ async fn process_agent_message(
 
             // Update agent record with hostname, IPs, version, system info, and heartbeat
             // NOTE: We do NOT set is_active = true here to respect blocked status
-            if let Err(e) = sqlx::query(
-                "UPDATE agents SET hostname = $2, ip_addresses = $3, last_heartbeat_at = now(), \
+            if let Err(e) = sqlx::query(&format!(
+                "UPDATE agents SET hostname = $2, ip_addresses = $3, last_heartbeat_at = {}, \
                  version = COALESCE($4, version), \
                  os_name = COALESCE($5, os_name), \
                  os_version = COALESCE($6, os_version), \
@@ -1281,7 +1305,8 @@ async fn process_agent_message(
                  certificate_fingerprint = COALESCE($11, certificate_fingerprint), \
                  identity_verified = ($11 IS NOT NULL) \
                  WHERE id = $1 AND is_active = true",
-            )
+                crate::db::sql::now()
+            ))
             .bind(agent_id)
             .bind(&hostname)
             .bind(serde_json::json!(&ip_addresses))
@@ -1391,12 +1416,13 @@ async fn process_agent_message(
                 status = status_str,
                 "Agent update progress"
             );
-            let _ = sqlx::query(
-                "UPDATE agent_update_tasks
-                 SET status = $2, error = $3,
-                     completed_at = CASE WHEN $2 IN ('complete', 'failed') THEN now() ELSE completed_at END
+            let _ = sqlx::query(&format!(
+                "UPDATE agent_update_tasks \
+                 SET status = $2, error = $3, \
+                     completed_at = CASE WHEN $2 IN ('complete', 'failed') THEN {} ELSE completed_at END \
                  WHERE id = $1",
-            )
+                crate::db::sql::now()
+            ))
             .bind(update_id)
             .bind(status_str)
             .bind(error.as_deref())
