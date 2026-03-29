@@ -178,9 +178,18 @@ pub async fn update_link(
     Path((component_id, link_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<UpdateLinkRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    #[cfg(feature = "postgres")]
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let app_id =
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(DbUuid::from(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -208,6 +217,7 @@ pub async fn update_link(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let link = sqlx::query_as::<_, LinkRow>(
         r#"
         UPDATE component_links SET
@@ -221,6 +231,28 @@ pub async fn update_link(
     )
     .bind(component_id)
     .bind(link_id)
+    .bind(&body.label)
+    .bind(&body.url)
+    .bind(&body.link_type)
+    .bind(body.display_order)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let link = sqlx::query_as::<_, LinkRow>(
+        r#"
+        UPDATE component_links SET
+            label = COALESCE($3, label),
+            url = COALESCE($4, url),
+            link_type = COALESCE($5, link_type),
+            display_order = COALESCE($6, display_order)
+        WHERE id = $2 AND component_id = $1
+        RETURNING id, component_id, label, url, link_type, display_order, created_at
+        "#,
+    )
+    .bind(DbUuid::from(component_id))
+    .bind(DbUuid::from(link_id))
     .bind(&body.label)
     .bind(&body.url)
     .bind(&body.link_type)
