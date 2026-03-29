@@ -623,9 +623,18 @@ pub async fn update_position(
     Json(body): Json<UpdatePositionRequest>,
 ) -> Result<StatusCode, ApiError> {
     // Get app_id for permission check
+    #[cfg(feature = "postgres")]
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let app_id =
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(DbUuid::from(id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;

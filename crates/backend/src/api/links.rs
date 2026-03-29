@@ -270,9 +270,18 @@ pub async fn delete_link(
     Extension(user): Extension<AuthUser>,
     Path((component_id, link_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
+    #[cfg(feature = "postgres")]
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let app_id =
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(DbUuid::from(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -292,9 +301,17 @@ pub async fn delete_link(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM component_links WHERE id = $1 AND component_id = $2")
         .bind(link_id)
         .bind(component_id)
+        .execute(&state.db)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query("DELETE FROM component_links WHERE id = $1 AND component_id = $2")
+        .bind(DbUuid::from(link_id))
+        .bind(DbUuid::from(component_id))
         .execute(&state.db)
         .await?;
 
