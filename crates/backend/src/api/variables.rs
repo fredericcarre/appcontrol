@@ -252,9 +252,17 @@ pub async fn delete_variable(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM app_variables WHERE id = $1 AND application_id = $2")
         .bind(var_id)
         .bind(app_id)
+        .execute(&state.db)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query("DELETE FROM app_variables WHERE id = $1 AND application_id = $2")
+        .bind(DbUuid::from(var_id))
+        .bind(DbUuid::from(app_id))
         .execute(&state.db)
         .await?;
 
