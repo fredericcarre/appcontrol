@@ -9,6 +9,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::error::{validate_length, ApiError};
 use crate::middleware::audit::log_action;
 use crate::AppState;
@@ -34,9 +35,9 @@ pub struct ActivateBreakGlassRequest {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct BreakGlassSessionRow {
-    pub id: Uuid,
-    pub account_id: Uuid,
-    pub organization_id: Uuid,
+    pub id: DbUuid,
+    pub account_id: DbUuid,
+    pub organization_id: DbUuid,
     pub activated_by_ip: String,
     pub reason: String,
     pub started_at: chrono::DateTime<chrono::Utc>,
@@ -119,7 +120,7 @@ pub async fn list_break_glass_accounts(
         return Err(ApiError::Forbidden);
     }
 
-    let accounts = sqlx::query_as::<_, (Uuid, String, bool, chrono::DateTime<chrono::Utc>)>(
+    let accounts = sqlx::query_as::<_, (DbUuid, String, bool, chrono::DateTime<chrono::Utc>)>(
         "SELECT id, username, is_active, last_rotated_at FROM break_glass_accounts \
          WHERE organization_id = $1 ORDER BY username",
     )
@@ -155,7 +156,7 @@ pub async fn activate_break_glass(
     let password_hash = hash_password(&body.password);
 
     // Validate credentials
-    let account = sqlx::query_as::<_, (Uuid, Uuid)>(
+    let account = sqlx::query_as::<_, (DbUuid, DbUuid)>(
         "SELECT id, organization_id FROM break_glass_accounts \
          WHERE username = $1 AND password_hash = $2 AND is_active = true",
     )

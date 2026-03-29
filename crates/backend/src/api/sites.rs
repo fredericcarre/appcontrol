@@ -13,6 +13,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::AppState;
 
@@ -40,8 +41,8 @@ pub struct ListSitesQuery {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct SiteRow {
-    pub id: Uuid,
-    pub organization_id: Uuid,
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
     pub name: String,
     pub code: String,
     pub site_type: String,

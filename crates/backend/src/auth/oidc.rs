@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use super::AuthUser;
 use crate::AppState;
+use crate::db::DbUuid;
 
 /// OIDC provider configuration.
 #[derive(Debug, Clone)]
@@ -231,7 +232,7 @@ async fn find_or_create_oidc_user(
     oidc_sub: &str,
 ) -> Result<AuthUser, sqlx::Error> {
     // Try to find by email first
-    let existing = sqlx::query_as::<_, (Uuid, Uuid, String, String)>(
+    let existing = sqlx::query_as::<_, (DbUuid, DbUuid, String, String)>(
         "SELECT id, organization_id, email, role FROM users WHERE email = $1",
     )
     .bind(email)
@@ -247,15 +248,15 @@ async fn find_or_create_oidc_user(
             .await;
 
         return Ok(AuthUser {
-            user_id,
-            organization_id: org_id,
+            user_id: *user_id,
+            organization_id: *org_id,
             email,
             role,
         });
     }
 
     // Auto-create user in default organization
-    let org_id = sqlx::query_scalar::<_, Uuid>("SELECT id FROM organizations LIMIT 1")
+    let org_id = sqlx::query_scalar::<_, DbUuid>("SELECT id FROM organizations LIMIT 1")
         .fetch_one(pool)
         .await?;
 
@@ -275,7 +276,7 @@ async fn find_or_create_oidc_user(
 
     Ok(AuthUser {
         user_id,
-        organization_id: org_id,
+        organization_id: *org_id,
         email: email.to_string(),
         role: "viewer".to_string(),
     })

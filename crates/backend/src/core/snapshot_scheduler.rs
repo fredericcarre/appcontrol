@@ -9,14 +9,15 @@ use uuid::Uuid;
 
 #[cfg(feature = "postgres")]
 use crate::db::UuidArray;
+use crate::db::DbUuid;
 use crate::AppState;
 
 /// Row returned when querying for due schedules.
 #[cfg(feature = "postgres")]
 #[derive(Debug, sqlx::FromRow)]
 struct DueSchedule {
-    id: Uuid,
-    organization_id: Uuid,
+    id: DbUuid,
+    organization_id: DbUuid,
     name: String,
     agent_ids: UuidArray,
     frequency: String,
@@ -350,7 +351,7 @@ async fn fetch_services_for_correlation(
 #[cfg(feature = "postgres")]
 async fn update_schedule_after_run(
     db: &crate::db::DbPool,
-    schedule_id: Uuid,
+    schedule_id: DbUuid,
     next_run: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
@@ -372,7 +373,7 @@ async fn update_schedule_after_run(
 #[allow(dead_code)] // Will be used when snapshot scheduler is fully implemented for SQLite
 async fn update_schedule_after_run(
     db: &crate::db::DbPool,
-    schedule_id: Uuid,
+    schedule_id: DbUuid,
     next_run: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(

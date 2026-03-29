@@ -3,6 +3,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::AppState;
+use crate::db::DbUuid;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SwitchoverError {
@@ -87,7 +88,7 @@ async fn execute_validate(
     }
 
     // 2. Verify a binding profile exists for the target site
-    let target_profile = sqlx::query_as::<_, (Uuid, String, i64)>(
+    let target_profile = sqlx::query_as::<_, (DbUuid, String, i64)>(
         r#"
         SELECT bp.id, bp.name,
                (SELECT COUNT(*) FROM binding_profile_mappings WHERE profile_id = bp.id) as mapping_count
@@ -129,7 +130,7 @@ async fn execute_validate(
     };
 
     // 3. Get all components and verify they have mappings in the target profile
-    let components = sqlx::query_as::<_, (Uuid, String)>(
+    let components = sqlx::query_as::<_, (DbUuid, String)>(
         "SELECT id, name FROM components WHERE application_id = $1",
     )
     .bind(app_id)
@@ -166,7 +167,7 @@ async fn execute_validate(
     }
 
     // 4. Verify agents in the target profile are connected (check heartbeats)
-    let target_agents = sqlx::query_as::<_, (Uuid, String)>(
+    let target_agents = sqlx::query_as::<_, (DbUuid, String)>(
         r#"
         SELECT DISTINCT bpm.agent_id, a.hostname
         FROM binding_profile_mappings bpm
@@ -392,7 +393,7 @@ async fn execute_start_target(
     );
 
     // 1. Find the target binding profile (profile whose gateways belong to target site)
-    let target_profile = sqlx::query_as::<_, (Uuid, String)>(
+    let target_profile = sqlx::query_as::<_, (DbUuid, String)>(
         r#"
         SELECT bp.id, bp.name
         FROM binding_profiles bp
@@ -420,7 +421,7 @@ async fn execute_start_target(
     let (target_profile_id, target_profile_name) = target_profile;
 
     // 2. Get current active profile for snapshot
-    let current_profile = sqlx::query_as::<_, (Uuid, String)>(
+    let current_profile = sqlx::query_as::<_, (DbUuid, String)>(
         "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = true",
     )
     .bind(app_id)
@@ -470,7 +471,7 @@ async fn execute_start_target(
     }
 
     // 3. Get mappings from the target profile and update components
-    let mappings = sqlx::query_as::<_, (String, Uuid)>(
+    let mappings = sqlx::query_as::<_, (String, DbUuid)>(
         "SELECT component_name, agent_id FROM binding_profile_mappings WHERE profile_id = $1",
     )
     .bind(target_profile_id)
@@ -495,7 +496,7 @@ async fn execute_start_target(
 
     for (comp_name, new_agent_id) in &mappings {
         // Get component id and current agent
-        let comp_info = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<String>, Option<String>, Option<String>)>(
+        let comp_info = sqlx::query_as::<_, (DbUuid, Option<DbUuid>, Option<String>, Option<String>, Option<String>)>(
             "SELECT id, agent_id, check_cmd, start_cmd, stop_cmd FROM components WHERE application_id = $1 AND name = $2",
         )
         .bind(app_id)
@@ -616,7 +617,7 @@ async fn execute_start_target(
 
         if let Some(ids) = impacted_ids {
             if !ids.is_empty() {
-                let impacted_set: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+                let impacted_set: std::collections::HashSet<DbUuid> = ids.iter().copied().collect().into();
                 tracing::info!(
                     app_id = %app_id,
                     mode = mode,
@@ -629,7 +630,7 @@ async fn execute_start_target(
         } else if !swapped_component_ids.is_empty() {
             // Fallback: just start swapped components if impacted_ids not found
             let component_set: std::collections::HashSet<Uuid> =
-                swapped_component_ids.iter().copied().collect();
+                swapped_component_ids.iter().copied().collect().into();
             super::sequencer::execute_start_subset(state, app_id, &component_set).await?;
         }
     } else {
@@ -654,11 +655,13 @@ async fn execute_start_target(
 
 /// Advance to the next phase with real orchestration.
 /// The phase that's currently "in_progress" is the one we execute.
-pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value, SwitchoverError> {
+pub async fn advance_phase(state: &Arc<AppState>, app_id: impl Into<Uuid>) -> Result<Value, SwitchoverError> {
+    let app_id: Uuid = app_id.into();
+
     let pool = &state.db;
 
     // Get the phase that's currently in_progress - that's what we need to execute
-    let current = sqlx::query_as::<_, (Uuid, String, String)>(
+    let current = sqlx::query_as::<_, (DbUuid, String, String)>(
         r#"
         SELECT switchover_id, phase, status
         FROM switchover_log
@@ -681,10 +684,10 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
             // PREPARE is just initialization, nothing to execute
             Ok(serde_json::json!({"status": "prepared"}))
         }
-        "VALIDATE" => execute_validate(state, app_id, switchover_id).await,
-        "STOP_SOURCE" => execute_stop_source(state, app_id, switchover_id).await,
-        "SYNC" => execute_sync(state, app_id, switchover_id).await,
-        "START_TARGET" => execute_start_target(state, app_id, switchover_id).await,
+        "VALIDATE" => execute_validate(state, app_id, *switchover_id).await,
+        "STOP_SOURCE" => execute_stop_source(state, app_id, *switchover_id).await,
+        "SYNC" => execute_sync(state, app_id, *switchover_id).await,
+        "START_TARGET" => execute_start_target(state, app_id, *switchover_id).await,
         "COMMIT" => Ok(serde_json::json!({"finalized": true})),
         _ => return Err(SwitchoverError::InvalidPhase),
     };
@@ -745,7 +748,7 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
             };
             let event = super::notifications::NotificationEvent::Switchover {
                 app_id,
-                switchover_id,
+                switchover_id: *switchover_id,
                 phase: notification_phase.clone(),
                 status: notification_status.to_string(),
             };
@@ -783,8 +786,10 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
 }
 
 /// Rollback the switchover.
-pub async fn rollback(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
-    let current = sqlx::query_as::<_, (Uuid, String)>(
+pub async fn rollback(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Result<Value, SwitchoverError> {
+    let app_id: Uuid = app_id.into();
+
+    let current = sqlx::query_as::<_, (DbUuid, String)>(
         r#"
         SELECT switchover_id, phase
         FROM switchover_log
@@ -823,8 +828,10 @@ pub async fn rollback(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, S
 }
 
 /// Commit the switchover (final phase).
-pub async fn commit(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
-    let current = sqlx::query_as::<_, (Uuid, String)>(
+pub async fn commit(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Result<Value, SwitchoverError> {
+    let app_id: Uuid = app_id.into();
+
+    let current = sqlx::query_as::<_, (DbUuid, String)>(
         r#"
         SELECT switchover_id, phase
         FROM switchover_log
@@ -864,8 +871,10 @@ pub async fn commit(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, Swi
 }
 
 /// Get switchover status.
-pub async fn get_status(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
-    let logs = sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
+pub async fn get_status(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Result<Value, SwitchoverError> {
+    let app_id: Uuid = app_id.into();
+
+    let logs = sqlx::query_as::<_, (DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
         r#"
         SELECT switchover_id, phase, status, created_at
         FROM switchover_log

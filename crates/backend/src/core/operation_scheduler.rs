@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use cron::Schedule as CronSchedule;
 use uuid::Uuid;
 
-use crate::db::DbPool;
+use crate::db::{DbPool, DbUuid};
 use crate::middleware::audit;
 use crate::AppState;
 
@@ -19,10 +19,10 @@ use crate::AppState;
 #[derive(Debug, sqlx::FromRow)]
 #[allow(dead_code)]
 struct DueSchedule {
-    id: Uuid,
-    organization_id: Uuid,
-    application_id: Option<Uuid>,
-    component_id: Option<Uuid>,
+    id: DbUuid,
+    organization_id: DbUuid,
+    application_id: Option<DbUuid>,
+    component_id: Option<DbUuid>,
     name: String,
     operation: String,
     cron_expression: String,
@@ -243,7 +243,7 @@ async fn execute_start(state: &Arc<AppState>, schedule: &DueSchedule) -> Schedul
             .await
             .map_err(|e| e.to_string())
     } else if let Some(comp_id) = schedule.component_id {
-        super::sequencer::start_single_component(state, comp_id)
+        super::sequencer::start_single_component(state, *comp_id)
             .await
             .map_err(|e| e.to_string())
     } else {
@@ -258,7 +258,7 @@ async fn execute_stop(state: &Arc<AppState>, schedule: &DueSchedule) -> Schedule
             .await
             .map_err(|e| e.to_string())
     } else if let Some(comp_id) = schedule.component_id {
-        super::sequencer::stop_single_component(state, comp_id)
+        super::sequencer::stop_single_component(state, *comp_id)
             .await
             .map_err(|e| e.to_string())
     } else {

@@ -1,4 +1,4 @@
-use crate::db::{self, DbPool};
+use crate::db::{self, DbPool, DbUuid};
 use uuid::Uuid;
 
 use super::AuthUser;
@@ -57,8 +57,8 @@ pub async fn validate_api_key(pool: &DbPool, key: &str) -> Result<AuthUser, ApiK
     .await;
 
     Ok(AuthUser {
-        user_id: row.user_id,
-        organization_id: row.organization_id,
+        user_id: *row.user_id,
+        organization_id: *row.organization_id,
         email: row.email,
         role: row.role,
     })
@@ -66,9 +66,9 @@ pub async fn validate_api_key(pool: &DbPool, key: &str) -> Result<AuthUser, ApiK
 
 #[derive(Debug, sqlx::FromRow)]
 struct ApiKeyRow {
-    id: Uuid,
-    user_id: Uuid,
-    organization_id: Uuid,
+    id: DbUuid,
+    user_id: DbUuid,
+    organization_id: DbUuid,
     email: String,
     role: String,
 }

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
 use crate::error::{validate_length, ApiError, OptionExt};
 use crate::middleware::audit::log_action;
@@ -17,8 +18,8 @@ use appcontrol_common::PermissionLevel;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct InputParamRow {
-    pub id: Uuid,
-    pub command_id: Uuid,
+    pub id: DbUuid,
+    pub command_id: DbUuid,
     pub name: String,
     pub description: Option<String>,
     pub default_value: Option<String>,
@@ -55,8 +56,8 @@ pub struct UpdateInputParamRequest {
 }
 
 /// Resolve the application_id for a command through the component chain.
-async fn app_id_for_command(db: &crate::db::DbPool, command_id: Uuid) -> Result<Uuid, ApiError> {
-    sqlx::query_scalar::<_, Uuid>(
+async fn app_id_for_command(db: &crate::db::DbPool, command_id: DbUuid) -> Result<Uuid, ApiError> {
+    sqlx::query_scalar::<_, DbUuid>(
         "SELECT c.application_id FROM component_commands cc \
          JOIN components c ON c.id = cc.component_id \
          WHERE cc.id = $1",
@@ -73,7 +74,7 @@ pub async fn list_params(
     Extension(user): Extension<AuthUser>,
     Path(command_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id = app_id_for_command(&state.db, command_id).await?;
+    let app_id = app_id_for_command(&state.db, DbUuid::from(command_id)).await?;
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
         return Err(ApiError::Forbidden);
@@ -98,7 +99,7 @@ pub async fn create_param(
     Path(command_id): Path<Uuid>,
     Json(body): Json<CreateInputParamRequest>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    let app_id = app_id_for_command(&state.db, command_id).await?;
+    let app_id = app_id_for_command(&state.db, DbUuid::from(command_id)).await?;
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
         return Err(ApiError::Forbidden);
@@ -159,7 +160,7 @@ pub async fn delete_param(
     Extension(user): Extension<AuthUser>,
     Path((command_id, param_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
-    let app_id = app_id_for_command(&state.db, command_id).await?;
+    let app_id = app_id_for_command(&state.db, DbUuid::from(command_id)).await?;
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
         return Err(ApiError::Forbidden);

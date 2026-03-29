@@ -14,6 +14,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::error::{ApiError, OptionExt};
 use crate::AppState;
 
@@ -28,14 +29,14 @@ pub struct UpdateGatewayRequest {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct GatewayRow {
-    pub id: Uuid,
-    pub organization_id: Uuid,
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
     pub name: String,
     /// DEPRECATED: Legacy zone field, now nullable. Use site_id instead.
     pub zone: Option<String>,
     pub hostname: Option<String>,
     pub port: Option<i32>,
-    pub site_id: Option<Uuid>,
+    pub site_id: Option<DbUuid>,
     pub certificate_fingerprint: Option<String>,
     pub is_active: bool,
     pub is_primary: bool,
@@ -48,7 +49,7 @@ pub struct GatewayRow {
 /// Response struct for gateway list with additional computed fields
 #[derive(Debug, Serialize)]
 pub struct GatewayListItem {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub name: String,
     pub zone: String,
     pub status: String, // "active", "suspended"
@@ -60,7 +61,7 @@ pub struct GatewayListItem {
     pub version: Option<String>,
     pub last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
     // Site information
-    pub site_id: Option<Uuid>,
+    pub site_id: Option<DbUuid>,
     pub site_name: Option<String>,
     pub site_code: Option<String>,
 }
@@ -68,14 +69,14 @@ pub struct GatewayListItem {
 /// Site summary for grouping gateways
 #[derive(Debug, Serialize)]
 pub struct SiteSummary {
-    pub site_id: Option<Uuid>,
+    pub site_id: Option<DbUuid>,
     pub site_name: String,
     pub site_code: String,
     /// DEPRECATED: Legacy zone field for backward compatibility. Same as site_code.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zone: Option<String>,
     pub gateway_count: i64,
-    pub active_gateway_id: Option<Uuid>,
+    pub active_gateway_id: Option<DbUuid>,
     pub failover_active: bool,
     pub gateways: Vec<GatewayListItem>,
 }
@@ -171,7 +172,7 @@ pub async fn list_gateways(
         };
 
         let item = GatewayListItem {
-            id,
+            id: DbUuid::from(id),
             name,
             zone: zone.clone().unwrap_or_default(),
             status,
@@ -476,7 +477,7 @@ pub async fn list_gateway_agents(
         return Err(ApiError::NotFound);
     }
 
-    let agents = sqlx::query_as::<_, (Uuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
+    let agents = sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
         r#"SELECT id, hostname, is_active, last_heartbeat_at
            FROM agents
            WHERE gateway_id = $1 AND organization_id = $2
@@ -714,7 +715,7 @@ pub async fn block_gateway(
     let mut components_affected = 0;
     for agent_id in &agent_ids {
         components_affected +=
-            transition_gateway_agent_components_to_unreachable(&state, *agent_id, gateway_id).await;
+            transition_gateway_agent_components_to_unreachable(&state, DbUuid::from(*agent_id), DbUuid::from(gateway_id)).await;
     }
 
     tx.commit().await?;
@@ -962,7 +963,7 @@ pub async fn list_revoked_certificates(
 
 /// Check if a certificate fingerprint is revoked.
 /// Used internally by the gateway mTLS verification.
-pub async fn is_cert_revoked(db: &crate::db::DbPool, org_id: Uuid, fingerprint: &str) -> bool {
+pub async fn is_cert_revoked(db: &crate::db::DbPool, org_id: DbUuid, fingerprint: &str) -> bool {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM revoked_certificates WHERE organization_id = $1 AND fingerprint = $2)",
     )
@@ -977,7 +978,7 @@ pub async fn is_cert_revoked(db: &crate::db::DbPool, org_id: Uuid, fingerprint: 
 /// Returns true if the fingerprint matches the stored one for this agent.
 pub async fn verify_agent_cert_pinning(
     db: &crate::db::DbPool,
-    agent_id: Uuid,
+    agent_id: DbUuid,
     presented_fingerprint: &str,
 ) -> bool {
     let stored: Option<Option<String>> = sqlx::query_scalar(
@@ -999,16 +1000,16 @@ pub async fn verify_agent_cert_pinning(
 /// Returns the number of components affected.
 async fn transition_gateway_agent_components_to_unreachable(
     state: &AppState,
-    agent_id: Uuid,
-    gateway_id: Uuid,
+    agent_id: DbUuid,
+    gateway_id: DbUuid,
 ) -> i32 {
     use appcontrol_common::ComponentState;
 
     #[derive(sqlx::FromRow)]
     struct ComponentInfo {
-        id: Uuid,
+        id: DbUuid,
         name: String,
-        application_id: Uuid,
+        application_id: DbUuid,
         app_name: String,
     }
 
@@ -1059,8 +1060,8 @@ async fn transition_gateway_agent_components_to_unreachable(
             state.ws_hub.broadcast(
                 comp.application_id,
                 appcontrol_common::WsEvent::StateChange {
-                    component_id: comp.id,
-                    app_id: comp.application_id,
+                    component_id: *comp.id,
+                    app_id: *comp.application_id,
                     component_name: Some(comp.name.clone()),
                     app_name: Some(comp.app_name.clone()),
                     from: current_state,

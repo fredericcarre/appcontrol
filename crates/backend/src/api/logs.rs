@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
 use crate::error::ApiError;
 use crate::middleware::audit;
@@ -149,7 +150,7 @@ pub async fn list_log_sources(
 ) -> Result<Json<Vec<LogSourceResponse>>, ApiError> {
     // Get component and check permission
     let component =
-        get_component_with_permission(&state, &user, component_id, PermissionLevel::View).await?;
+        get_component_with_permission(&state, &user, DbUuid::from(component_id), PermissionLevel::View).await?;
 
     let rows = sqlx::query_as::<_, LogSourceRow>(
         r#"
@@ -195,7 +196,7 @@ pub async fn create_log_source(
 ) -> Result<(StatusCode, Json<LogSourceResponse>), ApiError> {
     // Check edit permission
     let component =
-        get_component_with_permission(&state, &user, component_id, PermissionLevel::Edit).await?;
+        get_component_with_permission(&state, &user, DbUuid::from(component_id), PermissionLevel::Edit).await?;
 
     // Validate source type
     if !["file", "event_log", "command"].contains(&req.source_type.as_str()) {
@@ -365,7 +366,7 @@ pub async fn update_log_source(
 
     let response = LogSourceResponse {
         id: source_id,
-        component_id: source.component_id,
+        component_id: *source.component_id,
         name,
         source_type: source.source_type,
         description,
@@ -441,7 +442,7 @@ pub async fn get_component_logs(
 ) -> Result<Json<LogsResponse>, ApiError> {
     // Check operate permission (minimum for log access)
     let component =
-        get_component_with_permission(&state, &user, component_id, PermissionLevel::Operate)
+        get_component_with_permission(&state, &user, DbUuid::from(component_id), PermissionLevel::Operate)
             .await?;
 
     let source_type: String;
@@ -509,7 +510,7 @@ pub async fn get_component_logs(
     log_access_audit(
         &state,
         &user,
-        component_id,
+        DbUuid::from(component_id),
         query.source.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
         &source_type,
         &source_name,
@@ -541,7 +542,7 @@ pub async fn run_diagnostic_command(
 ) -> Result<Json<DiagnosticCommandResponse>, ApiError> {
     // Check operate permission
     let component =
-        get_component_with_permission(&state, &user, component_id, PermissionLevel::Operate)
+        get_component_with_permission(&state, &user, DbUuid::from(component_id), PermissionLevel::Operate)
             .await?;
 
     // Find the command source
@@ -605,10 +606,10 @@ pub async fn run_diagnostic_command(
 
 #[derive(Debug, sqlx::FromRow)]
 struct LogSourceRow {
-    id: Uuid,
-    component_id: Uuid,
+    id: DbUuid,
+    component_id: DbUuid,
     #[allow(dead_code)]
-    organization_id: Uuid,
+    organization_id: DbUuid,
     name: String,
     source_type: String,
     description: Option<String>,
@@ -623,7 +624,7 @@ struct LogSourceRow {
     is_sensitive: bool,
     display_order: i32,
     #[allow(dead_code)]
-    created_by: Option<Uuid>,
+    created_by: Option<DbUuid>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -632,18 +633,18 @@ struct LogSourceRow {
 #[derive(Debug, sqlx::FromRow)]
 struct ComponentRow {
     #[allow(dead_code)]
-    id: Uuid,
-    application_id: Uuid,
-    organization_id: Uuid,
+    id: DbUuid,
+    application_id: DbUuid,
+    organization_id: DbUuid,
     name: String,
     #[allow(dead_code)]
-    agent_id: Option<Uuid>,
+    agent_id: Option<DbUuid>,
 }
 
 fn row_to_response(row: LogSourceRow) -> LogSourceResponse {
     LogSourceResponse {
-        id: row.id,
-        component_id: row.component_id,
+        id: *row.id,
+        component_id: *row.component_id,
         name: row.name,
         source_type: row.source_type,
         description: row.description,
@@ -664,7 +665,7 @@ fn row_to_response(row: LogSourceRow) -> LogSourceResponse {
 async fn get_component_with_permission(
     state: &AppState,
     user: &AuthUser,
-    component_id: Uuid,
+    component_id: DbUuid,
     required_level: PermissionLevel,
 ) -> Result<ComponentRow, ApiError> {
     let component = sqlx::query_as::<_, ComponentRow>(
@@ -694,14 +695,14 @@ async fn get_component_with_permission(
 async fn log_access_audit(
     state: &AppState,
     user: &AuthUser,
-    component_id: Uuid,
-    log_source_id: Option<Uuid>,
+    component_id: DbUuid,
+    log_source_id: Option<DbUuid>,
     source_type: &str,
     source_name: &str,
     query: &GetLogsQuery,
 ) -> Result<(), ApiError> {
     let org_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT organization_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_one(&state.db)
             .await

@@ -194,7 +194,7 @@ pub async fn preview_import(
 
     // List all available agents on selected gateways
     let available_agents =
-        list_available_agents(&state.db, &body.gateway_ids, user.organization_id)
+        list_available_agents(&state.db, &body.gateway_ids, user.organization_id.into())
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to list agents: {}", e)))?;
 
@@ -211,7 +211,7 @@ pub async fn preview_import(
 
         let resolution = if let Some(ref host) = comp.host {
             let result =
-                resolve_host_with_options(&state.db, host, &body.gateway_ids, user.organization_id)
+                resolve_host_with_options(&state.db, host, &body.gateway_ids, user.organization_id.into())
                     .await
                     .map_err(|e| ApiError::Internal(format!("Resolution failed: {}", e)))?;
 
@@ -235,7 +235,7 @@ pub async fn preview_import(
                         candidates: candidates
                             .into_iter()
                             .map(|c| AgentCandidateDto {
-                                agent_id: c.agent_id,
+                                agent_id: *c.agent_id,
                                 hostname: c.hostname,
                                 gateway_id: c.gateway_id,
                                 gateway_name: c.gateway_name,
@@ -275,7 +275,7 @@ pub async fn preview_import(
             for comp in &import_data.application.components {
                 if let Some(ref host) = comp.host {
                     let dr_result =
-                        resolve_dr_agent(&state.db, user.organization_id, dr_gw_ids, host)
+                        resolve_dr_agent(&state.db, user.organization_id.into(), dr_gw_ids, host)
                             .await
                             .map_err(|e| {
                                 ApiError::Internal(format!("DR resolution failed: {}", e))
@@ -302,7 +302,7 @@ pub async fn preview_import(
                                         candidates: candidates
                                             .into_iter()
                                             .map(|c| AgentCandidateDto {
-                                                agent_id: c.agent_id,
+                                                agent_id: *c.agent_id,
                                                 hostname: c.hostname,
                                                 gateway_id: c.gateway_id,
                                                 gateway_name: c.gateway_name,
@@ -341,7 +341,7 @@ pub async fn preview_import(
     let dr_available_agents = if let Some(ref dr_gw_ids) = body.dr_gateway_ids {
         if !dr_gw_ids.is_empty() {
             Some(
-                list_available_agents(&state.db, dr_gw_ids, user.organization_id)
+                list_available_agents(&state.db, dr_gw_ids, user.organization_id.into())
                     .await
                     .map_err(|e| ApiError::Internal(format!("Failed to list DR agents: {}", e)))?,
             )

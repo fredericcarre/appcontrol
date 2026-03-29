@@ -14,6 +14,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::auth::jwt;
+use crate::db::DbUuid;
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -1078,7 +1079,7 @@ async fn process_agent_message(
 
             // Broadcast CommandResultEvent to subscribed frontend clients
             if let Ok(Some((comp_id, comp_name, app_id))) =
-                sqlx::query_as::<_, (uuid::Uuid, String, uuid::Uuid)>(
+                sqlx::query_as::<_, (DbUuid, String, DbUuid)>(
                     r#"SELECT c.id, c.name, c.application_id
                    FROM command_executions ce
                    JOIN components c ON ce.component_id = c.id
@@ -1092,7 +1093,7 @@ async fn process_agent_message(
                     app_id,
                     appcontrol_common::WsEvent::CommandResultEvent {
                         request_id,
-                        component_id: comp_id,
+                        component_id: *comp_id,
                         component_name: Some(comp_name),
                         exit_code,
                         stdout: stdout.clone(),
@@ -1145,7 +1146,7 @@ async fn process_agent_message(
             );
 
             // Resolve component_id from command_executions to broadcast to subscribed clients
-            let component_id = sqlx::query_scalar::<_, uuid::Uuid>(
+            let component_id = sqlx::query_scalar::<_, DbUuid>(
                 "SELECT component_id FROM command_executions WHERE request_id = $1",
             )
             .bind(request_id)
@@ -1154,7 +1155,7 @@ async fn process_agent_message(
 
             if let Ok(Some(comp_id)) = component_id {
                 // Resolve app_id for broadcast routing
-                if let Ok(Some(app_id)) = sqlx::query_scalar::<_, uuid::Uuid>(
+                if let Ok(Some(app_id)) = sqlx::query_scalar::<_, DbUuid>(
                     "SELECT application_id FROM components WHERE id = $1",
                 )
                 .bind(comp_id)
@@ -1165,7 +1166,7 @@ async fn process_agent_message(
                         app_id,
                         appcontrol_common::WsEvent::CommandOutputChunkEvent {
                             request_id,
-                            component_id: comp_id,
+                            component_id: *comp_id,
                             stdout,
                             stderr,
                         },
@@ -1328,7 +1329,7 @@ async fn process_agent_message(
             // (late binding: user created component before agent was online)
             crate::api::components::resolve_components_for_agent(
                 &state.db,
-                agent_id,
+                agent_id.into(),
                 &hostname,
                 &ip_addresses,
             )
@@ -1816,10 +1817,10 @@ async fn mark_agent_components_unreachable(
     // Row type for query
     #[derive(sqlx::FromRow)]
     struct ComponentInfo {
-        id: uuid::Uuid,
+        id: DbUuid,
         name: String,
         current_state: String,
-        application_id: uuid::Uuid,
+        application_id: DbUuid,
         app_name: String,
     }
 
@@ -1914,8 +1915,8 @@ async fn mark_agent_components_unreachable(
         state.ws_hub.broadcast(
             comp.application_id,
             appcontrol_common::WsEvent::StateChange {
-                component_id: comp.id,
-                app_id: comp.application_id,
+                component_id: *comp.id,
+                app_id: *comp.application_id,
                 component_name: Some(comp.name.clone()),
                 app_name: Some(comp.app_name.clone()),
                 from: from_state,

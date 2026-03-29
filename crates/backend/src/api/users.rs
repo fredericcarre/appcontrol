@@ -13,6 +13,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::AppState;
 
@@ -44,8 +45,8 @@ pub struct ListUsersQuery {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct UserRow {
-    pub id: Uuid,
-    pub organization_id: Uuid,
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
     pub email: String,
     pub display_name: String,
     pub role: String,

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
 use crate::error::{validate_length, ApiError, OptionExt};
 use crate::middleware::audit::log_action;
@@ -17,8 +18,8 @@ use appcontrol_common::PermissionLevel;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct LinkRow {
-    pub id: Uuid,
-    pub component_id: Uuid,
+    pub id: DbUuid,
+    pub component_id: DbUuid,
     pub label: String,
     pub url: String,
     pub link_type: String,
@@ -49,7 +50,7 @@ pub async fn list_links(
     Path(component_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?
@@ -79,7 +80,7 @@ pub async fn create_link(
     Json(body): Json<CreateLinkRequest>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?
@@ -132,7 +133,7 @@ pub async fn update_link(
     Json(body): Json<UpdateLinkRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?
@@ -192,7 +193,7 @@ pub async fn delete_link(
     Path((component_id, link_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?

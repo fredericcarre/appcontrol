@@ -26,7 +26,7 @@ use uuid::Uuid;
 ///
 /// For PostgreSQL: transparent wrapper around `uuid::Uuid`.
 /// For SQLite: encodes as TEXT (hyphenated string), decodes via `Uuid::parse_str`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DbUuid(pub Uuid);
 
@@ -68,6 +68,19 @@ impl From<DbUuid> for Uuid {
         u.0
     }
 }
+
+impl std::borrow::Borrow<Uuid> for DbUuid {
+    fn borrow(&self) -> &Uuid {
+        &self.0
+    }
+}
+
+impl AsRef<Uuid> for DbUuid {
+    fn as_ref(&self) -> &Uuid {
+        &self.0
+    }
+}
+
 
 impl std::str::FromStr for DbUuid {
     type Err = uuid::Error;

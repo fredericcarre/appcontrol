@@ -9,6 +9,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::middleware::audit::log_action;
@@ -17,8 +18,8 @@ use appcontrol_common::PermissionLevel;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct VariableRow {
-    pub id: Uuid,
-    pub application_id: Uuid,
+    pub id: DbUuid,
+    pub application_id: DbUuid,
     pub name: String,
     pub value: String,
     pub description: Option<String>,
@@ -229,7 +230,7 @@ pub async fn delete_variable(
 #[allow(dead_code)]
 pub async fn resolve_variables(
     db: &crate::db::DbPool,
-    app_id: Uuid,
+    app_id: DbUuid,
 ) -> Result<std::collections::HashMap<String, String>, sqlx::Error> {
     let rows = sqlx::query_as::<_, (String, String)>(
         "SELECT name, value FROM app_variables WHERE application_id = $1",

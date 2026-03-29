@@ -9,6 +9,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
 use crate::error::ApiError;
 use crate::AppState;
@@ -46,7 +47,7 @@ pub async fn get_topology(
         .ok_or(ApiError::NotFound)?;
 
     // Fetch components with current state
-    let components = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String)>(
+    let components = sqlx::query_as::<_, (DbUuid, String, String, Option<String>, String)>(
         r#"
         SELECT c.id, c.name, c.component_type, c.host, c.current_state
         FROM components c
@@ -59,7 +60,7 @@ pub async fn get_topology(
     .await?;
 
     // Build name lookup
-    let name_map: HashMap<Uuid, String> = components
+    let name_map: HashMap<DbUuid, String> = components
         .iter()
         .map(|(id, name, _, _, _)| (*id, name.clone()))
         .collect();
@@ -73,7 +74,7 @@ pub async fn get_topology(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     // Fetch dependencies
-    let deps = sqlx::query_as::<_, (Uuid, Uuid)>(
+    let deps = sqlx::query_as::<_, (DbUuid, DbUuid)>(
         "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
     )
     .bind(app_id)
@@ -139,7 +140,7 @@ fn build_topology_structure(
     components: &[(Uuid, String, String, Option<String>, String)],
     deps: &[(Uuid, Uuid)],
     levels: &[Vec<Uuid>],
-    name_map: &HashMap<Uuid, String>,
+    name_map: &HashMap<DbUuid, String>,
 ) -> Value {
     let comp_list: Vec<Value> = components
         .iter()
@@ -352,7 +353,7 @@ pub async fn validate_sequence(
     let operation = body.operation.as_deref().unwrap_or("start");
 
     // Fetch components and build name→id map
-    let components = sqlx::query_as::<_, (Uuid, String)>(
+    let components = sqlx::query_as::<_, (DbUuid, String)>(
         "SELECT id, name FROM components WHERE application_id = $1",
     )
     .bind(app_id)
@@ -362,8 +363,8 @@ pub async fn validate_sequence(
     let name_to_id: HashMap<String, Uuid> = components
         .iter()
         .map(|(id, name)| (name.clone(), *id))
-        .collect();
-    let id_to_name: HashMap<Uuid, String> = components
+        .collect().into();
+    let id_to_name: HashMap<DbUuid, String> = components
         .iter()
         .map(|(id, name)| (*id, name.clone()))
         .collect();
@@ -382,7 +383,7 @@ pub async fn validate_sequence(
     }
 
     // Build position map from correct order (lower position = earlier in sequence)
-    let mut correct_position: HashMap<Uuid, usize> = HashMap::new();
+    let mut correct_position: HashMap<DbUuid, usize> = HashMap::new();
     for (pos, level) in levels.iter().enumerate() {
         for &comp_id in level {
             correct_position.insert(comp_id, pos);
@@ -390,7 +391,7 @@ pub async fn validate_sequence(
     }
 
     // Build position map from proposed sequence
-    let mut proposed_position: HashMap<Uuid, usize> = HashMap::new();
+    let mut proposed_position: HashMap<DbUuid, usize> = HashMap::new();
     let mut unknown_names: Vec<String> = Vec::new();
     for (idx, name) in body.sequence.iter().enumerate() {
         if let Some(&comp_id) = name_to_id.get(name) {
@@ -403,7 +404,7 @@ pub async fn validate_sequence(
     // Detect conflicts: for each dependency A depends on B,
     // check that B appears before A in the proposed sequence
     let mut conflicts = Vec::new();
-    let deps = sqlx::query_as::<_, (Uuid, Uuid)>(
+    let deps = sqlx::query_as::<_, (DbUuid, DbUuid)>(
         "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
     )
     .bind(app_id)
@@ -503,7 +504,7 @@ pub async fn dependency_history(
     let offset = params.offset.unwrap_or(0);
 
     // Query config_versions for dependency-related changes
-    let rows = sqlx::query_as::<_, (Uuid, String, Value, Value, Uuid, chrono::DateTime<chrono::Utc>)>(
+    let rows = sqlx::query_as::<_, (DbUuid, String, Value, Value, DbUuid, chrono::DateTime<chrono::Utc>)>(
         r#"
         SELECT cv.id, cv.change_type, cv.before_snapshot, cv.after_snapshot, cv.changed_by, cv.created_at
         FROM config_versions cv

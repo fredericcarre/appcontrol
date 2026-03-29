@@ -8,6 +8,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
 use crate::error::ApiError;
 use crate::AppState;
@@ -159,7 +160,7 @@ pub async fn availability(
         .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
-    let stats = sqlx::query_as::<_, (Uuid, String, i64, i64)>(
+    let stats = sqlx::query_as::<_, (DbUuid, String, i64, i64)>(
         r#"
         SELECT component_id, date::text,
                COALESCE(running_seconds, 0) as running_seconds,
@@ -200,7 +201,7 @@ pub async fn incidents(
         .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
-    let incidents = sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
+    let incidents = sqlx::query_as::<_, (DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
         r#"
         SELECT st.component_id, c.name, st.to_state, st.created_at
         FROM state_transitions st
@@ -235,7 +236,7 @@ pub async fn switchovers(
         return Err(ApiError::Forbidden);
     }
 
-    let logs = sqlx::query_as::<_, (Uuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
+    let logs = sqlx::query_as::<_, (DbUuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
         r#"
         SELECT id, phase, status, details::text, created_at
         FROM switchover_log
@@ -268,7 +269,7 @@ pub async fn drp_report(
     }
 
     // Get application info
-    let app_info = sqlx::query_as::<_, (String, Option<Uuid>, Option<String>)>(
+    let app_info = sqlx::query_as::<_, (String, Option<DbUuid>, Option<String>)>(
         "SELECT a.name, a.site_id, s.name FROM applications a LEFT JOIN sites s ON a.site_id = s.id WHERE a.id = $1"
     )
     .bind(app_id)
@@ -278,7 +279,7 @@ pub async fn drp_report(
     let (app_name, _site_id, site_name) = app_info.unwrap_or(("Unknown".to_string(), None, None));
 
     // Get all switchover logs grouped by switchover_id
-    let logs = sqlx::query_as::<_, (Uuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
+    let logs = sqlx::query_as::<_, (DbUuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
         r#"
         SELECT switchover_id, phase, status, details, created_at
         FROM switchover_log
@@ -291,8 +292,8 @@ pub async fn drp_report(
     .await?;
 
     // Pre-fetch all sites for name lookup
-    let sites: std::collections::HashMap<Uuid, String> =
-        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM sites")
+    let sites: std::collections::HashMap<DbUuid, String> =
+        sqlx::query_as::<_, (DbUuid, String)>("SELECT id, name FROM sites")
             .fetch_all(&state.db)
             .await?
             .into_iter()
@@ -301,12 +302,12 @@ pub async fn drp_report(
     // Group by switchover_id
     // Phase tuple: (phase_name, status, details, created_at)
     type PhaseEntry = (String, String, Value, chrono::DateTime<chrono::Utc>);
-    let mut switchovers_map: std::collections::HashMap<Uuid, Vec<PhaseEntry>> =
+    let mut switchovers_map: std::collections::HashMap<DbUuid, Vec<PhaseEntry>> =
         std::collections::HashMap::new();
 
     for (switchover_id, phase, status, details, created_at) in logs {
         switchovers_map
-            .entry(switchover_id)
+            .entry(switchover_id.into())
             .or_default()
             .push((phase, status, details, created_at));
     }
@@ -548,7 +549,7 @@ pub async fn drp_report(
 
     // Fetch components for the topology graph
     // position_x/y are `real` (f32) in Postgres, cast to float8 for f64 compatibility
-    let components = sqlx::query_as::<_, (Uuid, String, String, f64, f64)>(
+    let components = sqlx::query_as::<_, (DbUuid, String, String, f64, f64)>(
         r#"
         SELECT id, name, component_type,
                COALESCE(position_x, 0)::float8,
@@ -576,7 +577,7 @@ pub async fn drp_report(
         .collect();
 
     // Fetch dependencies for the topology edges
-    let dependencies = sqlx::query_as::<_, (Uuid, Uuid)>(
+    let dependencies = sqlx::query_as::<_, (DbUuid, DbUuid)>(
         r#"
         SELECT d.from_component_id, d.to_component_id
         FROM dependencies d
@@ -631,7 +632,7 @@ pub async fn audit(
         .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
-    let logs = sqlx::query_as::<_, (Uuid, Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
+    let logs = sqlx::query_as::<_, (DbUuid, DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
         r#"
         SELECT id, user_id, action, resource_type, created_at
         FROM action_log
@@ -1104,7 +1105,7 @@ pub async fn activity_feed(
 
     // Switchover events for this app
     let switchovers =
-        sqlx::query_as::<_, (Uuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
+        sqlx::query_as::<_, (DbUuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
             r#"
         SELECT sl.switchover_id, sl.phase, sl.status, sl.details, sl.created_at
         FROM switchover_log sl
@@ -1304,7 +1305,7 @@ pub async fn health_summary(
 
     // Components in error
     let error_components =
-        sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
+        sqlx::query_as::<_, (DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
             r#"
         SELECT c.id, c.name, COALESCE(c.current_state, 'UNKNOWN'), c.updated_at
         FROM components c
@@ -1325,7 +1326,7 @@ pub async fn health_summary(
         .collect();
 
     // Agent status for this app
-    let agents = sqlx::query_as::<_, (Uuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
+    let agents = sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
         r#"
         SELECT DISTINCT a.id, a.hostname, a.is_active, a.last_heartbeat_at
         FROM agents a
@@ -1354,7 +1355,7 @@ pub async fn health_summary(
 
     // Recent incidents (last 10 FAILED transitions)
     let recent_incidents =
-        sqlx::query_as::<_, (Uuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
+        sqlx::query_as::<_, (DbUuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
             r#"
         SELECT st.component_id, c.name, st.from_state, st.to_state, st.created_at
         FROM state_transitions st

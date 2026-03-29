@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
+use crate::db::DbUuid;
 
 use crate::auth::AuthUser;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
@@ -33,7 +34,7 @@ pub struct UpdateOrgRequest {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct OrgRow {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub name: String,
     pub slug: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -52,7 +53,7 @@ fn require_super_admin(
 }
 
 /// Fetch the platform_role for a user from the database.
-async fn get_platform_role(db: &crate::db::DbPool, user_id: Uuid) -> Option<String> {
+async fn get_platform_role(db: &crate::db::DbPool, user_id: DbUuid) -> Option<String> {
     sqlx::query_scalar::<_, Option<String>>("SELECT platform_role FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_optional(db)
@@ -66,7 +67,7 @@ pub async fn list_organizations(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id).await;
+    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
     require_super_admin(&user, &platform_role)?;
 
     let orgs = sqlx::query_as::<_, OrgRow>(
@@ -83,7 +84,7 @@ pub async fn get_organization(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id).await;
+    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
 
     // Super-admins can view any org; regular admins can view their own
     if platform_role.as_deref() != Some("super_admin") && user.organization_id != id {
@@ -106,7 +107,7 @@ pub async fn create_organization(
     Extension(user): Extension<AuthUser>,
     Json(req): Json<CreateOrgRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id).await;
+    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
     require_super_admin(&user, &platform_role)?;
 
     validate_length("name", &req.name, 1, 200)?;
@@ -151,7 +152,7 @@ pub async fn create_organization(
     .await?;
 
     // Create the org admin user
-    let admin_id = sqlx::query_scalar::<_, Uuid>(
+    let admin_id = sqlx::query_scalar::<_, DbUuid>(
         r#"INSERT INTO users (organization_id, external_id, email, display_name, role, auth_provider)
            VALUES ($1, $2, $3, $4, 'admin', 'local')
            RETURNING id"#,
@@ -193,7 +194,7 @@ pub async fn update_organization(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateOrgRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id).await;
+    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
     require_super_admin(&user, &platform_role)?;
 
     validate_optional_length("name", &req.name, 200)?;

@@ -10,6 +10,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::AppState;
+use crate::db::DbUuid;
 #[cfg(feature = "postgres")]
 use appcontrol_common::ComponentState;
 
@@ -17,10 +18,10 @@ use appcontrol_common::ComponentState;
 #[cfg(feature = "postgres")]
 #[derive(Debug, sqlx::FromRow)]
 struct StaleComponent {
-    component_id: Uuid,
+    component_id: DbUuid,
     component_name: String,
-    agent_id: Uuid,
-    application_id: Uuid,
+    agent_id: DbUuid,
+    application_id: DbUuid,
     app_name: String,
     /// Whether the agent is blocked (is_active = false) vs stale heartbeat
     agent_blocked: bool,
@@ -169,7 +170,7 @@ async fn check_stale_agents(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     }
 
     // Group by agent for logging
-    let mut agent_ids: Vec<Uuid> = stale_components.iter().map(|c| c.agent_id).collect();
+    let mut agent_ids: Vec<DbUuid> = stale_components.iter().map(|c| c.agent_id).collect();
     agent_ids.sort();
     agent_ids.dedup();
 
@@ -259,8 +260,8 @@ async fn transition_to_unreachable(
     state.ws_hub.broadcast(
         comp.application_id,
         appcontrol_common::WsEvent::StateChange {
-            component_id: comp.component_id,
-            app_id: comp.application_id,
+            component_id: *comp.component_id,
+            app_id: *comp.application_id,
             component_name: Some(comp.component_name.clone()),
             app_name: Some(comp.app_name.clone()),
             from: current_state,
@@ -284,7 +285,7 @@ async fn transition_to_unreachable(
 #[cfg(feature = "postgres")]
 #[derive(Debug, sqlx::FromRow)]
 struct AgentToResync {
-    agent_id: Uuid,
+    agent_id: DbUuid,
     unreachable_count: i64,
 }
 
@@ -334,7 +335,7 @@ async fn resync_unreachable_components(state: &Arc<AppState>) -> Result<(), sqlx
         );
 
         // Use the websocket module's send_run_checks_now function
-        crate::websocket::send_run_checks_now(state, agent.agent_id);
+        crate::websocket::send_run_checks_now(state, *agent.agent_id);
     }
 
     Ok(())
@@ -349,10 +350,10 @@ mod tests {
     fn test_stale_component_struct() {
         // Basic struct construction test
         let comp = StaleComponent {
-            component_id: Uuid::new_v4(),
+            component_id: DbUuid::new_v4(),
             component_name: "test-component".to_string(),
-            agent_id: Uuid::new_v4(),
-            application_id: Uuid::new_v4(),
+            agent_id: DbUuid::new_v4(),
+            application_id: DbUuid::new_v4(),
             app_name: "test-app".to_string(),
             agent_blocked: false,
         };

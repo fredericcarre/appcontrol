@@ -19,6 +19,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
 use crate::db::UuidArray;
 use crate::error::ApiError;
@@ -32,8 +33,8 @@ use crate::AppState;
 /// A binding profile
 #[derive(Debug, Serialize, FromRow)]
 pub struct BindingProfile {
-    pub id: Uuid,
-    pub application_id: Uuid,
+    pub id: DbUuid,
+    pub application_id: DbUuid,
     pub name: String,
     pub description: Option<String>,
     pub profile_type: String,
@@ -41,13 +42,13 @@ pub struct BindingProfile {
     pub gateway_ids: UuidArray,
     pub auto_failover: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
-    pub created_by: Option<Uuid>,
+    pub created_by: Option<DbUuid>,
 }
 
 /// Profile with mapping count
 #[derive(Debug, Serialize)]
 pub struct ProfileSummary {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub name: String,
     pub description: Option<String>,
     pub profile_type: String,
@@ -61,11 +62,11 @@ pub struct ProfileSummary {
 /// A binding profile mapping
 #[derive(Debug, Serialize, FromRow)]
 pub struct ProfileMapping {
-    pub id: Uuid,
-    pub profile_id: Uuid,
+    pub id: DbUuid,
+    pub profile_id: DbUuid,
     pub component_name: String,
     pub host: String,
-    pub agent_id: Uuid,
+    pub agent_id: DbUuid,
     pub resolved_via: String,
 }
 
@@ -78,7 +79,7 @@ pub struct CreateProfileRequest {
     pub gateway_ids: Vec<Uuid>,
     pub auto_failover: Option<bool>,
     /// Optional: copy mappings from another profile
-    pub copy_from_profile_id: Option<Uuid>,
+    pub copy_from_profile_id: Option<DbUuid>,
     /// Manual mappings (if not copying)
     pub mappings: Option<Vec<CreateMappingRequest>>,
 }
@@ -88,15 +89,15 @@ pub struct CreateProfileRequest {
 pub struct CreateMappingRequest {
     pub component_name: String,
     pub host: String,
-    pub agent_id: Uuid,
+    pub agent_id: DbUuid,
     pub resolved_via: String,
 }
 
 /// DR Pattern Rule
 #[derive(Debug, Serialize, FromRow)]
 pub struct DrPatternRule {
-    pub id: Uuid,
-    pub organization_id: Uuid,
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
     pub name: String,
     pub search_pattern: String,
     pub replace_pattern: String,
@@ -135,7 +136,7 @@ pub async fn list_profiles(
 
     #[derive(Debug, FromRow)]
     struct ProfileRow {
-        id: Uuid,
+        id: DbUuid,
         name: String,
         description: Option<String>,
         profile_type: String,

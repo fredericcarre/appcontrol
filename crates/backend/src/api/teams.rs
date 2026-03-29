@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
+use crate::db::DbUuid;
 
 use crate::auth::AuthUser;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
@@ -33,8 +34,8 @@ pub struct AddMemberRequest {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct TeamRow {
-    pub id: Uuid,
-    pub organization_id: Uuid,
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
     pub name: String,
     pub description: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -192,8 +193,8 @@ pub async fn list_members(
     let members = sqlx::query_as::<
         _,
         (
-            Uuid,
-            Uuid,
+            DbUuid,
+            DbUuid,
             String,
             chrono::DateTime<chrono::Utc>,
             String,
@@ -260,7 +261,7 @@ pub async fn add_member(
     )
     .await?;
 
-    let member_id = sqlx::query_scalar::<_, Uuid>(
+    let member_id = sqlx::query_scalar::<_, DbUuid>(
         r#"
         INSERT INTO team_members (team_id, user_id, role)
         VALUES ($1, $2, $3)

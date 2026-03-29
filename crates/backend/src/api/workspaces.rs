@@ -14,6 +14,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::error::{validate_length, validate_optional_length, ApiError};
 use crate::AppState;
 
@@ -23,8 +24,8 @@ use crate::AppState;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct WorkspaceRow {
-    pub id: Uuid,
-    pub organization_id: Uuid,
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
     pub name: String,
     pub description: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -39,15 +40,15 @@ pub struct CreateWorkspace {
 
 #[derive(Debug, Deserialize)]
 pub struct AddWorkspaceSite {
-    pub site_id: Uuid,
+    pub site_id: DbUuid,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct AddWorkspaceMember {
     #[serde(default)]
-    pub user_id: Option<Uuid>,
+    pub user_id: Option<DbUuid>,
     #[serde(default)]
-    pub team_id: Option<Uuid>,
+    pub team_id: Option<DbUuid>,
     #[serde(default = "default_role")]
     pub role: String,
 }
@@ -168,7 +169,7 @@ pub async fn list_workspace_sites(
         return Err(ApiError::NotFound);
     }
 
-    let sites = sqlx::query_as::<_, (Uuid, String, String)>(
+    let sites = sqlx::query_as::<_, (DbUuid, String, String)>(
         r#"
         SELECT s.id, s.name, s.code
         FROM sites s
@@ -253,7 +254,7 @@ pub async fn list_workspace_members(
         return Err(ApiError::NotFound);
     }
 
-    let members = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<Uuid>, String)>(
+    let members = sqlx::query_as::<_, (DbUuid, Option<DbUuid>, Option<DbUuid>, String)>(
         r#"
         SELECT wm.id, wm.user_id, wm.team_id, wm.role
         FROM workspace_members wm
@@ -338,7 +339,7 @@ pub async fn my_accessible_sites(
 ) -> Result<Json<Value>, ApiError> {
     if user.is_admin() {
         // Admin sees all sites
-        let sites = sqlx::query_as::<_, (Uuid, String, String)>(
+        let sites = sqlx::query_as::<_, (DbUuid, String, String)>(
             "SELECT id, name, code FROM sites WHERE organization_id = $1 ORDER BY name",
         )
         .bind(user.organization_id)
@@ -363,7 +364,7 @@ pub async fn my_accessible_sites(
 
     if !has_any {
         // Feature not configured → return all sites
-        let sites = sqlx::query_as::<_, (Uuid, String, String)>(
+        let sites = sqlx::query_as::<_, (DbUuid, String, String)>(
             "SELECT id, name, code FROM sites WHERE organization_id = $1 ORDER BY name",
         )
         .bind(user.organization_id)
@@ -379,7 +380,7 @@ pub async fn my_accessible_sites(
     }
 
     // Return only sites from user's workspaces
-    let sites = sqlx::query_as::<_, (Uuid, String, String)>(
+    let sites = sqlx::query_as::<_, (DbUuid, String, String)>(
         r#"
         SELECT DISTINCT s.id, s.name, s.code
         FROM sites s

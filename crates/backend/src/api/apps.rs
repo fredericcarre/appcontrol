@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
-use crate::db::DbPool;
+use crate::db::{DbPool, DbUuid};
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::middleware::audit::{complete_action_failed, complete_action_success, log_action};
 use crate::AppState;
@@ -43,11 +43,11 @@ pub struct UpdateAppRequest {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct AppRow {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub name: String,
     pub description: Option<String>,
-    pub organization_id: Uuid,
-    pub site_id: Uuid,
+    pub organization_id: DbUuid,
+    pub site_id: DbUuid,
     pub tags: Value,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -55,16 +55,16 @@ pub struct AppRow {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct ComponentRow {
-    pub id: Uuid,
-    pub application_id: Uuid,
+    pub id: DbUuid,
+    pub application_id: DbUuid,
     pub name: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
     pub icon: Option<String>,
-    pub group_id: Option<Uuid>,
+    pub group_id: Option<DbUuid>,
     pub component_type: String,
     pub host: Option<String>,
-    pub agent_id: Option<Uuid>,
+    pub agent_id: Option<DbUuid>,
     pub check_cmd: Option<String>,
     pub start_cmd: Option<String>,
     pub stop_cmd: Option<String>,
@@ -81,9 +81,9 @@ pub struct ComponentRow {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct DependencyRow {
-    pub id: Uuid,
-    pub from_component_id: Uuid,
-    pub to_component_id: Uuid,
+    pub id: DbUuid,
+    pub from_component_id: DbUuid,
+    pub to_component_id: DbUuid,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,13 +93,13 @@ pub struct StartAppRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct StartBranchRequest {
-    pub component_id: Option<Uuid>,
+    pub component_id: Option<DbUuid>,
     pub dry_run: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct StartToRequest {
-    pub target_component_id: Uuid,
+    pub target_component_id: DbUuid,
     pub dry_run: Option<bool>,
 }
 
@@ -174,11 +174,11 @@ pub async fn list_apps(
     // Fetch apps with component state counts in a single query
     #[derive(Debug, sqlx::FromRow)]
     struct AppWithCounts {
-        id: Uuid,
+        id: DbUuid,
         name: String,
         description: Option<String>,
-        organization_id: Uuid,
-        site_id: Uuid,
+        organization_id: DbUuid,
+        site_id: DbUuid,
         tags: Value,
         created_at: chrono::DateTime<chrono::Utc>,
         updated_at: chrono::DateTime<chrono::Utc>,
@@ -291,16 +291,16 @@ pub async fn get_app(
     // Fetch components with agent info
     #[derive(Debug, sqlx::FromRow)]
     struct ComponentWithAgent {
-        id: Uuid,
-        application_id: Uuid,
+        id: DbUuid,
+        application_id: DbUuid,
         name: String,
         display_name: Option<String>,
         description: Option<String>,
         icon: Option<String>,
-        group_id: Option<Uuid>,
+        group_id: Option<DbUuid>,
         component_type: String,
         host: Option<String>,
-        agent_id: Option<Uuid>,
+        agent_id: Option<DbUuid>,
         check_cmd: Option<String>,
         start_cmd: Option<String>,
         stop_cmd: Option<String>,
@@ -313,12 +313,12 @@ pub async fn get_app(
         position_y: Option<f32>,
         cluster_size: Option<i32>,
         cluster_nodes: Option<Value>,
-        referenced_app_id: Option<Uuid>,
+        referenced_app_id: Option<DbUuid>,
         created_at: chrono::DateTime<chrono::Utc>,
         updated_at: chrono::DateTime<chrono::Utc>,
         // Agent info
         agent_hostname: Option<String>,
-        gateway_id: Option<Uuid>,
+        gateway_id: Option<DbUuid>,
         gateway_name: Option<String>,
         // Latest metrics from check
         last_check_metrics: Option<Value>,
@@ -344,19 +344,20 @@ pub async fn get_app(
     .await?;
 
     // Collect referenced app IDs to compute their statuses (for application-type components)
-    let referenced_app_ids: Vec<Uuid> = components
+    let referenced_app_ids: Vec<DbUuid> = components
         .iter()
         .filter_map(|c| c.referenced_app_id)
         .collect();
 
     // Fetch status counts and names for referenced apps
-    let mut referenced_app_statuses: std::collections::HashMap<Uuid, String> =
+    let mut referenced_app_statuses: std::collections::HashMap<DbUuid, String> =
         std::collections::HashMap::new();
-    let mut referenced_app_names: std::collections::HashMap<Uuid, String> =
+    let mut referenced_app_names: std::collections::HashMap<DbUuid, String> =
         std::collections::HashMap::new();
 
     if !referenced_app_ids.is_empty() {
-        let status_rows = fetch_referenced_app_statuses(&state.db, &referenced_app_ids).await?;
+        let ref_ids: Vec<Uuid> = referenced_app_ids.iter().map(|id| **id).collect();
+        let status_rows = fetch_referenced_app_statuses(&state.db, &ref_ids).await?;
         for (app_id, app_name, counts) in status_rows {
             referenced_app_names.insert(app_id, app_name);
             let (state, _) =
@@ -867,10 +868,10 @@ pub async fn start_branch(
     }
 
     // If no component_id provided, find all FAILED components in this application.
-    let target_component_ids: Vec<Uuid> = if let Some(cid) = body.component_id {
-        vec![cid]
+    let target_component_ids: Vec<DbUuid> = if let Some(cid) = body.component_id {
+        vec![DbUuid::from(*cid)]
     } else {
-        sqlx::query_scalar::<_, Uuid>(
+        sqlx::query_scalar::<_, DbUuid>(
             "SELECT id FROM components WHERE application_id = $1 AND current_state = 'FAILED'",
         )
         .bind(id)
@@ -952,14 +953,14 @@ pub async fn start_to(
 
     // Verify the target component belongs to this application
     let target_app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(body.target_component_id)
             .fetch_optional(&state.db)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
             .ok_or(ApiError::NotFound)?;
 
-    if target_app_id != id {
+    if target_app_id != DbUuid::from(id) {
         return Err(ApiError::Conflict(
             "Target component does not belong to this application".to_string(),
         ));
@@ -971,7 +972,7 @@ pub async fn start_to(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let mut subset = dag.find_all_dependencies(body.target_component_id);
-    subset.insert(body.target_component_id); // Include the target itself
+    subset.insert(*body.target_component_id); // Include the target itself
 
     log_action(
         &state.db,
@@ -1227,7 +1228,7 @@ pub async fn get_site_overrides(
     }
 
     // Verify app belongs to org
-    let _app = sqlx::query_scalar::<_, Uuid>(
+    let _app = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(app_id)
@@ -1239,7 +1240,7 @@ pub async fn get_site_overrides(
     // Fetch the application's primary site info
     #[derive(Debug, sqlx::FromRow)]
     struct AppSiteInfo {
-        site_id: Uuid,
+        site_id: DbUuid,
         site_name: String,
         site_code: String,
         site_type: String,
@@ -1261,17 +1262,17 @@ pub async fn get_site_overrides(
     // Each profile is associated with gateways, and gateways belong to sites
     #[derive(Debug, sqlx::FromRow)]
     struct BindingRow {
-        component_id: Uuid,
+        component_id: DbUuid,
         component_name: String,
         #[allow(dead_code)]
         component_host: Option<String>,
-        profile_id: Uuid,
+        profile_id: DbUuid,
         profile_name: String,
         profile_type: String,
         is_active: bool,
-        agent_id: Uuid,
+        agent_id: DbUuid,
         agent_hostname: String,
-        site_id: Uuid,
+        site_id: DbUuid,
         site_name: String,
         site_code: String,
         site_type: String,
@@ -1312,8 +1313,8 @@ pub async fn get_site_overrides(
     // Fetch command overrides from site_overrides table
     #[derive(Debug, sqlx::FromRow)]
     struct CmdOverrideRow {
-        component_id: Uuid,
-        site_id: Uuid,
+        component_id: DbUuid,
+        site_id: DbUuid,
         check_cmd_override: Option<String>,
         start_cmd_override: Option<String>,
         stop_cmd_override: Option<String>,
@@ -1334,13 +1335,13 @@ pub async fn get_site_overrides(
     .await?;
 
     // Create a lookup map for command overrides
-    let cmd_override_map: std::collections::HashMap<(Uuid, Uuid), &CmdOverrideRow> = cmd_overrides
+    let cmd_override_map: std::collections::HashMap<(DbUuid, DbUuid), &CmdOverrideRow> = cmd_overrides
         .iter()
         .map(|o| ((o.component_id, o.site_id), o))
         .collect();
 
     // Build the response - group bindings by component
-    let mut component_map: std::collections::HashMap<Uuid, Vec<Value>> =
+    let mut component_map: std::collections::HashMap<DbUuid, Vec<Value>> =
         std::collections::HashMap::new();
 
     for binding in &bindings {
@@ -1421,10 +1422,10 @@ pub async fn get_site_overrides(
 async fn fetch_referenced_app_statuses(
     pool: &DbPool,
     app_ids: &[Uuid],
-) -> Result<Vec<(Uuid, String, (i64, i64, i64, i64, i64, i64))>, sqlx::Error> {
+) -> Result<Vec<(DbUuid, String, (i64, i64, i64, i64, i64, i64))>, sqlx::Error> {
     #[derive(sqlx::FromRow)]
     struct Row {
-        app_id: Uuid,
+        app_id: DbUuid,
         app_name: String,
         running_count: Option<i64>,
         starting_count: Option<i64>,
@@ -1471,14 +1472,14 @@ async fn fetch_referenced_app_statuses(
                 ),
             )
         })
-        .collect())
+        .collect().into())
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 async fn fetch_referenced_app_statuses(
     pool: &DbPool,
     app_ids: &[Uuid],
-) -> Result<Vec<(Uuid, String, (i64, i64, i64, i64, i64, i64))>, sqlx::Error> {
+) -> Result<Vec<(DbUuid, String, (i64, i64, i64, i64, i64, i64))>, sqlx::Error> {
     if app_ids.is_empty() {
         return Ok(Vec::new());
     }

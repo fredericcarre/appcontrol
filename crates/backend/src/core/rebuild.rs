@@ -3,6 +3,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::AppState;
+use crate::db::DbUuid;
 use appcontrol_common::BackendMessage;
 
 /// Default timeout for rebuild commands (5 minutes).
@@ -149,10 +150,12 @@ async fn fetch_rebuild_targets(
 /// On failure: SUSPEND — log the error, do NOT proceed to restart phase.
 pub async fn execute_rebuild(
     state: &Arc<AppState>,
-    app_id: Uuid,
+    app_id: impl Into<Uuid>,
     component_ids: Option<&[Uuid]>,
     initiated_by: Uuid,
 ) -> Result<Value, RebuildError> {
+    let app_id: Uuid = app_id.into();
+
     let targets = fetch_rebuild_targets(&state.db, app_id, component_ids).await?;
 
     // Check for protected components
@@ -389,8 +392,8 @@ pub async fn execute_rebuild(
 }
 
 /// Get the agent_id assigned to a component.
-async fn get_component_agent(pool: &crate::db::DbPool, component_id: Uuid) -> Option<Uuid> {
-    sqlx::query_scalar::<_, Uuid>(
+async fn get_component_agent(pool: &crate::db::DbPool, component_id: Uuid) -> Option<DbUuid> {
+    sqlx::query_scalar::<_, DbUuid>(
         "SELECT agent_id FROM components WHERE id = $1 AND agent_id IS NOT NULL",
     )
     .bind(component_id)

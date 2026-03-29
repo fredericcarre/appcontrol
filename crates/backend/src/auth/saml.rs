@@ -56,6 +56,7 @@ use uuid::Uuid;
 
 use super::AuthUser;
 use crate::AppState;
+use crate::db::DbUuid;
 
 /// SAML SP configuration.
 #[derive(Debug, Clone)]
@@ -326,7 +327,7 @@ async fn sync_saml_groups(
     .await?;
 
     // Determine which teams the user should belong to based on current SAML groups
-    let target_team_ids: Vec<Uuid> = mappings
+    let target_team_ids: Vec<DbUuid> = mappings
         .iter()
         .filter(|m| saml_groups.contains(&m.saml_group))
         .map(|m| m.team_id)
@@ -368,7 +369,7 @@ async fn sync_saml_groups(
     }
 
     // Remove user from SAML-managed teams they no longer belong to
-    let saml_managed_team_ids: Vec<Uuid> = mappings.iter().map(|m| m.team_id).collect();
+    let saml_managed_team_ids: Vec<DbUuid> = mappings.iter().map(|m| m.team_id).collect();
     for team_id in &saml_managed_team_ids {
         if !target_team_ids.contains(team_id) {
             sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
@@ -385,9 +386,9 @@ async fn sync_saml_groups(
 #[derive(Debug, sqlx::FromRow)]
 struct SamlGroupMapping {
     #[allow(dead_code)]
-    id: Uuid,
+    id: DbUuid,
     saml_group: String,
-    team_id: Uuid,
+    team_id: DbUuid,
     #[allow(dead_code)]
     default_role: String,
 }
@@ -402,7 +403,7 @@ async fn find_or_create_saml_user(
     role: &str,
 ) -> Result<AuthUser, sqlx::Error> {
     // Try to find by email
-    let existing = sqlx::query_as::<_, (Uuid, Uuid, String, String)>(
+    let existing = sqlx::query_as::<_, (DbUuid, DbUuid, String, String)>(
         "SELECT id, organization_id, email, role FROM users WHERE email = $1",
     )
     .bind(email)
@@ -427,15 +428,15 @@ async fn find_or_create_saml_user(
         .await;
 
         return Ok(AuthUser {
-            user_id,
-            organization_id: org_id,
+            user_id: *user_id,
+            organization_id: *org_id,
             email,
             role: effective_role.to_string(),
         });
     }
 
     // Auto-create user in default organization
-    let org_id = sqlx::query_scalar::<_, Uuid>("SELECT id FROM organizations LIMIT 1")
+    let org_id = sqlx::query_scalar::<_, DbUuid>("SELECT id FROM organizations LIMIT 1")
         .fetch_one(pool)
         .await?;
 
@@ -456,7 +457,7 @@ async fn find_or_create_saml_user(
 
     Ok(AuthUser {
         user_id,
-        organization_id: org_id,
+        organization_id: *org_id,
         email: email.to_string(),
         role: role.to_string(),
     })
@@ -627,7 +628,7 @@ pub fn saml_routes() -> axum::Router<Arc<AppState>> {
 pub async fn list_group_mappings(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let mappings = sqlx::query_as::<_, (Uuid, String, Uuid, String, String)>(
+    let mappings = sqlx::query_as::<_, (DbUuid, String, DbUuid, String, String)>(
         r#"SELECT sgm.id, sgm.saml_group, sgm.team_id, t.name, sgm.default_role
            FROM saml_group_mappings sgm
            JOIN teams t ON t.id = sgm.team_id
@@ -657,7 +658,7 @@ pub async fn list_group_mappings(
 #[derive(Debug, Deserialize)]
 pub struct CreateGroupMapping {
     pub saml_group: String,
-    pub team_id: Uuid,
+    pub team_id: DbUuid,
     pub default_role: Option<String>,
 }
 

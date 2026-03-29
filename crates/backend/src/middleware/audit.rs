@@ -1,4 +1,4 @@
-use crate::db::{self, DbPool};
+use crate::db::{self, DbPool, DbUuid};
 use uuid::Uuid;
 
 /// Log an action to the action_log table BEFORE the action executes.
@@ -6,13 +6,15 @@ use uuid::Uuid;
 /// Returns the action_log ID which can be used to update the result later.
 pub async fn log_action(
     pool: &DbPool,
-    user_id: Uuid,
+    user_id: impl Into<Uuid>,
     action: &str,
     resource_type: &str,
-    resource_id: Uuid,
+    resource_id: impl Into<Uuid>,
     details: serde_json::Value,
 ) -> Result<Uuid, sqlx::Error> {
-    let row = sqlx::query_scalar::<_, Uuid>(
+    let user_id: Uuid = user_id.into();
+    let resource_id: Uuid = resource_id.into();
+    let row = sqlx::query_scalar::<_, DbUuid>(
         r#"
         INSERT INTO action_log (user_id, action, resource_type, resource_id, details, status)
         VALUES ($1, $2, $3, $4, $5, 'in_progress')
@@ -27,11 +29,12 @@ pub async fn log_action(
     .fetch_one(pool)
     .await?;
 
-    Ok(row)
+    Ok(row.into_inner())
 }
 
 /// Mark an action as successfully completed.
-pub async fn complete_action_success(pool: &DbPool, action_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn complete_action_success(pool: &DbPool, action_id: impl Into<Uuid>) -> Result<(), sqlx::Error> {
+    let action_id: Uuid = action_id.into();
     let sql = format!(
         "UPDATE action_log SET status = 'success', completed_at = {} WHERE id = $1",
         db::sql::now()
@@ -44,9 +47,10 @@ pub async fn complete_action_success(pool: &DbPool, action_id: Uuid) -> Result<(
 /// Mark an action as failed with an error message.
 pub async fn complete_action_failed(
     pool: &DbPool,
-    action_id: Uuid,
+    action_id: impl Into<Uuid>,
     error_message: &str,
 ) -> Result<(), sqlx::Error> {
+    let action_id: Uuid = action_id.into();
     let sql = format!(
         "UPDATE action_log SET status = 'failed', error_message = $2, completed_at = {} WHERE id = $1",
         db::sql::now()
@@ -61,7 +65,8 @@ pub async fn complete_action_failed(
 }
 
 /// Mark an action as cancelled.
-pub async fn complete_action_cancelled(pool: &DbPool, action_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn complete_action_cancelled(pool: &DbPool, action_id: impl Into<Uuid>) -> Result<(), sqlx::Error> {
+    let action_id: Uuid = action_id.into();
     let sql = format!(
         "UPDATE action_log SET status = 'cancelled', completed_at = {} WHERE id = $1",
         db::sql::now()

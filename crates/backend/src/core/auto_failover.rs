@@ -7,7 +7,7 @@
 //! Check interval: 30 seconds
 //! Failover threshold: >50% agents unreachable for >2 minutes
 
-use crate::db::DbPool;
+use crate::db::{DbPool, DbUuid};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 use sqlx::FromRow;
@@ -66,11 +66,11 @@ async fn check_and_failover(
     // Find all applications with an active profile and a DR profile with auto_failover enabled
     #[derive(Debug, FromRow)]
     struct FailoverCandidate {
-        application_id: Uuid,
+        application_id: DbUuid,
         application_name: String,
-        active_profile_id: Uuid,
+        active_profile_id: DbUuid,
         active_profile_name: String,
-        dr_profile_id: Uuid,
+        dr_profile_id: DbUuid,
         dr_profile_name: String,
     }
 
@@ -140,7 +140,7 @@ async fn check_profile_health_and_failover(
     // Get all agents for the active profile and their health status
     #[derive(Debug, FromRow)]
     struct AgentHealth {
-        agent_id: Uuid,
+        agent_id: DbUuid,
         agent_hostname: String,
         last_heartbeat_at: Option<DateTime<Utc>>,
         is_active: bool,

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::core::permissions::effective_permission;
 use crate::error::ApiError;
 use crate::middleware::audit::log_action;
@@ -41,7 +42,7 @@ pub struct PreflightResult {
 pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult {
     // Get all components with their agent information
     let components =
-        sqlx::query_as::<_, (Uuid, String, Option<Uuid>, Option<String>, Option<Uuid>)>(
+        sqlx::query_as::<_, (DbUuid, String, Option<DbUuid>, Option<String>, Option<DbUuid>)>(
             r#"
         SELECT c.id, c.name, c.agent_id, a.hostname, a.gateway_id
         FROM components c
@@ -93,7 +94,7 @@ pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult 
                         .unwrap_or_else(|| gid.to_string());
 
                         disconnected_gateways.push((gid, gw_name));
-                        seen_gateways.insert(gid);
+                        seen_gateways.insert(*gid);
                     }
                 }
             }
@@ -294,7 +295,7 @@ pub async fn status(
         return Err(ApiError::Forbidden);
     }
 
-    let components = sqlx::query_as::<_, (Uuid, String, String)>(
+    let components = sqlx::query_as::<_, (DbUuid, String, String)>(
         r#"
         SELECT c.id, c.name, c.current_state
         FROM components c
@@ -335,7 +336,7 @@ pub async fn wait_running(
     let start_time = std::time::Instant::now();
 
     loop {
-        let components = sqlx::query_as::<_, (Uuid, String, String)>(
+        let components = sqlx::query_as::<_, (DbUuid, String, String)>(
             r#"
             SELECT c.id, c.name, c.current_state
             FROM components c
@@ -455,7 +456,7 @@ pub async fn health(
     }
 
     // Get component states
-    let components = sqlx::query_as::<_, (Uuid, String, String, Option<Uuid>)>(
+    let components = sqlx::query_as::<_, (DbUuid, String, String, Option<DbUuid>)>(
         r#"
         SELECT c.id, c.name, c.current_state, c.agent_id
         FROM components c
