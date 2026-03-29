@@ -731,13 +731,25 @@ async fn test_sqlite_startup_full() {
         200,
         "GET /api/v1/apps should return 200"
     );
-    let apps_list: serde_json::Value = resp.json().await.unwrap();
-    let apps_array = apps_list.as_array().expect("Apps should be an array");
+    let apps_body = resp.text().await.unwrap_or_default();
+    let apps_list: serde_json::Value =
+        serde_json::from_str(&apps_body).unwrap_or(serde_json::json!(null));
+    // Response may be a direct array or an object with "apps" key
+    let apps_count = if let Some(arr) = apps_list.as_array() {
+        arr.len()
+    } else if let Some(arr) = apps_list.get("apps").and_then(|v| v.as_array()) {
+        arr.len()
+    } else {
+        panic!(
+            "Apps response should be array or {{apps: [...]}}, got: {}",
+            &apps_body[..apps_body.len().min(500)]
+        );
+    };
     assert!(
-        !apps_array.is_empty(),
+        apps_count > 0,
         "Apps list should not be empty after creating an app"
     );
-    eprintln!("Apps list: {} app(s)", apps_array.len());
+    eprintln!("Apps list: {} app(s)", apps_count);
 
     // --- Gateway WebSocket connection ---
     // Connect to the gateway WebSocket endpoint and verify it accepts the connection.

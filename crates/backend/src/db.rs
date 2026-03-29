@@ -145,6 +145,95 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DbUuid {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// DbJson — cross-database JSON value type
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// PostgreSQL has native JSONB support — sqlx decodes directly to serde_json::Value.
+// SQLite stores JSON as TEXT — sqlx has no direct Value decode, needs Json<T> wrapper.
+// DbJson provides a transparent wrapper that works for both.
+
+/// A JSON value type that works with both PostgreSQL (JSONB) and SQLite (TEXT).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DbJson(pub serde_json::Value);
+
+impl std::ops::Deref for DbJson {
+    type Target = serde_json::Value;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<serde_json::Value> for DbJson {
+    fn from(v: serde_json::Value) -> Self {
+        DbJson(v)
+    }
+}
+
+impl From<DbJson> for serde_json::Value {
+    fn from(v: DbJson) -> Self {
+        v.0
+    }
+}
+
+// PostgreSQL: transparent to serde_json::Value (JSONB)
+#[cfg(feature = "postgres")]
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DbJson {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let v = <serde_json::Value as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        Ok(DbJson(v))
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl sqlx::Type<sqlx::Postgres> for DbJson {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <serde_json::Value as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <serde_json::Value as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for DbJson {
+    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> sqlx::encode::IsNull {
+        <serde_json::Value as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+    }
+}
+
+// SQLite: encode/decode as TEXT via Json<Value> wrapper
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for DbJson {
+    fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let json_wrapper =
+            <sqlx::types::Json<serde_json::Value> as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
+        Ok(DbJson(json_wrapper.0))
+    }
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+impl sqlx::Type<sqlx::Sqlite> for DbJson {
+    fn type_info() -> sqlx::sqlite::SqliteTypeInfo {
+        <sqlx::types::Json<serde_json::Value> as sqlx::Type<sqlx::Sqlite>>::type_info()
+    }
+    fn compatible(ty: &sqlx::sqlite::SqliteTypeInfo) -> bool {
+        <sqlx::types::Json<serde_json::Value> as sqlx::Type<sqlx::Sqlite>>::compatible(ty)
+    }
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DbJson {
+    fn encode_by_ref(
+        &self,
+        args: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+    ) -> sqlx::encode::IsNull {
+        let wrapper = sqlx::types::Json(&self.0);
+        <sqlx::types::Json<&serde_json::Value> as sqlx::Encode<sqlx::Sqlite>>::encode(wrapper, args)
+    }
+}
+
 /// Type alias for the database pool.
 /// We use PgPool for PostgreSQL-specific features but can switch to AnyPool
 /// for portable deployment.

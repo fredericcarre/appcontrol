@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
-use crate::db::{DbPool, DbUuid};
+use crate::db::{DbJson, DbPool, DbUuid};
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::middleware::audit::{complete_action_failed, complete_action_success, log_action};
 use crate::AppState;
@@ -48,7 +48,7 @@ pub struct AppRow {
     pub description: Option<String>,
     pub organization_id: DbUuid,
     pub site_id: DbUuid,
-    pub tags: Value,
+    pub tags: DbJson,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -179,7 +179,7 @@ pub async fn list_apps(
         description: Option<String>,
         organization_id: DbUuid,
         site_id: DbUuid,
-        tags: Value,
+        tags: DbJson,
         created_at: chrono::DateTime<chrono::Utc>,
         updated_at: chrono::DateTime<chrono::Utc>,
         component_count: Option<i64>,

@@ -29,13 +29,13 @@ CREATE TABLE component_groups (
 
 CREATE INDEX idx_component_groups_app ON component_groups (application_id);
 
--- Add group_id to components (already exists in V004 for SQLite)
--- ALTER TABLE components ADD COLUMN group_id TEXT REFERENCES component_groups(id) ON DELETE SET NULL;
+-- Add group_id to components
+ALTER TABLE components ADD COLUMN group_id TEXT REFERENCES component_groups(id);
 
--- 3. Display Enhancements for Components (already in V004 for SQLite)
--- ALTER TABLE components ADD COLUMN display_name TEXT;
--- ALTER TABLE components ADD COLUMN icon TEXT DEFAULT 'box';
--- ALTER TABLE components ADD COLUMN description TEXT;
+-- 3. Display Enhancements for Components
+ALTER TABLE components ADD COLUMN display_name TEXT;
+ALTER TABLE components ADD COLUMN icon TEXT DEFAULT 'box';
+ALTER TABLE components ADD COLUMN description TEXT;
 
 -- 4. Hypertext Links (Resources)
 CREATE TABLE component_links (
