@@ -442,21 +442,7 @@ pub async fn search_users(
     } else {
         // Search by email or display name (case-insensitive)
         let pattern = format!("%{}%", query);
-        sqlx::query_as::<_, (DbUuid, String, Option<String>, String)>(
-            r#"
-            SELECT id, email, display_name, role
-            FROM users
-            WHERE organization_id = $1 AND is_active = true
-              AND (email ILIKE $2 OR display_name ILIKE $2)
-            ORDER BY display_name, email
-            LIMIT $3
-            "#,
-        )
-        .bind(user.organization_id)
-        .bind(&pattern)
-        .bind(limit)
-        .fetch_all(&state.db)
-        .await?
+        search_users_by_pattern(&state.db, user.organization_id, &pattern, limit).await?
     };
 
     let data: Vec<Value> = users
@@ -725,4 +711,56 @@ pub async fn get_share_link_info(
         "exhausted": exhausted,
         "valid": !expired && !exhausted,
     })))
+}
+
+// ============================================================================
+// Database-specific helper functions
+// ============================================================================
+
+#[cfg(feature = "postgres")]
+async fn search_users_by_pattern(
+    db: &crate::db::DbPool,
+    org_id: Uuid,
+    pattern: &str,
+    limit: i64,
+) -> Result<Vec<(DbUuid, String, Option<String>, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, Option<String>, String)>(
+        r#"
+        SELECT id, email, display_name, role
+        FROM users
+        WHERE organization_id = $1 AND is_active = true
+          AND (email ILIKE $2 OR display_name ILIKE $2)
+        ORDER BY display_name, email
+        LIMIT $3
+        "#,
+    )
+    .bind(org_id)
+    .bind(pattern)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn search_users_by_pattern(
+    db: &crate::db::DbPool,
+    org_id: Uuid,
+    pattern: &str,
+    limit: i64,
+) -> Result<Vec<(DbUuid, String, Option<String>, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, Option<String>, String)>(
+        r#"
+        SELECT id, email, display_name, role
+        FROM users
+        WHERE organization_id = $1 AND is_active = 1
+          AND (email LIKE $2 OR display_name LIKE $2)
+        ORDER BY display_name, email
+        LIMIT $3
+        "#,
+    )
+    .bind(org_id)
+    .bind(pattern)
+    .bind(limit)
+    .fetch_all(db)
+    .await
 }

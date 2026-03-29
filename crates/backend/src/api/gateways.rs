@@ -1045,17 +1045,20 @@ async fn transition_gateway_agent_components_to_unreachable(
             _ => {}
         }
 
+        let details_json = serde_json::json!({
+            "previous_state": current_state.to_string(),
+            "agent_id": agent_id.to_string(),
+            "gateway_id": gateway_id.to_string(),
+        });
         let result = sqlx::query(
             r#"
             INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, 'UNREACHABLE', 'gateway_blocked',
-                    jsonb_build_object('previous_state', $2, 'agent_id', $3::text, 'gateway_id', $4::text))
+            VALUES ($1, $2, 'UNREACHABLE', 'gateway_blocked', $3)
             "#,
         )
         .bind(comp.id)
         .bind(current_state.to_string())
-        .bind(agent_id.to_string())
-        .bind(gateway_id.to_string())
+        .bind(details_json)
         .execute(&state.db)
         .await;
 

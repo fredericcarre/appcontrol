@@ -286,7 +286,7 @@ async fn execute_stop_source(
                 // Store the impacted set for START_TARGET phase
                 // Read current details, merge, write back (works for both PG and SQLite)
                 let impacted_ids: Vec<Uuid> = impacted_set.iter().copied().collect();
-                let current_details = get_switchover_details(&state.db, *switchover_id).await?;
+                let current_details = get_switchover_details(&state.db, switchover_id).await?;
                 let mut merged = current_details;
                 if let Some(obj) = merged.as_object_mut() {
                     obj.insert("impacted_component_ids".to_string(), serde_json::json!(impacted_ids));
@@ -298,7 +298,7 @@ async fn execute_stop_source(
                     WHERE switchover_id = $1 AND phase = 'PREPARE'
                     "#,
                 )
-                .bind(DbUuid::from(*switchover_id))
+                .bind(DbUuid::from(switchover_id))
                 .bind(DbJson::from(merged))
                 .execute(&state.db)
                 .await

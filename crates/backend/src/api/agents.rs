@@ -314,17 +314,7 @@ pub async fn get_agent_metrics(
     // Clamp minutes to valid range
     let minutes = params.minutes.clamp(1, 1440);
 
-    let metrics = sqlx::query_as::<_, MetricPoint>(&format!(
-        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
-             FROM agent_metrics
-             WHERE agent_id = $1 AND created_at > {} - ($2 || ' minutes')::interval
-             ORDER BY created_at ASC",
-        crate::db::sql::now()
-    ))
-    .bind(agent_id)
-    .bind(minutes)
-    .fetch_all(&state.db)
-    .await?;
+    let metrics = fetch_agent_metrics(&state.db, agent_id, minutes).await?;
 
     Ok(Json(json!({
         "agent_id": agent_id,
@@ -378,16 +368,19 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
         }
 
         // Insert state transition (append-only)
+        let details_json = serde_json::json!({
+            "previous_state": current_state.to_string(),
+            "agent_id": agent_id.to_string(),
+        });
         let result = sqlx::query(
             r#"
             INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, 'UNREACHABLE', 'agent_blocked',
-                    jsonb_build_object('previous_state', $2, 'agent_id', $3::text))
+            VALUES ($1, $2, 'UNREACHABLE', 'agent_blocked', $3)
             "#,
         )
         .bind(*comp.id)
         .bind(current_state.to_string())
-        .bind(agent_id.to_string())
+        .bind(details_json)
         .execute(&state.db)
         .await;
 
@@ -599,6 +592,43 @@ pub async fn bulk_delete_agents(
 // ══════════════════════════════════════════════════════════════════════════════
 // Helper functions for cross-database compatibility
 // ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "postgres")]
+async fn fetch_agent_metrics(
+    db: &DbPool,
+    agent_id: Uuid,
+    minutes: i32,
+) -> Result<Vec<MetricPoint>, sqlx::Error> {
+    sqlx::query_as::<_, MetricPoint>(&format!(
+        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
+             FROM agent_metrics
+             WHERE agent_id = $1 AND created_at > {} - ($2 || ' minutes')::interval
+             ORDER BY created_at ASC",
+        crate::db::sql::now()
+    ))
+    .bind(agent_id)
+    .bind(minutes)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_agent_metrics(
+    db: &DbPool,
+    agent_id: Uuid,
+    minutes: i32,
+) -> Result<Vec<MetricPoint>, sqlx::Error> {
+    sqlx::query_as::<_, MetricPoint>(
+        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
+             FROM agent_metrics
+             WHERE agent_id = $1 AND created_at > datetime('now', '-' || $2 || ' minutes')
+             ORDER BY created_at ASC",
+    )
+    .bind(agent_id)
+    .bind(minutes)
+    .fetch_all(db)
+    .await
+}
 
 /// Verify agents belong to organization - returns (id, hostname) pairs
 #[cfg(feature = "postgres")]
