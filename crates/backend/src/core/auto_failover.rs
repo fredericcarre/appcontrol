@@ -205,25 +205,51 @@ async fn check_profile_health_and_failover(
         let is_reachable =
             agent.is_active && agent.last_heartbeat_at.is_some_and(|hb| hb >= threshold);
 
-        sqlx::query(
-            r#"
-            INSERT INTO failover_health_status (profile_id, agent_id, is_reachable, last_check_at, unreachable_since)
-            VALUES ($1, $2, $3, $4, CASE WHEN $3 THEN NULL ELSE COALESCE(
-                (SELECT unreachable_since FROM failover_health_status WHERE profile_id = $1 AND agent_id = $2),
-                $4
-            ) END)
-            ON CONFLICT (profile_id, agent_id) DO UPDATE SET
-                is_reachable = EXCLUDED.is_reachable,
-                last_check_at = EXCLUDED.last_check_at,
-                unreachable_since = CASE WHEN EXCLUDED.is_reachable THEN NULL ELSE COALESCE(failover_health_status.unreachable_since, EXCLUDED.last_check_at) END
-            "#
-        )
-        .bind(active_profile_id)
-        .bind(agent.agent_id)
-        .bind(is_reachable)
-        .bind(now)
-        .execute(pool)
-        .await?;
+        #[cfg(feature = "postgres")]
+        {
+            sqlx::query(
+                r#"
+                INSERT INTO failover_health_status (profile_id, agent_id, is_reachable, last_check_at, unreachable_since)
+                VALUES ($1, $2, $3, $4, CASE WHEN $3 THEN NULL ELSE COALESCE(
+                    (SELECT unreachable_since FROM failover_health_status WHERE profile_id = $1 AND agent_id = $2),
+                    $4
+                ) END)
+                ON CONFLICT (profile_id, agent_id) DO UPDATE SET
+                    is_reachable = EXCLUDED.is_reachable,
+                    last_check_at = EXCLUDED.last_check_at,
+                    unreachable_since = CASE WHEN EXCLUDED.is_reachable THEN NULL ELSE COALESCE(failover_health_status.unreachable_since, EXCLUDED.last_check_at) END
+                "#
+            )
+            .bind(active_profile_id)
+            .bind(agent.agent_id)
+            .bind(is_reachable)
+            .bind(now)
+            .execute(pool)
+            .await?;
+        }
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        {
+            let is_reachable_int: i32 = if is_reachable { 1 } else { 0 };
+            sqlx::query(
+                r#"
+                INSERT INTO failover_health_status (profile_id, agent_id, is_reachable, last_check_at, unreachable_since)
+                VALUES ($1, $2, $3, $4, CASE WHEN $3 THEN NULL ELSE COALESCE(
+                    (SELECT unreachable_since FROM failover_health_status WHERE profile_id = $1 AND agent_id = $2),
+                    $4
+                ) END)
+                ON CONFLICT (profile_id, agent_id) DO UPDATE SET
+                    is_reachable = EXCLUDED.is_reachable,
+                    last_check_at = EXCLUDED.last_check_at,
+                    unreachable_since = CASE WHEN EXCLUDED.is_reachable THEN NULL ELSE COALESCE(failover_health_status.unreachable_since, EXCLUDED.last_check_at) END
+                "#
+            )
+            .bind(DbUuid::from(*active_profile_id))
+            .bind(&agent.agent_id)
+            .bind(is_reachable_int)
+            .bind(now)
+            .execute(pool)
+            .await?;
+        }
     }
 
     // Check if failover should be triggered

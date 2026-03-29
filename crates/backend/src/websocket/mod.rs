@@ -1201,7 +1201,7 @@ async fn process_agent_message(
                    JOIN components c ON ce.component_id = c.id
                    WHERE ce.request_id = $1"#,
                 )
-                .bind(request_id)
+                .bind(DbUuid::from(request_id))
                 .fetch_optional(&state.db)
                 .await
             {
@@ -1265,7 +1265,7 @@ async fn process_agent_message(
             let component_id = sqlx::query_scalar::<_, DbUuid>(
                 "SELECT component_id FROM command_executions WHERE request_id = $1",
             )
-            .bind(request_id)
+            .bind(DbUuid::from(request_id))
             .fetch_optional(&state.db)
             .await;
 
