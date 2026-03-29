@@ -47,9 +47,10 @@ pub async fn login(
     axum::Json(body): axum::Json<LoginRequest>,
 ) -> Result<impl axum::response::IntoResponse, (axum::http::StatusCode, axum::Json<LoginError>)> {
     // Look up user by email with password hash
+    #[cfg(feature = "postgres")]
     let row: Option<(Uuid, Uuid, String, String, Option<String>)> = sqlx::query_as(
-        r#"SELECT id, organization_id, email, role, password_hash
-           FROM users WHERE email = $1 AND is_active = true"#,
+        "SELECT id, organization_id, email, role, password_hash \
+         FROM users WHERE email = $1 AND is_active = true",
     )
     .bind(&body.email)
     .fetch_optional(&state.db)
@@ -63,6 +64,35 @@ pub async fn login(
             }),
         )
     })?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let row: Option<(Uuid, Uuid, String, String, Option<String>)> = {
+        let r: Option<(String, String, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, organization_id, email, role, password_hash \
+             FROM users WHERE email = $1 AND is_active = 1",
+        )
+        .bind(&body.email)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error during login: {}", e);
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(LoginError {
+                    message: "Internal error".to_string(),
+                }),
+            )
+        })?;
+        r.map(|(id, org_id, email, role, pw)| {
+            (
+                Uuid::parse_str(&id).unwrap_or_default(),
+                Uuid::parse_str(&org_id).unwrap_or_default(),
+                email,
+                role,
+                pw,
+            )
+        })
+    };
 
     let (user_id, org_id, email, role, password_hash) = row.ok_or_else(|| {
         (
