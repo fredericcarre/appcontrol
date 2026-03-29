@@ -32,7 +32,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::{IntArray, UuidArray};
+use crate::db::{DbUuid, IntArray, UuidArray};
 use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
@@ -50,7 +50,7 @@ pub async fn list_reports(
         return Err(ApiError::Forbidden);
     }
 
-    let rows = sqlx::query_as::<_, (Uuid, Uuid, String, chrono::DateTime<chrono::Utc>)>(
+    let rows = sqlx::query_as::<_, (DbUuid, DbUuid, String, chrono::DateTime<chrono::Utc>)>(
         "SELECT id, agent_id, hostname, scanned_at
          FROM discovery_reports
          ORDER BY created_at DESC
@@ -170,10 +170,19 @@ pub async fn trigger_all(
     )
     .await?;
 
-    let agent_ids = sqlx::query_scalar::<_, Uuid>(
+    #[cfg(feature = "postgres")]
+    let agent_ids = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM agents WHERE organization_id = $1 AND is_active = true",
     )
     .bind(user.organization_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let agent_ids = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT id FROM agents WHERE organization_id = $1 AND is_active = 1",
+    )
+    .bind(DbUuid::from(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -224,9 +233,9 @@ pub async fn correlate(
     }
 
     // Fetch latest report per agent
-    let mut reports: Vec<(Uuid, String, serde_json::Value)> = Vec::new();
+    let mut reports: Vec<(DbUuid, String, serde_json::Value)> = Vec::new();
     for agent_id in &body.agent_ids {
-        let row = sqlx::query_as::<_, (Uuid, String, serde_json::Value)>(
+        let row = sqlx::query_as::<_, (DbUuid, String, serde_json::Value)>(
             "SELECT agent_id, hostname, report FROM discovery_reports
              WHERE agent_id = $1
              ORDER BY scanned_at DESC LIMIT 1",
@@ -251,9 +260,18 @@ pub async fn correlate(
     let mut agent_hostnames: std::collections::HashMap<Uuid, String> =
         std::collections::HashMap::new();
     for (agent_id, hostname, _) in &reports {
-        agent_hostnames.insert(*agent_id, hostname.clone());
+        agent_hostnames.insert(agent_id.into_inner(), hostname.clone());
+        #[cfg(feature = "postgres")]
         let ips = sqlx::query_scalar::<_, serde_json::Value>(
             "SELECT COALESCE(ip_addresses, '[]'::jsonb) FROM agents WHERE id = $1",
+        )
+        .bind(agent_id)
+        .fetch_optional(&state.db)
+        .await?;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let ips = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT COALESCE(ip_addresses, '[]') FROM agents WHERE id = $1",
         )
         .bind(agent_id)
         .fetch_optional(&state.db)
@@ -264,7 +282,7 @@ pub async fn correlate(
                     .iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                     .collect();
-                agent_ips.insert(*agent_id, ip_list);
+                agent_ips.insert(agent_id.into_inner(), ip_list);
             }
         }
     }
@@ -475,7 +493,7 @@ pub async fn correlate(
                 }
 
                 // Skip if already added
-                if !client_services_added.insert((*agent_id, proc_name.clone())) {
+                if !client_services_added.insert((agent_id.into_inner(), proc_name.clone())) {
                     continue;
                 }
 
@@ -1030,7 +1048,7 @@ pub async fn list_drafts(
         return Err(ApiError::Forbidden);
     }
 
-    let rows = sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
+    let rows = sqlx::query_as::<_, (DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
         "SELECT id, name, status, inferred_at
          FROM discovery_drafts
          WHERE organization_id = $1
@@ -1066,7 +1084,7 @@ pub async fn get_draft(
         return Err(ApiError::Forbidden);
     }
 
-    let draft = sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
+    let draft = sqlx::query_as::<_, (DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
         "SELECT id, name, status, inferred_at FROM discovery_drafts WHERE id = $1",
     )
     .bind(draft_id)
@@ -1076,6 +1094,7 @@ pub async fn get_draft(
     let (id, name, status, inferred_at) = draft.ok_or(ApiError::NotFound)?;
 
     #[allow(clippy::type_complexity)]
+    #[cfg(feature = "postgres")]
     let components = sqlx::query_as::<
         _,
         (
@@ -1108,7 +1127,41 @@ pub async fn get_draft(
     .fetch_all(&state.db)
     .await?;
 
-    let deps = sqlx::query_as::<_, (Uuid, Uuid, Uuid, String)>(
+    #[allow(clippy::type_complexity)]
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let components = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            serde_json::Value,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            serde_json::Value,
+            serde_json::Value,
+            Option<String>,
+        ),
+    >(
+        "SELECT id, suggested_name, process_name, host, component_type, metadata,
+                check_cmd, start_cmd, stop_cmd, restart_cmd,
+                command_confidence, command_source,
+                COALESCE(config_files, '[]'),
+                COALESCE(log_files, '[]'),
+                matched_service
+         FROM discovery_draft_components WHERE draft_id = $1",
+    )
+    .bind(draft_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let deps = sqlx::query_as::<_, (DbUuid, DbUuid, DbUuid, String)>(
         "SELECT id, from_component, to_component, inferred_via
          FROM discovery_draft_dependencies WHERE draft_id = $1",
     )
@@ -1236,7 +1289,7 @@ pub async fn create_draft(
         return Err(ApiError::Forbidden);
     }
 
-    let org_id = sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM users WHERE id = $1")
+    let org_id = sqlx::query_scalar::<_, DbUuid>("SELECT organization_id FROM users WHERE id = $1")
         .bind(user.user_id)
         .fetch_one(&state.db)
         .await?;
@@ -1484,7 +1537,7 @@ pub async fn apply_draft(
         return Err(ApiError::Forbidden);
     }
 
-    let draft = sqlx::query_as::<_, (Uuid, Uuid, String, String)>(
+    let draft = sqlx::query_as::<_, (DbUuid, DbUuid, String, String)>(
         "SELECT id, organization_id, name, status FROM discovery_drafts WHERE id = $1",
     )
     .bind(draft_id)
@@ -1506,7 +1559,7 @@ pub async fn apply_draft(
     )
     .await?;
 
-    let site_id = sqlx::query_scalar::<_, Uuid>(
+    let site_id = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM sites WHERE organization_id = $1 ORDER BY created_at ASC LIMIT 1",
     )
     .bind(org_id)
@@ -1532,6 +1585,7 @@ pub async fn apply_draft(
 
     // Create components WITH operational commands
     #[allow(clippy::type_complexity)]
+    #[cfg(feature = "postgres")]
     let draft_comps = sqlx::query_as::<
         _,
         (
@@ -1552,6 +1606,34 @@ pub async fn apply_draft(
                 check_cmd, start_cmd, stop_cmd,
                 COALESCE(config_files, '[]'::jsonb),
                 COALESCE(log_files, '[]'::jsonb)
+         FROM discovery_draft_components WHERE draft_id = $1",
+    )
+    .bind(draft_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[allow(clippy::type_complexity)]
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let draft_comps = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            serde_json::Value,
+            serde_json::Value,
+        ),
+    >(
+        "SELECT id, suggested_name, process_name, host, component_type, agent_id,
+                check_cmd, start_cmd, stop_cmd,
+                COALESCE(config_files, '[]'),
+                COALESCE(log_files, '[]')
          FROM discovery_draft_components WHERE draft_id = $1",
     )
     .bind(draft_id)
@@ -1635,7 +1717,7 @@ pub async fn apply_draft(
     }
 
     // Create dependencies
-    let draft_deps = sqlx::query_as::<_, (Uuid, Uuid)>(
+    let draft_deps = sqlx::query_as::<_, (DbUuid, DbUuid)>(
         "SELECT from_component, to_component
          FROM discovery_draft_dependencies WHERE draft_id = $1",
     )
@@ -1686,7 +1768,7 @@ pub async fn apply_draft(
 /// Row type for schedule queries (uses UuidArray for cross-database compatibility).
 #[derive(Debug, sqlx::FromRow)]
 struct ScheduleRow {
-    id: Uuid,
+    id: DbUuid,
     name: String,
     agent_ids: UuidArray,
     frequency: String,
@@ -2022,14 +2104,14 @@ pub async fn delete_schedule(
 
 #[derive(Debug, Deserialize)]
 pub struct ListSnapshotsQuery {
-    pub schedule_id: Option<Uuid>,
+    pub schedule_id: Option<DbUuid>,
 }
 
 /// Row type for snapshot queries.
 #[derive(Debug, sqlx::FromRow)]
 struct SnapshotRow {
-    id: Uuid,
-    schedule_id: Uuid,
+    id: DbUuid,
+    schedule_id: DbUuid,
     schedule_name: String,
     agent_ids: UuidArray,
     report_ids: UuidArray,
@@ -2093,8 +2175,8 @@ pub async fn list_snapshots(
 /// Compare two snapshots and return differences.
 #[derive(Debug, Deserialize)]
 pub struct CompareSnapshotsRequest {
-    pub snapshot_id_1: Uuid,
-    pub snapshot_id_2: Uuid,
+    pub snapshot_id_1: DbUuid,
+    pub snapshot_id_2: DbUuid,
 }
 
 pub async fn compare_snapshots(
@@ -2107,6 +2189,7 @@ pub async fn compare_snapshots(
     }
 
     // Fetch both snapshots' correlation results
+    #[cfg(feature = "postgres")]
     let snap1 = sqlx::query_as::<_, (serde_json::Value,)>(
         "SELECT COALESCE(correlation_result, '{}'::jsonb)
          FROM scheduled_snapshots
@@ -2117,8 +2200,31 @@ pub async fn compare_snapshots(
     .fetch_optional(&state.db)
     .await?;
 
+    #[cfg(feature = "postgres")]
     let snap2 = sqlx::query_as::<_, (serde_json::Value,)>(
         "SELECT COALESCE(correlation_result, '{}'::jsonb)
+         FROM scheduled_snapshots
+         WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(body.snapshot_id_2)
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let snap1 = sqlx::query_as::<_, (serde_json::Value,)>(
+        "SELECT COALESCE(correlation_result, '{}')
+         FROM scheduled_snapshots
+         WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(body.snapshot_id_1)
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let snap2 = sqlx::query_as::<_, (serde_json::Value,)>(
+        "SELECT COALESCE(correlation_result, '{}')
          FROM scheduled_snapshots
          WHERE id = $1 AND organization_id = $2",
     )
@@ -2226,7 +2332,7 @@ pub async fn compare_snapshots(
 /// Request to read file content from an agent.
 #[derive(Debug, Deserialize)]
 pub struct ReadFileContentRequest {
-    pub agent_id: Uuid,
+    pub agent_id: DbUuid,
     pub path: String,
     /// For log files: read only the last N lines (default: 100)
     #[serde(default = "default_tail_lines")]
@@ -2297,7 +2403,7 @@ pub async fn read_file_content(
     // Send command to agent
     let msg = appcontrol_common::BackendMessage::ExecuteCommand {
         request_id,
-        component_id: Uuid::nil(), // No component context for discovery
+        component_id: *DbUuid::nil(), // No component context for discovery
         command: command.clone(),
         timeout_seconds: 30,
         exec_mode: "sync".to_string(),

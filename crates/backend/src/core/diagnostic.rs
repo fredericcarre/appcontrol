@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::db::DbPool;
+use crate::db::{DbPool, DbUuid};
 use appcontrol_common::{CheckStatus, DiagnosticRecommendation};
 
 #[derive(Debug, thiserror::Error)]
@@ -66,10 +66,11 @@ pub fn compute_recommendation(
 /// check result for each (component, check_type) pair, instead of O(3N) queries.
 pub async fn diagnose_app(
     pool: &crate::db::DbPool,
-    app_id: Uuid,
+    app_id: impl Into<Uuid>,
 ) -> Result<Vec<ComponentDiagnosis>, DiagnosticError> {
+    let app_id: Uuid = app_id.into();
     // Get all components
-    let components = sqlx::query_as::<_, (Uuid, String)>(
+    let components = sqlx::query_as::<_, (DbUuid, String)>(
         "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
     )
     .bind(app_id)
@@ -81,10 +82,11 @@ pub async fn diagnose_app(
         return Ok(Vec::new());
     }
 
-    let comp_ids: Vec<Uuid> = components.iter().map(|(id, _)| *id).collect();
+    let comp_ids: Vec<DbUuid> = components.iter().map(|(id, _)| *id).collect();
 
     // Single query: get latest check result per (component_id, check_type)
-    let latest_checks = fetch_latest_checks(pool, &comp_ids)
+    let comp_ids_uuid: Vec<Uuid> = comp_ids.iter().map(|id| id.into_inner()).collect();
+    let latest_checks = fetch_latest_checks(pool, &comp_ids_uuid)
         .await
         .map_err(|e| DiagnosticError::Database(e.to_string()))?;
 
@@ -98,7 +100,7 @@ pub async fn diagnose_app(
             "infrastructure" => "infrastructure",
             _ => continue,
         };
-        check_map.insert((*comp_id, ct), *exit_code);
+        check_map.insert((**comp_id, ct), *exit_code);
     }
 
     let exit_code_to_status = |code: Option<&i16>| -> CheckStatus {
@@ -112,13 +114,13 @@ pub async fn diagnose_app(
     let diagnoses = components
         .into_iter()
         .map(|(comp_id, comp_name)| {
-            let health = exit_code_to_status(check_map.get(&(comp_id, "health")));
-            let integrity = exit_code_to_status(check_map.get(&(comp_id, "integrity")));
-            let infrastructure = exit_code_to_status(check_map.get(&(comp_id, "infrastructure")));
+            let health = exit_code_to_status(check_map.get(&(*comp_id, "health")));
+            let integrity = exit_code_to_status(check_map.get(&(*comp_id, "integrity")));
+            let infrastructure = exit_code_to_status(check_map.get(&(*comp_id, "infrastructure")));
             let recommendation = compute_recommendation(health, integrity, infrastructure);
 
             ComponentDiagnosis {
-                component_id: comp_id,
+                component_id: *comp_id,
                 component_name: comp_name,
                 health,
                 integrity,
@@ -136,8 +138,8 @@ pub async fn diagnose_app(
 async fn fetch_latest_checks(
     pool: &DbPool,
     comp_ids: &[Uuid],
-) -> Result<Vec<(Uuid, String, i16)>, sqlx::Error> {
-    sqlx::query_as::<_, (Uuid, String, i16)>(
+) -> Result<Vec<(DbUuid, String, i16)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, i16)>(
         r#"
         SELECT component_id, check_type, exit_code
         FROM (
@@ -159,7 +161,7 @@ async fn fetch_latest_checks(
 async fn fetch_latest_checks(
     pool: &DbPool,
     comp_ids: &[Uuid],
-) -> Result<Vec<(Uuid, String, i16)>, sqlx::Error> {
+) -> Result<Vec<(DbUuid, String, i16)>, sqlx::Error> {
     if comp_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -188,7 +190,7 @@ async fn fetch_latest_checks(
         .filter_map(|(id_str, check_type, exit_code)| {
             Uuid::parse_str(&id_str)
                 .ok()
-                .map(|id| (id, check_type, exit_code))
+                .map(|id| (DbUuid::from(id), check_type, exit_code))
         })
         .collect())
 }

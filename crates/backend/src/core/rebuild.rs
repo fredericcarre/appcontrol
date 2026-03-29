@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::db::DbUuid;
 use crate::AppState;
 use appcontrol_common::BackendMessage;
 
@@ -149,10 +150,12 @@ async fn fetch_rebuild_targets(
 /// On failure: SUSPEND — log the error, do NOT proceed to restart phase.
 pub async fn execute_rebuild(
     state: &Arc<AppState>,
-    app_id: Uuid,
+    app_id: impl Into<Uuid>,
     component_ids: Option<&[Uuid]>,
     initiated_by: Uuid,
 ) -> Result<Value, RebuildError> {
+    let app_id: Uuid = app_id.into();
+
     let targets = fetch_rebuild_targets(&state.db, app_id, component_ids).await?;
 
     // Check for protected components
@@ -232,7 +235,7 @@ pub async fn execute_rebuild(
 
             // Run infrastructure rebuild first (if defined) — WAIT for completion
             if let Some(infra_cmd) = infra_cmd {
-                let exec_agent = bastion_agent.or(agent_id);
+                let exec_agent = bastion_agent.or(agent_id.map(|id| id.into_inner()));
                 if let Some(exec_agent_id) = exec_agent {
                     let request_id = Uuid::new_v4();
                     let message = BackendMessage::ExecuteCommand {
@@ -287,7 +290,7 @@ pub async fn execute_rebuild(
 
             // Run application rebuild command — WAIT for completion
             if let Some(rebuild_cmd) = rebuild_cmd {
-                if let Some(agent_id) = agent_id {
+                if let Some(agent_id) = agent_id.map(|id| id.into_inner()) {
                     let request_id = Uuid::new_v4();
                     let message = BackendMessage::ExecuteCommand {
                         request_id,
@@ -389,8 +392,8 @@ pub async fn execute_rebuild(
 }
 
 /// Get the agent_id assigned to a component.
-async fn get_component_agent(pool: &crate::db::DbPool, component_id: Uuid) -> Option<Uuid> {
-    sqlx::query_scalar::<_, Uuid>(
+async fn get_component_agent(pool: &crate::db::DbPool, component_id: Uuid) -> Option<DbUuid> {
+    sqlx::query_scalar::<_, DbUuid>(
         "SELECT agent_id FROM components WHERE id = $1 AND agent_id IS NOT NULL",
     )
     .bind(component_id)

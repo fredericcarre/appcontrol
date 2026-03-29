@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::{ApiError, OptionExt};
 use crate::middleware::audit::log_action;
 use crate::AppState;
@@ -36,13 +37,13 @@ pub struct ApprovalDecisionRequest {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct ApprovalRow {
-    pub id: Uuid,
-    pub organization_id: Uuid,
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
     pub operation_type: String,
     pub resource_type: String,
-    pub resource_id: Uuid,
+    pub resource_id: DbUuid,
     pub risk_level: String,
-    pub requested_by: Uuid,
+    pub requested_by: DbUuid,
     pub request_payload: Value,
     pub status: String,
     pub required_approvals: i32,
@@ -93,7 +94,7 @@ fn required_approvals_for_risk(risk_level: &str) -> i32 {
 /// Returns None if no approval needed, or Some(risk_level) if approval is required.
 pub async fn check_approval_required(
     pool: &crate::db::DbPool,
-    organization_id: Uuid,
+    organization_id: DbUuid,
     operation_type: &str,
 ) -> Option<String> {
     let risk_level = classify_risk(operation_type);
@@ -242,7 +243,7 @@ pub async fn decide_approval(
     .ok_or_not_found()?;
 
     // 4-eyes: requester cannot approve their own request
-    if request.requested_by == user.user_id {
+    if request.requested_by == DbUuid::from(user.user_id) {
         return Err(ApiError::Forbidden);
     }
 
@@ -352,7 +353,7 @@ pub async fn list_approval_policies(
         return Err(ApiError::Forbidden);
     }
 
-    let policies = sqlx::query_as::<_, (Uuid, String, String, i32, i32, bool)>(
+    let policies = sqlx::query_as::<_, (DbUuid, String, String, i32, i32, bool)>(
         "SELECT id, operation_type, risk_level, required_approvals, timeout_minutes, enabled \
          FROM approval_policies WHERE organization_id = $1 ORDER BY operation_type",
     )

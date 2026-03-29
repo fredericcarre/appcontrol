@@ -1,3 +1,4 @@
+use crate::db::DbUuid;
 use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
@@ -114,16 +115,16 @@ impl UpdateComponentRequest {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct ComponentRow {
-    pub id: Uuid,
-    pub application_id: Uuid,
+    pub id: DbUuid,
+    pub application_id: DbUuid,
     pub name: String,
     pub component_type: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
     pub icon: Option<String>,
-    pub group_id: Option<Uuid>,
+    pub group_id: Option<DbUuid>,
     pub host: Option<String>,
-    pub agent_id: Option<Uuid>,
+    pub agent_id: Option<DbUuid>,
     pub check_cmd: Option<String>,
     pub start_cmd: Option<String>,
     pub stop_cmd: Option<String>,
@@ -135,23 +136,23 @@ pub struct ComponentRow {
     pub position_y: Option<f32>,
     pub cluster_size: Option<i32>,
     pub cluster_nodes: Option<Value>,
-    pub referenced_app_id: Option<Uuid>,
+    pub referenced_app_id: Option<DbUuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CreateDependencyRequest {
-    pub from_component_id: Uuid,
-    pub to_component_id: Uuid,
+    pub from_component_id: DbUuid,
+    pub to_component_id: DbUuid,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct DependencyRow {
-    pub id: Uuid,
-    pub application_id: Uuid,
-    pub from_component_id: Uuid,
-    pub to_component_id: Uuid,
+    pub id: DbUuid,
+    pub application_id: DbUuid,
+    pub from_component_id: DbUuid,
+    pub to_component_id: DbUuid,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -165,6 +166,7 @@ pub async fn list_components(
         return Err(ApiError::Forbidden);
     }
 
+    #[cfg(feature = "postgres")]
     let components = sqlx::query_as::<_, ComponentRow>(
         r#"
         SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
@@ -178,6 +180,20 @@ pub async fn list_components(
     .fetch_all(&state.db)
     .await?;
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let components = sqlx::query_as::<_, ComponentRow>(
+        r#"
+        SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
+               host, agent_id, check_cmd, start_cmd, stop_cmd,
+               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
+               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
+        FROM components WHERE application_id = $1 ORDER BY name
+        "#,
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_all(&state.db)
+    .await?;
+
     Ok(Json(json!({ "components": components })))
 }
 
@@ -186,6 +202,7 @@ pub async fn get_component(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
+    #[cfg(feature = "postgres")]
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
         SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
@@ -196,6 +213,21 @@ pub async fn get_component(
         "#,
     )
     .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let component = sqlx::query_as::<_, ComponentRow>(
+        r#"
+        SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
+               host, agent_id, check_cmd, start_cmd, stop_cmd,
+               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
+               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
+        FROM components WHERE id = $1
+        "#,
+    )
+    .bind(DbUuid::from(id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -255,6 +287,7 @@ pub async fn create_component(
         .as_ref()
         .map(|nodes| serde_json::to_value(nodes).unwrap_or(json!([])));
 
+    #[cfg(feature = "postgres")]
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
         INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id,
@@ -295,6 +328,47 @@ pub async fn create_component(
     .fetch_one(&state.db)
     .await?;
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let component = sqlx::query_as::<_, ComponentRow>(
+        r#"
+        INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id,
+                                host, agent_id, check_cmd, start_cmd, stop_cmd,
+                                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
+                                position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+        RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
+               host, agent_id, check_cmd, start_cmd, stop_cmd,
+               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
+               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
+        "#,
+    )
+    .bind(DbUuid::from(comp_id))
+    .bind(DbUuid::from(app_id))
+    .bind(&body.name)
+    .bind(&body.component_type)
+    .bind(&body.display_name)
+    .bind(&body.description)
+    .bind(body.icon.as_deref().unwrap_or("box"))
+    .bind(body.group_id.map(DbUuid::from))
+    .bind(&effective_host)
+    .bind(resolved_agent_id.map(DbUuid::from))
+    .bind(&body.check_cmd)
+    .bind(&body.start_cmd)
+    .bind(&body.stop_cmd)
+    .bind(body.check_interval_seconds.unwrap_or(30))
+    .bind(body.start_timeout_seconds.unwrap_or(120))
+    .bind(body.stop_timeout_seconds.unwrap_or(60))
+    .bind(body.is_optional.unwrap_or(false))
+    .bind(body.position_x.unwrap_or(0.0))
+    .bind(body.position_y.unwrap_or(0.0))
+    .bind(body.env_vars.as_ref().unwrap_or(&json!({})))
+    .bind(body.tags.as_ref().unwrap_or(&json!([])))
+    .bind(body.cluster_size)
+    .bind(&cluster_nodes_json)
+    .bind(body.referenced_app_id.map(DbUuid::from))
+    .fetch_one(&state.db)
+    .await?;
+
     // Push config to affected agent so it starts health checks immediately
     let agent_ids = resolved_agent_id.map(|id| vec![id]);
     crate::websocket::push_config_to_affected_agents(
@@ -315,9 +389,18 @@ pub async fn update_component(
     Json(body): Json<UpdateComponentRequest>,
 ) -> Result<Json<Value>, ApiError> {
     // Get current component to check app permission
+    #[cfg(feature = "postgres")]
     let current =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let current =
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(DbUuid::from(id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -355,72 +438,100 @@ pub async fn update_component(
         .as_ref()
         .map(|nodes| serde_json::to_value(nodes).unwrap_or(json!([])));
 
+    let update_sql = format!(
+        "UPDATE components SET
+            name = COALESCE($2, name),
+            component_type = COALESCE($3, component_type),
+            display_name = $4,
+            description = $5,
+            icon = COALESCE($6, icon),
+            group_id = $7,
+            host = COALESCE($8, host),
+            agent_id = COALESCE($9, agent_id),
+            check_cmd = $10,
+            start_cmd = $11,
+            stop_cmd = $12,
+            check_interval_seconds = COALESCE($13, check_interval_seconds),
+            start_timeout_seconds = COALESCE($14, start_timeout_seconds),
+            stop_timeout_seconds = COALESCE($15, stop_timeout_seconds),
+            is_optional = COALESCE($16, is_optional),
+            position_x = COALESCE($17, position_x),
+            position_y = COALESCE($18, position_y),
+            cluster_size = $19,
+            cluster_nodes = $20,
+            referenced_app_id = $21,
+            updated_at = {}
+        WHERE id = $1
+        RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
+               host, agent_id, check_cmd, start_cmd, stop_cmd,
+               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
+               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at",
+        crate::db::sql::now()
+    );
+
     // Note: Fields that can be explicitly cleared (set to NULL) use direct assignment.
     // Fields that should always have a value use COALESCE to keep existing if not provided.
     // Special case: host and agent_id use COALESCE to preserve existing if not explicitly provided.
-    let component = sqlx::query_as::<_, ComponentRow>(
-        &format!(
-            "UPDATE components SET
-                name = COALESCE($2, name),
-                component_type = COALESCE($3, component_type),
-                display_name = $4,
-                description = $5,
-                icon = COALESCE($6, icon),
-                group_id = $7,
-                host = COALESCE($8, host),
-                agent_id = COALESCE($9, agent_id),
-                check_cmd = $10,
-                start_cmd = $11,
-                stop_cmd = $12,
-                check_interval_seconds = COALESCE($13, check_interval_seconds),
-                start_timeout_seconds = COALESCE($14, start_timeout_seconds),
-                stop_timeout_seconds = COALESCE($15, stop_timeout_seconds),
-                is_optional = COALESCE($16, is_optional),
-                position_x = COALESCE($17, position_x),
-                position_y = COALESCE($18, position_y),
-                cluster_size = $19,
-                cluster_nodes = $20,
-                referenced_app_id = $21,
-                updated_at = {}
-            WHERE id = $1
-            RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
-                   host, agent_id, check_cmd, start_cmd, stop_cmd,
-                   check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-                   position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at",
-            crate::db::sql::now()
-        ),
-    )
-    .bind(id)
-    .bind(&body.name)
-    .bind(&body.component_type)
-    .bind(&body.display_name)
-    .bind(&body.description)
-    .bind(&body.icon)
-    .bind(body.group_id)
-    .bind(&effective_host)
-    .bind(resolved_agent_id)
-    .bind(&body.check_cmd)
-    .bind(&body.start_cmd)
-    .bind(&body.stop_cmd)
-    .bind(body.check_interval_seconds)
-    .bind(body.start_timeout_seconds)
-    .bind(body.stop_timeout_seconds)
-    .bind(body.is_optional)
-    .bind(body.position_x)
-    .bind(body.position_y)
-    .bind(body.cluster_size)
-    .bind(&cluster_nodes_json)
-    .bind(body.referenced_app_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    #[cfg(feature = "postgres")]
+    let component = sqlx::query_as::<_, ComponentRow>(&update_sql)
+        .bind(id)
+        .bind(&body.name)
+        .bind(&body.component_type)
+        .bind(&body.display_name)
+        .bind(&body.description)
+        .bind(&body.icon)
+        .bind(body.group_id)
+        .bind(&effective_host)
+        .bind(resolved_agent_id)
+        .bind(&body.check_cmd)
+        .bind(&body.start_cmd)
+        .bind(&body.stop_cmd)
+        .bind(body.check_interval_seconds)
+        .bind(body.start_timeout_seconds)
+        .bind(body.stop_timeout_seconds)
+        .bind(body.is_optional)
+        .bind(body.position_x)
+        .bind(body.position_y)
+        .bind(body.cluster_size)
+        .bind(&cluster_nodes_json)
+        .bind(body.referenced_app_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let component = sqlx::query_as::<_, ComponentRow>(&update_sql)
+        .bind(DbUuid::from(id))
+        .bind(&body.name)
+        .bind(&body.component_type)
+        .bind(&body.display_name)
+        .bind(&body.description)
+        .bind(&body.icon)
+        .bind(body.group_id.map(DbUuid::from))
+        .bind(&effective_host)
+        .bind(resolved_agent_id.map(DbUuid::from))
+        .bind(&body.check_cmd)
+        .bind(&body.start_cmd)
+        .bind(&body.stop_cmd)
+        .bind(body.check_interval_seconds)
+        .bind(body.start_timeout_seconds)
+        .bind(body.stop_timeout_seconds)
+        .bind(body.is_optional)
+        .bind(body.position_x)
+        .bind(body.position_y)
+        .bind(body.cluster_size)
+        .bind(&cluster_nodes_json)
+        .bind(body.referenced_app_id.map(DbUuid::from))
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
 
     // Push config to affected agent so it picks up the changes
     // Use the actual agent_id from the updated component (after COALESCE), not the resolved one
-    let agent_ids = component.agent_id.map(|id| vec![id]);
+    let agent_ids: Option<Vec<uuid::Uuid>> = component.agent_id.map(|id| vec![id.into_inner()]);
     crate::websocket::push_config_to_affected_agents(
         &state,
-        Some(current),
+        Some(current.into()),
         None,
         agent_ids.as_deref(),
     )
@@ -435,12 +546,24 @@ pub async fn delete_component(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     // Get app_id and agent_id before deleting
+    #[cfg(feature = "postgres")]
     let (app_id, agent_id): (Uuid, Option<Uuid>) =
         sqlx::query_as("SELECT application_id, agent_id FROM components WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let (app_id, agent_id): (Uuid, Option<Uuid>) = {
+        let row: (DbUuid, Option<DbUuid>) =
+            sqlx::query_as("SELECT application_id, agent_id FROM components WHERE id = $1")
+                .bind(DbUuid::from(id))
+                .fetch_optional(&state.db)
+                .await?
+                .ok_or_not_found()?;
+        (row.0.into_inner(), row.1.map(|u| u.into_inner()))
+    };
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
@@ -457,8 +580,15 @@ pub async fn delete_component(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     sqlx::query("DELETE FROM components WHERE id = $1")
         .bind(id)
+        .execute(&state.db)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("DELETE FROM components WHERE id = $1")
+        .bind(DbUuid::from(id))
         .execute(&state.db)
         .await?;
 
@@ -493,9 +623,18 @@ pub async fn update_position(
     Json(body): Json<UpdatePositionRequest>,
 ) -> Result<StatusCode, ApiError> {
     // Get app_id for permission check
+    #[cfg(feature = "postgres")]
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let app_id =
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(DbUuid::from(id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -508,15 +647,26 @@ pub async fn update_position(
     // Note: We don't log position updates to avoid spamming action_log during drag operations.
     // Position is not a critical operational parameter.
 
-    sqlx::query(&format!(
+    let pos_sql = format!(
         "UPDATE components SET position_x = $2, position_y = $3, updated_at = {} WHERE id = $1",
         crate::db::sql::now()
-    ))
-    .bind(id)
-    .bind(body.x)
-    .bind(body.y)
-    .execute(&state.db)
-    .await?;
+    );
+
+    #[cfg(feature = "postgres")]
+    sqlx::query(&pos_sql)
+        .bind(id)
+        .bind(body.x)
+        .bind(body.y)
+        .execute(&state.db)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(&pos_sql)
+        .bind(DbUuid::from(id))
+        .bind(body.x)
+        .bind(body.y)
+        .execute(&state.db)
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -530,7 +680,7 @@ pub struct BatchPositionUpdate {
 
 #[derive(Debug, Deserialize)]
 pub struct ComponentPosition {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub x: f32,
     pub y: f32,
 }
@@ -547,7 +697,7 @@ pub async fn update_positions_batch(
     // Get app_id from first component (all should be in same app)
     let first_id = body.positions[0].id;
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(first_id)
             .fetch_optional(&state.db)
             .await?
@@ -584,8 +734,8 @@ pub async fn start_component(
     // Get component info including referenced_app_id
     #[derive(sqlx::FromRow)]
     struct ComponentInfo {
-        application_id: Uuid,
-        referenced_app_id: Option<Uuid>,
+        application_id: DbUuid,
+        referenced_app_id: Option<DbUuid>,
     }
 
     let comp_info = sqlx::query_as::<_, ComponentInfo>(
@@ -657,8 +807,8 @@ pub async fn stop_component(
     // Get component info including referenced_app_id
     #[derive(sqlx::FromRow)]
     struct ComponentInfo {
-        application_id: Uuid,
-        referenced_app_id: Option<Uuid>,
+        application_id: DbUuid,
+        referenced_app_id: Option<DbUuid>,
     }
 
     let comp_info = sqlx::query_as::<_, ComponentInfo>(
@@ -728,7 +878,7 @@ pub async fn force_stop_component(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
             .await?
@@ -769,7 +919,7 @@ pub async fn start_with_deps(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
             .await?
@@ -834,7 +984,7 @@ pub async fn restart_with_dependents(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
             .await?
@@ -929,8 +1079,8 @@ pub async fn execute_command(
     // Fetch component with all command columns
     #[derive(sqlx::FromRow)]
     struct ComponentCmd {
-        application_id: Uuid,
-        agent_id: Option<Uuid>,
+        application_id: DbUuid,
+        agent_id: Option<DbUuid>,
         check_cmd: Option<String>,
         start_cmd: Option<String>,
         stop_cmd: Option<String>,
@@ -977,7 +1127,7 @@ pub async fn execute_command(
         (None, builtin)
     } else {
         // Look up the command definition from component_commands
-        let cmd_row = sqlx::query_as::<_, (Uuid, String, bool)>(
+        let cmd_row = sqlx::query_as::<_, (DbUuid, String, bool)>(
             "SELECT id, command, requires_confirmation FROM component_commands WHERE component_id = $1 AND name = $2",
         )
         .bind(id)
@@ -986,7 +1136,7 @@ pub async fn execute_command(
         .await?
         .ok_or_not_found()?;
 
-        (Some(cmd_row.0), cmd_row.1)
+        (Some(cmd_row.0.into()), cmd_row.1)
     };
 
     let agent_id = comp.agent_id;
@@ -1099,10 +1249,19 @@ pub async fn list_dependencies(
         return Err(ApiError::Forbidden);
     }
 
+    #[cfg(feature = "postgres")]
     let deps = sqlx::query_as::<_, DependencyRow>(
         "SELECT id, application_id, from_component_id, to_component_id, created_at FROM dependencies WHERE application_id = $1",
     )
     .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let deps = sqlx::query_as::<_, DependencyRow>(
+        "SELECT id, application_id, from_component_id, to_component_id, created_at FROM dependencies WHERE application_id = $1",
+    )
+    .bind(DbUuid::from(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1146,6 +1305,7 @@ pub async fn create_dependency(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let dep = sqlx::query_as::<_, DependencyRow>(
         r#"
         INSERT INTO dependencies (id, application_id, from_component_id, to_component_id)
@@ -1160,6 +1320,21 @@ pub async fn create_dependency(
     .fetch_one(&state.db)
     .await?;
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let dep = sqlx::query_as::<_, DependencyRow>(
+        r#"
+        INSERT INTO dependencies (id, application_id, from_component_id, to_component_id)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, application_id, from_component_id, to_component_id, created_at
+        "#,
+    )
+    .bind(DbUuid::from(dep_id))
+    .bind(DbUuid::from(app_id))
+    .bind(body.from_component_id)
+    .bind(body.to_component_id)
+    .fetch_one(&state.db)
+    .await?;
+
     Ok((StatusCode::CREATED, Json(json!(dep))))
 }
 
@@ -1168,9 +1343,18 @@ pub async fn delete_dependency(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
+    #[cfg(feature = "postgres")]
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM dependencies WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM dependencies WHERE id = $1")
             .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let app_id =
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM dependencies WHERE id = $1")
+            .bind(DbUuid::from(id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -1190,8 +1374,15 @@ pub async fn delete_dependency(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     sqlx::query("DELETE FROM dependencies WHERE id = $1")
         .bind(id)
+        .execute(&state.db)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("DELETE FROM dependencies WHERE id = $1")
+        .bind(DbUuid::from(id))
         .execute(&state.db)
         .await?;
 
@@ -1204,8 +1395,8 @@ pub async fn delete_dependency(
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct CustomCommandRow {
-    pub id: Uuid,
-    pub component_id: Uuid,
+    pub id: DbUuid,
+    pub component_id: DbUuid,
     pub name: String,
     pub command: String,
     pub description: Option<String>,
@@ -1221,7 +1412,7 @@ pub async fn list_custom_commands(
     Path(component_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?
@@ -1249,10 +1440,10 @@ pub async fn list_custom_commands(
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct CommandExecutionRow {
-    pub id: Uuid,
-    pub request_id: Uuid,
-    pub component_id: Uuid,
-    pub agent_id: Option<Uuid>,
+    pub id: DbUuid,
+    pub request_id: DbUuid,
+    pub component_id: DbUuid,
+    pub agent_id: Option<DbUuid>,
     pub command_type: String,
     pub exit_code: Option<i16>,
     pub stdout: Option<String>,
@@ -1278,7 +1469,7 @@ pub async fn list_command_executions(
     axum::extract::Query(query): axum::extract::Query<ExecutionHistoryQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?
@@ -1330,8 +1521,8 @@ pub async fn list_command_executions(
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct StateTransitionRow {
-    pub id: Uuid,
-    pub component_id: Uuid,
+    pub id: DbUuid,
+    pub component_id: DbUuid,
     pub from_state: String,
     pub to_state: String,
     pub trigger: String,
@@ -1346,7 +1537,7 @@ pub async fn list_state_transitions(
     axum::extract::Query(query): axum::extract::Query<ExecutionHistoryQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?
@@ -1382,7 +1573,7 @@ pub async fn list_state_transitions(
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct CheckEventRow {
     pub id: i64,
-    pub component_id: Uuid,
+    pub component_id: DbUuid,
     pub check_type: String,
     pub exit_code: i16,
     pub stdout: Option<String>,
@@ -1398,7 +1589,7 @@ pub async fn list_check_events(
     axum::extract::Query(query): axum::extract::Query<ExecutionHistoryQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?
@@ -1441,7 +1632,8 @@ pub async fn list_check_events(
 /// share an IP, the first one (by created_at) wins.
 pub async fn resolve_host_to_agent(pool: &crate::db::DbPool, host: &str) -> Option<Uuid> {
     // 1. Try exact hostname match
-    let by_hostname = sqlx::query_scalar::<_, Uuid>(
+    #[cfg(feature = "postgres")]
+    let by_hostname = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM agents WHERE hostname = $1 AND is_active = true ORDER BY created_at LIMIT 1",
     )
     .bind(host)
@@ -1450,19 +1642,42 @@ pub async fn resolve_host_to_agent(pool: &crate::db::DbPool, host: &str) -> Opti
     .ok()
     .flatten();
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let by_hostname = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT id FROM agents WHERE hostname = $1 AND is_active = 1 ORDER BY created_at LIMIT 1",
+    )
+    .bind(host)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
     if by_hostname.is_some() {
-        return by_hostname;
+        return by_hostname.map(|x| x.into_inner());
     }
 
     // 2. Try IP address match in JSONB array
-    sqlx::query_scalar::<_, Uuid>(
+    #[cfg(feature = "postgres")]
+    let by_ip = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM agents WHERE ip_addresses ? $1 AND is_active = true ORDER BY created_at LIMIT 1",
     )
     .bind(host)
     .fetch_optional(pool)
     .await
     .ok()
-    .flatten()
+    .flatten();
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let by_ip = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT id FROM agents WHERE EXISTS(SELECT 1 FROM json_each(ip_addresses) WHERE value = $1) AND is_active = 1 ORDER BY created_at LIMIT 1",
+    )
+    .bind(host)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    by_ip.map(|x| x.into_inner())
 }
 
 /// Called when an agent registers: resolve all components that reference
@@ -1472,10 +1687,11 @@ pub async fn resolve_host_to_agent(pool: &crate::db::DbPool, host: &str) -> Opti
 /// agent registers later with hostname="srv-oracle.prod" → agent_id is set automatically.
 pub async fn resolve_components_for_agent(
     pool: &crate::db::DbPool,
-    agent_id: Uuid,
+    agent_id: impl Into<Uuid> + Send,
     hostname: &str,
     ip_addresses: &[String],
 ) {
+    let agent_id: Uuid = agent_id.into();
     // Match components by hostname
     let result =
         sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
@@ -1529,7 +1745,7 @@ pub async fn get_component_metrics(
     Path(component_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?
@@ -1574,7 +1790,7 @@ pub async fn get_component_metrics_history(
     Path(component_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?
@@ -1628,7 +1844,7 @@ pub async fn list_site_overrides(
 ) -> Result<Json<Value>, ApiError> {
     // First get the app_id to check permissions
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?
@@ -1641,10 +1857,10 @@ pub async fn list_site_overrides(
 
     #[derive(Debug, sqlx::FromRow)]
     struct SiteOverrideRow {
-        id: Uuid,
-        component_id: Uuid,
-        site_id: Uuid,
-        agent_id_override: Option<Uuid>,
+        id: DbUuid,
+        component_id: DbUuid,
+        site_id: DbUuid,
+        agent_id_override: Option<DbUuid>,
         check_cmd_override: Option<String>,
         start_cmd_override: Option<String>,
         stop_cmd_override: Option<String>,
@@ -1724,7 +1940,7 @@ pub async fn upsert_site_override(
 ) -> Result<Json<Value>, ApiError> {
     // First get the app_id to check permissions
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?
@@ -1736,7 +1952,7 @@ pub async fn upsert_site_override(
     }
 
     // Verify site exists
-    let _site_exists = sqlx::query_scalar::<_, Uuid>("SELECT id FROM sites WHERE id = $1")
+    let _site_exists = sqlx::query_scalar::<_, DbUuid>("SELECT id FROM sites WHERE id = $1")
         .bind(site_id)
         .fetch_optional(&state.db)
         .await?
@@ -1758,7 +1974,7 @@ pub async fn upsert_site_override(
     .ok();
 
     // Upsert
-    let id = sqlx::query_scalar::<_, Uuid>(
+    let id = sqlx::query_scalar::<_, DbUuid>(
         r#"
         INSERT INTO site_overrides (component_id, site_id, agent_id_override,
             check_cmd_override, start_cmd_override, stop_cmd_override,
@@ -1802,7 +2018,7 @@ pub async fn delete_site_override(
 ) -> Result<StatusCode, ApiError> {
     // First get the app_id to check permissions
     let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
             .await?

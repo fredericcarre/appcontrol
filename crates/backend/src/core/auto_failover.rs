@@ -7,7 +7,7 @@
 //! Check interval: 30 seconds
 //! Failover threshold: >50% agents unreachable for >2 minutes
 
-use crate::db::DbPool;
+use crate::db::{DbJson, DbPool, DbUuid};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 use sqlx::FromRow;
@@ -66,16 +66,16 @@ async fn check_and_failover(
     // Find all applications with an active profile and a DR profile with auto_failover enabled
     #[derive(Debug, FromRow)]
     struct FailoverCandidate {
-        application_id: Uuid,
+        application_id: DbUuid,
         application_name: String,
-        active_profile_id: Uuid,
+        active_profile_id: DbUuid,
         active_profile_name: String,
-        dr_profile_id: Uuid,
+        dr_profile_id: DbUuid,
         dr_profile_name: String,
     }
 
-    let candidates: Vec<FailoverCandidate> = sqlx::query_as(
-        r#"
+    #[cfg(feature = "postgres")]
+    let candidates_sql: &str = r#"
         SELECT
             app.id as application_id,
             app.name as application_name,
@@ -90,10 +90,26 @@ async fn check_and_failover(
             AND dr.auto_failover = true
             AND dr.is_active = false
         WHERE active.profile_type = 'primary'
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
+        "#;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let candidates_sql: &str = r#"
+        SELECT
+            app.id as application_id,
+            app.name as application_name,
+            active.id as active_profile_id,
+            active.name as active_profile_name,
+            dr.id as dr_profile_id,
+            dr.name as dr_profile_name
+        FROM applications app
+        JOIN binding_profiles active ON active.application_id = app.id AND active.is_active = 1
+        JOIN binding_profiles dr ON dr.application_id = app.id
+            AND dr.profile_type = 'dr'
+            AND dr.auto_failover = 1
+            AND dr.is_active = 0
+        WHERE active.profile_type = 'primary'
+        "#;
+
+    let candidates: Vec<FailoverCandidate> = sqlx::query_as(candidates_sql).fetch_all(pool).await?;
 
     for candidate in candidates {
         if let Err(e) = check_profile_health_and_failover(
@@ -140,7 +156,7 @@ async fn check_profile_health_and_failover(
     // Get all agents for the active profile and their health status
     #[derive(Debug, FromRow)]
     struct AgentHealth {
-        agent_id: Uuid,
+        agent_id: DbUuid,
         agent_hostname: String,
         last_heartbeat_at: Option<DateTime<Utc>>,
         is_active: bool,
@@ -158,7 +174,7 @@ async fn check_profile_health_and_failover(
         WHERE m.profile_id = $1
         "#,
     )
-    .bind(active_profile_id)
+    .bind(DbUuid::from(*active_profile_id))
     .fetch_all(pool)
     .await?;
 
@@ -187,43 +203,78 @@ async fn check_profile_health_and_failover(
         let is_reachable =
             agent.is_active && agent.last_heartbeat_at.is_some_and(|hb| hb >= threshold);
 
-        sqlx::query(
-            r#"
-            INSERT INTO failover_health_status (profile_id, agent_id, is_reachable, last_check_at, unreachable_since)
-            VALUES ($1, $2, $3, $4, CASE WHEN $3 THEN NULL ELSE COALESCE(
-                (SELECT unreachable_since FROM failover_health_status WHERE profile_id = $1 AND agent_id = $2),
-                $4
-            ) END)
-            ON CONFLICT (profile_id, agent_id) DO UPDATE SET
-                is_reachable = EXCLUDED.is_reachable,
-                last_check_at = EXCLUDED.last_check_at,
-                unreachable_since = CASE WHEN EXCLUDED.is_reachable THEN NULL ELSE COALESCE(failover_health_status.unreachable_since, EXCLUDED.last_check_at) END
-            "#
-        )
-        .bind(active_profile_id)
-        .bind(agent.agent_id)
-        .bind(is_reachable)
-        .bind(now)
-        .execute(pool)
-        .await?;
+        #[cfg(feature = "postgres")]
+        {
+            sqlx::query(
+                r#"
+                INSERT INTO failover_health_status (profile_id, agent_id, is_reachable, last_check_at, unreachable_since)
+                VALUES ($1, $2, $3, $4, CASE WHEN $3 THEN NULL ELSE COALESCE(
+                    (SELECT unreachable_since FROM failover_health_status WHERE profile_id = $1 AND agent_id = $2),
+                    $4
+                ) END)
+                ON CONFLICT (profile_id, agent_id) DO UPDATE SET
+                    is_reachable = EXCLUDED.is_reachable,
+                    last_check_at = EXCLUDED.last_check_at,
+                    unreachable_since = CASE WHEN EXCLUDED.is_reachable THEN NULL ELSE COALESCE(failover_health_status.unreachable_since, EXCLUDED.last_check_at) END
+                "#
+            )
+            .bind(active_profile_id)
+            .bind(agent.agent_id)
+            .bind(is_reachable)
+            .bind(now)
+            .execute(pool)
+            .await?;
+        }
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        {
+            let is_reachable_int: i32 = if is_reachable { 1 } else { 0 };
+            sqlx::query(
+                r#"
+                INSERT INTO failover_health_status (profile_id, agent_id, is_reachable, last_check_at, unreachable_since)
+                VALUES ($1, $2, $3, $4, CASE WHEN $3 THEN NULL ELSE COALESCE(
+                    (SELECT unreachable_since FROM failover_health_status WHERE profile_id = $1 AND agent_id = $2),
+                    $4
+                ) END)
+                ON CONFLICT (profile_id, agent_id) DO UPDATE SET
+                    is_reachable = EXCLUDED.is_reachable,
+                    last_check_at = EXCLUDED.last_check_at,
+                    unreachable_since = CASE WHEN EXCLUDED.is_reachable THEN NULL ELSE COALESCE(failover_health_status.unreachable_since, EXCLUDED.last_check_at) END
+                "#
+            )
+            .bind(DbUuid::from(*active_profile_id))
+            .bind(agent.agent_id)
+            .bind(is_reachable_int)
+            .bind(now)
+            .execute(pool)
+            .await?;
+        }
     }
 
     // Check if failover should be triggered
     if unreachable_ratio >= config.unreachable_percentage {
         // Verify agents have been unreachable for the required duration
-        let all_unreachable_long_enough: bool = sqlx::query_scalar(
-            r#"
+        #[cfg(feature = "postgres")]
+        let unreachable_sql: &str = r#"
             SELECT COUNT(*) = 0
             FROM failover_health_status
             WHERE profile_id = $1
               AND is_reachable = false
               AND unreachable_since > $2
-            "#,
-        )
-        .bind(active_profile_id)
-        .bind(threshold)
-        .fetch_one(pool)
-        .await?;
+            "#;
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let unreachable_sql: &str = r#"
+            SELECT COUNT(*) = 0
+            FROM failover_health_status
+            WHERE profile_id = $1
+              AND is_reachable = 0
+              AND unreachable_since > $2
+            "#;
+
+        let all_unreachable_long_enough: bool = sqlx::query_scalar(unreachable_sql)
+            .bind(DbUuid::from(*active_profile_id))
+            .bind(threshold)
+            .fetch_one(pool)
+            .await?;
 
         if all_unreachable_long_enough {
             tracing::warn!(
@@ -269,7 +320,7 @@ async fn trigger_auto_failover(
     let switchover_id = Uuid::new_v4();
 
     // Log to action_log (use system user ID placeholder)
-    let system_user_id = Uuid::nil(); // System-initiated action
+    let system_user_id = DbUuid::nil(); // System-initiated action
     sqlx::query(
         r#"
         INSERT INTO action_log (user_id, action, resource_type, resource_id, details)
@@ -277,60 +328,99 @@ async fn trigger_auto_failover(
         "#,
     )
     .bind(system_user_id)
-    .bind(app_id)
-    .bind(json!({
+    .bind(DbUuid::from(*app_id))
+    .bind(DbJson::from(json!({
         "switchover_id": switchover_id,
         "trigger": "auto_failover",
         "from_profile": active_profile_name,
         "to_profile": dr_profile_name,
         "unreachable_agents": unreachable_agents
-    }))
+    })))
     .execute(pool)
     .await?;
 
     // Deactivate current profile
-    sqlx::query("UPDATE binding_profiles SET is_active = false WHERE id = $1")
-        .bind(active_profile_id)
+    #[cfg(feature = "postgres")]
+    let deact_sql: &str = "UPDATE binding_profiles SET is_active = false WHERE id = $1";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let deact_sql: &str = "UPDATE binding_profiles SET is_active = 0 WHERE id = $1";
+
+    sqlx::query(deact_sql)
+        .bind(DbUuid::from(*active_profile_id))
         .execute(pool)
         .await?;
 
     // Activate DR profile
-    sqlx::query("UPDATE binding_profiles SET is_active = true WHERE id = $1")
-        .bind(dr_profile_id)
+    #[cfg(feature = "postgres")]
+    let act_sql: &str = "UPDATE binding_profiles SET is_active = true WHERE id = $1";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let act_sql: &str = "UPDATE binding_profiles SET is_active = 1 WHERE id = $1";
+
+    sqlx::query(act_sql)
+        .bind(DbUuid::from(*dr_profile_id))
         .execute(pool)
         .await?;
 
     // Update component agent_ids based on DR profile mappings
-    sqlx::query(
-        r#"
-        UPDATE components c
-        SET agent_id = m.agent_id
-        FROM binding_profile_mappings m
-        WHERE c.application_id = $1
-          AND m.profile_id = $2
-          AND c.name = m.component_name
-        "#,
-    )
-    .bind(app_id)
-    .bind(dr_profile_id)
-    .execute(pool)
-    .await?;
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query(
+            r#"
+            UPDATE components c
+            SET agent_id = m.agent_id
+            FROM binding_profile_mappings m
+            WHERE c.application_id = $1
+              AND m.profile_id = $2
+              AND c.name = m.component_name
+            "#,
+        )
+        .bind(DbUuid::from(*app_id))
+        .bind(DbUuid::from(*dr_profile_id))
+        .execute(pool)
+        .await?;
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        // SQLite doesn't support UPDATE ... FROM, so use a subquery
+        sqlx::query(
+            r#"
+            UPDATE components
+            SET agent_id = (
+                SELECT m.agent_id
+                FROM binding_profile_mappings m
+                WHERE m.profile_id = $2
+                  AND m.component_name = components.name
+            )
+            WHERE application_id = $1
+              AND EXISTS (
+                SELECT 1 FROM binding_profile_mappings m
+                WHERE m.profile_id = $2
+                  AND m.component_name = components.name
+              )
+            "#,
+        )
+        .bind(DbUuid::from(*app_id))
+        .bind(DbUuid::from(*dr_profile_id))
+        .execute(pool)
+        .await?;
+    }
 
     // Log to switchover_log
     sqlx::query(
         r#"
-        INSERT INTO switchover_log (switchover_id, application_id, phase, status, details)
-        VALUES ($1, $2, 'COMMIT', 'completed', $3)
+        INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
+        VALUES ($1, $2, $3, 'COMMIT', 'completed', $4)
         "#,
     )
-    .bind(switchover_id)
-    .bind(app_id)
-    .bind(json!({
+    .bind(DbUuid::new_v4())
+    .bind(DbUuid::from(switchover_id))
+    .bind(DbUuid::from(*app_id))
+    .bind(DbJson::from(json!({
         "type": "auto_failover",
         "from_profile": active_profile_name,
         "to_profile": dr_profile_name,
         "unreachable_agents": unreachable_agents
-    }))
+    })))
     .execute(pool)
     .await?;
 

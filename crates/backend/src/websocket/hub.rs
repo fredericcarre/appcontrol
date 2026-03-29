@@ -113,7 +113,8 @@ impl Hub {
     /// Broadcast an event to all connections subscribed to the given app.
     /// Uses the app_subscriptions reverse index for O(subscribers) performance
     /// instead of scanning all connections.
-    pub fn broadcast(&self, app_id: Uuid, event: WsEvent) {
+    pub fn broadcast(&self, app_id: impl Into<Uuid>, event: WsEvent) {
+        let app_id: Uuid = app_id.into();
         let json = match serde_json::to_string(&event) {
             Ok(j) => j,
             Err(_) => return,
@@ -217,7 +218,8 @@ impl Hub {
     /// The message is wrapped in a GatewayEnvelope with the target_agent_id.
     /// If the message is an ExecuteCommand, the request_id → agent_id mapping
     /// is recorded for Ack routing when CommandResult comes back.
-    pub fn send_to_agent(&self, agent_id: Uuid, message: BackendMessage) -> bool {
+    pub fn send_to_agent(&self, agent_id: impl Into<Uuid>, message: BackendMessage) -> bool {
+        let agent_id: Uuid = agent_id.into();
         // Track request_id → agent_id for Ack routing
         if let BackendMessage::ExecuteCommand { request_id, .. } = &message {
             self.request_to_agent.insert(*request_id, agent_id);

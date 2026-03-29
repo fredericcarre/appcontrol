@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -61,7 +62,7 @@ pub async fn get_estimates(
     };
 
     // Fetch historical stats for all components in this app
-    let stats = sqlx::query_as::<_, (Uuid, String, i32, i32, i32, i32, i32)>(
+    let stats = sqlx::query_as::<_, (DbUuid, String, i32, i32, i32, i32, i32)>(
         "SELECT component_id, command_type, sample_count, avg_ms, p50_ms, p95_ms, max_ms
          FROM component_operation_stats
          WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)",
@@ -71,7 +72,7 @@ pub async fn get_estimates(
     .await;
 
     // Build lookup: component_id -> (command_type -> stats)
-    let mut stats_map: HashMap<Uuid, HashMap<String, ComponentStats>> = HashMap::new();
+    let mut stats_map: HashMap<DbUuid, HashMap<String, ComponentStats>> = HashMap::new();
     if let Ok(rows) = stats {
         for (comp_id, cmd_type, sample_count, avg_ms, p50_ms, p95_ms, max_ms) in rows {
             stats_map.entry(comp_id).or_default().insert(

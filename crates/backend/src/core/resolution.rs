@@ -8,7 +8,7 @@
 //! 2. FQDN suffix match (host matches start of agent's hostname)
 //! 3. IP address match (from agents.ip_addresses JSONB array)
 
-use crate::db::DbPool;
+use crate::db::{DbPool, DbUuid};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -21,7 +21,7 @@ pub enum ResolutionResult {
     Resolved {
         agent_id: Uuid,
         agent_hostname: String,
-        gateway_id: Option<Uuid>,
+        gateway_id: Option<DbUuid>,
         gateway_name: Option<String>,
         resolved_via: ResolutionMethod,
     },
@@ -63,9 +63,9 @@ impl std::fmt::Display for ResolutionMethod {
 /// An agent candidate for resolution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentCandidate {
-    pub agent_id: Uuid,
+    pub agent_id: DbUuid,
     pub hostname: String,
-    pub gateway_id: Option<Uuid>,
+    pub gateway_id: Option<DbUuid>,
     pub gateway_name: Option<String>,
     pub ip_addresses: Vec<String>,
     pub matched_via: ResolutionMethod,
@@ -74,9 +74,9 @@ pub struct AgentCandidate {
 /// Available agent (for manual selection UI)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AvailableAgent {
-    pub agent_id: Uuid,
+    pub agent_id: DbUuid,
     pub hostname: String,
-    pub gateway_id: Option<Uuid>,
+    pub gateway_id: Option<DbUuid>,
     pub gateway_name: Option<String>,
     pub ip_addresses: Vec<String>,
     pub is_active: bool,
@@ -85,9 +85,9 @@ pub struct AvailableAgent {
 /// Internal row for agent queries
 #[derive(Debug, FromRow)]
 struct AgentRow {
-    agent_id: Uuid,
+    agent_id: DbUuid,
     hostname: String,
-    gateway_id: Option<Uuid>,
+    gateway_id: Option<DbUuid>,
     gateway_name: Option<String>,
     ip_addresses: sqlx::types::Json<Vec<String>>,
     is_active: bool,
@@ -103,7 +103,7 @@ pub async fn resolve_host_with_options(
     pool: &DbPool,
     host: &str,
     gateway_ids: &[Uuid],
-    org_id: Uuid,
+    org_id: DbUuid,
 ) -> Result<ResolutionResult, sqlx::Error> {
     let host_lower = host.to_lowercase();
 
@@ -114,7 +114,7 @@ pub async fn resolve_host_with_options(
     if exact_matches.len() == 1 {
         let m = &exact_matches[0];
         return Ok(ResolutionResult::Resolved {
-            agent_id: m.agent_id,
+            agent_id: *m.agent_id,
             agent_hostname: m.hostname.clone(),
             gateway_id: m.gateway_id,
             gateway_name: m.gateway_name.clone(),
@@ -145,7 +145,7 @@ pub async fn resolve_host_with_options(
     if fqdn_matches.len() == 1 {
         let m = &fqdn_matches[0];
         return Ok(ResolutionResult::Resolved {
-            agent_id: m.agent_id,
+            agent_id: *m.agent_id,
             agent_hostname: m.hostname.clone(),
             gateway_id: m.gateway_id,
             gateway_name: m.gateway_name.clone(),
@@ -174,7 +174,7 @@ pub async fn resolve_host_with_options(
     if ip_matches.len() == 1 {
         let m = &ip_matches[0];
         return Ok(ResolutionResult::Resolved {
-            agent_id: m.agent_id,
+            agent_id: *m.agent_id,
             agent_hostname: m.hostname.clone(),
             gateway_id: m.gateway_id,
             gateway_name: m.gateway_name.clone(),
@@ -205,7 +205,7 @@ pub async fn resolve_host_with_options(
 pub async fn list_available_agents(
     pool: &DbPool,
     gateway_ids: &[Uuid],
-    org_id: Uuid,
+    org_id: DbUuid,
 ) -> Result<Vec<AvailableAgent>, sqlx::Error> {
     let agents: Vec<AgentRow> = query_agents_list(pool, org_id, gateway_ids).await?;
 
@@ -232,20 +232,24 @@ struct PatternRuleRow {
 /// Apply DR pattern rules to suggest a DR hostname from a primary hostname
 pub async fn suggest_dr_hostname(
     pool: &DbPool,
-    org_id: Uuid,
+    org_id: DbUuid,
     primary_hostname: &str,
 ) -> Result<Option<String>, sqlx::Error> {
-    let rules: Vec<PatternRuleRow> = sqlx::query_as(
-        r#"
-        SELECT search_pattern, replace_pattern
-        FROM dr_pattern_rules
-        WHERE organization_id = $1 AND is_active = true
-        ORDER BY priority DESC
-        "#,
-    )
-    .bind(org_id)
-    .fetch_all(pool)
-    .await?;
+    #[cfg(feature = "postgres")]
+    let rules_sql: &str = "SELECT search_pattern, replace_pattern \
+        FROM dr_pattern_rules \
+        WHERE organization_id = $1 AND is_active = true \
+        ORDER BY priority DESC";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let rules_sql: &str = "SELECT search_pattern, replace_pattern \
+        FROM dr_pattern_rules \
+        WHERE organization_id = $1 AND is_active = 1 \
+        ORDER BY priority DESC";
+
+    let rules: Vec<PatternRuleRow> = sqlx::query_as(rules_sql)
+        .bind(org_id)
+        .fetch_all(pool)
+        .await?;
 
     for rule in rules {
         if let Ok(regex) = regex::Regex::new(&rule.search_pattern) {
@@ -262,7 +266,7 @@ pub async fn suggest_dr_hostname(
 /// Try to resolve a suggested DR hostname to an actual agent
 pub async fn resolve_dr_agent(
     pool: &DbPool,
-    org_id: Uuid,
+    org_id: DbUuid,
     dr_gateway_ids: &[Uuid],
     primary_hostname: &str,
 ) -> Result<Option<(String, ResolutionResult)>, sqlx::Error> {
@@ -283,7 +287,7 @@ pub async fn resolve_dr_agent(
 #[cfg(feature = "postgres")]
 async fn query_agents_exact_hostname(
     pool: &DbPool,
-    org_id: Uuid,
+    org_id: DbUuid,
     host_lower: &str,
     gateway_ids: &[Uuid],
 ) -> Result<Vec<AgentRow>, sqlx::Error> {
@@ -308,7 +312,7 @@ async fn query_agents_exact_hostname(
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 async fn query_agents_exact_hostname(
     pool: &DbPool,
-    org_id: Uuid,
+    org_id: DbUuid,
     host_lower: &str,
     gateway_ids: &[Uuid],
 ) -> Result<Vec<AgentRow>, sqlx::Error> {
@@ -343,7 +347,7 @@ async fn query_agents_exact_hostname(
 #[cfg(feature = "postgres")]
 async fn query_agents_fqdn_match(
     pool: &DbPool,
-    org_id: Uuid,
+    org_id: DbUuid,
     fqdn_pattern: &str,
     gateway_ids: &[Uuid],
 ) -> Result<Vec<AgentRow>, sqlx::Error> {
@@ -368,7 +372,7 @@ async fn query_agents_fqdn_match(
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 async fn query_agents_fqdn_match(
     pool: &DbPool,
-    org_id: Uuid,
+    org_id: DbUuid,
     fqdn_pattern: &str,
     gateway_ids: &[Uuid],
 ) -> Result<Vec<AgentRow>, sqlx::Error> {
@@ -402,7 +406,7 @@ async fn query_agents_fqdn_match(
 #[cfg(feature = "postgres")]
 async fn query_agents_ip_match(
     pool: &DbPool,
-    org_id: Uuid,
+    org_id: DbUuid,
     ip: &str,
     gateway_ids: &[Uuid],
 ) -> Result<Vec<AgentRow>, sqlx::Error> {
@@ -427,7 +431,7 @@ async fn query_agents_ip_match(
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 async fn query_agents_ip_match(
     pool: &DbPool,
-    org_id: Uuid,
+    org_id: DbUuid,
     ip: &str,
     gateway_ids: &[Uuid],
 ) -> Result<Vec<AgentRow>, sqlx::Error> {
@@ -465,7 +469,7 @@ async fn query_agents_ip_match(
 #[cfg(feature = "postgres")]
 async fn query_agents_list(
     pool: &DbPool,
-    org_id: Uuid,
+    org_id: DbUuid,
     gateway_ids: &[Uuid],
 ) -> Result<Vec<AgentRow>, sqlx::Error> {
     sqlx::query_as::<_, AgentRow>(
@@ -488,7 +492,7 @@ async fn query_agents_list(
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 async fn query_agents_list(
     pool: &DbPool,
-    org_id: Uuid,
+    org_id: DbUuid,
     gateway_ids: &[Uuid],
 ) -> Result<Vec<AgentRow>, sqlx::Error> {
     if gateway_ids.is_empty() {

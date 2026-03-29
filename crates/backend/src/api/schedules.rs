@@ -3,6 +3,7 @@
 //! Schedules allow automating start/stop/restart operations on applications or components
 //! based on cron expressions. Use case: stop app at night, restart every morning.
 
+use crate::db::DbUuid;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -66,7 +67,7 @@ pub struct UpdateScheduleRequest {
 
 #[derive(Debug, Serialize)]
 pub struct ScheduleResponse {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub name: String,
     pub description: Option<String>,
     pub operation: String,
@@ -80,18 +81,18 @@ pub struct ScheduleResponse {
     pub last_run_status: Option<String>,
     pub last_run_message: Option<String>,
     pub target_type: String, // "application" or "component"
-    pub target_id: Uuid,
+    pub target_id: DbUuid,
     pub target_name: String,
-    pub created_by: Option<Uuid>,
+    pub created_by: Option<DbUuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ScheduleExecutionResponse {
-    pub id: Uuid,
-    pub schedule_id: Uuid,
-    pub action_log_id: Option<Uuid>,
+    pub id: DbUuid,
+    pub schedule_id: DbUuid,
+    pub action_log_id: Option<DbUuid>,
     pub executed_at: DateTime<Utc>,
     pub status: String,
     pub message: Option<String>,
@@ -119,10 +120,10 @@ pub struct ListSchedulesQuery {
 #[derive(sqlx::FromRow)]
 #[allow(dead_code)]
 struct ScheduleRow {
-    id: Uuid,
-    organization_id: Uuid,
-    application_id: Option<Uuid>,
-    component_id: Option<Uuid>,
+    id: DbUuid,
+    organization_id: DbUuid,
+    application_id: Option<DbUuid>,
+    component_id: Option<DbUuid>,
     name: String,
     description: Option<String>,
     operation: String,
@@ -133,16 +134,16 @@ struct ScheduleRow {
     next_run_at: Option<DateTime<Utc>>,
     last_run_status: Option<String>,
     last_run_message: Option<String>,
-    created_by: Option<Uuid>,
+    created_by: Option<DbUuid>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
 
 #[derive(sqlx::FromRow)]
 struct ExecutionRow {
-    id: Uuid,
-    schedule_id: Uuid,
-    action_log_id: Option<Uuid>,
+    id: DbUuid,
+    schedule_id: DbUuid,
+    action_log_id: Option<DbUuid>,
     executed_at: DateTime<Utc>,
     status: String,
     message: Option<String>,
@@ -179,9 +180,9 @@ fn relative_time(dt: DateTime<Utc>) -> String {
 
 async fn get_target_info(
     db: &crate::db::DbPool,
-    application_id: Option<Uuid>,
-    component_id: Option<Uuid>,
-) -> (String, Uuid, String) {
+    application_id: Option<DbUuid>,
+    component_id: Option<DbUuid>,
+) -> (String, DbUuid, String) {
     if let Some(app_id) = application_id {
         let name: Option<String> =
             sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
@@ -209,14 +210,14 @@ async fn get_target_info(
             name.unwrap_or_else(|| comp_id.to_string()),
         )
     } else {
-        ("unknown".to_string(), Uuid::nil(), "Unknown".to_string())
+        ("unknown".to_string(), DbUuid::nil(), "Unknown".to_string())
     }
 }
 
 fn row_to_response(
     row: ScheduleRow,
     target_type: String,
-    target_id: Uuid,
+    target_id: DbUuid,
     target_name: String,
 ) -> ScheduleResponse {
     let next_run_relative = row.next_run_at.map(relative_time);
@@ -246,7 +247,7 @@ fn row_to_response(
 }
 
 /// Get app_id from component_id for permission checks
-async fn get_app_id_for_component(db: &crate::db::DbPool, component_id: Uuid) -> Option<Uuid> {
+async fn get_app_id_for_component(db: &crate::db::DbPool, component_id: DbUuid) -> Option<DbUuid> {
     sqlx::query_scalar("SELECT application_id FROM components WHERE id = $1")
         .bind(component_id)
         .fetch_optional(db)
@@ -320,7 +321,14 @@ pub async fn list_app_schedules(
 
     let responses: Vec<ScheduleResponse> = rows
         .into_iter()
-        .map(|row| row_to_response(row, "application".to_string(), app_id, target_name.clone()))
+        .map(|row| {
+            row_to_response(
+                row,
+                "application".to_string(),
+                app_id.into(),
+                target_name.clone(),
+            )
+        })
         .collect();
 
     Ok(Json(responses))
@@ -445,7 +453,7 @@ pub async fn create_app_schedule(
             .flatten();
     let target_name = app_name.unwrap_or_else(|| app_id.to_string());
 
-    let response = row_to_response(row, "application".to_string(), app_id, target_name);
+    let response = row_to_response(row, "application".to_string(), app_id.into(), target_name);
 
     Ok((StatusCode::CREATED, Json(response)))
 }
@@ -462,7 +470,7 @@ pub async fn list_component_schedules(
     Query(query): Query<ListSchedulesQuery>,
 ) -> Result<Json<Vec<ScheduleResponse>>, ApiError> {
     // Get app_id for permission check
-    let app_id = get_app_id_for_component(&state.db, comp_id)
+    let app_id = get_app_id_for_component(&state.db, comp_id.into())
         .await
         .ok_or_else(|| ApiError::NotFound)?;
 
@@ -519,7 +527,14 @@ pub async fn list_component_schedules(
 
     let responses: Vec<ScheduleResponse> = rows
         .into_iter()
-        .map(|row| row_to_response(row, "component".to_string(), comp_id, target_name.clone()))
+        .map(|row| {
+            row_to_response(
+                row,
+                "component".to_string(),
+                comp_id.into(),
+                target_name.clone(),
+            )
+        })
         .collect();
 
     Ok(Json(responses))
@@ -533,7 +548,7 @@ pub async fn create_component_schedule(
     Json(req): Json<CreateScheduleRequest>,
 ) -> Result<(StatusCode, Json<ScheduleResponse>), ApiError> {
     // Get app_id for permission check
-    let app_id = get_app_id_for_component(&state.db, comp_id)
+    let app_id = get_app_id_for_component(&state.db, comp_id.into())
         .await
         .ok_or_else(|| ApiError::NotFound)?;
 
@@ -648,7 +663,7 @@ pub async fn create_component_schedule(
             .flatten();
     let target_name = comp_name.unwrap_or_else(|| comp_id.to_string());
 
-    let response = row_to_response(row, "component".to_string(), comp_id, target_name);
+    let response = row_to_response(row, "component".to_string(), comp_id.into(), target_name);
 
     Ok((StatusCode::CREATED, Json(response)))
 }

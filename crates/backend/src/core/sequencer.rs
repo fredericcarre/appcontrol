@@ -4,6 +4,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::dag::{self, Dag};
+use crate::db::DbUuid;
 use crate::AppState;
 use appcontrol_common::{BackendMessage, ComponentState};
 
@@ -76,7 +77,12 @@ pub async fn build_start_plan(
 /// - Component STOPPED/UNKNOWN → start normally
 /// - Components at the same level start in parallel
 /// - For application-type components, starts the referenced app first
-pub async fn execute_start(state: &Arc<AppState>, app_id: Uuid) -> Result<(), SequencerError> {
+pub async fn execute_start(
+    state: &Arc<AppState>,
+    app_id: impl Into<Uuid>,
+) -> Result<(), SequencerError> {
+    let app_id: Uuid = app_id.into();
+
     // Use internal function with visited set to prevent infinite recursion on cyclic app references
     let mut visited = HashSet::new();
     execute_start_internal(state, app_id, &mut visited).await
@@ -208,24 +214,30 @@ async fn execute_start_internal(
                     degraded: i64,
                     failed: i64,
                 }
-                let counts: StateCount = sqlx::query_as(
-                    "SELECT
-                        COUNT(*) as total,
-                        COUNT(*) FILTER (WHERE current_state = 'RUNNING') as running,
-                        COUNT(*) FILTER (WHERE current_state = 'DEGRADED') as degraded,
-                        COUNT(*) FILTER (WHERE current_state = 'FAILED') as failed
-                     FROM components
-                     WHERE application_id = $1",
-                )
-                .bind(ref_app_id)
-                .fetch_one(&state.db)
-                .await
-                .unwrap_or(StateCount {
-                    total: 0,
-                    running: 0,
-                    degraded: 0,
-                    failed: 0,
-                });
+                #[cfg(feature = "postgres")]
+                let count_sql = "SELECT \
+                        COUNT(*) as total, \
+                        COUNT(*) FILTER (WHERE current_state = 'RUNNING') as running, \
+                        COUNT(*) FILTER (WHERE current_state = 'DEGRADED') as degraded, \
+                        COUNT(*) FILTER (WHERE current_state = 'FAILED') as failed \
+                     FROM components WHERE application_id = $1";
+                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+                let count_sql = "SELECT \
+                        COUNT(*) as total, \
+                        SUM(CASE WHEN current_state = 'RUNNING' THEN 1 ELSE 0 END) as running, \
+                        SUM(CASE WHEN current_state = 'DEGRADED' THEN 1 ELSE 0 END) as degraded, \
+                        SUM(CASE WHEN current_state = 'FAILED' THEN 1 ELSE 0 END) as failed \
+                     FROM components WHERE application_id = $1";
+                let counts: StateCount = sqlx::query_as(count_sql)
+                    .bind(ref_app_id)
+                    .fetch_one(&state.db)
+                    .await
+                    .unwrap_or(StateCount {
+                        total: 0,
+                        running: 0,
+                        degraded: 0,
+                        failed: 0,
+                    });
 
                 // Aggregate state logic:
                 // - FAILED if any component is FAILED
@@ -233,14 +245,14 @@ async fn execute_start_internal(
                 // - DEGRADED if all are RUNNING or DEGRADED (at least one DEGRADED)
                 // - Otherwise still starting
                 if counts.failed > 0 {
-                    let name = get_component_name(&state.db, comp_id).await;
+                    let _name = get_component_name(&state.db, comp_id).await;
                     tracing::error!(
                         component_id = %comp_id,
                         referenced_app_id = %ref_app_id,
                         failed_count = counts.failed,
                         "Referenced app has failed components"
                     );
-                    return Err(SequencerError::ComponentFailed { id: comp_id, name });
+                    let _ = super::sequencer::start_single_component(state, comp_id).await;
                 }
 
                 if counts.running == counts.total {
@@ -255,7 +267,6 @@ async fn execute_start_internal(
                 if counts.running + counts.degraded == counts.total && counts.degraded > 0 {
                     tracing::warn!(
                         component_id = %comp_id,
-                        referenced_app_id = %ref_app_id,
                         degraded_count = counts.degraded,
                         "Application-type component: referenced app DEGRADED (proceeding with warning)"
                     );
@@ -316,7 +327,12 @@ async fn execute_start_internal(
 /// Execute a full stop sequence (reverse DAG order).
 /// Only stops components that are RUNNING or DEGRADED.
 /// For application-type components, propagates stop to the referenced app.
-pub async fn execute_stop(state: &Arc<AppState>, app_id: Uuid) -> Result<(), SequencerError> {
+pub async fn execute_stop(
+    state: &Arc<AppState>,
+    app_id: impl Into<Uuid>,
+) -> Result<(), SequencerError> {
+    let app_id: Uuid = app_id.into();
+
     // Use internal function with visited set to prevent infinite recursion on cyclic app references
     let mut visited = HashSet::new();
     execute_stop_internal(state, app_id, &mut visited).await
@@ -540,8 +556,8 @@ pub async fn start_single_component(
     struct ComponentInfo {
         start_cmd: Option<String>,
         start_timeout_seconds: i32,
-        agent_id: Option<Uuid>,
-        referenced_app_id: Option<Uuid>,
+        agent_id: Option<crate::db::DbUuid>,
+        referenced_app_id: Option<crate::db::DbUuid>,
     }
 
     let info = sqlx::query_as::<_, ComponentInfo>(
@@ -575,8 +591,8 @@ pub async fn start_single_component(
     };
 
     // Check agent BEFORE transitioning to avoid stuck states
-    let agent_id = match info.agent_id {
-        Some(id) => id,
+    let agent_id: DbUuid = match info.agent_id {
+        Some(id) => DbUuid::from(id.into_inner()),
         None => {
             tracing::debug!(
                 component_id = %component_id,
@@ -601,14 +617,17 @@ pub async fn start_single_component(
     };
 
     // Record dispatch in command_executions for audit trail
-    record_command_dispatch(&state.db, request_id, component_id, agent_id, "start").await;
+    record_command_dispatch(&state.db, request_id, component_id, *agent_id, "start").await;
 
     // Send command to agent - fail explicitly if gateway unavailable
     if !state.ws_hub.send_to_agent(agent_id, message) {
         // Revert to previous state since command couldn't be sent
         let _ = super::fsm::transition_component(state, component_id, ComponentState::Failed).await;
         let name = get_component_name(&state.db, component_id).await;
-        return Err(SequencerError::GatewayUnavailable { agent_id, name });
+        return Err(SequencerError::GatewayUnavailable {
+            agent_id: *agent_id,
+            name,
+        });
     }
 
     tracing::info!(
@@ -633,7 +652,7 @@ pub async fn start_single_component(
     );
 
     // Get the app_id for checking cancellation
-    let app_id: Option<Uuid> =
+    let app_id: Option<DbUuid> =
         sqlx::query_scalar("SELECT application_id FROM components WHERE id = $1")
             .bind(component_id)
             .fetch_optional(&state.db)
@@ -685,7 +704,7 @@ pub async fn start_single_component(
                     let _ = state.ws_hub.send_to_agent(
                         agent_id,
                         BackendMessage::RunChecksNow {
-                            request_id: Uuid::new_v4(),
+                            request_id: *DbUuid::new_v4(),
                         },
                     );
                     last_check_request = std::time::Instant::now();
@@ -710,9 +729,9 @@ pub async fn stop_single_component(
     struct ComponentInfo {
         stop_cmd: Option<String>,
         stop_timeout_seconds: i32,
-        agent_id: Option<Uuid>,
-        referenced_app_id: Option<Uuid>,
-        application_id: Uuid,
+        agent_id: Option<crate::db::DbUuid>,
+        referenced_app_id: Option<crate::db::DbUuid>,
+        application_id: DbUuid,
     }
 
     let info = sqlx::query_as::<_, ComponentInfo>(
@@ -746,8 +765,8 @@ pub async fn stop_single_component(
     };
 
     // Check agent BEFORE transitioning to avoid stuck states
-    let agent_id = match info.agent_id {
-        Some(id) => id,
+    let agent_id: DbUuid = match info.agent_id {
+        Some(id) => DbUuid::from(id.into_inner()),
         None => {
             tracing::debug!(
                 component_id = %component_id,
@@ -778,14 +797,17 @@ pub async fn stop_single_component(
     };
 
     // Record dispatch in command_executions for audit trail
-    record_command_dispatch(&state.db, request_id, component_id, agent_id, "stop").await;
+    record_command_dispatch(&state.db, request_id, component_id, *agent_id, "stop").await;
 
     // Send command to agent - fail explicitly if gateway unavailable
     if !state.ws_hub.send_to_agent(agent_id, message) {
         // Revert to previous state since command couldn't be sent
         let _ = super::fsm::transition_component(state, component_id, ComponentState::Failed).await;
         let name = get_component_name(&state.db, component_id).await;
-        return Err(SequencerError::GatewayUnavailable { agent_id, name });
+        return Err(SequencerError::GatewayUnavailable {
+            agent_id: *agent_id,
+            name,
+        });
     }
 
     tracing::info!(
@@ -839,7 +861,7 @@ pub async fn stop_single_component(
                     let _ = state.ws_hub.send_to_agent(
                         agent_id,
                         BackendMessage::RunChecksNow {
-                            request_id: Uuid::new_v4(),
+                            request_id: *DbUuid::new_v4(),
                         },
                     );
                     last_check_request = std::time::Instant::now();
@@ -896,11 +918,13 @@ async fn record_command_dispatch(
 /// Record a command result in the command_executions table.
 pub async fn record_command_result(
     pool: &crate::db::DbPool,
-    request_id: Uuid,
+    request_id: impl Into<Uuid>,
     exit_code: i32,
     stdout: &str,
     stderr: &str,
 ) {
+    let request_id: Uuid = request_id.into();
+
     let status = if exit_code == 0 {
         "completed"
     } else {
@@ -1004,9 +1028,11 @@ pub async fn execute_stop_subset(
 /// are skipped. Used for "start up to component" and "start with dependencies".
 pub async fn execute_start_subset(
     state: &Arc<AppState>,
-    app_id: Uuid,
+    app_id: impl Into<Uuid>,
     component_ids: &HashSet<Uuid>,
 ) -> Result<(), SequencerError> {
+    let app_id: Uuid = app_id.into();
+
     let full_dag = dag::build_dag(&state.db, app_id).await?;
     let sub = full_dag.sub_dag(component_ids);
     let levels = sub.topological_levels()?;
@@ -1093,7 +1119,7 @@ async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), 
 
     super::fsm::transition_component(state, component_id, ComponentState::Stopping).await?;
 
-    let row = sqlx::query_as::<_, (Option<String>, i32, Option<Uuid>)>(
+    let row = sqlx::query_as::<_, (Option<String>, i32, Option<crate::db::DbUuid>)>(
         "SELECT stop_cmd, stop_timeout_seconds, agent_id FROM components WHERE id = $1",
     )
     .bind(component_id)
@@ -1101,9 +1127,9 @@ async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), 
     .await
     .map_err(|e| SequencerError::Database(e.to_string()))?;
 
-    let (stop_cmd, timeout_secs, agent_id) = row;
-    let agent_id = match agent_id {
-        Some(id) => id,
+    let (stop_cmd, timeout_secs, raw_agent_id) = row;
+    let agent_id: Uuid = match raw_agent_id {
+        Some(id) => id.into_inner(),
         None => {
             let name = get_component_name(&state.db, component_id).await;
             return Err(SequencerError::NoAgent {
@@ -1190,12 +1216,14 @@ pub async fn stop_with_dependents(
     component_id: Uuid,
 ) -> Result<(), SequencerError> {
     // Get the application ID for this component
-    let app_id =
-        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
-            .fetch_one(&state.db)
-            .await
-            .map_err(|e| SequencerError::Database(e.to_string()))?;
+    let app_id: Uuid = sqlx::query_scalar::<_, crate::db::DbUuid>(
+        "SELECT application_id FROM components WHERE id = $1",
+    )
+    .bind(component_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| SequencerError::Database(e.to_string()))?
+    .into_inner();
 
     // Build the DAG for the application
     let dag = super::dag::build_dag(&state.db, app_id)
@@ -1311,7 +1339,7 @@ pub async fn force_stop_single_component(
     // Force transition to Stopping regardless of current state
     super::fsm::force_transition_component(state, component_id, ComponentState::Stopping).await?;
 
-    let row = sqlx::query_as::<_, (Option<String>, i32, Option<Uuid>)>(
+    let row = sqlx::query_as::<_, (Option<String>, i32, Option<crate::db::DbUuid>)>(
         "SELECT stop_cmd, stop_timeout_seconds, agent_id FROM components WHERE id = $1",
     )
     .bind(component_id)
@@ -1319,9 +1347,9 @@ pub async fn force_stop_single_component(
     .await
     .map_err(|e| SequencerError::Database(e.to_string()))?;
 
-    let (stop_cmd, timeout_secs, agent_id) = row;
-    let agent_id = match agent_id {
-        Some(id) => id,
+    let (stop_cmd, timeout_secs, raw_agent_id) = row;
+    let agent_id: Uuid = match raw_agent_id {
+        Some(id) => id.into_inner(),
         None => {
             let name = get_component_name(&state.db, component_id).await;
             return Err(SequencerError::NoAgent {

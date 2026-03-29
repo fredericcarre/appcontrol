@@ -373,6 +373,8 @@ use chrono::Datelike;
 ///
 /// Uses UPSERT to override any migration-seeded data with the configured values.
 async fn seed_initial_user(pool: &crate::db::DbPool, seed: &config::SeedConfig) {
+    use appcontrol_backend::db::DbUuid;
+
     let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(pool)
         .await
@@ -400,7 +402,7 @@ async fn seed_initial_user(pool: &crate::db::DbPool, seed: &config::SeedConfig) 
         "INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3) \
          ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug",
     )
-    .bind(org_id)
+    .bind(DbUuid::from(org_id))
     .bind(&seed.org_name)
     .bind(&seed.org_slug)
     .execute(pool)
@@ -417,8 +419,8 @@ async fn seed_initial_user(pool: &crate::db::DbPool, seed: &config::SeedConfig) 
          VALUES ($1, $2, 'seed-admin', $3, $4, 'admin', 'super_admin', 'local', $5) \
          ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, password_hash = EXCLUDED.password_hash",
     )
-    .bind(user_id)
-    .bind(org_id)
+    .bind(DbUuid::from(user_id))
+    .bind(DbUuid::from(org_id))
     .bind(&seed.admin_email)
     .bind(&seed.admin_display_name)
     .bind(&password_hash)
@@ -446,7 +448,9 @@ async fn seed_initial_user(pool: &crate::db::DbPool, seed: &config::SeedConfig) 
 /// Without this, the admin must manually call `POST /api/v1/pki/init` before any
 /// agent can enroll. This eliminates that manual step — zero-config mTLS.
 async fn auto_init_pki(pool: &crate::db::DbPool) {
-    let orgs_without_ca: Vec<(uuid::Uuid, String)> =
+    use appcontrol_backend::db::DbUuid;
+
+    let orgs_without_ca: Vec<(DbUuid, String)> =
         sqlx::query_as("SELECT id, name FROM organizations WHERE ca_cert_pem IS NULL")
             .fetch_all(pool)
             .await

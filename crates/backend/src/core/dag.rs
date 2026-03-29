@@ -23,13 +23,18 @@ impl Dag {
         Self::default()
     }
 
-    pub fn add_node(&mut self, id: Uuid) {
+    pub fn add_node(&mut self, id: impl Into<Uuid>) {
+        let id: Uuid = id.into();
+
         self.nodes.insert(id);
         self.adjacency.entry(id).or_default();
     }
 
     /// Add an edge: `from` depends on `to` (to must start before from).
-    pub fn add_edge(&mut self, from: Uuid, to: Uuid) {
+    pub fn add_edge(&mut self, from: impl Into<Uuid>, to: impl Into<Uuid>) {
+        let from: Uuid = from.into();
+        let to: Uuid = to.into();
+
         self.nodes.insert(from);
         self.nodes.insert(to);
         self.adjacency.entry(from).or_default().insert(to);
@@ -97,7 +102,9 @@ impl Dag {
     /// Find all upstream dependencies of a component (transitive closure).
     /// Returns the set of component IDs that `component_id` depends on (directly or transitively).
     /// Does NOT include `component_id` itself.
-    pub fn find_all_dependencies(&self, component_id: Uuid) -> HashSet<Uuid> {
+    pub fn find_all_dependencies(&self, component_id: impl Into<Uuid>) -> HashSet<Uuid> {
+        let component_id: Uuid = component_id.into();
+
         let mut deps = HashSet::new();
         let mut stack = vec![component_id];
 
@@ -118,7 +125,9 @@ impl Dag {
     /// Returns the set of component IDs that depend on `component_id` (directly or transitively).
     /// Does NOT include `component_id` itself.
     /// These are the components that must be stopped BEFORE stopping `component_id`.
-    pub fn find_all_dependents(&self, component_id: Uuid) -> HashSet<Uuid> {
+    pub fn find_all_dependents(&self, component_id: impl Into<Uuid>) -> HashSet<Uuid> {
+        let component_id: Uuid = component_id.into();
+
         // Build reverse adjacency: for each node, who depends on it?
         let mut reverse: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
         for (&node, deps) in &self.adjacency {
@@ -163,7 +172,10 @@ impl Dag {
 
     /// Check if adding edge from->to (from depends on to) would create a cycle.
     /// A cycle exists if `to` can already reach `from` through existing dependency edges.
-    pub fn would_create_cycle(&self, from: Uuid, to: Uuid) -> bool {
+    pub fn would_create_cycle(&self, from: impl Into<Uuid>, to: impl Into<Uuid>) -> bool {
+        let from: Uuid = from.into();
+        let to: Uuid = to.into();
+
         // Check: can we reach `from` starting from `to` via the dependency graph?
         let mut visited = HashSet::new();
         let mut stack = vec![to];
@@ -186,15 +198,18 @@ impl Dag {
 }
 
 /// Build a DAG from the dependencies table for a given application.
-pub async fn build_dag(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Dag, DagError> {
-    let components =
-        sqlx::query_as::<_, (Uuid,)>("SELECT id FROM components WHERE application_id = $1")
-            .bind(app_id)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| DagError::Database(e.to_string()))?;
+pub async fn build_dag(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Result<Dag, DagError> {
+    let app_id: Uuid = app_id.into();
 
-    let deps = sqlx::query_as::<_, (Uuid, Uuid)>(
+    let components = sqlx::query_as::<_, (crate::db::DbUuid,)>(
+        "SELECT id FROM components WHERE application_id = $1",
+    )
+    .bind(app_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| DagError::Database(e.to_string()))?;
+
+    let deps = sqlx::query_as::<_, (crate::db::DbUuid, crate::db::DbUuid)>(
         "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
     )
     .bind(app_id)
@@ -205,11 +220,11 @@ pub async fn build_dag(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Dag, Da
     let mut dag = Dag::new();
 
     for (id,) in components {
-        dag.add_node(id);
+        dag.add_node(*id);
     }
 
     for (from, to) in deps {
-        dag.add_edge(from, to);
+        dag.add_edge(*from, *to);
     }
 
     // Validate no cycles
@@ -221,10 +236,13 @@ pub async fn build_dag(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Dag, Da
 /// Validate that adding a new edge won't create a cycle.
 pub async fn validate_no_cycle(
     pool: &crate::db::DbPool,
-    app_id: Uuid,
-    from: Uuid,
-    to: Uuid,
+    app_id: impl Into<Uuid>,
+    from: impl Into<Uuid>,
+    to: impl Into<Uuid>,
 ) -> Result<(), DagError> {
+    let app_id: Uuid = app_id.into();
+    let from: Uuid = from.into();
+    let to: Uuid = to.into();
     let dag = build_dag(pool, app_id).await?;
 
     if dag.would_create_cycle(from, to) {

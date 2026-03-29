@@ -9,6 +9,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+#[allow(unused_imports)]
+use crate::db::DbUuid;
 use crate::error::{validate_length, ApiError};
 use crate::middleware::audit::log_action;
 use crate::AppState;
@@ -48,6 +50,7 @@ pub async fn create_api_key(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"
         INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, scopes, expires_at)
@@ -63,6 +66,29 @@ pub async fn create_api_key(
     .bind(body.expires_at)
     .execute(&state.db)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(raw_key.as_bytes());
+        let key_hash = hex::encode(hasher.finalize());
+        sqlx::query(
+            r#"
+            INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, scopes, expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(DbUuid::from(key_id))
+        .bind(DbUuid::from(user.user_id))
+        .bind(&body.name)
+        .bind(&key_hash)
+        .bind(key_prefix)
+        .bind(&scopes)
+        .bind(body.expires_at)
+        .execute(&state.db)
+        .await?;
+    }
 
     Ok((
         StatusCode::CREATED,
@@ -126,12 +152,20 @@ pub async fn delete_api_key(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
+    #[cfg(feature = "postgres")]
     let result =
         sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1 AND user_id = $2")
             .bind(id)
             .bind(user.user_id)
             .execute(&state.db)
             .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query("UPDATE api_keys SET is_active = 0 WHERE id = $1 AND user_id = $2")
+        .bind(DbUuid::from(id))
+        .bind(DbUuid::from(user.user_id))
+        .execute(&state.db)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound);

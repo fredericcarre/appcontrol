@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::middleware::audit::log_action;
 use crate::AppState;
@@ -32,27 +33,35 @@ pub struct WaitQuery {
 #[derive(Debug, Clone)]
 pub struct PreflightResult {
     pub can_start: bool,
-    pub unreachable_agents: Vec<(Uuid, String)>, // (agent_id, hostname)
-    pub disconnected_gateways: Vec<(Uuid, String)>, // (gateway_id, name)
-    pub components_without_agent: Vec<(Uuid, String)>, // (component_id, name)
+    pub unreachable_agents: Vec<(DbUuid, String)>, // (agent_id, hostname)
+    pub disconnected_gateways: Vec<(DbUuid, String)>, // (gateway_id, name)
+    pub components_without_agent: Vec<(DbUuid, String)>, // (component_id, name)
 }
 
 /// Check if all agents for an application are reachable before starting
 pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult {
     // Get all components with their agent information
-    let components =
-        sqlx::query_as::<_, (Uuid, String, Option<Uuid>, Option<String>, Option<Uuid>)>(
-            r#"
+    let components = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            String,
+            Option<DbUuid>,
+            Option<String>,
+            Option<DbUuid>,
+        ),
+    >(
+        r#"
         SELECT c.id, c.name, c.agent_id, a.hostname, a.gateway_id
         FROM components c
         LEFT JOIN agents a ON c.agent_id = a.id
         WHERE c.application_id = $1 AND c.is_optional = false
         "#,
-        )
-        .bind(app_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
 
     // Get connected agents and gateways from WebSocket hub
     let connected_agents: HashSet<Uuid> = state.ws_hub.connected_agent_ids().into_iter().collect();
@@ -93,7 +102,7 @@ pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult 
                         .unwrap_or_else(|| gid.to_string());
 
                         disconnected_gateways.push((gid, gw_name));
-                        seen_gateways.insert(gid);
+                        seen_gateways.insert(*gid);
                     }
                 }
             }
@@ -294,7 +303,7 @@ pub async fn status(
         return Err(ApiError::Forbidden);
     }
 
-    let components = sqlx::query_as::<_, (Uuid, String, String)>(
+    let components = sqlx::query_as::<_, (DbUuid, String, String)>(
         r#"
         SELECT c.id, c.name, c.current_state
         FROM components c
@@ -335,7 +344,7 @@ pub async fn wait_running(
     let start_time = std::time::Instant::now();
 
     loop {
-        let components = sqlx::query_as::<_, (Uuid, String, String)>(
+        let components = sqlx::query_as::<_, (DbUuid, String, String)>(
             r#"
             SELECT c.id, c.name, c.current_state
             FROM components c
@@ -455,7 +464,7 @@ pub async fn health(
     }
 
     // Get component states
-    let components = sqlx::query_as::<_, (Uuid, String, String, Option<Uuid>)>(
+    let components = sqlx::query_as::<_, (DbUuid, String, String, Option<DbUuid>)>(
         r#"
         SELECT c.id, c.name, c.current_state, c.agent_id
         FROM components c

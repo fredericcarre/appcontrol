@@ -14,6 +14,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::error::{ApiError, OptionExt};
 use crate::AppState;
 
@@ -28,14 +29,14 @@ pub struct UpdateGatewayRequest {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct GatewayRow {
-    pub id: Uuid,
-    pub organization_id: Uuid,
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
     pub name: String,
     /// DEPRECATED: Legacy zone field, now nullable. Use site_id instead.
     pub zone: Option<String>,
     pub hostname: Option<String>,
     pub port: Option<i32>,
-    pub site_id: Option<Uuid>,
+    pub site_id: Option<DbUuid>,
     pub certificate_fingerprint: Option<String>,
     pub is_active: bool,
     pub is_primary: bool,
@@ -48,7 +49,7 @@ pub struct GatewayRow {
 /// Response struct for gateway list with additional computed fields
 #[derive(Debug, Serialize)]
 pub struct GatewayListItem {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub name: String,
     pub zone: String,
     pub status: String, // "active", "suspended"
@@ -60,7 +61,7 @@ pub struct GatewayListItem {
     pub version: Option<String>,
     pub last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
     // Site information
-    pub site_id: Option<Uuid>,
+    pub site_id: Option<DbUuid>,
     pub site_name: Option<String>,
     pub site_code: Option<String>,
 }
@@ -68,14 +69,14 @@ pub struct GatewayListItem {
 /// Site summary for grouping gateways
 #[derive(Debug, Serialize)]
 pub struct SiteSummary {
-    pub site_id: Option<Uuid>,
+    pub site_id: Option<DbUuid>,
     pub site_name: String,
     pub site_code: String,
     /// DEPRECATED: Legacy zone field for backward compatibility. Same as site_code.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zone: Option<String>,
     pub gateway_count: i64,
-    pub active_gateway_id: Option<Uuid>,
+    pub active_gateway_id: Option<DbUuid>,
     pub failover_active: bool,
     pub gateways: Vec<GatewayListItem>,
 }
@@ -88,7 +89,7 @@ pub async fn list_gateways(
     let gateways = sqlx::query_as::<
         _,
         (
-            Uuid,
+            DbUuid,
             String,
             Option<String>,
             bool,
@@ -97,7 +98,7 @@ pub async fn list_gateways(
             Option<String>,
             Option<chrono::DateTime<chrono::Utc>>,
             i64,
-            Option<Uuid>,
+            Option<DbUuid>,
             Option<String>,
             Option<String>,
         ),
@@ -131,7 +132,7 @@ pub async fn list_gateways(
     // Group by site_id and compute failover status
     // Key is (site_id, site_name, site_code)
     let mut sites_map: std::collections::HashMap<
-        (Option<Uuid>, String, String),
+        (Option<DbUuid>, String, String),
         Vec<GatewayListItem>,
     > = std::collections::HashMap::new();
 
@@ -300,7 +301,7 @@ pub async fn update_gateway(
 
     // If setting as primary, first unset any existing primary in the same site
     if req.is_primary == Some(true) {
-        let gw_info: Option<(Option<Uuid>, String)> = sqlx::query_as(
+        let gw_info: Option<(Option<DbUuid>, String)> = sqlx::query_as(
             "SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2",
         )
         .bind(id)
@@ -476,16 +477,17 @@ pub async fn list_gateway_agents(
         return Err(ApiError::NotFound);
     }
 
-    let agents = sqlx::query_as::<_, (Uuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
-        r#"SELECT id, hostname, is_active, last_heartbeat_at
+    let agents =
+        sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
+            r#"SELECT id, hostname, is_active, last_heartbeat_at
            FROM agents
            WHERE gateway_id = $1 AND organization_id = $2
            ORDER BY hostname"#,
-    )
-    .bind(gateway_id)
-    .bind(user.organization_id)
-    .fetch_all(&state.db)
-    .await?;
+        )
+        .bind(gateway_id)
+        .bind(user.organization_id)
+        .fetch_all(&state.db)
+        .await?;
 
     // Get live connection status from the WebSocket hub
     let connected_agents = state.ws_hub.connected_agent_ids();
@@ -529,6 +531,7 @@ pub async fn suspend_gateway(
     .await
     .ok();
 
+    #[cfg(feature = "postgres")]
     let gw = sqlx::query_as::<_, GatewayRow>(
         r#"UPDATE gateways SET is_active = false
            WHERE id = $1 AND organization_id = $2
@@ -540,6 +543,22 @@ pub async fn suspend_gateway(
     )
     .bind(gateway_id)
     .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let gw = sqlx::query_as::<_, GatewayRow>(
+        r#"UPDATE gateways SET is_active = 0
+           WHERE id = $1 AND organization_id = $2
+           RETURNING id, organization_id, name, zone, hostname, port, site_id,
+                     certificate_fingerprint, is_active,
+                     COALESCE(is_primary, 0) as is_primary,
+                     COALESCE(priority, 0) as priority,
+                     version, last_heartbeat_at, created_at"#,
+    )
+    .bind(DbUuid::from(gateway_id))
+    .bind(DbUuid::from(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -568,6 +587,7 @@ pub async fn activate_gateway(
     .await
     .ok();
 
+    #[cfg(feature = "postgres")]
     let gw = sqlx::query_as::<_, GatewayRow>(
         r#"UPDATE gateways SET is_active = true
            WHERE id = $1 AND organization_id = $2
@@ -579,6 +599,22 @@ pub async fn activate_gateway(
     )
     .bind(gateway_id)
     .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let gw = sqlx::query_as::<_, GatewayRow>(
+        r#"UPDATE gateways SET is_active = 1
+           WHERE id = $1 AND organization_id = $2
+           RETURNING id, organization_id, name, zone, hostname, port, site_id,
+                     certificate_fingerprint, is_active,
+                     COALESCE(is_primary, 0) as is_primary,
+                     COALESCE(priority, 0) as priority,
+                     version, last_heartbeat_at, created_at"#,
+    )
+    .bind(DbUuid::from(gateway_id))
+    .bind(DbUuid::from(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -678,8 +714,14 @@ pub async fn block_gateway(
     let mut tx = state.db.begin().await?;
 
     // 1. Suspend the gateway
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
         .bind(gateway_id)
+        .execute(&mut *tx)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE gateways SET is_active = 0 WHERE id = $1")
+        .bind(DbUuid::from(gateway_id))
         .execute(&mut *tx)
         .await?;
 
@@ -713,8 +755,12 @@ pub async fn block_gateway(
     // 5. Transition all components of affected agents to UNREACHABLE
     let mut components_affected = 0;
     for agent_id in &agent_ids {
-        components_affected +=
-            transition_gateway_agent_components_to_unreachable(&state, *agent_id, gateway_id).await;
+        components_affected += transition_gateway_agent_components_to_unreachable(
+            &state,
+            DbUuid::from(*agent_id),
+            DbUuid::from(gateway_id),
+        )
+        .await;
     }
 
     tx.commit().await?;
@@ -818,8 +864,14 @@ pub async fn revoke_agent_cert(
     .await?;
 
     // Deactivate the agent
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE agents SET is_active = false, identity_verified = false WHERE id = $1")
         .bind(agent_id)
+        .execute(&mut *tx)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE agents SET is_active = 0, identity_verified = 0 WHERE id = $1")
+        .bind(DbUuid::from(agent_id))
         .execute(&mut *tx)
         .await?;
 
@@ -897,8 +949,14 @@ pub async fn revoke_gateway_cert(
     .execute(&mut *tx)
     .await?;
 
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
         .bind(gateway_id)
+        .execute(&mut *tx)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE gateways SET is_active = 0 WHERE id = $1")
+        .bind(DbUuid::from(gateway_id))
         .execute(&mut *tx)
         .await?;
 
@@ -962,7 +1020,7 @@ pub async fn list_revoked_certificates(
 
 /// Check if a certificate fingerprint is revoked.
 /// Used internally by the gateway mTLS verification.
-pub async fn is_cert_revoked(db: &crate::db::DbPool, org_id: Uuid, fingerprint: &str) -> bool {
+pub async fn is_cert_revoked(db: &crate::db::DbPool, org_id: DbUuid, fingerprint: &str) -> bool {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM revoked_certificates WHERE organization_id = $1 AND fingerprint = $2)",
     )
@@ -977,11 +1035,21 @@ pub async fn is_cert_revoked(db: &crate::db::DbPool, org_id: Uuid, fingerprint: 
 /// Returns true if the fingerprint matches the stored one for this agent.
 pub async fn verify_agent_cert_pinning(
     db: &crate::db::DbPool,
-    agent_id: Uuid,
+    agent_id: DbUuid,
     presented_fingerprint: &str,
 ) -> bool {
+    #[cfg(feature = "postgres")]
     let stored: Option<Option<String>> = sqlx::query_scalar(
         "SELECT certificate_fingerprint FROM agents WHERE id = $1 AND is_active = true AND identity_verified = true",
+    )
+    .bind(agent_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let stored: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT certificate_fingerprint FROM agents WHERE id = $1 AND is_active = 1 AND identity_verified = 1",
     )
     .bind(agent_id)
     .fetch_optional(db)
@@ -999,16 +1067,16 @@ pub async fn verify_agent_cert_pinning(
 /// Returns the number of components affected.
 async fn transition_gateway_agent_components_to_unreachable(
     state: &AppState,
-    agent_id: Uuid,
-    gateway_id: Uuid,
+    agent_id: DbUuid,
+    gateway_id: DbUuid,
 ) -> i32 {
     use appcontrol_common::ComponentState;
 
     #[derive(sqlx::FromRow)]
     struct ComponentInfo {
-        id: Uuid,
+        id: DbUuid,
         name: String,
-        application_id: Uuid,
+        application_id: DbUuid,
         app_name: String,
     }
 
@@ -1039,17 +1107,20 @@ async fn transition_gateway_agent_components_to_unreachable(
             _ => {}
         }
 
+        let details_json = serde_json::json!({
+            "previous_state": current_state.to_string(),
+            "agent_id": agent_id.to_string(),
+            "gateway_id": gateway_id.to_string(),
+        });
         let result = sqlx::query(
             r#"
             INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, 'UNREACHABLE', 'gateway_blocked',
-                    jsonb_build_object('previous_state', $2, 'agent_id', $3::text, 'gateway_id', $4::text))
+            VALUES ($1, $2, 'UNREACHABLE', 'gateway_blocked', $3)
             "#,
         )
         .bind(comp.id)
         .bind(current_state.to_string())
-        .bind(agent_id.to_string())
-        .bind(gateway_id.to_string())
+        .bind(details_json)
         .execute(&state.db)
         .await;
 
@@ -1059,8 +1130,8 @@ async fn transition_gateway_agent_components_to_unreachable(
             state.ws_hub.broadcast(
                 comp.application_id,
                 appcontrol_common::WsEvent::StateChange {
-                    component_id: comp.id,
-                    app_id: comp.application_id,
+                    component_id: *comp.id,
+                    app_id: *comp.application_id,
                     component_name: Some(comp.name.clone()),
                     app_name: Some(comp.app_name.clone()),
                     from: current_state,

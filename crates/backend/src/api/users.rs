@@ -13,6 +13,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+#[allow(unused_imports)]
+use crate::db::DbUuid;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::AppState;
 
@@ -44,8 +46,8 @@ pub struct ListUsersQuery {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct UserRow {
-    pub id: Uuid,
-    pub organization_id: Uuid,
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
     pub email: String,
     pub display_name: String,
     pub role: String,
@@ -66,6 +68,7 @@ pub async fn list_users(
         return Err(ApiError::Forbidden);
     }
 
+    #[cfg(feature = "postgres")]
     let users = sqlx::query_as::<_, UserRow>(
         r#"SELECT id, organization_id, email, display_name, role, auth_provider,
                   is_active, last_login_at, created_at
@@ -77,6 +80,24 @@ pub async fn list_users(
            ORDER BY display_name"#,
     )
     .bind(user.organization_id)
+    .bind(&query.role)
+    .bind(query.is_active)
+    .bind(&query.search)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let users = sqlx::query_as::<_, UserRow>(
+        r#"SELECT id, organization_id, email, display_name, role, auth_provider,
+                  is_active, last_login_at, created_at
+           FROM users
+           WHERE organization_id = $1
+             AND ($2 IS NULL OR role = $2)
+             AND ($3 IS NULL OR is_active = $3)
+             AND ($4 IS NULL OR email LIKE '%' || $4 || '%' OR display_name LIKE '%' || $4 || '%')
+           ORDER BY display_name"#,
+    )
+    .bind(DbUuid::from(user.organization_id))
     .bind(&query.role)
     .bind(query.is_active)
     .bind(&query.search)

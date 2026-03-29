@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -171,7 +172,7 @@ struct VarRow {
 
 #[derive(sqlx::FromRow)]
 struct GroupRow {
-    id: Uuid,
+    id: DbUuid,
     name: String,
     description: Option<String>,
     color: Option<String>,
@@ -180,13 +181,13 @@ struct GroupRow {
 
 #[derive(sqlx::FromRow)]
 struct ComponentRow {
-    id: Uuid,
+    id: DbUuid,
     name: String,
     display_name: Option<String>,
     description: Option<String>,
     component_type: String,
     icon: Option<String>,
-    group_id: Option<Uuid>,
+    group_id: Option<DbUuid>,
     host: Option<String>,
     check_cmd: Option<String>,
     start_cmd: Option<String>,
@@ -206,8 +207,8 @@ struct ComponentRow {
 
 #[derive(sqlx::FromRow)]
 struct CustomCmdRow {
-    id: Uuid,
-    component_id: Uuid,
+    id: DbUuid,
+    component_id: DbUuid,
     name: String,
     command: String,
     description: Option<String>,
@@ -216,7 +217,7 @@ struct CustomCmdRow {
 
 #[derive(sqlx::FromRow)]
 struct CmdParamRow {
-    command_id: Uuid,
+    command_id: DbUuid,
     name: String,
     description: Option<String>,
     default_value: Option<String>,
@@ -228,7 +229,7 @@ struct CmdParamRow {
 
 #[derive(sqlx::FromRow)]
 struct LinkRow {
-    component_id: Uuid,
+    component_id: DbUuid,
     label: String,
     url: String,
     link_type: String,
@@ -236,8 +237,8 @@ struct LinkRow {
 
 #[derive(sqlx::FromRow)]
 struct DepRow {
-    from_component_id: Uuid,
-    to_component_id: Uuid,
+    from_component_id: DbUuid,
+    to_component_id: DbUuid,
 }
 
 // ── Export Endpoint ─────────────────────────────────────────────────
@@ -303,7 +304,7 @@ pub async fn export_app_json(
     .fetch_all(&state.db)
     .await?;
 
-    let group_id_to_name: HashMap<Uuid, String> =
+    let group_id_to_name: HashMap<DbUuid, String> =
         group_rows.iter().map(|g| (g.id, g.name.clone())).collect();
 
     let groups: Vec<GroupExport> = group_rows
@@ -332,7 +333,7 @@ pub async fn export_app_json(
     .await?;
 
     // Build component ID → name map for dependencies
-    let comp_id_to_name: HashMap<Uuid, String> =
+    let comp_id_to_name: HashMap<DbUuid, String> =
         comp_rows.iter().map(|c| (c.id, c.name.clone())).collect();
 
     // Fetch all custom commands
@@ -366,7 +367,7 @@ pub async fn export_app_json(
     .await?;
 
     // Group parameters by command ID
-    let mut params_by_cmd: HashMap<Uuid, Vec<CommandParamExport>> = HashMap::new();
+    let mut params_by_cmd: HashMap<DbUuid, Vec<CommandParamExport>> = HashMap::new();
     for p in param_rows {
         let param = CommandParamExport {
             name: p.name,
@@ -381,7 +382,7 @@ pub async fn export_app_json(
     }
 
     // Group custom commands by component ID
-    let mut cmds_by_comp: HashMap<Uuid, Vec<CustomCommandExport>> = HashMap::new();
+    let mut cmds_by_comp: HashMap<DbUuid, Vec<CustomCommandExport>> = HashMap::new();
     for cmd in cmd_rows {
         let custom_cmd = CustomCommandExport {
             name: cmd.name,
@@ -411,7 +412,7 @@ pub async fn export_app_json(
     .await?;
 
     // Group links by component ID
-    let mut links_by_comp: HashMap<Uuid, Vec<LinkExport>> = HashMap::new();
+    let mut links_by_comp: HashMap<DbUuid, Vec<LinkExport>> = HashMap::new();
     for link in link_rows {
         let link_export = LinkExport {
             label: link.label,

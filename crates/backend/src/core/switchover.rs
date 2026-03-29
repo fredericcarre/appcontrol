@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::db::{DbJson, DbUuid};
 use crate::AppState;
 
 #[derive(Debug, thiserror::Error)]
@@ -36,21 +37,23 @@ pub async fn start_switchover(
     let switchover_id = Uuid::new_v4();
 
     // Insert into switchover_log (append-only)
-    sqlx::query(
-        r#"
-        INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-        VALUES (gen_random_uuid(), $1, $2, 'PREPARE', 'in_progress',
-                $3::jsonb)
-        "#,
-    )
-    .bind(switchover_id)
-    .bind(app_id)
-    .bind(serde_json::json!({
+    let row_id = DbUuid::new_v4();
+    let details_json = DbJson::from(serde_json::json!({
         "target_site_id": target_site_id,
         "mode": mode,
         "component_ids": component_ids,
         "initiated_by": initiated_by,
-    }))
+    }));
+    sqlx::query(
+        r#"
+        INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
+        VALUES ($1, $2, $3, 'PREPARE', 'in_progress', $4)
+        "#,
+    )
+    .bind(row_id)
+    .bind(DbUuid::from(switchover_id))
+    .bind(DbUuid::from(app_id))
+    .bind(&details_json)
     .execute(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -75,7 +78,7 @@ async fn execute_validate(
 
     let site_info =
         sqlx::query_as::<_, (String, bool)>("SELECT name, is_active FROM sites WHERE id = $1")
-            .bind(target_site_id)
+            .bind(DbUuid::from(target_site_id))
             .fetch_optional(&state.db)
             .await
             .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -87,8 +90,8 @@ async fn execute_validate(
     }
 
     // 2. Verify a binding profile exists for the target site
-    let target_profile = sqlx::query_as::<_, (Uuid, String, i64)>(
-        r#"
+    #[cfg(feature = "postgres")]
+    let profile_sql: &str = r#"
         SELECT bp.id, bp.name,
                (SELECT COUNT(*) FROM binding_profile_mappings WHERE profile_id = bp.id) as mapping_count
         FROM binding_profiles bp
@@ -99,13 +102,26 @@ async fn execute_validate(
             WHERE g.site_id = $2
           )
         LIMIT 1
-        "#,
-    )
-    .bind(app_id)
-    .bind(target_site_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+        "#;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let profile_sql: &str = r#"
+        SELECT bp.id, bp.name,
+               (SELECT COUNT(*) FROM binding_profile_mappings WHERE profile_id = bp.id) as mapping_count
+        FROM binding_profiles bp
+        WHERE bp.application_id = $1
+          AND EXISTS (
+            SELECT 1 FROM json_each(bp.gateway_ids) AS gw
+            JOIN gateways g ON g.id = gw.value
+            WHERE g.site_id = $2
+          )
+        LIMIT 1
+        "#;
+    let target_profile = sqlx::query_as::<_, (DbUuid, String, i64)>(profile_sql)
+        .bind(DbUuid::from(app_id))
+        .bind(DbUuid::from(target_site_id))
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     let (target_profile_id, target_profile_name) = match target_profile {
         Some((id, name, count)) => {
@@ -129,10 +145,10 @@ async fn execute_validate(
     };
 
     // 3. Get all components and verify they have mappings in the target profile
-    let components = sqlx::query_as::<_, (Uuid, String)>(
+    let components = sqlx::query_as::<_, (DbUuid, String)>(
         "SELECT id, name FROM components WHERE application_id = $1",
     )
-    .bind(app_id)
+    .bind(DbUuid::from(app_id))
     .fetch_all(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -166,7 +182,7 @@ async fn execute_validate(
     }
 
     // 4. Verify agents in the target profile are connected (check heartbeats)
-    let target_agents = sqlx::query_as::<_, (Uuid, String)>(
+    let target_agents = sqlx::query_as::<_, (DbUuid, String)>(
         r#"
         SELECT DISTINCT bpm.agent_id, a.hostname
         FROM binding_profile_mappings bpm
@@ -268,16 +284,25 @@ async fn execute_stop_source(
                 super::sequencer::execute_stop_subset(state, app_id, &impacted_set).await?;
 
                 // Store the impacted set for START_TARGET phase
+                // Read current details, merge, write back (works for both PG and SQLite)
                 let impacted_ids: Vec<Uuid> = impacted_set.iter().copied().collect();
+                let current_details = get_switchover_details(&state.db, switchover_id).await?;
+                let mut merged = current_details;
+                if let Some(obj) = merged.as_object_mut() {
+                    obj.insert(
+                        "impacted_component_ids".to_string(),
+                        serde_json::json!(impacted_ids),
+                    );
+                }
                 sqlx::query(
                     r#"
                     UPDATE switchover_log
-                    SET details = details || $2::jsonb
+                    SET details = $2
                     WHERE switchover_id = $1 AND phase = 'PREPARE'
                     "#,
                 )
-                .bind(switchover_id)
-                .bind(serde_json::json!({"impacted_component_ids": impacted_ids}))
+                .bind(DbUuid::from(switchover_id))
+                .bind(DbJson::from(merged))
                 .execute(&state.db)
                 .await
                 .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -301,16 +326,18 @@ async fn execute_stop_source(
     super::sequencer::execute_stop(state, app_id).await?;
 
     // Verify all non-optional components are stopped
-    let still_running = sqlx::query_scalar::<_, i64>(
-        r#"
-        SELECT COUNT(*) FROM components
-        WHERE application_id = $1 AND is_optional = false AND current_state NOT IN ('STOPPED', 'UNKNOWN')
-        "#,
-    )
-    .bind(app_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+    #[cfg(feature = "postgres")]
+    let running_sql: &str = "SELECT COUNT(*) FROM components \
+        WHERE application_id = $1 AND is_optional = false AND current_state NOT IN ('STOPPED', 'UNKNOWN')";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let running_sql: &str = "SELECT COUNT(*) FROM components \
+        WHERE application_id = $1 AND is_optional = 0 AND current_state NOT IN ('STOPPED', 'UNKNOWN')";
+
+    let still_running = sqlx::query_scalar::<_, i64>(running_sql)
+        .bind(DbUuid::from(app_id))
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     Ok(serde_json::json!({
         "source_stopped": true,
@@ -392,8 +419,8 @@ async fn execute_start_target(
     );
 
     // 1. Find the target binding profile (profile whose gateways belong to target site)
-    let target_profile = sqlx::query_as::<_, (Uuid, String)>(
-        r#"
+    #[cfg(feature = "postgres")]
+    let target_profile_sql: &str = r#"
         SELECT bp.id, bp.name
         FROM binding_profiles bp
         WHERE bp.application_id = $1
@@ -403,30 +430,47 @@ async fn execute_start_target(
             WHERE g.site_id = $2
           )
         LIMIT 1
-        "#,
-    )
-    .bind(app_id)
-    .bind(target_site_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?
-    .ok_or_else(|| {
-        SwitchoverError::ValidationFailed(format!(
-            "No binding profile found for target site {}",
-            target_site_id
-        ))
-    })?;
+        "#;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let target_profile_sql: &str = r#"
+        SELECT bp.id, bp.name
+        FROM binding_profiles bp
+        WHERE bp.application_id = $1
+          AND EXISTS (
+            SELECT 1 FROM json_each(bp.gateway_ids) AS gw
+            JOIN gateways g ON g.id = gw.value
+            WHERE g.site_id = $2
+          )
+        LIMIT 1
+        "#;
+    let target_profile = sqlx::query_as::<_, (DbUuid, String)>(target_profile_sql)
+        .bind(DbUuid::from(app_id))
+        .bind(DbUuid::from(target_site_id))
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?
+        .ok_or_else(|| {
+            SwitchoverError::ValidationFailed(format!(
+                "No binding profile found for target site {}",
+                target_site_id
+            ))
+        })?;
 
     let (target_profile_id, target_profile_name) = target_profile;
 
     // 2. Get current active profile for snapshot
-    let current_profile = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = true",
-    )
-    .bind(app_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+    #[cfg(feature = "postgres")]
+    let active_sql: &str =
+        "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = true";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let active_sql: &str =
+        "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = 1";
+
+    let current_profile = sqlx::query_as::<_, (DbUuid, String)>(active_sql)
+        .bind(DbUuid::from(app_id))
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     let source_profile_name = current_profile
         .as_ref()
@@ -437,14 +481,26 @@ async fn execute_start_target(
     // For FULL mode, we switch the entire profile
     if mode == "FULL" {
         // Deactivate all profiles for this app
-        sqlx::query("UPDATE binding_profiles SET is_active = false WHERE application_id = $1")
-            .bind(app_id)
+        #[cfg(feature = "postgres")]
+        let deactivate_sql: &str =
+            "UPDATE binding_profiles SET is_active = false WHERE application_id = $1";
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let deactivate_sql: &str =
+            "UPDATE binding_profiles SET is_active = 0 WHERE application_id = $1";
+
+        sqlx::query(deactivate_sql)
+            .bind(DbUuid::from(app_id))
             .execute(&state.db)
             .await
             .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
         // Activate the target profile
-        sqlx::query("UPDATE binding_profiles SET is_active = true WHERE id = $1")
+        #[cfg(feature = "postgres")]
+        let activate_sql: &str = "UPDATE binding_profiles SET is_active = true WHERE id = $1";
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let activate_sql: &str = "UPDATE binding_profiles SET is_active = 1 WHERE id = $1";
+
+        sqlx::query(activate_sql)
             .bind(target_profile_id)
             .execute(&state.db)
             .await
@@ -462,15 +518,15 @@ async fn execute_start_target(
             "UPDATE applications SET site_id = $2, updated_at = {} WHERE id = $1",
             crate::db::sql::now()
         ))
-        .bind(app_id)
-        .bind(target_site_id)
+        .bind(DbUuid::from(app_id))
+        .bind(DbUuid::from(target_site_id))
         .execute(&state.db)
         .await
         .map_err(|e| SwitchoverError::Database(e.to_string()))?;
     }
 
     // 3. Get mappings from the target profile and update components
-    let mappings = sqlx::query_as::<_, (String, Uuid)>(
+    let mappings = sqlx::query_as::<_, (String, DbUuid)>(
         "SELECT component_name, agent_id FROM binding_profile_mappings WHERE profile_id = $1",
     )
     .bind(target_profile_id)
@@ -495,10 +551,10 @@ async fn execute_start_target(
 
     for (comp_name, new_agent_id) in &mappings {
         // Get component id and current agent
-        let comp_info = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<String>, Option<String>, Option<String>)>(
+        let comp_info = sqlx::query_as::<_, (DbUuid, Option<DbUuid>, Option<String>, Option<String>, Option<String>)>(
             "SELECT id, agent_id, check_cmd, start_cmd, stop_cmd FROM components WHERE application_id = $1 AND name = $2",
         )
-        .bind(app_id)
+        .bind(DbUuid::from(app_id))
         .bind(comp_name)
         .fetch_optional(&state.db)
         .await
@@ -545,7 +601,7 @@ async fn execute_start_target(
                 "#,
                 )
                 .bind(comp_id)
-                .bind(target_site_id)
+                .bind(DbUuid::from(target_site_id))
                 .fetch_optional(&state.db)
                 .await
                 .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -589,9 +645,9 @@ async fn execute_start_target(
                 "#,
             )
             .bind(comp_id)
-            .bind(initiated_by)
-            .bind(before)
-            .bind(after)
+            .bind(DbUuid::from(initiated_by))
+            .bind(DbJson::from(before))
+            .bind(DbJson::from(after))
             .execute(&state.db)
             .await;
 
@@ -628,8 +684,10 @@ async fn execute_start_target(
             }
         } else if !swapped_component_ids.is_empty() {
             // Fallback: just start swapped components if impacted_ids not found
-            let component_set: std::collections::HashSet<Uuid> =
-                swapped_component_ids.iter().copied().collect();
+            let component_set: std::collections::HashSet<Uuid> = swapped_component_ids
+                .iter()
+                .map(|id| id.into_inner())
+                .collect();
             super::sequencer::execute_start_subset(state, app_id, &component_set).await?;
         }
     } else {
@@ -654,11 +712,16 @@ async fn execute_start_target(
 
 /// Advance to the next phase with real orchestration.
 /// The phase that's currently "in_progress" is the one we execute.
-pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value, SwitchoverError> {
+pub async fn advance_phase(
+    state: &Arc<AppState>,
+    app_id: impl Into<Uuid>,
+) -> Result<Value, SwitchoverError> {
+    let app_id: Uuid = app_id.into();
+
     let pool = &state.db;
 
     // Get the phase that's currently in_progress - that's what we need to execute
-    let current = sqlx::query_as::<_, (Uuid, String, String)>(
+    let current = sqlx::query_as::<_, (DbUuid, String, String)>(
         r#"
         SELECT switchover_id, phase, status
         FROM switchover_log
@@ -667,7 +730,7 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
         LIMIT 1
         "#,
     )
-    .bind(app_id)
+    .bind(DbUuid::from(app_id))
     .fetch_optional(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?
@@ -681,10 +744,10 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
             // PREPARE is just initialization, nothing to execute
             Ok(serde_json::json!({"status": "prepared"}))
         }
-        "VALIDATE" => execute_validate(state, app_id, switchover_id).await,
-        "STOP_SOURCE" => execute_stop_source(state, app_id, switchover_id).await,
-        "SYNC" => execute_sync(state, app_id, switchover_id).await,
-        "START_TARGET" => execute_start_target(state, app_id, switchover_id).await,
+        "VALIDATE" => execute_validate(state, app_id, *switchover_id).await,
+        "STOP_SOURCE" => execute_stop_source(state, app_id, *switchover_id).await,
+        "SYNC" => execute_sync(state, app_id, *switchover_id).await,
+        "START_TARGET" => execute_start_target(state, app_id, *switchover_id).await,
         "COMMIT" => Ok(serde_json::json!({"finalized": true})),
         _ => return Err(SwitchoverError::InvalidPhase),
     };
@@ -706,13 +769,14 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
             sqlx::query(
                 r#"
                 INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-                VALUES (gen_random_uuid(), $1, $2, $3, 'completed', $4::jsonb)
+                VALUES ($1, $2, $3, $4, 'completed', $5)
                 "#,
             )
+            .bind(DbUuid::new_v4())
             .bind(switchover_id)
-            .bind(app_id)
+            .bind(DbUuid::from(app_id))
             .bind(&active_phase)
-            .bind(&details)
+            .bind(DbJson::from(details.clone()))
             .execute(pool)
             .await
             .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -722,12 +786,14 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
                 sqlx::query(
                     r#"
                     INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-                    VALUES (gen_random_uuid(), $1, $2, $3, 'in_progress', '{}'::jsonb)
+                    VALUES ($1, $2, $3, $4, 'in_progress', $5)
                     "#,
                 )
+                .bind(DbUuid::new_v4())
                 .bind(switchover_id)
-                .bind(app_id)
+                .bind(DbUuid::from(app_id))
                 .bind(next)
+                .bind(DbJson::from(serde_json::json!({})))
                 .execute(pool)
                 .await
                 .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -745,7 +811,7 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
             };
             let event = super::notifications::NotificationEvent::Switchover {
                 app_id,
-                switchover_id,
+                switchover_id: *switchover_id,
                 phase: notification_phase.clone(),
                 status: notification_status.to_string(),
             };
@@ -767,13 +833,14 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
             let _ = sqlx::query(
                 r#"
                 INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-                VALUES (gen_random_uuid(), $1, $2, $3, 'failed', $4::jsonb)
+                VALUES ($1, $2, $3, $4, 'failed', $5)
                 "#,
             )
+            .bind(DbUuid::new_v4())
             .bind(switchover_id)
-            .bind(app_id)
+            .bind(DbUuid::from(app_id))
             .bind(&active_phase)
-            .bind(&error_details)
+            .bind(DbJson::from(error_details))
             .execute(pool)
             .await;
 
@@ -783,8 +850,13 @@ pub async fn advance_phase(state: &Arc<AppState>, app_id: Uuid) -> Result<Value,
 }
 
 /// Rollback the switchover.
-pub async fn rollback(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
-    let current = sqlx::query_as::<_, (Uuid, String)>(
+pub async fn rollback(
+    pool: &crate::db::DbPool,
+    app_id: impl Into<Uuid>,
+) -> Result<Value, SwitchoverError> {
+    let app_id: Uuid = app_id.into();
+
+    let current = sqlx::query_as::<_, (DbUuid, String)>(
         r#"
         SELECT switchover_id, phase
         FROM switchover_log
@@ -793,7 +865,7 @@ pub async fn rollback(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, S
         LIMIT 1
         "#,
     )
-    .bind(app_id)
+    .bind(DbUuid::from(app_id))
     .fetch_optional(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?
@@ -804,13 +876,13 @@ pub async fn rollback(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, S
     sqlx::query(
         r#"
         INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-        VALUES (gen_random_uuid(), $1, $2, 'ROLLBACK', 'completed',
-                $3::jsonb)
+        VALUES ($1, $2, $3, 'ROLLBACK', 'completed', $4)
         "#,
     )
+    .bind(DbUuid::new_v4())
     .bind(switchover_id)
-    .bind(app_id)
-    .bind(serde_json::json!({"rolled_back_from": phase}))
+    .bind(DbUuid::from(app_id))
+    .bind(DbJson::from(serde_json::json!({"rolled_back_from": phase})))
     .execute(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -823,8 +895,13 @@ pub async fn rollback(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, S
 }
 
 /// Commit the switchover (final phase).
-pub async fn commit(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
-    let current = sqlx::query_as::<_, (Uuid, String)>(
+pub async fn commit(
+    pool: &crate::db::DbPool,
+    app_id: impl Into<Uuid>,
+) -> Result<Value, SwitchoverError> {
+    let app_id: Uuid = app_id.into();
+
+    let current = sqlx::query_as::<_, (DbUuid, String)>(
         r#"
         SELECT switchover_id, phase
         FROM switchover_log
@@ -833,7 +910,7 @@ pub async fn commit(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, Swi
         LIMIT 1
         "#,
     )
-    .bind(app_id)
+    .bind(DbUuid::from(app_id))
     .fetch_optional(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?
@@ -848,11 +925,13 @@ pub async fn commit(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, Swi
     sqlx::query(
         r#"
         INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-        VALUES (gen_random_uuid(), $1, $2, 'COMMIT', 'completed', '{}'::jsonb)
+        VALUES ($1, $2, $3, 'COMMIT', 'completed', $4)
         "#,
     )
+    .bind(DbUuid::new_v4())
     .bind(switchover_id)
-    .bind(app_id)
+    .bind(DbUuid::from(app_id))
+    .bind(DbJson::from(serde_json::json!({})))
     .execute(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -864,8 +943,13 @@ pub async fn commit(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, Swi
 }
 
 /// Get switchover status.
-pub async fn get_status(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value, SwitchoverError> {
-    let logs = sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
+pub async fn get_status(
+    pool: &crate::db::DbPool,
+    app_id: impl Into<Uuid>,
+) -> Result<Value, SwitchoverError> {
+    let app_id: Uuid = app_id.into();
+
+    let logs = sqlx::query_as::<_, (DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
         r#"
         SELECT switchover_id, phase, status, created_at
         FROM switchover_log
@@ -874,7 +958,7 @@ pub async fn get_status(pool: &crate::db::DbPool, app_id: Uuid) -> Result<Value,
         LIMIT 20
         "#,
     )
-    .bind(app_id)
+    .bind(DbUuid::from(app_id))
     .fetch_all(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -902,7 +986,7 @@ async fn get_switchover_details(
     pool: &crate::db::DbPool,
     switchover_id: Uuid,
 ) -> Result<Value, SwitchoverError> {
-    sqlx::query_scalar::<_, Value>(
+    sqlx::query_scalar::<_, DbJson>(
         r#"
         SELECT details FROM switchover_log
         WHERE switchover_id = $1 AND phase = 'PREPARE'
@@ -910,9 +994,10 @@ async fn get_switchover_details(
         LIMIT 1
         "#,
     )
-    .bind(switchover_id)
+    .bind(DbUuid::from(switchover_id))
     .fetch_optional(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?
+    .map(|dj| dj.0)
     .ok_or(SwitchoverError::NoActiveSwitchover)
 }

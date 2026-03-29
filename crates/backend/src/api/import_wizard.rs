@@ -194,7 +194,7 @@ pub async fn preview_import(
 
     // List all available agents on selected gateways
     let available_agents =
-        list_available_agents(&state.db, &body.gateway_ids, user.organization_id)
+        list_available_agents(&state.db, &body.gateway_ids, user.organization_id.into())
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to list agents: {}", e)))?;
 
@@ -210,10 +210,14 @@ pub async fn preview_import(
             .unwrap_or_else(|| "service".to_string());
 
         let resolution = if let Some(ref host) = comp.host {
-            let result =
-                resolve_host_with_options(&state.db, host, &body.gateway_ids, user.organization_id)
-                    .await
-                    .map_err(|e| ApiError::Internal(format!("Resolution failed: {}", e)))?;
+            let result = resolve_host_with_options(
+                &state.db,
+                host,
+                &body.gateway_ids,
+                user.organization_id.into(),
+            )
+            .await
+            .map_err(|e| ApiError::Internal(format!("Resolution failed: {}", e)))?;
 
             match result {
                 ResolutionResult::Resolved {
@@ -225,7 +229,7 @@ pub async fn preview_import(
                 } => ComponentResolutionStatus::Resolved {
                     agent_id,
                     agent_hostname,
-                    gateway_id,
+                    gateway_id: gateway_id.map(|g| g.into_inner()),
                     gateway_name,
                     resolved_via: resolved_via.to_string(),
                 },
@@ -235,9 +239,9 @@ pub async fn preview_import(
                         candidates: candidates
                             .into_iter()
                             .map(|c| AgentCandidateDto {
-                                agent_id: c.agent_id,
+                                agent_id: *c.agent_id,
                                 hostname: c.hostname,
-                                gateway_id: c.gateway_id,
+                                gateway_id: c.gateway_id.map(|g| *g),
                                 gateway_name: c.gateway_name,
                                 ip_addresses: c.ip_addresses,
                                 matched_via: c.matched_via.to_string(),
@@ -275,7 +279,7 @@ pub async fn preview_import(
             for comp in &import_data.application.components {
                 if let Some(ref host) = comp.host {
                     let dr_result =
-                        resolve_dr_agent(&state.db, user.organization_id, dr_gw_ids, host)
+                        resolve_dr_agent(&state.db, user.organization_id.into(), dr_gw_ids, host)
                             .await
                             .map_err(|e| {
                                 ApiError::Internal(format!("DR resolution failed: {}", e))
@@ -293,7 +297,7 @@ pub async fn preview_import(
                                 } => Some(ComponentResolutionStatus::Resolved {
                                     agent_id,
                                     agent_hostname,
-                                    gateway_id,
+                                    gateway_id: gateway_id.map(|g| g.into_inner()),
                                     gateway_name,
                                     resolved_via: resolved_via.to_string(),
                                 }),
@@ -302,9 +306,9 @@ pub async fn preview_import(
                                         candidates: candidates
                                             .into_iter()
                                             .map(|c| AgentCandidateDto {
-                                                agent_id: c.agent_id,
+                                                agent_id: *c.agent_id,
                                                 hostname: c.hostname,
-                                                gateway_id: c.gateway_id,
+                                                gateway_id: c.gateway_id.map(|g| *g),
                                                 gateway_name: c.gateway_name,
                                                 ip_addresses: c.ip_addresses,
                                                 matched_via: c.matched_via.to_string(),
@@ -341,7 +345,7 @@ pub async fn preview_import(
     let dr_available_agents = if let Some(ref dr_gw_ids) = body.dr_gateway_ids {
         if !dr_gw_ids.is_empty() {
             Some(
-                list_available_agents(&state.db, dr_gw_ids, user.organization_id)
+                list_available_agents(&state.db, dr_gw_ids, user.organization_id.into())
                     .await
                     .map_err(|e| ApiError::Internal(format!("Failed to list DR agents: {}", e)))?,
             )
@@ -467,8 +471,17 @@ pub async fn execute_import(
         Some(id) => id,
         None => {
             // Find default site for organization (prefer 'primary' type)
+            #[cfg(feature = "postgres")]
             let site: Option<(Uuid,)> = sqlx::query_as(
                 "SELECT id FROM sites WHERE organization_id = $1 AND is_active = true ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
+            )
+            .bind(user.organization_id)
+            .fetch_optional(&state.db)
+            .await?;
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let site: Option<(Uuid,)> = sqlx::query_as(
+                "SELECT id FROM sites WHERE organization_id = $1 AND is_active = 1 ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
             )
             .bind(user.organization_id)
             .fetch_optional(&state.db)
@@ -890,6 +903,7 @@ pub async fn execute_import(
                 override_data.host_override
             {
                 // Look up agent by hostname or IP at this site's gateway
+                #[cfg(feature = "postgres")]
                 let agent_row: Option<(Uuid,)> = sqlx::query_as(
                     r#"SELECT a.id FROM agents a
                        JOIN gateways g ON a.gateway_id = g.id
@@ -898,6 +912,24 @@ pub async fn execute_import(
                          AND (a.hostname ILIKE $3 OR EXISTS (
                            SELECT 1 FROM jsonb_array_elements_text(a.ip_addresses) ip
                            WHERE ip = $3
+                         ))
+                       LIMIT 1"#,
+                )
+                .bind(user.organization_id)
+                .bind(override_site_id)
+                .bind(host)
+                .fetch_optional(&state.db)
+                .await?;
+
+                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+                let agent_row: Option<(Uuid,)> = sqlx::query_as(
+                    r#"SELECT a.id FROM agents a
+                       JOIN gateways g ON a.gateway_id = g.id
+                       WHERE a.organization_id = $1
+                         AND g.site_id = $2
+                         AND (a.hostname LIKE $3 OR EXISTS (
+                           SELECT 1 FROM json_each(a.ip_addresses)
+                           WHERE value = $3
                          ))
                        LIMIT 1"#,
                 )

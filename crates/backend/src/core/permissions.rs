@@ -1,4 +1,4 @@
-use crate::db::{self, DbPool};
+use crate::db::{self, DbPool, DbUuid};
 use uuid::Uuid;
 
 use appcontrol_common::PermissionLevel;
@@ -12,10 +12,12 @@ use appcontrol_common::PermissionLevel;
 /// 4. Return MAX of all
 pub async fn effective_permission(
     pool: &DbPool,
-    user_id: Uuid,
-    app_id: Uuid,
+    user_id: impl Into<Uuid>,
+    app_id: impl Into<Uuid>,
     is_org_admin: bool,
 ) -> PermissionLevel {
+    let user_id: Uuid = user_id.into();
+    let app_id: Uuid = app_id.into();
     // 1. Org admin = implicit Owner
     if is_org_admin {
         return PermissionLevel::Owner;
@@ -73,11 +75,14 @@ pub async fn effective_permission(
 ///   (directly as user, or via team membership)
 pub async fn can_access_site(
     pool: &DbPool,
-    user_id: Uuid,
-    site_id: Uuid,
-    organization_id: Uuid,
+    user_id: impl Into<Uuid>,
+    site_id: impl Into<Uuid>,
+    organization_id: impl Into<Uuid>,
     is_org_admin: bool,
 ) -> bool {
+    let user_id: Uuid = user_id.into();
+    let site_id: Uuid = site_id.into();
+    let organization_id: Uuid = organization_id.into();
     // Org admin bypasses all workspace restrictions
     if is_org_admin {
         return true;
@@ -136,12 +141,14 @@ pub async fn can_access_site(
 /// or None if they lack site access entirely.
 pub async fn can_operate_component(
     pool: &DbPool,
-    user_id: Uuid,
-    component_id: Uuid,
+    user_id: impl Into<Uuid>,
+    component_id: impl Into<Uuid>,
     is_org_admin: bool,
 ) -> PermissionLevel {
+    let user_id: Uuid = user_id.into();
+    let component_id: Uuid = component_id.into();
     // Get component's app_id and site info
-    let comp_info = sqlx::query_as::<_, (Uuid, Option<Uuid>, Uuid)>(
+    let comp_info = sqlx::query_as::<_, (DbUuid, Option<DbUuid>, DbUuid)>(
         r#"
         SELECT c.application_id, a.gateway_id, app.organization_id
         FROM components c
@@ -157,7 +164,7 @@ pub async fn can_operate_component(
     .flatten();
 
     let (app_id, _gateway_id, organization_id) = match comp_info {
-        Some(info) => info,
+        Some((a, g, o)) => (a.into_inner(), g.map(DbUuid::into_inner), o.into_inner()),
         None => return PermissionLevel::None,
     };
 
@@ -168,12 +175,13 @@ pub async fn can_operate_component(
     }
 
     // Check site-level access via application's site
-    let site_id = sqlx::query_scalar::<_, Uuid>("SELECT site_id FROM applications WHERE id = $1")
+    let site_id = sqlx::query_scalar::<_, DbUuid>("SELECT site_id FROM applications WHERE id = $1")
         .bind(app_id)
         .fetch_optional(pool)
         .await
         .ok()
-        .flatten();
+        .flatten()
+        .map(DbUuid::into_inner);
 
     if let Some(site_id) = site_id {
         if !can_access_site(pool, user_id, site_id, organization_id, is_org_admin).await {

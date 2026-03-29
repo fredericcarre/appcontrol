@@ -13,6 +13,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::AppState;
 
@@ -40,8 +41,8 @@ pub struct ListSitesQuery {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct SiteRow {
-    pub id: Uuid,
-    pub organization_id: Uuid,
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
     pub name: String,
     pub code: String,
     pub site_type: String,
@@ -55,6 +56,7 @@ pub async fn list_sites(
     Extension(user): Extension<AuthUser>,
     Query(query): Query<ListSitesQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    #[cfg(feature = "postgres")]
     let sites = sqlx::query_as::<_, SiteRow>(
         r#"SELECT id, organization_id, name, code, site_type, location, is_active, created_at
            FROM sites
@@ -69,6 +71,21 @@ pub async fn list_sites(
     .fetch_all(&state.db)
     .await?;
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let sites = sqlx::query_as::<_, SiteRow>(
+        r#"SELECT id, organization_id, name, code, site_type, location, is_active, created_at
+           FROM sites
+           WHERE organization_id = $1
+             AND ($2 IS NULL OR site_type = $2)
+             AND ($3 IS NULL OR is_active = $3)
+           ORDER BY code"#,
+    )
+    .bind(DbUuid::from(user.organization_id))
+    .bind(&query.site_type)
+    .bind(query.is_active)
+    .fetch_all(&state.db)
+    .await?;
+
     Ok(Json(json!({ "sites": sites })))
 }
 
@@ -77,6 +94,7 @@ pub async fn get_site(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
+    #[cfg(feature = "postgres")]
     let site = sqlx::query_as::<_, SiteRow>(
         r#"SELECT id, organization_id, name, code, site_type, location, is_active, created_at
            FROM sites
@@ -84,6 +102,18 @@ pub async fn get_site(
     )
     .bind(id)
     .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let site = sqlx::query_as::<_, SiteRow>(
+        r#"SELECT id, organization_id, name, code, site_type, location, is_active, created_at
+           FROM sites
+           WHERE id = $1 AND organization_id = $2"#,
+    )
+    .bind(DbUuid::from(id))
+    .bind(DbUuid::from(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -123,6 +153,7 @@ pub async fn create_site(
     .await
     .ok();
 
+    #[cfg(feature = "postgres")]
     let site = sqlx::query_as::<_, SiteRow>(
         r#"INSERT INTO sites (organization_id, name, code, site_type, location)
            VALUES ($1, $2, $3, $4, $5)
@@ -135,6 +166,24 @@ pub async fn create_site(
     .bind(&req.location)
     .fetch_one(&state.db)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let site = {
+        let new_id = DbUuid::new_v4();
+        sqlx::query_as::<_, SiteRow>(
+            r#"INSERT INTO sites (id, organization_id, name, code, site_type, location)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
+        )
+        .bind(new_id)
+        .bind(DbUuid::from(user.organization_id))
+        .bind(&req.name)
+        .bind(&req.code)
+        .bind(site_type)
+        .bind(&req.location)
+        .fetch_one(&state.db)
+        .await?
+    };
 
     Ok(Json(json!(site)))
 }
@@ -164,6 +213,7 @@ pub async fn update_site(
     .await
     .ok();
 
+    #[cfg(feature = "postgres")]
     let site = sqlx::query_as::<_, SiteRow>(
         r#"UPDATE sites SET
                name = COALESCE($3, name),
@@ -174,6 +224,24 @@ pub async fn update_site(
     )
     .bind(id)
     .bind(user.organization_id)
+    .bind(&req.name)
+    .bind(&req.location)
+    .bind(req.is_active)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let site = sqlx::query_as::<_, SiteRow>(
+        r#"UPDATE sites SET
+               name = COALESCE($3, name),
+               location = COALESCE($4, location),
+               is_active = COALESCE($5, is_active)
+           WHERE id = $1 AND organization_id = $2
+           RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
+    )
+    .bind(DbUuid::from(id))
+    .bind(DbUuid::from(user.organization_id))
     .bind(&req.name)
     .bind(&req.location)
     .bind(req.is_active)
@@ -206,10 +274,20 @@ pub async fn delete_site(
     .ok();
 
     // Check for applications linked to this site
+    #[cfg(feature = "postgres")]
     let app_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM applications WHERE site_id = $1")
         .bind(id)
         .fetch_one(&state.db)
         .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let app_count: i64 = {
+        let count: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM applications WHERE site_id = $1")
+            .bind(DbUuid::from(id))
+            .fetch_one(&state.db)
+            .await?;
+        count as i64
+    };
 
     if app_count > 0 {
         return Err(ApiError::Conflict(format!(
@@ -218,9 +296,17 @@ pub async fn delete_site(
         )));
     }
 
+    #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM sites WHERE id = $1 AND organization_id = $2")
         .bind(id)
         .bind(user.organization_id)
+        .execute(&state.db)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query("DELETE FROM sites WHERE id = $1 AND organization_id = $2")
+        .bind(DbUuid::from(id))
+        .bind(DbUuid::from(user.organization_id))
         .execute(&state.db)
         .await?;
 

@@ -22,6 +22,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+use crate::db::DbUuid;
 use crate::error::{validate_length, ApiError};
 use crate::AppState;
 
@@ -89,7 +90,7 @@ pub async fn create_enrollment_token(
     .await
     .ok();
 
-    let id = sqlx::query_scalar::<_, Uuid>(
+    let id = sqlx::query_scalar::<_, DbUuid>(
         r#"INSERT INTO enrollment_tokens
            (organization_id, token_hash, token_prefix, name, max_uses, expires_at, scope, created_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -118,7 +119,7 @@ pub async fn create_enrollment_token(
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct EnrollmentTokenRow {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub token_prefix: String,
     pub name: String,
     pub max_uses: Option<i32>,
@@ -390,7 +391,7 @@ pub struct EnrollResponse {
     pub cert_pem: String,
     pub key_pem: String,
     pub ca_pem: String,
-    pub agent_id: Uuid,
+    pub agent_id: DbUuid,
     pub fingerprint: String,
     pub expires_in_days: u32,
 }
@@ -450,7 +451,7 @@ pub async fn enroll(
         None => {
             log_enrollment_event(
                 &state.db,
-                Uuid::nil(),
+                DbUuid::from(Uuid::nil()),
                 None,
                 "invalid_token",
                 &req.hostname,
@@ -470,8 +471,8 @@ pub async fn enroll(
             Some(gw_zone) => {
                 log_enrollment_event(
                     &state.db,
-                    org_id,
-                    Some(token_id),
+                    DbUuid::from(org_id),
+                    Some(token_id.into()),
                     "zone_mismatch",
                     &req.hostname,
                     &client_ip,
@@ -488,8 +489,8 @@ pub async fn enroll(
             None => {
                 log_enrollment_event(
                     &state.db,
-                    org_id,
-                    Some(token_id),
+                    DbUuid::from(org_id),
+                    Some(token_id.into()),
                     "zone_required",
                     &req.hostname,
                     &client_ip,
@@ -506,8 +507,8 @@ pub async fn enroll(
     if chrono::Utc::now() > expires_at {
         log_enrollment_event(
             &state.db,
-            org_id,
-            Some(token_id),
+            DbUuid::from(org_id),
+            Some(token_id.into()),
             "token_expired",
             &req.hostname,
             &client_ip,
@@ -521,8 +522,8 @@ pub async fn enroll(
         if current_uses >= max {
             log_enrollment_event(
                 &state.db,
-                org_id,
-                Some(token_id),
+                DbUuid::from(org_id),
+                Some(token_id.into()),
                 "token_exhausted",
                 &req.hostname,
                 &client_ip,
@@ -590,8 +591,8 @@ pub async fn enroll(
     if is_revoked {
         log_enrollment_event(
             &state.db,
-            org_id,
-            Some(token_id),
+            DbUuid::from(org_id),
+            Some(token_id.into()),
             "invalid_token",
             &req.hostname,
             &client_ip,
@@ -704,8 +705,8 @@ pub async fn enroll(
 /// Log a failed enrollment attempt (APPEND-ONLY).
 async fn log_enrollment_event(
     db: &crate::db::DbPool,
-    org_id: Uuid,
-    token_id: Option<Uuid>,
+    org_id: DbUuid,
+    token_id: Option<DbUuid>,
     event_type: &str,
     hostname: &str,
     ip_address: &str,
@@ -732,7 +733,7 @@ pub async fn list_enrollment_events(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let events = sqlx::query_as::<_, (Uuid, Option<Uuid>, String, Option<String>, Option<String>, Option<Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)>(
+    let events = sqlx::query_as::<_, (DbUuid, Option<DbUuid>, String, Option<String>, Option<String>, Option<DbUuid>, Option<String>, chrono::DateTime<chrono::Utc>)>(
         r#"SELECT id, token_id, event_type, hostname, ip_address, agent_id, cert_fingerprint, created_at
            FROM enrollment_events
            WHERE organization_id = $1

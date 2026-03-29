@@ -3,6 +3,7 @@
 //! Only platform super-admins can create and manage organizations.
 //! Each organization is an isolated tenant with its own PKI, users, sites, and apps.
 
+use crate::db::DbUuid;
 use axum::{
     extract::{Extension, Path, State},
     response::Json,
@@ -33,7 +34,7 @@ pub struct UpdateOrgRequest {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct OrgRow {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub name: String,
     pub slug: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -52,7 +53,7 @@ fn require_super_admin(
 }
 
 /// Fetch the platform_role for a user from the database.
-async fn get_platform_role(db: &crate::db::DbPool, user_id: Uuid) -> Option<String> {
+async fn get_platform_role(db: &crate::db::DbPool, user_id: DbUuid) -> Option<String> {
     sqlx::query_scalar::<_, Option<String>>("SELECT platform_role FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_optional(db)
@@ -66,7 +67,7 @@ pub async fn list_organizations(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id).await;
+    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
     require_super_admin(&user, &platform_role)?;
 
     let orgs = sqlx::query_as::<_, OrgRow>(
@@ -83,17 +84,27 @@ pub async fn get_organization(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id).await;
+    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
 
     // Super-admins can view any org; regular admins can view their own
     if platform_role.as_deref() != Some("super_admin") && user.organization_id != id {
         return Err(ApiError::Forbidden);
     }
 
+    #[cfg(feature = "postgres")]
     let org = sqlx::query_as::<_, OrgRow>(
         "SELECT id, name, slug, created_at, updated_at FROM organizations WHERE id = $1",
     )
     .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let org = sqlx::query_as::<_, OrgRow>(
+        "SELECT id, name, slug, created_at, updated_at FROM organizations WHERE id = $1",
+    )
+    .bind(DbUuid::from(id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -106,7 +117,7 @@ pub async fn create_organization(
     Extension(user): Extension<AuthUser>,
     Json(req): Json<CreateOrgRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id).await;
+    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
     require_super_admin(&user, &platform_role)?;
 
     validate_length("name", &req.name, 1, 200)?;
@@ -151,7 +162,7 @@ pub async fn create_organization(
     .await?;
 
     // Create the org admin user
-    let admin_id = sqlx::query_scalar::<_, Uuid>(
+    let admin_id = sqlx::query_scalar::<_, DbUuid>(
         r#"INSERT INTO users (organization_id, external_id, email, display_name, role, auth_provider)
            VALUES ($1, $2, $3, $4, 'admin', 'local')
            RETURNING id"#,
@@ -193,7 +204,7 @@ pub async fn update_organization(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateOrgRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id).await;
+    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
     require_super_admin(&user, &platform_role)?;
 
     validate_optional_length("name", &req.name, 200)?;
@@ -209,19 +220,30 @@ pub async fn update_organization(
     .await
     .ok();
 
-    let org = sqlx::query_as::<_, OrgRow>(&format!(
+    let update_org_sql = format!(
         "UPDATE organizations SET
                  name = COALESCE($2, name),
                  updated_at = {}
              WHERE id = $1
              RETURNING id, name, slug, created_at, updated_at",
         crate::db::sql::now()
-    ))
-    .bind(id)
-    .bind(&req.name)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    );
+
+    #[cfg(feature = "postgres")]
+    let org = sqlx::query_as::<_, OrgRow>(&update_org_sql)
+        .bind(id)
+        .bind(&req.name)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let org = sqlx::query_as::<_, OrgRow>(&update_org_sql)
+        .bind(DbUuid::from(id))
+        .bind(&req.name)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
 
     Ok(Json(json!(org)))
 }

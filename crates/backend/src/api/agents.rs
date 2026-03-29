@@ -8,16 +8,16 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::DbPool;
+use crate::db::{DbPool, DbUuid};
 use crate::error::{ApiError, OptionExt};
 use crate::AppState;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct AgentRow {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub hostname: String,
-    pub organization_id: Uuid,
-    pub gateway_id: Option<Uuid>,
+    pub organization_id: DbUuid,
+    pub gateway_id: Option<DbUuid>,
     pub labels: Value,
     pub ip_addresses: Value,
     pub version: Option<String>,
@@ -29,10 +29,10 @@ pub struct AgentRow {
 /// Row type for agent list query with gateway info and system info
 #[derive(Debug, sqlx::FromRow)]
 pub struct AgentListRow {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub hostname: String,
-    pub organization_id: Uuid,
-    pub gateway_id: Option<Uuid>,
+    pub organization_id: DbUuid,
+    pub gateway_id: Option<DbUuid>,
     pub labels: Value,
     pub ip_addresses: Value,
     pub version: Option<String>,
@@ -82,10 +82,10 @@ pub async fn list_agents(
     let agents_with_status: Vec<Value> = agents
         .into_iter()
         .map(|a| {
-            let connected = connected_agent_set.contains(&a.id);
+            let connected = connected_agent_set.contains(&*a.id);
             let gateway_connected = a
                 .gateway_id
-                .map(|gid| connected_gateway_set.contains(&gid))
+                .map(|gid| connected_gateway_set.contains(&*gid))
                 .unwrap_or(false);
             json!({
                 "id": a.id,
@@ -178,8 +178,14 @@ pub async fn block_agent(
     let mut tx = state.db.begin().await?;
 
     // 1. Suspend the agent and clear gateway association
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE agents SET is_active = false, gateway_id = NULL WHERE id = $1")
         .bind(agent_id)
+        .execute(&mut *tx)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE agents SET is_active = 0, gateway_id = NULL WHERE id = $1")
+        .bind(DbUuid::from(agent_id))
         .execute(&mut *tx)
         .await?;
 
@@ -252,8 +258,14 @@ pub async fn unblock_agent(
     .ok();
 
     // Reactivate the agent
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE agents SET is_active = true WHERE id = $1")
         .bind(agent_id)
+        .execute(&state.db)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE agents SET is_active = 1 WHERE id = $1")
+        .bind(DbUuid::from(agent_id))
         .execute(&state.db)
         .await?;
 
@@ -300,7 +312,7 @@ pub async fn get_agent_metrics(
     Query(params): Query<MetricsQuery>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify agent belongs to user's organization
-    let agent_exists: Option<(Uuid,)> =
+    let agent_exists: Option<(DbUuid,)> =
         sqlx::query_as("SELECT id FROM agents WHERE id = $1 AND organization_id = $2")
             .bind(agent_id)
             .bind(user.organization_id)
@@ -314,17 +326,7 @@ pub async fn get_agent_metrics(
     // Clamp minutes to valid range
     let minutes = params.minutes.clamp(1, 1440);
 
-    let metrics = sqlx::query_as::<_, MetricPoint>(&format!(
-        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
-             FROM agent_metrics
-             WHERE agent_id = $1 AND created_at > {} - ($2 || ' minutes')::interval
-             ORDER BY created_at ASC",
-        crate::db::sql::now()
-    ))
-    .bind(agent_id)
-    .bind(minutes)
-    .fetch_all(&state.db)
-    .await?;
+    let metrics = fetch_agent_metrics(&state.db, agent_id, minutes).await?;
 
     Ok(Json(json!({
         "agent_id": agent_id,
@@ -341,9 +343,9 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
     // Get all components for this agent that are NOT already UNREACHABLE/STOPPED/STOPPING
     #[derive(sqlx::FromRow)]
     struct ComponentInfo {
-        id: Uuid,
+        id: DbUuid,
         name: String,
-        application_id: Uuid,
+        application_id: DbUuid,
         app_name: String,
     }
 
@@ -364,7 +366,7 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
 
     for comp in &components {
         // Get current state
-        let current_state = match crate::core::fsm::get_current_state(&state.db, comp.id).await {
+        let current_state = match crate::core::fsm::get_current_state(&state.db, *comp.id).await {
             Ok(s) => s,
             Err(_) => continue,
         };
@@ -378,16 +380,19 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
         }
 
         // Insert state transition (append-only)
+        let details_json = serde_json::json!({
+            "previous_state": current_state.to_string(),
+            "agent_id": agent_id.to_string(),
+        });
         let result = sqlx::query(
             r#"
             INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, 'UNREACHABLE', 'agent_blocked',
-                    jsonb_build_object('previous_state', $2, 'agent_id', $3::text))
+            VALUES ($1, $2, 'UNREACHABLE', 'agent_blocked', $3)
             "#,
         )
-        .bind(comp.id)
+        .bind(*comp.id)
         .bind(current_state.to_string())
-        .bind(agent_id.to_string())
+        .bind(details_json)
         .execute(&state.db)
         .await;
 
@@ -396,10 +401,10 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
 
             // Push WebSocket event
             state.ws_hub.broadcast(
-                comp.application_id,
+                *comp.application_id,
                 appcontrol_common::WsEvent::StateChange {
-                    component_id: comp.id,
-                    app_id: comp.application_id,
+                    component_id: *comp.id,
+                    app_id: *comp.application_id,
                     component_name: Some(comp.name.clone()),
                     app_name: Some(comp.app_name.clone()),
                     from: current_state,
@@ -440,7 +445,7 @@ pub async fn delete_agent(
     }
 
     // Verify agent exists and belongs to user's organization
-    let agent: Option<(Uuid, String)> =
+    let agent: Option<(DbUuid, String)> =
         sqlx::query_as("SELECT id, hostname FROM agents WHERE id = $1 AND organization_id = $2")
             .bind(agent_id)
             .bind(user.organization_id)
@@ -599,6 +604,43 @@ pub async fn bulk_delete_agents(
 // ══════════════════════════════════════════════════════════════════════════════
 // Helper functions for cross-database compatibility
 // ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "postgres")]
+async fn fetch_agent_metrics(
+    db: &DbPool,
+    agent_id: Uuid,
+    minutes: i32,
+) -> Result<Vec<MetricPoint>, sqlx::Error> {
+    sqlx::query_as::<_, MetricPoint>(&format!(
+        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
+             FROM agent_metrics
+             WHERE agent_id = $1 AND created_at > {} - ($2 || ' minutes')::interval
+             ORDER BY created_at ASC",
+        crate::db::sql::now()
+    ))
+    .bind(agent_id)
+    .bind(minutes)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_agent_metrics(
+    db: &DbPool,
+    agent_id: Uuid,
+    minutes: i32,
+) -> Result<Vec<MetricPoint>, sqlx::Error> {
+    sqlx::query_as::<_, MetricPoint>(
+        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
+             FROM agent_metrics
+             WHERE agent_id = $1 AND created_at > datetime('now', '-' || $2 || ' minutes')
+             ORDER BY created_at ASC",
+    )
+    .bind(agent_id)
+    .bind(minutes)
+    .fetch_all(db)
+    .await
+}
 
 /// Verify agents belong to organization - returns (id, hostname) pairs
 #[cfg(feature = "postgres")]

@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
@@ -42,56 +43,14 @@ pub async fn global_audit(
     // Filter by organization via the user who performed the action
     // action_log doesn't have organization_id, so we join through users
     // We also LEFT JOIN various tables to resolve target names
-    let logs = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            Uuid,
-            String,
-            String,
-            String,
-            Uuid,
-            serde_json::Value,
-            chrono::DateTime<chrono::Utc>,
-            Option<String>, // app_name
-            Option<String>, // component_name
-            Option<String>, // agent_hostname
-            Option<String>, // gateway_name
-        ),
-    >(
-        r#"
-        SELECT
-            al.id,
-            al.user_id,
-            COALESCE(u.email, 'system') as user_email,
-            al.action,
-            al.resource_type,
-            al.resource_id,
-            al.details,
-            al.created_at,
-            app.name as app_name,
-            comp.name as component_name,
-            ag.hostname as agent_hostname,
-            gw.name as gateway_name
-        FROM action_log al
-        LEFT JOIN users u ON u.id = al.user_id
-        LEFT JOIN applications app ON app.id = al.resource_id AND al.resource_type = 'application'
-        LEFT JOIN components comp ON comp.id = al.resource_id AND al.resource_type = 'component'
-        LEFT JOIN agents ag ON ag.id = al.resource_id AND al.resource_type = 'agent'
-        LEFT JOIN gateways gw ON gw.id = al.resource_id AND al.resource_type = 'gateway'
-        WHERE u.organization_id = $1
-          AND ($2::uuid IS NULL OR al.resource_id = $2)
-          AND ($3::uuid IS NULL OR al.user_id = $3)
-        ORDER BY al.created_at DESC
-        LIMIT $4 OFFSET $5
-        "#,
+    let logs = fetch_global_audit_logs(
+        &state.db,
+        user.organization_id,
+        params.app_id,
+        params.user_id,
+        limit,
+        offset,
     )
-    .bind(user.organization_id)
-    .bind(params.app_id)
-    .bind(params.user_id)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.db)
     .await?;
 
     let data: Vec<Value> = logs
@@ -159,22 +118,7 @@ pub async fn availability(
         .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
-    let stats = sqlx::query_as::<_, (Uuid, String, i64, i64)>(
-        r#"
-        SELECT component_id, date::text,
-               COALESCE(running_seconds, 0) as running_seconds,
-               COALESCE(total_seconds, 86400) as total_seconds
-        FROM component_daily_stats
-        WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
-          AND date >= $2::date AND date <= $3::date
-        ORDER BY date
-        "#,
-    )
-    .bind(app_id)
-    .bind(from)
-    .bind(to)
-    .fetch_all(&state.db)
-    .await?;
+    let stats = fetch_availability_stats(&state.db, app_id, from, to).await?;
 
     let data: Vec<Value> = stats.iter().map(|(cid, date, running, total)| {
         let pct = if *total > 0 { (*running as f64 / *total as f64) * 100.0 } else { 0.0 };
@@ -200,7 +144,7 @@ pub async fn incidents(
         .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
-    let incidents = sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
+    let incidents = sqlx::query_as::<_, (DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
         r#"
         SELECT st.component_id, c.name, st.to_state, st.created_at
         FROM state_transitions st
@@ -235,18 +179,7 @@ pub async fn switchovers(
         return Err(ApiError::Forbidden);
     }
 
-    let logs = sqlx::query_as::<_, (Uuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
-        r#"
-        SELECT id, phase, status, details::text, created_at
-        FROM switchover_log
-        WHERE application_id = $1
-        ORDER BY created_at DESC
-        LIMIT 100
-        "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+    let logs = fetch_switchover_logs(&state.db, app_id).await?;
 
     let data: Vec<Value> = logs.iter().map(|(id, phase, status, details, at)| {
         json!({"id": id, "phase": phase, "status": status, "details": details, "at": at})
@@ -268,7 +201,7 @@ pub async fn drp_report(
     }
 
     // Get application info
-    let app_info = sqlx::query_as::<_, (String, Option<Uuid>, Option<String>)>(
+    let app_info = sqlx::query_as::<_, (String, Option<DbUuid>, Option<String>)>(
         "SELECT a.name, a.site_id, s.name FROM applications a LEFT JOIN sites s ON a.site_id = s.id WHERE a.id = $1"
     )
     .bind(app_id)
@@ -278,7 +211,7 @@ pub async fn drp_report(
     let (app_name, _site_id, site_name) = app_info.unwrap_or(("Unknown".to_string(), None, None));
 
     // Get all switchover logs grouped by switchover_id
-    let logs = sqlx::query_as::<_, (Uuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
+    let logs = sqlx::query_as::<_, (DbUuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
         r#"
         SELECT switchover_id, phase, status, details, created_at
         FROM switchover_log
@@ -291,8 +224,8 @@ pub async fn drp_report(
     .await?;
 
     // Pre-fetch all sites for name lookup
-    let sites: std::collections::HashMap<Uuid, String> =
-        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM sites")
+    let sites: std::collections::HashMap<DbUuid, String> =
+        sqlx::query_as::<_, (DbUuid, String)>("SELECT id, name FROM sites")
             .fetch_all(&state.db)
             .await?
             .into_iter()
@@ -301,7 +234,7 @@ pub async fn drp_report(
     // Group by switchover_id
     // Phase tuple: (phase_name, status, details, created_at)
     type PhaseEntry = (String, String, Value, chrono::DateTime<chrono::Utc>);
-    let mut switchovers_map: std::collections::HashMap<Uuid, Vec<PhaseEntry>> =
+    let mut switchovers_map: std::collections::HashMap<DbUuid, Vec<PhaseEntry>> =
         std::collections::HashMap::new();
 
     for (switchover_id, phase, status, details, created_at) in logs {
@@ -548,20 +481,9 @@ pub async fn drp_report(
 
     // Fetch components for the topology graph
     // position_x/y are `real` (f32) in Postgres, cast to float8 for f64 compatibility
-    let components = sqlx::query_as::<_, (Uuid, String, String, f64, f64)>(
-        r#"
-        SELECT id, name, component_type,
-               COALESCE(position_x, 0)::float8,
-               COALESCE(position_y, 0)::float8
-        FROM components
-        WHERE application_id = $1
-        ORDER BY name
-        "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let components = fetch_topology_components(&state.db, app_id)
+        .await
+        .unwrap_or_default();
 
     let component_list: Vec<Value> = components
         .into_iter()
@@ -576,7 +498,7 @@ pub async fn drp_report(
         .collect();
 
     // Fetch dependencies for the topology edges
-    let dependencies = sqlx::query_as::<_, (Uuid, Uuid)>(
+    let dependencies = sqlx::query_as::<_, (DbUuid, DbUuid)>(
         r#"
         SELECT d.from_component_id, d.to_component_id
         FROM dependencies d
@@ -631,7 +553,16 @@ pub async fn audit(
         .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
-    let logs = sqlx::query_as::<_, (Uuid, Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
+    let logs = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            DbUuid,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         r#"
         SELECT id, user_id, action, resource_type, created_at
         FROM action_log
@@ -693,20 +624,7 @@ pub async fn rto(
     }
 
     // Compute average Recovery Time Objective from switchover logs
-    let avg_rto = sqlx::query_scalar::<_, Option<f64>>(
-        r#"
-        SELECT AVG(EXTRACT(EPOCH FROM (
-            (SELECT MAX(created_at) FROM switchover_log sl2 WHERE sl2.switchover_id = sl.switchover_id AND sl2.phase = 'COMMIT')
-            - sl.created_at
-        )))
-        FROM switchover_log sl
-        WHERE sl.application_id = $1 AND sl.phase = 'PREPARE'
-        "#,
-    )
-    .bind(app_id)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(None);
+    let avg_rto = fetch_avg_rto(&state.db, app_id).await;
 
     Ok(Json(json!({
         "report": "rto",
@@ -743,20 +661,7 @@ pub async fn export_pdf(
         .unwrap_or_else(|| "Unknown".to_string());
 
     // Availability summary
-    let availability_stats = sqlx::query_as::<_, (i64, i64)>(
-        r#"
-        SELECT COALESCE(SUM(running_seconds), 0), COALESCE(SUM(total_seconds), 1)
-        FROM component_daily_stats
-        WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
-          AND date >= $2::date AND date <= $3::date
-        "#,
-    )
-    .bind(app_id)
-    .bind(from)
-    .bind(to)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or((0, 1));
+    let availability_stats = fetch_availability_summary(&state.db, app_id, from, to).await;
     let overall_availability = (availability_stats.0 as f64 / availability_stats.1 as f64) * 100.0;
 
     // Incident count
@@ -797,20 +702,7 @@ pub async fn export_pdf(
     .unwrap_or(0);
 
     // RTO average
-    let avg_rto = sqlx::query_scalar::<_, Option<f64>>(
-        r#"
-        SELECT AVG(EXTRACT(EPOCH FROM (
-            (SELECT MAX(created_at) FROM switchover_log sl2 WHERE sl2.switchover_id = sl.switchover_id AND sl2.phase = 'COMMIT')
-            - sl.created_at
-        )))
-        FROM switchover_log sl
-        WHERE sl.application_id = $1 AND sl.phase = 'PREPARE'
-        "#,
-    )
-    .bind(app_id)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(None);
+    let avg_rto = fetch_avg_rto(&state.db, app_id).await;
 
     let report = json!({
         "report": "export",
@@ -1025,7 +917,7 @@ pub async fn activity_feed(
         ),
     >(
         r#"
-        SELECT al.user_id, COALESCE(u.email, al.user_id::text), al.action, al.details, al.created_at,
+        SELECT al.user_id, COALESCE(u.email, CAST(al.user_id AS TEXT)), al.action, al.details, al.created_at,
                al.status, al.error_message
         FROM action_log al
         LEFT JOIN users u ON u.id = al.user_id
@@ -1055,8 +947,8 @@ pub async fn activity_feed(
         ),
     >(
         r#"
-        SELECT al.user_id, COALESCE(u.email, al.user_id::text), al.action,
-               COALESCE(c.name, al.resource_id::text), al.details, al.created_at,
+        SELECT al.user_id, COALESCE(u.email, CAST(al.user_id AS TEXT)), al.action,
+               COALESCE(c.name, CAST(al.resource_id AS TEXT)), al.details, al.created_at,
                al.status, al.error_message
         FROM action_log al
         LEFT JOIN users u ON u.id = al.user_id
@@ -1104,7 +996,7 @@ pub async fn activity_feed(
 
     // Switchover events for this app
     let switchovers =
-        sqlx::query_as::<_, (Uuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
+        sqlx::query_as::<_, (DbUuid, String, String, Value, chrono::DateTime<chrono::Utc>)>(
             r#"
         SELECT sl.switchover_id, sl.phase, sl.status, sl.details, sl.created_at
         FROM switchover_log sl
@@ -1304,7 +1196,7 @@ pub async fn health_summary(
 
     // Components in error
     let error_components =
-        sqlx::query_as::<_, (Uuid, String, String, chrono::DateTime<chrono::Utc>)>(
+        sqlx::query_as::<_, (DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
             r#"
         SELECT c.id, c.name, COALESCE(c.current_state, 'UNKNOWN'), c.updated_at
         FROM components c
@@ -1325,18 +1217,19 @@ pub async fn health_summary(
         .collect();
 
     // Agent status for this app
-    let agents = sqlx::query_as::<_, (Uuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
-        r#"
+    let agents =
+        sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
+            r#"
         SELECT DISTINCT a.id, a.hostname, a.is_active, a.last_heartbeat_at
         FROM agents a
         JOIN components c ON c.agent_id = a.id
         WHERE c.application_id = $1
         ORDER BY a.hostname
         "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+        )
+        .bind(app_id)
+        .fetch_all(&state.db)
+        .await?;
 
     let agent_status: Vec<Value> = agents
         .iter()
@@ -1353,9 +1246,17 @@ pub async fn health_summary(
         .collect();
 
     // Recent incidents (last 10 FAILED transitions)
-    let recent_incidents =
-        sqlx::query_as::<_, (Uuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
-            r#"
+    let recent_incidents = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            String,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        r#"
         SELECT st.component_id, c.name, st.from_state, st.to_state, st.created_at
         FROM state_transitions st
         JOIN components c ON c.id = st.component_id
@@ -1363,10 +1264,10 @@ pub async fn health_summary(
         ORDER BY st.created_at DESC
         LIMIT 10
         "#,
-        )
-        .bind(app_id)
-        .fetch_all(&state.db)
-        .await?;
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
 
     let incidents: Vec<Value> = recent_incidents
         .iter()
@@ -1415,67 +1316,7 @@ pub async fn mttr(
 
     // Find all FAILED → RUNNING recovery pairs
     // For each component, pair each FAILED transition with the next RUNNING transition
-    let recoveries = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            chrono::DateTime<chrono::Utc>,
-            chrono::DateTime<chrono::Utc>,
-            i64,
-        ),
-    >(
-        r#"
-        WITH failed_events AS (
-            SELECT
-                st.component_id,
-                c.name as component_name,
-                st.created_at as failed_at,
-                ROW_NUMBER() OVER (PARTITION BY st.component_id ORDER BY st.created_at) as rn
-            FROM state_transitions st
-            JOIN components c ON c.id = st.component_id
-            WHERE c.application_id = $1
-              AND st.to_state = 'FAILED'
-              AND st.created_at >= $2 AND st.created_at <= $3
-        ),
-        recovery_events AS (
-            SELECT
-                st.component_id,
-                st.created_at as recovered_at,
-                ROW_NUMBER() OVER (PARTITION BY st.component_id ORDER BY st.created_at) as rn
-            FROM state_transitions st
-            JOIN components c ON c.id = st.component_id
-            WHERE c.application_id = $1
-              AND st.to_state = 'RUNNING'
-              AND st.from_state IN ('FAILED', 'STARTING')
-              AND st.created_at >= $2 AND st.created_at <= $3
-        )
-        SELECT
-            f.component_id,
-            f.component_name,
-            f.failed_at,
-            r.recovered_at,
-            EXTRACT(EPOCH FROM (r.recovered_at - f.failed_at))::bigint as recovery_seconds
-        FROM failed_events f
-        JOIN recovery_events r ON f.component_id = r.component_id
-        WHERE r.recovered_at > f.failed_at
-          AND NOT EXISTS (
-            -- Ensure no other FAILED event between this FAILED and RUNNING
-            SELECT 1 FROM state_transitions st2
-            WHERE st2.component_id = f.component_id
-              AND st2.to_state = 'FAILED'
-              AND st2.created_at > f.failed_at
-              AND st2.created_at < r.recovered_at
-          )
-        ORDER BY f.failed_at DESC
-        LIMIT 100
-        "#,
-    )
-    .bind(app_id)
-    .bind(from)
-    .bind(to)
-    .fetch_all(&state.db)
-    .await?;
+    let recoveries = fetch_mttr_recoveries(&state.db, app_id, from, to).await?;
 
     // Calculate statistics
     let total_incidents = recoveries.len();
@@ -1558,6 +1399,514 @@ pub async fn mttr(
         "per_component": per_component,
         "recent_incidents": recent,
     })))
+}
+
+// ============================================================================
+// Database-specific helper functions
+// ============================================================================
+
+type GlobalAuditRow = (
+    Uuid,
+    Uuid,
+    String,
+    String,
+    String,
+    Uuid,
+    serde_json::Value,
+    chrono::DateTime<chrono::Utc>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+#[cfg(feature = "postgres")]
+async fn fetch_global_audit_logs(
+    db: &crate::db::DbPool,
+    org_id: Uuid,
+    app_id: Option<Uuid>,
+    user_id: Option<Uuid>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<GlobalAuditRow>, sqlx::Error> {
+    sqlx::query_as::<_, GlobalAuditRow>(
+        r#"
+        SELECT
+            al.id,
+            al.user_id,
+            COALESCE(u.email, 'system') as user_email,
+            al.action,
+            al.resource_type,
+            al.resource_id,
+            al.details,
+            al.created_at,
+            app.name as app_name,
+            comp.name as component_name,
+            ag.hostname as agent_hostname,
+            gw.name as gateway_name
+        FROM action_log al
+        LEFT JOIN users u ON u.id = al.user_id
+        LEFT JOIN applications app ON app.id = al.resource_id AND al.resource_type = 'application'
+        LEFT JOIN components comp ON comp.id = al.resource_id AND al.resource_type = 'component'
+        LEFT JOIN agents ag ON ag.id = al.resource_id AND al.resource_type = 'agent'
+        LEFT JOIN gateways gw ON gw.id = al.resource_id AND al.resource_type = 'gateway'
+        WHERE u.organization_id = $1
+          AND ($2::uuid IS NULL OR al.resource_id = $2)
+          AND ($3::uuid IS NULL OR al.user_id = $3)
+        ORDER BY al.created_at DESC
+        LIMIT $4 OFFSET $5
+        "#,
+    )
+    .bind(org_id)
+    .bind(app_id)
+    .bind(user_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_global_audit_logs(
+    db: &crate::db::DbPool,
+    org_id: Uuid,
+    app_id: Option<Uuid>,
+    user_id: Option<Uuid>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<GlobalAuditRow>, sqlx::Error> {
+    sqlx::query_as::<_, GlobalAuditRow>(
+        r#"
+        SELECT
+            al.id,
+            al.user_id,
+            COALESCE(u.email, 'system') as user_email,
+            al.action,
+            al.resource_type,
+            al.resource_id,
+            al.details,
+            al.created_at,
+            app.name as app_name,
+            comp.name as component_name,
+            ag.hostname as agent_hostname,
+            gw.name as gateway_name
+        FROM action_log al
+        LEFT JOIN users u ON u.id = al.user_id
+        LEFT JOIN applications app ON app.id = al.resource_id AND al.resource_type = 'application'
+        LEFT JOIN components comp ON comp.id = al.resource_id AND al.resource_type = 'component'
+        LEFT JOIN agents ag ON ag.id = al.resource_id AND al.resource_type = 'agent'
+        LEFT JOIN gateways gw ON gw.id = al.resource_id AND al.resource_type = 'gateway'
+        WHERE u.organization_id = $1
+          AND ($2 IS NULL OR al.resource_id = $2)
+          AND ($3 IS NULL OR al.user_id = $3)
+        ORDER BY al.created_at DESC
+        LIMIT $4 OFFSET $5
+        "#,
+    )
+    .bind(org_id)
+    .bind(app_id)
+    .bind(user_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_availability_stats(
+    db: &crate::db::DbPool,
+    app_id: Uuid,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<(DbUuid, String, i64, i64)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, i64, i64)>(
+        r#"
+        SELECT component_id, date::text,
+               COALESCE(running_seconds, 0) as running_seconds,
+               COALESCE(total_seconds, 86400) as total_seconds
+        FROM component_daily_stats
+        WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
+          AND date >= $2::date AND date <= $3::date
+        ORDER BY date
+        "#,
+    )
+    .bind(app_id)
+    .bind(from)
+    .bind(to)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_availability_stats(
+    db: &crate::db::DbPool,
+    app_id: Uuid,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<(DbUuid, String, i64, i64)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, i64, i64)>(
+        r#"
+        SELECT component_id, CAST(date AS TEXT),
+               COALESCE(running_seconds, 0) as running_seconds,
+               COALESCE(total_seconds, 86400) as total_seconds
+        FROM component_daily_stats
+        WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
+          AND date >= date($2) AND date <= date($3)
+        ORDER BY date
+        "#,
+    )
+    .bind(app_id)
+    .bind(from)
+    .bind(to)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_switchover_logs(
+    db: &crate::db::DbPool,
+    app_id: Uuid,
+) -> Result<
+    Vec<(
+        DbUuid,
+        String,
+        String,
+        String,
+        chrono::DateTime<chrono::Utc>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            String,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        r#"
+        SELECT id, phase, status, details::text, created_at
+        FROM switchover_log
+        WHERE application_id = $1
+        ORDER BY created_at DESC
+        LIMIT 100
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_switchover_logs(
+    db: &crate::db::DbPool,
+    app_id: Uuid,
+) -> Result<
+    Vec<(
+        DbUuid,
+        String,
+        String,
+        String,
+        chrono::DateTime<chrono::Utc>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            String,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        r#"
+        SELECT id, phase, status, CAST(details AS TEXT), created_at
+        FROM switchover_log
+        WHERE application_id = $1
+        ORDER BY created_at DESC
+        LIMIT 100
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_topology_components(
+    db: &crate::db::DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String, String, f64, f64)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String, f64, f64)>(
+        r#"
+        SELECT id, name, component_type,
+               COALESCE(position_x, 0)::float8,
+               COALESCE(position_y, 0)::float8
+        FROM components
+        WHERE application_id = $1
+        ORDER BY name
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_topology_components(
+    db: &crate::db::DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String, String, f64, f64)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String, f64, f64)>(
+        r#"
+        SELECT id, name, component_type,
+               COALESCE(position_x, 0.0),
+               COALESCE(position_y, 0.0)
+        FROM components
+        WHERE application_id = $1
+        ORDER BY name
+        "#,
+    )
+    .bind(app_id)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_avg_rto(db: &crate::db::DbPool, app_id: Uuid) -> Option<f64> {
+    sqlx::query_scalar::<_, Option<f64>>(
+        r#"
+        SELECT AVG(EXTRACT(EPOCH FROM (
+            (SELECT MAX(created_at) FROM switchover_log sl2 WHERE sl2.switchover_id = sl.switchover_id AND sl2.phase = 'COMMIT')
+            - sl.created_at
+        )))
+        FROM switchover_log sl
+        WHERE sl.application_id = $1 AND sl.phase = 'PREPARE'
+        "#,
+    )
+    .bind(app_id)
+    .fetch_one(db)
+    .await
+    .unwrap_or(None)
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_avg_rto(db: &crate::db::DbPool, app_id: Uuid) -> Option<f64> {
+    // SQLite: compute epoch difference using strftime or julianday
+    sqlx::query_scalar::<_, Option<f64>>(
+        r#"
+        SELECT AVG(
+            (julianday((SELECT MAX(created_at) FROM switchover_log sl2 WHERE sl2.switchover_id = sl.switchover_id AND sl2.phase = 'COMMIT'))
+             - julianday(sl.created_at)) * 86400.0
+        )
+        FROM switchover_log sl
+        WHERE sl.application_id = $1 AND sl.phase = 'PREPARE'
+        "#,
+    )
+    .bind(app_id)
+    .fetch_one(db)
+    .await
+    .unwrap_or(None)
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_availability_summary(
+    db: &crate::db::DbPool,
+    app_id: Uuid,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> (i64, i64) {
+    sqlx::query_as::<_, (i64, i64)>(
+        r#"
+        SELECT COALESCE(SUM(running_seconds), 0), COALESCE(SUM(total_seconds), 1)
+        FROM component_daily_stats
+        WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
+          AND date >= $2::date AND date <= $3::date
+        "#,
+    )
+    .bind(app_id)
+    .bind(from)
+    .bind(to)
+    .fetch_one(db)
+    .await
+    .unwrap_or((0, 1))
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_availability_summary(
+    db: &crate::db::DbPool,
+    app_id: Uuid,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> (i64, i64) {
+    sqlx::query_as::<_, (i64, i64)>(
+        r#"
+        SELECT COALESCE(SUM(running_seconds), 0), COALESCE(SUM(total_seconds), 1)
+        FROM component_daily_stats
+        WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
+          AND date >= date($2) AND date <= date($3)
+        "#,
+    )
+    .bind(app_id)
+    .bind(from)
+    .bind(to)
+    .fetch_one(db)
+    .await
+    .unwrap_or((0, 1))
+}
+
+#[cfg(feature = "postgres")]
+async fn fetch_mttr_recoveries(
+    db: &crate::db::DbPool,
+    app_id: Uuid,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<
+    Vec<(
+        Uuid,
+        String,
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+        i64,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            i64,
+        ),
+    >(
+        r#"
+        WITH failed_events AS (
+            SELECT
+                st.component_id,
+                c.name as component_name,
+                st.created_at as failed_at,
+                ROW_NUMBER() OVER (PARTITION BY st.component_id ORDER BY st.created_at) as rn
+            FROM state_transitions st
+            JOIN components c ON c.id = st.component_id
+            WHERE c.application_id = $1
+              AND st.to_state = 'FAILED'
+              AND st.created_at >= $2 AND st.created_at <= $3
+        ),
+        recovery_events AS (
+            SELECT
+                st.component_id,
+                st.created_at as recovered_at,
+                ROW_NUMBER() OVER (PARTITION BY st.component_id ORDER BY st.created_at) as rn
+            FROM state_transitions st
+            JOIN components c ON c.id = st.component_id
+            WHERE c.application_id = $1
+              AND st.to_state = 'RUNNING'
+              AND st.from_state IN ('FAILED', 'STARTING')
+              AND st.created_at >= $2 AND st.created_at <= $3
+        )
+        SELECT
+            f.component_id,
+            f.component_name,
+            f.failed_at,
+            r.recovered_at,
+            EXTRACT(EPOCH FROM (r.recovered_at - f.failed_at))::bigint as recovery_seconds
+        FROM failed_events f
+        JOIN recovery_events r ON f.component_id = r.component_id
+        WHERE r.recovered_at > f.failed_at
+          AND NOT EXISTS (
+            SELECT 1 FROM state_transitions st2
+            WHERE st2.component_id = f.component_id
+              AND st2.to_state = 'FAILED'
+              AND st2.created_at > f.failed_at
+              AND st2.created_at < r.recovered_at
+          )
+        ORDER BY f.failed_at DESC
+        LIMIT 100
+        "#,
+    )
+    .bind(app_id)
+    .bind(from)
+    .bind(to)
+    .fetch_all(db)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn fetch_mttr_recoveries(
+    db: &crate::db::DbPool,
+    app_id: Uuid,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<
+    Vec<(
+        Uuid,
+        String,
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+        i64,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (Uuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64),
+    >(
+        r#"
+        WITH failed_events AS (
+            SELECT
+                st.component_id,
+                c.name as component_name,
+                st.created_at as failed_at,
+                ROW_NUMBER() OVER (PARTITION BY st.component_id ORDER BY st.created_at) as rn
+            FROM state_transitions st
+            JOIN components c ON c.id = st.component_id
+            WHERE c.application_id = $1
+              AND st.to_state = 'FAILED'
+              AND st.created_at >= $2 AND st.created_at <= $3
+        ),
+        recovery_events AS (
+            SELECT
+                st.component_id,
+                st.created_at as recovered_at,
+                ROW_NUMBER() OVER (PARTITION BY st.component_id ORDER BY st.created_at) as rn
+            FROM state_transitions st
+            JOIN components c ON c.id = st.component_id
+            WHERE c.application_id = $1
+              AND st.to_state = 'RUNNING'
+              AND st.from_state IN ('FAILED', 'STARTING')
+              AND st.created_at >= $2 AND st.created_at <= $3
+        )
+        SELECT
+            f.component_id,
+            f.component_name,
+            f.failed_at,
+            r.recovered_at,
+            CAST((julianday(r.recovered_at) - julianday(f.failed_at)) * 86400 AS INTEGER) as recovery_seconds
+        FROM failed_events f
+        JOIN recovery_events r ON f.component_id = r.component_id
+        WHERE r.recovered_at > f.failed_at
+          AND NOT EXISTS (
+            SELECT 1 FROM state_transitions st2
+            WHERE st2.component_id = f.component_id
+              AND st2.to_state = 'FAILED'
+              AND st2.created_at > f.failed_at
+              AND st2.created_at < r.recovered_at
+          )
+        ORDER BY f.failed_at DESC
+        LIMIT 100
+        "#,
+    )
+    .bind(app_id)
+    .bind(from)
+    .bind(to)
+    .fetch_all(db)
+    .await
 }
 
 /// Format duration in human-readable format
