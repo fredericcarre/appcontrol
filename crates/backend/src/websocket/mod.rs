@@ -775,11 +775,11 @@ async fn process_gateway_message(
                      site_id = COALESCE(EXCLUDED.site_id, gateways.site_id), \
                      last_heartbeat_at = datetime('now')",
             )
-            .bind(gateway_id)
-            .bind(org_id)
+            .bind(DbUuid::from(gateway_id))
+            .bind(DbUuid::from(org_id))
             .bind(&display_name)
             .bind(&zone)
-            .bind(resolved_site_id)
+            .bind(resolved_site_id.map(DbUuid::from))
             .execute(&state.db)
             .await
             {
@@ -803,6 +803,7 @@ async fn process_gateway_message(
             if let Some(gw_id) = gw_id {
                 // ── Agent active check ──
                 // If the agent is blocked (is_active = false), reject the connection.
+                #[cfg(feature = "postgres")]
                 let is_active: bool = sqlx::query_scalar(
                     "SELECT COALESCE(is_active, true) FROM agents WHERE id = $1",
                 )
@@ -812,6 +813,18 @@ async fn process_gateway_message(
                 .ok()
                 .flatten()
                 .unwrap_or(true); // Default to active if agent doesn't exist (first-time registration)
+                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+                let is_active: bool = {
+                    let val: Option<i32> = sqlx::query_scalar(
+                        "SELECT COALESCE(is_active, 1) FROM agents WHERE id = $1",
+                    )
+                    .bind(DbUuid::from(agent_id))
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten();
+                    val.unwrap_or(1) != 0
+                };
 
                 if !is_active {
                     tracing::warn!(

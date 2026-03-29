@@ -37,21 +37,23 @@ pub async fn start_switchover(
     let switchover_id = Uuid::new_v4();
 
     // Insert into switchover_log (append-only)
-    sqlx::query(
-        r#"
-        INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-        VALUES (gen_random_uuid(), $1, $2, 'PREPARE', 'in_progress',
-                $3::jsonb)
-        "#,
-    )
-    .bind(switchover_id)
-    .bind(app_id)
-    .bind(serde_json::json!({
+    let row_id = DbUuid::new_v4();
+    let details_json = DbJson::from(serde_json::json!({
         "target_site_id": target_site_id,
         "mode": mode,
         "component_ids": component_ids,
         "initiated_by": initiated_by,
-    }))
+    }));
+    sqlx::query(
+        r#"
+        INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
+        VALUES ($1, $2, $3, 'PREPARE', 'in_progress', $4)
+        "#,
+    )
+    .bind(row_id)
+    .bind(DbUuid::from(switchover_id))
+    .bind(DbUuid::from(app_id))
+    .bind(&details_json)
     .execute(pool)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -76,7 +78,7 @@ async fn execute_validate(
 
     let site_info =
         sqlx::query_as::<_, (String, bool)>("SELECT name, is_active FROM sites WHERE id = $1")
-            .bind(target_site_id)
+            .bind(DbUuid::from(target_site_id))
             .fetch_optional(&state.db)
             .await
             .map_err(|e| SwitchoverError::Database(e.to_string()))?;
