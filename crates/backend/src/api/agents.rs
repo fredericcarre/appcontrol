@@ -8,16 +8,16 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::DbPool;
+use crate::db::{DbPool, DbUuid};
 use crate::error::{ApiError, OptionExt};
 use crate::AppState;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct AgentRow {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub hostname: String,
-    pub organization_id: Uuid,
-    pub gateway_id: Option<Uuid>,
+    pub organization_id: DbUuid,
+    pub gateway_id: Option<DbUuid>,
     pub labels: Value,
     pub ip_addresses: Value,
     pub version: Option<String>,
@@ -29,10 +29,10 @@ pub struct AgentRow {
 /// Row type for agent list query with gateway info and system info
 #[derive(Debug, sqlx::FromRow)]
 pub struct AgentListRow {
-    pub id: Uuid,
+    pub id: DbUuid,
     pub hostname: String,
-    pub organization_id: Uuid,
-    pub gateway_id: Option<Uuid>,
+    pub organization_id: DbUuid,
+    pub gateway_id: Option<DbUuid>,
     pub labels: Value,
     pub ip_addresses: Value,
     pub version: Option<String>,
@@ -82,10 +82,10 @@ pub async fn list_agents(
     let agents_with_status: Vec<Value> = agents
         .into_iter()
         .map(|a| {
-            let connected = connected_agent_set.contains(&a.id);
+            let connected = connected_agent_set.contains(&*a.id);
             let gateway_connected = a
                 .gateway_id
-                .map(|gid| connected_gateway_set.contains(&gid))
+                .map(|gid| connected_gateway_set.contains(&*gid))
                 .unwrap_or(false);
             json!({
                 "id": a.id,
@@ -300,7 +300,7 @@ pub async fn get_agent_metrics(
     Query(params): Query<MetricsQuery>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify agent belongs to user's organization
-    let agent_exists: Option<(Uuid,)> =
+    let agent_exists: Option<(DbUuid,)> =
         sqlx::query_as("SELECT id FROM agents WHERE id = $1 AND organization_id = $2")
             .bind(agent_id)
             .bind(user.organization_id)
@@ -341,9 +341,9 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
     // Get all components for this agent that are NOT already UNREACHABLE/STOPPED/STOPPING
     #[derive(sqlx::FromRow)]
     struct ComponentInfo {
-        id: Uuid,
+        id: DbUuid,
         name: String,
-        application_id: Uuid,
+        application_id: DbUuid,
         app_name: String,
     }
 
@@ -364,7 +364,7 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
 
     for comp in &components {
         // Get current state
-        let current_state = match crate::core::fsm::get_current_state(&state.db, comp.id).await {
+        let current_state = match crate::core::fsm::get_current_state(&state.db, *comp.id).await {
             Ok(s) => s,
             Err(_) => continue,
         };
@@ -385,7 +385,7 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
                     jsonb_build_object('previous_state', $2, 'agent_id', $3::text))
             "#,
         )
-        .bind(comp.id)
+        .bind(*comp.id)
         .bind(current_state.to_string())
         .bind(agent_id.to_string())
         .execute(&state.db)
@@ -396,10 +396,10 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
 
             // Push WebSocket event
             state.ws_hub.broadcast(
-                comp.application_id,
+                *comp.application_id,
                 appcontrol_common::WsEvent::StateChange {
-                    component_id: comp.id,
-                    app_id: comp.application_id,
+                    component_id: *comp.id,
+                    app_id: *comp.application_id,
                     component_name: Some(comp.name.clone()),
                     app_name: Some(comp.app_name.clone()),
                     from: current_state,
@@ -440,7 +440,7 @@ pub async fn delete_agent(
     }
 
     // Verify agent exists and belongs to user's organization
-    let agent: Option<(Uuid, String)> =
+    let agent: Option<(DbUuid, String)> =
         sqlx::query_as("SELECT id, hostname FROM agents WHERE id = $1 AND organization_id = $2")
             .bind(agent_id)
             .bind(user.organization_id)

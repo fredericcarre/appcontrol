@@ -10,6 +10,129 @@ use crate::config::AppConfig;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// ══════════════════════════════════════════════════════════════════════════════
+// DbUuid — cross-database UUID type
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// sqlx for SQLite encodes Uuid as BLOB (16 bytes), but our SQLite migrations
+// define UUID columns as TEXT (human-readable strings). This causes a mismatch:
+// - Encode sends blob → column stores blob (or text if bound as string)
+// - Decode calls from_slice(blob) → fails on TEXT data (36 bytes != 16)
+//
+// DbUuid solves this by always encoding/decoding as TEXT for SQLite,
+// while remaining transparent to Uuid for PostgreSQL.
+
+/// A UUID type that works correctly with both PostgreSQL and SQLite.
+///
+/// For PostgreSQL: transparent wrapper around `uuid::Uuid`.
+/// For SQLite: encodes as TEXT (hyphenated string), decodes via `Uuid::parse_str`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DbUuid(pub Uuid);
+
+impl DbUuid {
+    pub fn new_v4() -> Self {
+        DbUuid(Uuid::new_v4())
+    }
+
+    pub fn nil() -> Self {
+        DbUuid(Uuid::nil())
+    }
+
+    pub fn into_inner(self) -> Uuid {
+        self.0
+    }
+}
+
+impl std::fmt::Display for DbUuid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::ops::Deref for DbUuid {
+    type Target = Uuid;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Uuid> for DbUuid {
+    fn from(u: Uuid) -> Self {
+        DbUuid(u)
+    }
+}
+
+impl From<DbUuid> for Uuid {
+    fn from(u: DbUuid) -> Self {
+        u.0
+    }
+}
+
+impl std::str::FromStr for DbUuid {
+    type Err = uuid::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(DbUuid(Uuid::parse_str(s)?))
+    }
+}
+
+// PostgreSQL: transparent to Uuid
+#[cfg(feature = "postgres")]
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DbUuid {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let uuid = <Uuid as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        Ok(DbUuid(uuid))
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl sqlx::Type<sqlx::Postgres> for DbUuid {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <Uuid as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <Uuid as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for DbUuid {
+    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> sqlx::encode::IsNull {
+        <Uuid as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+    }
+}
+
+// SQLite: encode/decode as TEXT (hyphenated UUID string)
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for DbUuid {
+    fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let text: &str = <&str as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
+        let uuid = Uuid::parse_str(text)?;
+        Ok(DbUuid(uuid))
+    }
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+impl sqlx::Type<sqlx::Sqlite> for DbUuid {
+    fn type_info() -> sqlx::sqlite::SqliteTypeInfo {
+        <String as sqlx::Type<sqlx::Sqlite>>::type_info()
+    }
+    fn compatible(ty: &sqlx::sqlite::SqliteTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Sqlite>>::compatible(ty)
+    }
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DbUuid {
+    fn encode_by_ref(
+        &self,
+        args: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+    ) -> sqlx::encode::IsNull {
+        let text = self.0.to_string();
+        <String as sqlx::Encode<sqlx::Sqlite>>::encode(text, args)
+    }
+}
+
 /// Type alias for the database pool.
 /// We use PgPool for PostgreSQL-specific features but can switch to AnyPool
 /// for portable deployment.
