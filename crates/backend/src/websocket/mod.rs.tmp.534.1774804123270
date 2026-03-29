@@ -1433,6 +1433,7 @@ async fn process_agent_message(
 
             // Update agent record with hostname, IPs, version, system info, and heartbeat
             // NOTE: We do NOT set is_active = true here to respect blocked status
+            #[cfg(feature = "postgres")]
             if let Err(e) = sqlx::query(&format!(
                 "UPDATE agents SET hostname = $2, ip_addresses = $3, last_heartbeat_at = {}, \
                  version = COALESCE($4, version), \
@@ -1450,6 +1451,37 @@ async fn process_agent_message(
             .bind(agent_id)
             .bind(&hostname)
             .bind(serde_json::json!(&ip_addresses))
+            .bind(&version)
+            .bind(&os_name)
+            .bind(&os_version)
+            .bind(&cpu_arch)
+            .bind(cpu_cores.map(|c| c as i32))
+            .bind(total_memory_mb.map(|m| m as i64))
+            .bind(disk_total_gb.map(|d| d as i64))
+            .bind(&cert_fingerprint)
+            .execute(&state.db)
+            .await
+            {
+                tracing::warn!(agent_id = %agent_id, "Failed to update agent registration: {}", e);
+            }
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            if let Err(e) = sqlx::query(&format!(
+                "UPDATE agents SET hostname = $2, ip_addresses = $3, last_heartbeat_at = {}, \
+                 version = COALESCE($4, version), \
+                 os_name = COALESCE($5, os_name), \
+                 os_version = COALESCE($6, os_version), \
+                 cpu_arch = COALESCE($7, cpu_arch), \
+                 cpu_cores = COALESCE($8, cpu_cores), \
+                 total_memory_mb = COALESCE($9, total_memory_mb), \
+                 disk_total_gb = COALESCE($10, disk_total_gb), \
+                 certificate_fingerprint = COALESCE($11, certificate_fingerprint), \
+                 identity_verified = ($11 IS NOT NULL) \
+                 WHERE id = $1 AND is_active = 1",
+                crate::db::sql::now()
+            ))
+            .bind(DbUuid::from(agent_id))
+            .bind(&hostname)
+            .bind(serde_json::to_string(&ip_addresses).unwrap_or_default())
             .bind(&version)
             .bind(&os_name)
             .bind(&os_version)

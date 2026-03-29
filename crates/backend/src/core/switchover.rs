@@ -90,8 +90,8 @@ async fn execute_validate(
     }
 
     // 2. Verify a binding profile exists for the target site
-    let target_profile = sqlx::query_as::<_, (DbUuid, String, i64)>(
-        r#"
+    #[cfg(feature = "postgres")]
+    let profile_sql: &str = r#"
         SELECT bp.id, bp.name,
                (SELECT COUNT(*) FROM binding_profile_mappings WHERE profile_id = bp.id) as mapping_count
         FROM binding_profiles bp
@@ -102,10 +102,23 @@ async fn execute_validate(
             WHERE g.site_id = $2
           )
         LIMIT 1
-        "#,
-    )
-    .bind(app_id)
-    .bind(target_site_id)
+        "#;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let profile_sql: &str = r#"
+        SELECT bp.id, bp.name,
+               (SELECT COUNT(*) FROM binding_profile_mappings WHERE profile_id = bp.id) as mapping_count
+        FROM binding_profiles bp
+        WHERE bp.application_id = $1
+          AND EXISTS (
+            SELECT 1 FROM json_each(bp.gateway_ids) AS gw
+            JOIN gateways g ON g.id = gw.value
+            WHERE g.site_id = $2
+          )
+        LIMIT 1
+        "#;
+    let target_profile = sqlx::query_as::<_, (DbUuid, String, i64)>(profile_sql)
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(target_site_id))
     .fetch_optional(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -135,7 +148,7 @@ async fn execute_validate(
     let components = sqlx::query_as::<_, (DbUuid, String)>(
         "SELECT id, name FROM components WHERE application_id = $1",
     )
-    .bind(app_id)
+    .bind(DbUuid::from(app_id))
     .fetch_all(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -177,7 +190,7 @@ async fn execute_validate(
         WHERE bpm.profile_id = $1
         "#,
     )
-    .bind(target_profile_id)
+    .bind(&target_profile_id)
     .fetch_all(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -271,16 +284,22 @@ async fn execute_stop_source(
                 super::sequencer::execute_stop_subset(state, app_id, &impacted_set).await?;
 
                 // Store the impacted set for START_TARGET phase
+                // Read current details, merge, write back (works for both PG and SQLite)
                 let impacted_ids: Vec<Uuid> = impacted_set.iter().copied().collect();
+                let current_details = get_switchover_details(&state.db, *switchover_id).await?;
+                let mut merged = current_details;
+                if let Some(obj) = merged.as_object_mut() {
+                    obj.insert("impacted_component_ids".to_string(), serde_json::json!(impacted_ids));
+                }
                 sqlx::query(
                     r#"
                     UPDATE switchover_log
-                    SET details = details || $2::jsonb
+                    SET details = $2
                     WHERE switchover_id = $1 AND phase = 'PREPARE'
                     "#,
                 )
-                .bind(switchover_id)
-                .bind(serde_json::json!({"impacted_component_ids": impacted_ids}))
+                .bind(DbUuid::from(*switchover_id))
+                .bind(DbJson::from(merged))
                 .execute(&state.db)
                 .await
                 .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -304,13 +323,15 @@ async fn execute_stop_source(
     super::sequencer::execute_stop(state, app_id).await?;
 
     // Verify all non-optional components are stopped
-    let still_running = sqlx::query_scalar::<_, i64>(
-        r#"
-        SELECT COUNT(*) FROM components
-        WHERE application_id = $1 AND is_optional = false AND current_state NOT IN ('STOPPED', 'UNKNOWN')
-        "#,
-    )
-    .bind(app_id)
+    #[cfg(feature = "postgres")]
+    let running_sql: &str = "SELECT COUNT(*) FROM components \
+        WHERE application_id = $1 AND is_optional = false AND current_state NOT IN ('STOPPED', 'UNKNOWN')";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let running_sql: &str = "SELECT COUNT(*) FROM components \
+        WHERE application_id = $1 AND is_optional = 0 AND current_state NOT IN ('STOPPED', 'UNKNOWN')";
+
+    let still_running = sqlx::query_scalar::<_, i64>(running_sql)
+    .bind(DbUuid::from(app_id))
     .fetch_one(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -395,8 +416,8 @@ async fn execute_start_target(
     );
 
     // 1. Find the target binding profile (profile whose gateways belong to target site)
-    let target_profile = sqlx::query_as::<_, (DbUuid, String)>(
-        r#"
+    #[cfg(feature = "postgres")]
+    let target_profile_sql: &str = r#"
         SELECT bp.id, bp.name
         FROM binding_profiles bp
         WHERE bp.application_id = $1
@@ -406,10 +427,22 @@ async fn execute_start_target(
             WHERE g.site_id = $2
           )
         LIMIT 1
-        "#,
-    )
-    .bind(app_id)
-    .bind(target_site_id)
+        "#;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let target_profile_sql: &str = r#"
+        SELECT bp.id, bp.name
+        FROM binding_profiles bp
+        WHERE bp.application_id = $1
+          AND EXISTS (
+            SELECT 1 FROM json_each(bp.gateway_ids) AS gw
+            JOIN gateways g ON g.id = gw.value
+            WHERE g.site_id = $2
+          )
+        LIMIT 1
+        "#;
+    let target_profile = sqlx::query_as::<_, (DbUuid, String)>(target_profile_sql)
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(target_site_id))
     .fetch_optional(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?
@@ -423,10 +456,13 @@ async fn execute_start_target(
     let (target_profile_id, target_profile_name) = target_profile;
 
     // 2. Get current active profile for snapshot
-    let current_profile = sqlx::query_as::<_, (DbUuid, String)>(
-        "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = true",
-    )
-    .bind(app_id)
+    #[cfg(feature = "postgres")]
+    let active_sql: &str = "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = true";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let active_sql: &str = "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = 1";
+
+    let current_profile = sqlx::query_as::<_, (DbUuid, String)>(active_sql)
+    .bind(DbUuid::from(app_id))
     .fetch_optional(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -440,15 +476,25 @@ async fn execute_start_target(
     // For FULL mode, we switch the entire profile
     if mode == "FULL" {
         // Deactivate all profiles for this app
-        sqlx::query("UPDATE binding_profiles SET is_active = false WHERE application_id = $1")
-            .bind(app_id)
+        #[cfg(feature = "postgres")]
+        let deactivate_sql: &str = "UPDATE binding_profiles SET is_active = false WHERE application_id = $1";
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let deactivate_sql: &str = "UPDATE binding_profiles SET is_active = 0 WHERE application_id = $1";
+
+        sqlx::query(deactivate_sql)
+            .bind(DbUuid::from(app_id))
             .execute(&state.db)
             .await
             .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
         // Activate the target profile
-        sqlx::query("UPDATE binding_profiles SET is_active = true WHERE id = $1")
-            .bind(target_profile_id)
+        #[cfg(feature = "postgres")]
+        let activate_sql: &str = "UPDATE binding_profiles SET is_active = true WHERE id = $1";
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let activate_sql: &str = "UPDATE binding_profiles SET is_active = 1 WHERE id = $1";
+
+        sqlx::query(activate_sql)
+            .bind(&target_profile_id)
             .execute(&state.db)
             .await
             .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -465,8 +511,8 @@ async fn execute_start_target(
             "UPDATE applications SET site_id = $2, updated_at = {} WHERE id = $1",
             crate::db::sql::now()
         ))
-        .bind(app_id)
-        .bind(target_site_id)
+        .bind(DbUuid::from(app_id))
+        .bind(DbUuid::from(target_site_id))
         .execute(&state.db)
         .await
         .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -476,7 +522,7 @@ async fn execute_start_target(
     let mappings = sqlx::query_as::<_, (String, DbUuid)>(
         "SELECT component_name, agent_id FROM binding_profile_mappings WHERE profile_id = $1",
     )
-    .bind(target_profile_id)
+    .bind(&target_profile_id)
     .fetch_all(&state.db)
     .await
     .map_err(|e| SwitchoverError::Database(e.to_string()))?;
