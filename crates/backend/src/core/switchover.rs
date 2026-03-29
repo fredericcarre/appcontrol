@@ -766,7 +766,7 @@ pub async fn advance_phase(
                 "#,
             )
             .bind(DbUuid::new_v4())
-            .bind(&switchover_id)
+            .bind(switchover_id)
             .bind(DbUuid::from(app_id))
             .bind(&active_phase)
             .bind(DbJson::from(details.clone()))
@@ -783,7 +783,7 @@ pub async fn advance_phase(
                     "#,
                 )
                 .bind(DbUuid::new_v4())
-                .bind(&switchover_id)
+                .bind(switchover_id)
                 .bind(DbUuid::from(app_id))
                 .bind(next)
                 .bind(DbJson::from(serde_json::json!({})))
@@ -830,7 +830,7 @@ pub async fn advance_phase(
                 "#,
             )
             .bind(DbUuid::new_v4())
-            .bind(&switchover_id)
+            .bind(switchover_id)
             .bind(DbUuid::from(app_id))
             .bind(&active_phase)
             .bind(DbJson::from(error_details))
@@ -873,7 +873,7 @@ pub async fn rollback(
         "#,
     )
     .bind(DbUuid::new_v4())
-    .bind(&switchover_id)
+    .bind(switchover_id)
     .bind(DbUuid::from(app_id))
     .bind(DbJson::from(serde_json::json!({"rolled_back_from": phase})))
     .execute(pool)
@@ -922,7 +922,7 @@ pub async fn commit(
         "#,
     )
     .bind(DbUuid::new_v4())
-    .bind(&switchover_id)
+    .bind(switchover_id)
     .bind(DbUuid::from(app_id))
     .bind(DbJson::from(serde_json::json!({})))
     .execute(pool)
