@@ -178,8 +178,14 @@ pub async fn block_agent(
     let mut tx = state.db.begin().await?;
 
     // 1. Suspend the agent and clear gateway association
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE agents SET is_active = false, gateway_id = NULL WHERE id = $1")
         .bind(agent_id)
+        .execute(&mut *tx)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE agents SET is_active = 0, gateway_id = NULL WHERE id = $1")
+        .bind(DbUuid::from(agent_id))
         .execute(&mut *tx)
         .await?;
 
@@ -252,8 +258,14 @@ pub async fn unblock_agent(
     .ok();
 
     // Reactivate the agent
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE agents SET is_active = true WHERE id = $1")
         .bind(agent_id)
+        .execute(&state.db)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE agents SET is_active = 1 WHERE id = $1")
+        .bind(DbUuid::from(agent_id))
         .execute(&state.db)
         .await?;
 

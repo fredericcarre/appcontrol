@@ -2383,7 +2383,7 @@ async fn validate_gateway_enrollment_token(
     .map_err(|_| "Database error")?;
 
     #[cfg(feature = "postgres")]
-    let parsed_row = token_row.map(|(id, org, scope, max, cur, exp)| (id, org, scope, max, cur, exp));
+    let parsed_row = token_row;
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let parsed_row = token_row.map(|(id, org, scope, max, cur, exp_str)| {
         let exp = chrono::DateTime::parse_from_rfc3339(&exp_str)

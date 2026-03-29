@@ -531,6 +531,7 @@ pub async fn suspend_gateway(
     .await
     .ok();
 
+    #[cfg(feature = "postgres")]
     let gw = sqlx::query_as::<_, GatewayRow>(
         r#"UPDATE gateways SET is_active = false
            WHERE id = $1 AND organization_id = $2
@@ -542,6 +543,22 @@ pub async fn suspend_gateway(
     )
     .bind(gateway_id)
     .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let gw = sqlx::query_as::<_, GatewayRow>(
+        r#"UPDATE gateways SET is_active = 0
+           WHERE id = $1 AND organization_id = $2
+           RETURNING id, organization_id, name, zone, hostname, port, site_id,
+                     certificate_fingerprint, is_active,
+                     COALESCE(is_primary, 0) as is_primary,
+                     COALESCE(priority, 0) as priority,
+                     version, last_heartbeat_at, created_at"#,
+    )
+    .bind(DbUuid::from(gateway_id))
+    .bind(DbUuid::from(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -570,6 +587,7 @@ pub async fn activate_gateway(
     .await
     .ok();
 
+    #[cfg(feature = "postgres")]
     let gw = sqlx::query_as::<_, GatewayRow>(
         r#"UPDATE gateways SET is_active = true
            WHERE id = $1 AND organization_id = $2
@@ -581,6 +599,22 @@ pub async fn activate_gateway(
     )
     .bind(gateway_id)
     .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let gw = sqlx::query_as::<_, GatewayRow>(
+        r#"UPDATE gateways SET is_active = 1
+           WHERE id = $1 AND organization_id = $2
+           RETURNING id, organization_id, name, zone, hostname, port, site_id,
+                     certificate_fingerprint, is_active,
+                     COALESCE(is_primary, 0) as is_primary,
+                     COALESCE(priority, 0) as priority,
+                     version, last_heartbeat_at, created_at"#,
+    )
+    .bind(DbUuid::from(gateway_id))
+    .bind(DbUuid::from(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -680,8 +714,14 @@ pub async fn block_gateway(
     let mut tx = state.db.begin().await?;
 
     // 1. Suspend the gateway
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
         .bind(gateway_id)
+        .execute(&mut *tx)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE gateways SET is_active = 0 WHERE id = $1")
+        .bind(DbUuid::from(gateway_id))
         .execute(&mut *tx)
         .await?;
 
@@ -824,8 +864,14 @@ pub async fn revoke_agent_cert(
     .await?;
 
     // Deactivate the agent
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE agents SET is_active = false, identity_verified = false WHERE id = $1")
         .bind(agent_id)
+        .execute(&mut *tx)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE agents SET is_active = 0, identity_verified = 0 WHERE id = $1")
+        .bind(DbUuid::from(agent_id))
         .execute(&mut *tx)
         .await?;
 
@@ -903,8 +949,14 @@ pub async fn revoke_gateway_cert(
     .execute(&mut *tx)
     .await?;
 
+    #[cfg(feature = "postgres")]
     sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
         .bind(gateway_id)
+        .execute(&mut *tx)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE gateways SET is_active = 0 WHERE id = $1")
+        .bind(DbUuid::from(gateway_id))
         .execute(&mut *tx)
         .await?;
 
