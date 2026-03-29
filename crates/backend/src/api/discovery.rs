@@ -224,7 +224,7 @@ pub async fn correlate(
     }
 
     // Fetch latest report per agent
-    let mut reports: Vec<(Uuid, String, serde_json::Value)> = Vec::new();
+    let mut reports: Vec<(DbUuid, String, serde_json::Value)> = Vec::new();
     for agent_id in &body.agent_ids {
         let row = sqlx::query_as::<_, (DbUuid, String, serde_json::Value)>(
             "SELECT agent_id, hostname, report FROM discovery_reports
@@ -251,7 +251,7 @@ pub async fn correlate(
     let mut agent_hostnames: std::collections::HashMap<Uuid, String> =
         std::collections::HashMap::new();
     for (agent_id, hostname, _) in &reports {
-        agent_hostnames.insert(*agent_id, hostname.clone());
+        agent_hostnames.insert(agent_id.into_inner(), hostname.clone());
         let ips = sqlx::query_scalar::<_, serde_json::Value>(
             "SELECT COALESCE(ip_addresses, '[]'::jsonb) FROM agents WHERE id = $1",
         )
@@ -264,7 +264,7 @@ pub async fn correlate(
                     .iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                     .collect();
-                agent_ips.insert(*agent_id, ip_list);
+                agent_ips.insert(agent_id.into_inner(), ip_list);
             }
         }
     }
@@ -475,7 +475,7 @@ pub async fn correlate(
                 }
 
                 // Skip if already added
-                if !client_services_added.insert((*agent_id, proc_name.clone())) {
+                if !client_services_added.insert((agent_id.into_inner(), proc_name.clone())) {
                     continue;
                 }
 

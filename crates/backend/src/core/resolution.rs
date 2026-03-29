@@ -21,7 +21,7 @@ pub enum ResolutionResult {
     Resolved {
         agent_id: Uuid,
         agent_hostname: String,
-        gateway_id: Option<Uuid>,
+        gateway_id: Option<DbUuid>,
         gateway_name: Option<String>,
         resolved_via: ResolutionMethod,
     },
@@ -126,7 +126,7 @@ pub async fn resolve_host_with_options(
             candidates: exact_matches
                 .into_iter()
                 .map(|r| AgentCandidate {
-                    agent_id: *r.agent_id,
+                    agent_id: r.agent_id,
                     hostname: r.hostname,
                     gateway_id: r.gateway_id.map(|g| g),
                     gateway_name: r.gateway_name,
@@ -157,7 +157,7 @@ pub async fn resolve_host_with_options(
             candidates: fqdn_matches
                 .into_iter()
                 .map(|r| AgentCandidate {
-                    agent_id: *r.agent_id,
+                    agent_id: r.agent_id,
                     hostname: r.hostname,
                     gateway_id: r.gateway_id,
                     gateway_name: r.gateway_name,
@@ -186,7 +186,7 @@ pub async fn resolve_host_with_options(
             candidates: ip_matches
                 .into_iter()
                 .map(|r| AgentCandidate {
-                    agent_id: *r.agent_id,
+                    agent_id: r.agent_id,
                     hostname: r.hostname,
                     gateway_id: r.gateway_id,
                     gateway_name: r.gateway_name,
@@ -212,7 +212,7 @@ pub async fn list_available_agents(
     Ok(agents
         .into_iter()
         .map(|r| AvailableAgent {
-            agent_id: *r.agent_id,
+            agent_id: r.agent_id,
             hostname: r.hostname,
             gateway_id: r.gateway_id,
             gateway_name: r.gateway_name,

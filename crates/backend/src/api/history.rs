@@ -218,10 +218,11 @@ pub async fn app_history(
 
     // 4. Get initial state at 'from' for each component
     // We need to find the most recent state_transition before 'from' for each component
-    let initial_states = get_initial_states(&state.db, &component_ids, from).await?;
+    let component_ids_uuid: Vec<Uuid> = component_ids.iter().map(|id| **id).collect();
+    let initial_states = get_initial_states(&state.db, &component_ids_uuid, from).await?;
 
     // 5. Get all state transitions in the time range
-    let transitions = fetch_transition_rows(&state.db, &component_ids, from, to).await?;
+    let transitions = fetch_transition_rows(&state.db, &component_ids_uuid, from, to).await?;
 
     // 6. Calculate snapshots at each resolution interval
     let snapshots = calculate_snapshots(
@@ -237,7 +238,7 @@ pub async fn app_history(
     let events = get_events(
         &state.db,
         DbUuid::from(app_id),
-        &component_ids,
+        &component_ids_uuid,
         &component_names,
         from,
         to,
@@ -276,7 +277,7 @@ async fn fetch_initial_states(
     db: &crate::db::DbPool,
     component_ids: &[Uuid],
     at: DateTime<Utc>,
-) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+) -> Result<Vec<(DbUuid, String)>, sqlx::Error> {
     sqlx::query_as::<_, (DbUuid, String)>(
         r#"
         SELECT c.id, COALESCE(
@@ -302,7 +303,7 @@ async fn fetch_initial_states(
     db: &crate::db::DbPool,
     component_ids: &[Uuid],
     at: DateTime<Utc>,
-) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+) -> Result<Vec<(DbUuid, String)>, sqlx::Error> {
     if component_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -333,7 +334,7 @@ async fn fetch_initial_states(
     let rows: Vec<(String, String)> = q.fetch_all(db).await?;
     Ok(rows
         .into_iter()
-        .filter_map(|(id_str, state)| Uuid::parse_str(&id_str).ok().map(|id| (id, state)))
+        .filter_map(|(id_str, state)| Uuid::parse_str(&id_str).ok().map(|id| (DbUuid::from(id), state)))
         .collect())
 }
 
@@ -360,7 +361,7 @@ fn calculate_snapshots(
             && transitions[transition_idx].created_at <= current_time
         {
             let t = &transitions[transition_idx];
-            current_states.insert(*t.component_id, t.to_state.clone());
+            current_states.insert(t.component_id, t.to_state.clone());
             transition_idx += 1;
         }
 
@@ -590,7 +591,7 @@ async fn fetch_transition_rows(
                 .ok()?
                 .with_timezone(&Utc);
             Some(StateTransitionRow {
-                component_id: id,
+                component_id: DbUuid::from(id),
                 from_state: r.from_state,
                 to_state: r.to_state,
                 trigger: r.trigger,
@@ -607,7 +608,7 @@ async fn fetch_state_transitions(
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     limit: i64,
-) -> Result<Vec<(Uuid, String, String, String, DateTime<Utc>)>, sqlx::Error> {
+) -> Result<Vec<(DbUuid, String, String, String, DateTime<Utc>)>, sqlx::Error> {
     sqlx::query_as::<_, (DbUuid, String, String, String, DateTime<Utc>)>(
         r#"
         SELECT component_id, from_state, to_state, trigger, created_at
@@ -632,7 +633,7 @@ async fn fetch_state_transitions(
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     limit: i64,
-) -> Result<Vec<(Uuid, String, String, String, DateTime<Utc>)>, sqlx::Error> {
+) -> Result<Vec<(DbUuid, String, String, String, DateTime<Utc>)>, sqlx::Error> {
     if component_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -664,7 +665,7 @@ async fn fetch_state_transitions(
             let at = chrono::DateTime::parse_from_rfc3339(&created_at)
                 .ok()?
                 .with_timezone(&Utc);
-            Some((id, from_state, to_state, trigger, at))
+            Some((DbUuid::from(id), from_state, to_state, trigger, at))
         })
         .collect())
 }

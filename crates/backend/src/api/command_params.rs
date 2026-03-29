@@ -56,8 +56,9 @@ pub struct UpdateInputParamRequest {
 }
 
 /// Resolve the application_id for a command through the component chain.
-async fn app_id_for_command(db: &crate::db::DbPool, command_id: DbUuid) -> Result<Uuid, ApiError> {
-    sqlx::query_scalar::<_, DbUuid>(
+async fn app_id_for_command(db: &crate::db::DbPool, command_id: impl Into<Uuid>) -> Result<Uuid, ApiError> {
+    let command_id: Uuid = command_id.into();
+    let id = sqlx::query_scalar::<_, DbUuid>(
         "SELECT c.application_id FROM component_commands cc \
          JOIN components c ON c.id = cc.component_id \
          WHERE cc.id = $1",
@@ -65,7 +66,8 @@ async fn app_id_for_command(db: &crate::db::DbPool, command_id: DbUuid) -> Resul
     .bind(command_id)
     .fetch_optional(db)
     .await?
-    .ok_or_not_found()
+    .ok_or_not_found()?;
+    Ok(id.into_inner())
 }
 
 /// List all input parameters for a command.

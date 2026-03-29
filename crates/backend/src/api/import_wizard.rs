@@ -225,7 +225,7 @@ pub async fn preview_import(
                 } => ComponentResolutionStatus::Resolved {
                     agent_id,
                     agent_hostname,
-                    gateway_id,
+                    gateway_id: gateway_id.map(|g| g.into_inner()),
                     gateway_name,
                     resolved_via: resolved_via.to_string(),
                 },
@@ -237,7 +237,7 @@ pub async fn preview_import(
                             .map(|c| AgentCandidateDto {
                                 agent_id: *c.agent_id,
                                 hostname: c.hostname,
-                                gateway_id: c.gateway_id,
+                                gateway_id: c.gateway_id.map(|g| *g),
                                 gateway_name: c.gateway_name,
                                 ip_addresses: c.ip_addresses,
                                 matched_via: c.matched_via.to_string(),
@@ -293,7 +293,7 @@ pub async fn preview_import(
                                 } => Some(ComponentResolutionStatus::Resolved {
                                     agent_id,
                                     agent_hostname,
-                                    gateway_id,
+                                    gateway_id: gateway_id.map(|g| g.into_inner()),
                                     gateway_name,
                                     resolved_via: resolved_via.to_string(),
                                 }),
@@ -304,7 +304,7 @@ pub async fn preview_import(
                                             .map(|c| AgentCandidateDto {
                                                 agent_id: *c.agent_id,
                                                 hostname: c.hostname,
-                                                gateway_id: c.gateway_id,
+                                                gateway_id: c.gateway_id.map(|g| *g),
                                                 gateway_name: c.gateway_name,
                                                 ip_addresses: c.ip_addresses,
                                                 matched_via: c.matched_via.to_string(),

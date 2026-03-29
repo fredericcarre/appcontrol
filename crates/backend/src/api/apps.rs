@@ -356,7 +356,7 @@ pub async fn get_app(
         std::collections::HashMap::new();
 
     if !referenced_app_ids.is_empty() {
-        let ref_ids: Vec<Uuid> = referenced_app_ids.iter().map(|id| **id).collect();
+        let ref_ids: Vec<Uuid> = referenced_app_ids.iter().map(|id| id.into_inner()).collect();
         let status_rows = fetch_referenced_app_statuses(&state.db, &ref_ids).await?;
         for (app_id, app_name, counts) in status_rows {
             referenced_app_names.insert(app_id, app_name);
@@ -869,7 +869,7 @@ pub async fn start_branch(
 
     // If no component_id provided, find all FAILED components in this application.
     let target_component_ids: Vec<DbUuid> = if let Some(cid) = body.component_id {
-        vec![DbUuid::from(*cid)]
+        vec![cid]
     } else {
         sqlx::query_scalar::<_, DbUuid>(
             "SELECT id FROM components WHERE application_id = $1 AND current_state = 'FAILED'",
@@ -896,7 +896,7 @@ pub async fn start_branch(
     )
     .await?;
 
-    let branch = crate::core::branch::detect_error_branch(&state.db, id, target_component_ids[0])
+    let branch = crate::core::branch::detect_error_branch(&state.db, id, *target_component_ids[0])
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -1472,7 +1472,7 @@ async fn fetch_referenced_app_statuses(
                 ),
             )
         })
-        .collect().into())
+        .collect::<Vec<_>>())
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -1528,7 +1528,7 @@ async fn fetch_referenced_app_statuses(
         .filter_map(|r| {
             Uuid::parse_str(&r.app_id).ok().map(|id| {
                 (
-                    id,
+                    DbUuid::from(id),
                     r.app_name,
                     (
                         r.running_count,

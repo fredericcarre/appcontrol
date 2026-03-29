@@ -511,7 +511,7 @@ pub async fn get_component_logs(
         &state,
         &user,
         DbUuid::from(component_id),
-        query.source.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+        query.source.as_ref().and_then(|s| Uuid::parse_str(s).ok().map(DbUuid::from)),
         &source_type,
         &source_name,
         &query,

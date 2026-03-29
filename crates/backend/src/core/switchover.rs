@@ -617,7 +617,7 @@ async fn execute_start_target(
 
         if let Some(ids) = impacted_ids {
             if !ids.is_empty() {
-                let impacted_set: std::collections::HashSet<DbUuid> = ids.iter().copied().collect().into();
+                let impacted_set: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
                 tracing::info!(
                     app_id = %app_id,
                     mode = mode,
@@ -630,7 +630,7 @@ async fn execute_start_target(
         } else if !swapped_component_ids.is_empty() {
             // Fallback: just start swapped components if impacted_ids not found
             let component_set: std::collections::HashSet<Uuid> =
-                swapped_component_ids.iter().copied().collect().into();
+                swapped_component_ids.iter().map(|id| id.into_inner()).collect();
             super::sequencer::execute_start_subset(state, app_id, &component_set).await?;
         }
     } else {

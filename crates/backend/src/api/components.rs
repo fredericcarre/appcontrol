@@ -418,7 +418,7 @@ pub async fn update_component(
 
     // Push config to affected agent so it picks up the changes
     // Use the actual agent_id from the updated component (after COALESCE), not the resolved one
-    let agent_ids = component.agent_id.map(|id| vec![id]);
+    let agent_ids: Option<Vec<uuid::Uuid>> = component.agent_id.map(|id| vec![id.into_inner()]);
     crate::websocket::push_config_to_affected_agents(
         &state,
         Some(current.into()),
@@ -1440,7 +1440,7 @@ pub async fn list_check_events(
 ///
 /// No multicast: returns the first match only. If multiple agents
 /// share an IP, the first one (by created_at) wins.
-pub async fn resolve_host_to_agent(pool: &crate::db::DbPool, host: &str) -> Option<DbUuid> {
+pub async fn resolve_host_to_agent(pool: &crate::db::DbPool, host: &str) -> Option<Uuid> {
     // 1. Try exact hostname match
     let by_hostname = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM agents WHERE hostname = $1 AND is_active = true ORDER BY created_at LIMIT 1",
@@ -1452,7 +1452,7 @@ pub async fn resolve_host_to_agent(pool: &crate::db::DbPool, host: &str) -> Opti
     .flatten();
 
     if by_hostname.is_some() {
-        return by_hostname;
+        return by_hostname.map(|x| x.into_inner());
     }
 
     // 2. Try IP address match in JSONB array
@@ -1464,6 +1464,7 @@ pub async fn resolve_host_to_agent(pool: &crate::db::DbPool, host: &str) -> Opti
     .await
     .ok()
     .flatten()
+    .map(|x| x.into_inner())
 }
 
 /// Called when an agent registers: resolve all components that reference

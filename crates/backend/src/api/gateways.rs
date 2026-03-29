@@ -89,7 +89,7 @@ pub async fn list_gateways(
     let gateways = sqlx::query_as::<
         _,
         (
-            Uuid,
+            DbUuid,
             String,
             Option<String>,
             bool,
@@ -98,7 +98,7 @@ pub async fn list_gateways(
             Option<String>,
             Option<chrono::DateTime<chrono::Utc>>,
             i64,
-            Option<Uuid>,
+            Option<DbUuid>,
             Option<String>,
             Option<String>,
         ),
@@ -132,7 +132,7 @@ pub async fn list_gateways(
     // Group by site_id and compute failover status
     // Key is (site_id, site_name, site_code)
     let mut sites_map: std::collections::HashMap<
-        (Option<Uuid>, String, String),
+        (Option<DbUuid>, String, String),
         Vec<GatewayListItem>,
     > = std::collections::HashMap::new();
 
@@ -183,14 +183,14 @@ pub async fn list_gateways(
             connected,
             version,
             last_heartbeat_at: last_heartbeat,
-            site_id,
+            site_id: site_id.map(DbUuid::from),
             site_name: site_name.clone(),
             site_code: site_code.clone(),
         };
 
         // Group by site - use "Unassigned" for gateways without a site
         let key = (
-            site_id,
+            site_id.map(DbUuid::from),
             site_name.unwrap_or_else(|| "Unassigned".to_string()),
             site_code.unwrap_or_else(|| "N/A".to_string()),
         );
@@ -301,7 +301,7 @@ pub async fn update_gateway(
 
     // If setting as primary, first unset any existing primary in the same site
     if req.is_primary == Some(true) {
-        let gw_info: Option<(Option<Uuid>, String)> = sqlx::query_as(
+        let gw_info: Option<(Option<DbUuid>, String)> = sqlx::query_as(
             "SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2",
         )
         .bind(id)

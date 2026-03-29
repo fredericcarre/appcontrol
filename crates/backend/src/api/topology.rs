@@ -137,8 +137,8 @@ pub async fn get_topology(
 fn build_topology_structure(
     app_id: Uuid,
     app_name: &str,
-    components: &[(Uuid, String, String, Option<String>, String)],
-    deps: &[(Uuid, Uuid)],
+    components: &[(DbUuid, String, String, Option<String>, String)],
+    deps: &[(DbUuid, DbUuid)],
     levels: &[Vec<Uuid>],
     name_map: &HashMap<DbUuid, String>,
 ) -> Value {
@@ -362,8 +362,8 @@ pub async fn validate_sequence(
 
     let name_to_id: HashMap<String, Uuid> = components
         .iter()
-        .map(|(id, name)| (name.clone(), *id))
-        .collect().into();
+        .map(|(id, name)| (name.clone(), id.into_inner()))
+        .collect();
     let id_to_name: HashMap<DbUuid, String> = components
         .iter()
         .map(|(id, name)| (*id, name.clone()))
@@ -386,7 +386,7 @@ pub async fn validate_sequence(
     let mut correct_position: HashMap<DbUuid, usize> = HashMap::new();
     for (pos, level) in levels.iter().enumerate() {
         for &comp_id in level {
-            correct_position.insert(comp_id, pos);
+            correct_position.insert(DbUuid::from(comp_id), pos);
         }
     }
 
@@ -395,7 +395,7 @@ pub async fn validate_sequence(
     let mut unknown_names: Vec<String> = Vec::new();
     for (idx, name) in body.sequence.iter().enumerate() {
         if let Some(&comp_id) = name_to_id.get(name) {
-            proposed_position.insert(comp_id, idx);
+            proposed_position.insert(DbUuid::from(comp_id), idx);
         } else {
             unknown_names.push(name.clone());
         }
@@ -449,7 +449,7 @@ pub async fn validate_sequence(
     // Missing components: in AppControl DAG but not in proposed sequence
     let missing: Vec<&str> = id_to_name
         .iter()
-        .filter(|(id, _)| !proposed_position.contains_key(id))
+        .filter(|(id, _)| !proposed_position.contains_key(*id))
         .map(|(_, name)| name.as_str())
         .collect();
 

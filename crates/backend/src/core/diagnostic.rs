@@ -85,7 +85,8 @@ pub async fn diagnose_app(
     let comp_ids: Vec<DbUuid> = components.iter().map(|(id, _)| *id).collect();
 
     // Single query: get latest check result per (component_id, check_type)
-    let latest_checks = fetch_latest_checks(pool, &comp_ids)
+    let comp_ids_uuid: Vec<Uuid> = comp_ids.iter().map(|id| id.into_inner()).collect();
+    let latest_checks = fetch_latest_checks(pool, &comp_ids_uuid)
         .await
         .map_err(|e| DiagnosticError::Database(e.to_string()))?;
 
@@ -99,7 +100,7 @@ pub async fn diagnose_app(
             "infrastructure" => "infrastructure",
             _ => continue,
         };
-        check_map.insert((*comp_id, ct), *exit_code);
+        check_map.insert((**comp_id, ct), *exit_code);
     }
 
     let exit_code_to_status = |code: Option<&i16>| -> CheckStatus {
@@ -137,7 +138,7 @@ pub async fn diagnose_app(
 async fn fetch_latest_checks(
     pool: &DbPool,
     comp_ids: &[Uuid],
-) -> Result<Vec<(Uuid, String, i16)>, sqlx::Error> {
+) -> Result<Vec<(DbUuid, String, i16)>, sqlx::Error> {
     sqlx::query_as::<_, (DbUuid, String, i16)>(
         r#"
         SELECT component_id, check_type, exit_code
@@ -160,7 +161,7 @@ async fn fetch_latest_checks(
 async fn fetch_latest_checks(
     pool: &DbPool,
     comp_ids: &[Uuid],
-) -> Result<Vec<(Uuid, String, i16)>, sqlx::Error> {
+) -> Result<Vec<(DbUuid, String, i16)>, sqlx::Error> {
     if comp_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -189,7 +190,7 @@ async fn fetch_latest_checks(
         .filter_map(|(id_str, check_type, exit_code)| {
             Uuid::parse_str(&id_str)
                 .ok()
-                .map(|id| (id, check_type, exit_code))
+                .map(|id| (DbUuid::from(id), check_type, exit_code))
         })
         .collect())
 }

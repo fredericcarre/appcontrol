@@ -1329,7 +1329,7 @@ async fn process_agent_message(
             // (late binding: user created component before agent was online)
             crate::api::components::resolve_components_for_agent(
                 &state.db,
-                agent_id.into(),
+                agent_id,
                 &hostname,
                 &ip_addresses,
             )

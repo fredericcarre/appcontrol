@@ -180,8 +180,8 @@ fn relative_time(dt: DateTime<Utc>) -> String {
 
 async fn get_target_info(
     db: &crate::db::DbPool,
-    application_id: Option<Uuid>,
-    component_id: Option<Uuid>,
+    application_id: Option<DbUuid>,
+    component_id: Option<DbUuid>,
 ) -> (String, DbUuid, String) {
     if let Some(app_id) = application_id {
         let name: Option<String> =

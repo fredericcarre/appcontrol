@@ -85,7 +85,7 @@ async fn fetch_component_states(
     let rows: Vec<(String, String)> = q.fetch_all(pool).await?;
     Ok(rows
         .into_iter()
-        .filter_map(|(id_str, state)| Uuid::parse_str(&id_str).ok().map(|id| (id, state)))
+        .filter_map(|(id_str, state)| Uuid::parse_str(&id_str).ok().map(|id| (DbUuid::from(id), state)))
         .collect())
 }
 
@@ -384,7 +384,7 @@ async fn fetch_component_for_transition<'a>(
     .await?;
 
     Ok(row.map(|r| {
-        let app_id = Uuid::parse_str(&r.application_id).unwrap_or(Uuid::nil());
+        let app_id = DbUuid::from(Uuid::parse_str(&r.application_id).unwrap_or(Uuid::nil()));
         (r.current_state, app_id, r.component_name, r.app_name)
     }))
 }

@@ -236,14 +236,14 @@ async fn execute_start_internal(
                 // - DEGRADED if all are RUNNING or DEGRADED (at least one DEGRADED)
                 // - Otherwise still starting
                 if counts.failed > 0 {
-                    let name = get_component_name(&state.db, comp_id).await;
+                    let _name = get_component_name(&state.db, comp_id).await;
                     tracing::error!(
                         component_id = %comp_id,
                         referenced_app_id = %ref_app_id,
                         failed_count = counts.failed,
                         "Referenced app has failed components"
                     );
-                    super::sequencer::start_single_component(state, *comp_id)
+                    let _ = super::sequencer::start_single_component(state, comp_id).await;
                 }
 
                 if counts.running == counts.total {

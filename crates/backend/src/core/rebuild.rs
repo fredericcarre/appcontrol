@@ -235,7 +235,7 @@ pub async fn execute_rebuild(
 
             // Run infrastructure rebuild first (if defined) — WAIT for completion
             if let Some(infra_cmd) = infra_cmd {
-                let exec_agent = bastion_agent.or(agent_id);
+                let exec_agent = bastion_agent.or(agent_id.map(|id| id.into_inner()));
                 if let Some(exec_agent_id) = exec_agent {
                     let request_id = Uuid::new_v4();
                     let message = BackendMessage::ExecuteCommand {
@@ -290,7 +290,7 @@ pub async fn execute_rebuild(
 
             // Run application rebuild command — WAIT for completion
             if let Some(rebuild_cmd) = rebuild_cmd {
-                if let Some(agent_id) = agent_id {
+                if let Some(agent_id) = agent_id.map(|id| id.into_inner()) {
                     let request_id = Uuid::new_v4();
                     let message = BackendMessage::ExecuteCommand {
                         request_id,

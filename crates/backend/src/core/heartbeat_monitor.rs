@@ -7,10 +7,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(feature = "postgres")]
-use uuid::Uuid;
+use crate::db::DbUuid;
 
 use crate::AppState;
-use crate::db::DbUuid;
+
 #[cfg(feature = "postgres")]
 use appcontrol_common::ComponentState;
 

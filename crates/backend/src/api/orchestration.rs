@@ -33,9 +33,9 @@ pub struct WaitQuery {
 #[derive(Debug, Clone)]
 pub struct PreflightResult {
     pub can_start: bool,
-    pub unreachable_agents: Vec<(Uuid, String)>, // (agent_id, hostname)
-    pub disconnected_gateways: Vec<(Uuid, String)>, // (gateway_id, name)
-    pub components_without_agent: Vec<(Uuid, String)>, // (component_id, name)
+    pub unreachable_agents: Vec<(DbUuid, String)>, // (agent_id, hostname)
+    pub disconnected_gateways: Vec<(DbUuid, String)>, // (gateway_id, name)
+    pub components_without_agent: Vec<(DbUuid, String)>, // (component_id, name)
 }
 
 /// Check if all agents for an application are reachable before starting
