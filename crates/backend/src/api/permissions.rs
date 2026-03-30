@@ -77,7 +77,8 @@ pub async fn list_user_permissions(
 
 /// Resolve the site_id and organization_id for an application.
 async fn app_site_info(pool: &crate::db::DbPool, app_id: Uuid) -> Option<(Uuid, Uuid)> {
-    sqlx::query_as::<_, (DbUuid, DbUuid)>(
+    #[cfg(feature = "postgres")]
+    let result = sqlx::query_as::<_, (DbUuid, DbUuid)>(
         "SELECT site_id, organization_id FROM applications WHERE id = $1",
     )
     .bind(app_id)
@@ -85,7 +86,20 @@ async fn app_site_info(pool: &crate::db::DbPool, app_id: Uuid) -> Option<(Uuid, 
     .await
     .ok()
     .flatten()
-    .map(|(s, o)| (s.into_inner(), o.into_inner()))
+    .map(|(s, o)| (s.into_inner(), o.into_inner()));
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query_as::<_, (DbUuid, DbUuid)>(
+        "SELECT site_id, organization_id FROM applications WHERE id = $1",
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .map(|(s, o)| (s.into_inner(), o.into_inner()));
+
+    result
 }
 
 /// Validate that a target user has workspace access to the app's site.
@@ -131,6 +145,7 @@ pub async fn grant_user_permission(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let id = sqlx::query_scalar::<_, DbUuid>(
         &format!(
             "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
@@ -144,6 +159,24 @@ pub async fn grant_user_permission(
     .bind(body.user_id)
     .bind(&body.permission_level)
     .bind(user.user_id)
+    .bind(body.expires_at)
+    .fetch_one(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let id = sqlx::query_scalar::<_, DbUuid>(
+        &format!(
+            "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (application_id, user_id) DO UPDATE SET permission_level = $3, expires_at = $5, updated_at = {}
+             RETURNING id",
+            crate::db::sql::now()
+        ),
+    )
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(body.user_id))
+    .bind(&body.permission_level)
+    .bind(DbUuid::from(user.user_id))
     .bind(body.expires_at)
     .fetch_one(&state.db)
     .await?;

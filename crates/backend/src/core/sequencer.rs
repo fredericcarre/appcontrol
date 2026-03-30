@@ -51,8 +51,17 @@ pub async fn build_start_plan(
     for level in &levels {
         let mut level_info = Vec::new();
         for &comp_id in level {
+            #[cfg(feature = "postgres")]
             let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
                 .bind(comp_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| SequencerError::Database(e.to_string()))?
+                .unwrap_or_else(|| comp_id.to_string());
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
+                .bind(crate::db::DbUuid::from(comp_id))
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| SequencerError::Database(e.to_string()))?

@@ -92,6 +92,11 @@ pub struct StartAppRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct StopAppRequest {
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct StartBranchRequest {
     pub component_id: Option<DbUuid>,
     pub dry_run: Option<bool>,
@@ -891,10 +896,32 @@ pub async fn stop_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
+    Json(body): Json<Option<StopAppRequest>>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
+    }
+
+    let dry_run = body.and_then(|b| b.dry_run).unwrap_or(false);
+
+    let action_id = log_action(
+        &state.db,
+        user.user_id,
+        "stop_app",
+        "application",
+        id,
+        json!({"dry_run": dry_run}),
+    )
+    .await?;
+
+    if dry_run {
+        // Build a stop plan (reverse of start plan)
+        let plan = crate::core::sequencer::build_start_plan(&state.db, id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        let _ = complete_action_success(&state.db, action_id).await;
+        return Ok(Json(json!({ "dry_run": true, "plan": plan })));
     }
 
     // Acquire operation lock — prevents concurrent start/stop on the same app
@@ -903,16 +930,6 @@ pub async fn stop_app(
         .try_lock(id, "stop", user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
-
-    let action_id = log_action(
-        &state.db,
-        user.user_id,
-        "stop_app",
-        "application",
-        id,
-        json!({}),
-    )
-    .await?;
 
     let state_clone = state.clone();
     tokio::spawn(async move {

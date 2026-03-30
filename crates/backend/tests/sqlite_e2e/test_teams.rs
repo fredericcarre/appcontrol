@@ -20,7 +20,8 @@ async fn test_list_teams() {
 
     let resp = ctx.get("/api/v1/teams").await;
     assert_eq!(resp.status(), 200);
-    let teams: Vec<Value> = resp.json().await.unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let teams = body["teams"].as_array().expect("Should have teams array");
     assert!(teams.len() >= 2, "Should have at least 2 teams");
 }
 

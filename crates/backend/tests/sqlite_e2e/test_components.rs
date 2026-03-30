@@ -60,7 +60,7 @@ async fn test_update_component() {
 
     let resp = ctx
         .put(
-            &format!("/api/v1/apps/{app_id}/components/{comp_id}"),
+            &format!("/api/v1/components/{comp_id}"),
             json!({"name": "Updated-Comp", "description": "Updated"}),
         )
         .await;
@@ -89,7 +89,7 @@ async fn test_delete_component() {
     let comp_id = comp["id"].as_str().unwrap();
 
     let resp = ctx
-        .delete(&format!("/api/v1/apps/{app_id}/components/{comp_id}"))
+        .delete(&format!("/api/v1/components/{comp_id}"))
         .await;
     assert!(
         resp.status().is_success(),

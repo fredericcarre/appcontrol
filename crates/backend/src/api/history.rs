@@ -193,10 +193,19 @@ pub async fn app_history(
     let resolution = params.resolution;
 
     // 3. Get all components for this app
+    #[cfg(feature = "postgres")]
     let components = sqlx::query_as::<_, ComponentRow>(
         "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
     )
     .bind(app_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let components = sqlx::query_as::<_, ComponentRow>(
+        "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
+    )
+    .bind(DbUuid::from(app_id))
     .fetch_all(&state.db)
     .await?;
 

@@ -23,9 +23,18 @@ pub async fn get_current_state(
 ) -> Result<ComponentState, FsmError> {
     let component_id: Uuid = component_id.into();
 
+    #[cfg(feature = "postgres")]
     let state_str =
         sqlx::query_scalar::<_, String>("SELECT current_state FROM components WHERE id = $1")
             .bind(component_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let state_str =
+        sqlx::query_scalar::<_, String>("SELECT current_state FROM components WHERE id = $1")
+            .bind(crate::db::DbUuid::from(component_id))
             .fetch_optional(pool)
             .await
             .map_err(|e| FsmError::Database(e.to_string()))?;
