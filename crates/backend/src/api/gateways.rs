@@ -558,7 +558,7 @@ pub async fn suspend_gateway(
                      version, last_heartbeat_at, created_at"#,
     )
     .bind(DbUuid::from(gateway_id))
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -614,7 +614,7 @@ pub async fn activate_gateway(
                      version, last_heartbeat_at, created_at"#,
     )
     .bind(DbUuid::from(gateway_id))
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;

@@ -176,7 +176,7 @@ pub async fn grant_user_permission(
     .bind(DbUuid::from(app_id))
     .bind(DbUuid::from(body.user_id))
     .bind(&body.permission_level)
-    .bind(DbUuid::from(user.user_id))
+    .bind(user.user_id)
     .bind(body.expires_at)
     .fetch_one(&state.db)
     .await?;
@@ -393,6 +393,7 @@ pub async fn create_share_link(
     )
     .await?;
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let new_id = DbUuid::new_v4();
 
     #[cfg(feature = "postgres")]

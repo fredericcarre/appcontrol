@@ -58,7 +58,7 @@ pub async fn list_teams(
     let teams = sqlx::query_as::<_, TeamRow>(
         "SELECT id, organization_id, name, description, created_at, updated_at FROM teams WHERE organization_id = $1 ORDER BY name",
     )
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .fetch_all(&state.db)
     .await?;
 
@@ -135,7 +135,7 @@ pub async fn create_team(
         "#,
     )
     .bind(DbUuid::from(team_id))
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .bind(&body.name)
     .bind(&body.description)
     .fetch_one(&state.db)
@@ -156,7 +156,7 @@ pub async fn create_team(
     )
     .bind(DbUuid::new_v4())
     .bind(DbUuid::from(team_id))
-    .bind(DbUuid::from(user.user_id))
+    .bind(user.user_id)
     .execute(&state.db)
     .await;
 
@@ -343,7 +343,7 @@ pub async fn add_member(
                 "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead'",
             )
             .bind(DbUuid::from(id))
-            .bind(DbUuid::from(user.user_id))
+            .bind(user.user_id)
             .fetch_one(&state.db)
             .await?;
             count > 0
@@ -421,7 +421,7 @@ pub async fn remove_member(
                 "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead'",
             )
             .bind(DbUuid::from(team_id))
-            .bind(DbUuid::from(user.user_id))
+            .bind(user.user_id)
             .fetch_one(&state.db)
             .await?;
             count > 0

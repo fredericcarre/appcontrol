@@ -97,7 +97,7 @@ pub async fn list_users(
              AND ($4 IS NULL OR email LIKE '%' || $4 || '%' OR display_name LIKE '%' || $4 || '%')
            ORDER BY display_name"#,
     )
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .bind(&query.role)
     .bind(query.is_active)
     .bind(&query.search)

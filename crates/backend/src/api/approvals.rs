@@ -243,7 +243,7 @@ pub async fn decide_approval(
     .ok_or_not_found()?;
 
     // 4-eyes: requester cannot approve their own request
-    if request.requested_by == DbUuid::from(user.user_id) {
+    if request.requested_by == user.user_id {
         return Err(ApiError::Forbidden);
     }
 

@@ -1091,20 +1091,19 @@ impl TestContext {
     // ---- Custom command helper ----
 
     pub async fn create_command(&self, component_id: Uuid, name: &str, cmd: &str, confirm: bool) {
-        self.put(
-            &format!("/api/v1/components/{component_id}"),
-            json!({
-                "commands": [{
-                    "name": name,
-                    "display_name": name,
-                    "command": cmd,
-                    "category": "custom",
-                    "requires_confirmation": confirm,
-                    "timeout_seconds": 30,
-                }]
-            }),
+        let cmd_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO component_commands (id, component_id, name, command, requires_confirmation) \
+             VALUES ($1, $2, $3, $4, $5)",
         )
-        .await;
+        .bind(DbUuid::from(cmd_id))
+        .bind(DbUuid::from(component_id))
+        .bind(name)
+        .bind(cmd)
+        .bind(confirm)
+        .execute(&self.db_pool)
+        .await
+        .unwrap();
     }
 
     pub async fn cleanup(&self) {

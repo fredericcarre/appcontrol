@@ -205,14 +205,17 @@ pub async fn get_component(
     #[cfg(feature = "postgres")]
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
-        SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
-               host, agent_id, check_cmd, start_cmd, stop_cmd,
-               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
-        FROM components WHERE id = $1
+        SELECT c.id, c.application_id, c.name, c.component_type, c.display_name, c.description, c.icon, c.group_id,
+               c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd,
+               c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds, c.is_optional,
+               c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at
+        FROM components c
+        JOIN applications a ON c.application_id = a.id
+        WHERE c.id = $1 AND a.organization_id = $2
         "#,
     )
     .bind(crate::db::bind_id(id))
+    .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -220,14 +223,17 @@ pub async fn get_component(
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let component = sqlx::query_as::<_, ComponentRow>(
         r#"
-        SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
-               host, agent_id, check_cmd, start_cmd, stop_cmd,
-               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
-        FROM components WHERE id = $1
+        SELECT c.id, c.application_id, c.name, c.component_type, c.display_name, c.description, c.icon, c.group_id,
+               c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd,
+               c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds, c.is_optional,
+               c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at
+        FROM components c
+        JOIN applications a ON c.application_id = a.id
+        WHERE c.id = $1 AND a.organization_id = $2
         "#,
     )
     .bind(DbUuid::from(id))
+    .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -420,6 +426,37 @@ pub async fn update_component(
     )
     .await?;
 
+    // Snapshot before state for config_versions
+    #[cfg(feature = "postgres")]
+    let before_snapshot = {
+        let row = sqlx::query_as::<_, ComponentRow>(
+            "SELECT id, application_id, name, component_type, display_name, description, icon, group_id, \
+             host, agent_id, check_cmd, start_cmd, stop_cmd, \
+             check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional, \
+             position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at \
+             FROM components WHERE id = $1",
+        )
+        .bind(crate::db::bind_id(id))
+        .fetch_optional(&state.db)
+        .await?;
+        row.map(|r| json!(r))
+    };
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let before_snapshot = {
+        let row = sqlx::query_as::<_, ComponentRow>(
+            "SELECT id, application_id, name, component_type, display_name, description, icon, group_id, \
+             host, agent_id, check_cmd, start_cmd, stop_cmd, \
+             check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional, \
+             position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at \
+             FROM components WHERE id = $1",
+        )
+        .bind(DbUuid::from(id))
+        .fetch_optional(&state.db)
+        .await?;
+        row.map(|r| json!(r))
+    };
+
     // Use effective_host() to support both "host" and "hostname" JSON fields
     let effective_host = body.effective_host().map(|s| s.to_string());
 
@@ -525,6 +562,41 @@ pub async fn update_component(
         .fetch_optional(&state.db)
         .await?
         .ok_or_not_found()?;
+
+    // Record config_versions snapshot
+    {
+        let after_snapshot = json!(component);
+        let before_json = before_snapshot
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "null".to_string());
+        let after_json = after_snapshot.to_string();
+
+        #[cfg(feature = "postgres")]
+        sqlx::query(
+            "INSERT INTO config_versions (resource_type, resource_id, changed_by, before_snapshot, after_snapshot) \
+             VALUES ('component', $1, $2, $3::jsonb, $4::jsonb)",
+        )
+        .bind(crate::db::bind_id(id))
+        .bind(user.user_id)
+        .bind(&before_json)
+        .bind(&after_json)
+        .execute(&state.db)
+        .await?;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        sqlx::query(
+            "INSERT INTO config_versions (id, resource_type, resource_id, changed_by, before_snapshot, after_snapshot) \
+             VALUES ($1, 'component', $2, $3, $4, $5)",
+        )
+        .bind(DbUuid::new_v4())
+        .bind(DbUuid::from(id))
+        .bind(user.user_id)
+        .bind(&before_json)
+        .bind(&after_json)
+        .execute(&state.db)
+        .await?;
+    }
 
     // Push config to affected agent so it picks up the changes
     // Use the actual agent_id from the updated component (after COALESCE), not the resolved one
@@ -1068,6 +1140,8 @@ pub async fn restart_with_dependents(
 pub struct ExecuteCommandBody {
     #[serde(default)]
     pub parameters: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub confirmed: Option<bool>,
 }
 
 pub async fn execute_command(
@@ -1146,6 +1220,20 @@ pub async fn execute_command(
         .fetch_optional(&state.db)
         .await?
         .ok_or_not_found()?;
+
+        // Check confirmation requirement
+        let requires_confirmation = cmd_row.2;
+        if requires_confirmation {
+            let confirmed = body
+                .as_ref()
+                .and_then(|b| b.confirmed)
+                .unwrap_or(false);
+            if !confirmed {
+                return Err(ApiError::Validation(
+                    "This command requires confirmation. Set 'confirmed: true' to execute.".to_string(),
+                ));
+            }
+        }
 
         (Some(cmd_row.0.into()), cmd_row.1)
     };

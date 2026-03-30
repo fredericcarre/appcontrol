@@ -175,12 +175,10 @@ async fn test_app_type_component_accepts_degraded_state() {
     ctx.force_component_state(core_app_id, "Core-API", "DEGRADED")
         .await;
 
-    // Verify aggregate state
+    // Verify aggregate state using current_state column
     let running: i32 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM components c
-         JOIN state_transitions st ON st.component_id = c.id
-         WHERE c.application_id = $1
-         AND st.to_state = 'RUNNING'",
+        "SELECT COUNT(*) FROM components
+         WHERE application_id = $1 AND current_state = 'RUNNING'",
     )
     .bind(core_app_id.to_string())
     .fetch_one(&ctx.db_pool)
@@ -188,10 +186,8 @@ async fn test_app_type_component_accepts_degraded_state() {
     .unwrap();
 
     let degraded: i32 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM components c
-         JOIN state_transitions st ON st.component_id = c.id
-         WHERE c.application_id = $1
-         AND st.to_state = 'DEGRADED'",
+        "SELECT COUNT(*) FROM components
+         WHERE application_id = $1 AND current_state = 'DEGRADED'",
     )
     .bind(core_app_id.to_string())
     .fetch_one(&ctx.db_pool)

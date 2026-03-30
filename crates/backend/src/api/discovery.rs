@@ -182,7 +182,7 @@ pub async fn trigger_all(
     let agent_ids = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM agents WHERE organization_id = $1 AND is_active = 1",
     )
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .fetch_all(&state.db)
     .await?;
 

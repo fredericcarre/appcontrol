@@ -67,7 +67,7 @@ pub async fn list_organizations(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
+    let platform_role = get_platform_role(&state.db, user.user_id).await;
     require_super_admin(&user, &platform_role)?;
 
     let orgs = sqlx::query_as::<_, OrgRow>(
@@ -84,7 +84,7 @@ pub async fn get_organization(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
+    let platform_role = get_platform_role(&state.db, user.user_id).await;
 
     // Super-admins can view any org; regular admins can view their own
     if platform_role.as_deref() != Some("super_admin") && *user.organization_id != id {
@@ -117,7 +117,7 @@ pub async fn create_organization(
     Extension(user): Extension<AuthUser>,
     Json(req): Json<CreateOrgRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
+    let platform_role = get_platform_role(&state.db, user.user_id).await;
     require_super_admin(&user, &platform_role)?;
 
     validate_length("name", &req.name, 1, 200)?;
@@ -204,7 +204,7 @@ pub async fn update_organization(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateOrgRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
+    let platform_role = get_platform_role(&state.db, user.user_id).await;
     require_super_admin(&user, &platform_role)?;
 
     validate_optional_length("name", &req.name, 200)?;

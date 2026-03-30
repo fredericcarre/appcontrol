@@ -184,14 +184,15 @@ pub async fn import_yaml_map(
     .bind(app_name)
     .bind(app_desc)
     .bind(user.organization_id)
-    .bind(body.site_id)
+    .bind(crate::db::bind_id(body.site_id))
     .execute(&state.db)
     .await?;
 
     // Grant owner to importing user
     let _ = sqlx::query(
-        "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) VALUES ($1, $2, 'owner', $2)",
+        "INSERT INTO app_permissions_users (id, application_id, user_id, permission_level, granted_by) VALUES ($1, $2, $3, 'owner', $3)",
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(app_id))
     .bind(user.user_id)
     .execute(&state.db)
@@ -210,8 +211,9 @@ pub async fn import_yaml_map(
         let value = var.value.as_deref().unwrap_or("");
 
         sqlx::query(
-            "INSERT INTO app_variables (application_id, name, value, description) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO app_variables (id, application_id, name, value, description) VALUES ($1, $2, $3, $4, $5)",
         )
+        .bind(crate::db::bind_id(Uuid::new_v4()))
         .bind(crate::db::bind_id(app_id))
         .bind(name)
         .bind(value)
@@ -351,9 +353,10 @@ pub async fn import_yaml_map(
                 };
 
                 sqlx::query(
-                    r#"INSERT INTO command_input_params (command_id, name, description, default_value, validation_regex, required, display_order)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+                    r#"INSERT INTO command_input_params (id, command_id, name, description, default_value, validation_regex, required, display_order)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
                 )
+                .bind(crate::db::bind_id(Uuid::new_v4()))
                 .bind(crate::db::bind_id(cmd_id))
                 .bind(param_name)
                 .bind(param.description.as_deref())
@@ -380,8 +383,9 @@ pub async fn import_yaml_map(
             let link_type = map_link_type(link.link_type.as_deref());
 
             sqlx::query(
-                "INSERT INTO component_links (component_id, label, url, link_type) VALUES ($1, $2, $3, $4)",
+                "INSERT INTO component_links (id, component_id, label, url, link_type) VALUES ($1, $2, $3, $4, $5)",
             )
+            .bind(crate::db::bind_id(Uuid::new_v4()))
             .bind(crate::db::bind_id(comp_id))
             .bind(label)
             .bind(url)
@@ -418,8 +422,9 @@ pub async fn import_yaml_map(
             };
 
             sqlx::query(
-                "INSERT INTO dependencies (application_id, from_component_id, to_component_id) VALUES ($1, $2, $3)",
+                "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id) VALUES ($1, $2, $3, $4)",
             )
+            .bind(crate::db::bind_id(Uuid::new_v4()))
             .bind(crate::db::bind_id(app_id))
             .bind(crate::db::bind_id(from_id))
             .bind(crate::db::bind_id(to_id))
@@ -748,15 +753,16 @@ pub async fn import_json_map(
     .bind(&app_data.name)
     .bind(&app_data.description)
     .bind(user.organization_id)
-    .bind(body.site_id)
+    .bind(crate::db::bind_id(body.site_id))
     .bind(&tags_json)
     .execute(&state.db)
     .await?;
 
     // Grant owner to importing user
     let _ = sqlx::query(
-        "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) VALUES ($1, $2, 'owner', $2)",
+        "INSERT INTO app_permissions_users (id, application_id, user_id, permission_level, granted_by) VALUES ($1, $2, $3, 'owner', $3)",
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(app_id))
     .bind(user.user_id)
     .execute(&state.db)
@@ -766,8 +772,9 @@ pub async fn import_json_map(
     let mut variables_created = 0;
     for var in &app_data.variables {
         sqlx::query(
-            "INSERT INTO app_variables (application_id, name, value, description, is_secret) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO app_variables (id, application_id, name, value, description, is_secret) VALUES ($1, $2, $3, $4, $5, $6)",
         )
+        .bind(crate::db::bind_id(Uuid::new_v4()))
         .bind(crate::db::bind_id(app_id))
         .bind(&var.name)
         .bind(&var.value)
@@ -927,10 +934,11 @@ pub async fn import_json_map(
 
                 sqlx::query(
                     r#"INSERT INTO command_input_params (
-                        command_id, name, description, default_value, validation_regex,
+                        id, command_id, name, description, default_value, validation_regex,
                         required, param_type, enum_values, display_order
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
                 )
+                .bind(crate::db::bind_id(Uuid::new_v4()))
                 .bind(crate::db::bind_id(cmd_id))
                 .bind(&param.name)
                 .bind(&param.description)
@@ -948,8 +956,9 @@ pub async fn import_json_map(
         // ── Import links ───────────────────────────────────────────────
         for (lidx, link) in comp.links.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO component_links (component_id, label, url, link_type, display_order) VALUES ($1, $2, $3, $4, $5)",
+                "INSERT INTO component_links (id, component_id, label, url, link_type, display_order) VALUES ($1, $2, $3, $4, $5, $6)",
             )
+            .bind(crate::db::bind_id(Uuid::new_v4()))
             .bind(crate::db::bind_id(comp_id))
             .bind(&link.label)
             .bind(&link.url)
@@ -991,8 +1000,9 @@ pub async fn import_json_map(
         let dep_type = dep.dep_type.as_deref().unwrap_or("strong");
 
         sqlx::query(
-            "INSERT INTO dependencies (application_id, from_component_id, to_component_id, dep_type) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id, dep_type) VALUES ($1, $2, $3, $4, $5)",
         )
+        .bind(crate::db::bind_id(Uuid::new_v4()))
         .bind(crate::db::bind_id(app_id))
         .bind(crate::db::bind_id(from_id))
         .bind(crate::db::bind_id(to_id))

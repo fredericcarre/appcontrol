@@ -57,7 +57,21 @@ async fn test_api_key_status_check() {
 async fn test_api_key_permissions_enforced() {
     let ctx = TestContext::new().await;
     let app_id = ctx.create_payments_app().await;
-    let api_key = ctx.create_api_key("ReadOnly", vec!["status"]).await;
+
+    // Grant viewer only view permission
+    ctx.grant_permission(app_id, ctx.viewer_user_id, "view")
+        .await;
+
+    // Create API key as viewer (not admin) -- the key inherits the viewer's permissions
+    let resp = ctx
+        .post_as(
+            "viewer",
+            "/api/v1/api-keys",
+            json!({"name": "ReadOnly", "allowed_actions": ["status"]}),
+        )
+        .await;
+    let key: serde_json::Value = resp.json().await.unwrap();
+    let api_key = key["key"].as_str().unwrap().to_string();
 
     let resp = ctx
         .post_with_api_key(
@@ -69,7 +83,7 @@ async fn test_api_key_permissions_enforced() {
     assert_eq!(
         resp.status().as_u16(),
         403,
-        "start with status-only key should be denied"
+        "start with viewer-owned API key should be denied"
     );
 }
 
@@ -86,7 +100,7 @@ async fn test_scheduler_wait_running_endpoint() {
         .build()
         .unwrap();
     let resp = client
-        .get(format!("{}/api/v1/apps/{app_id}/wait-running", ctx.api_url))
+        .get(format!("{}/api/v1/orchestration/apps/{app_id}/wait-running?timeout=2", ctx.api_url))
         .header("Authorization", format!("ApiKey {api_key}"))
         .send()
         .await;

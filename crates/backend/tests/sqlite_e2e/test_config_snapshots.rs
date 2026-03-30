@@ -126,7 +126,7 @@ async fn test_snapshot_preserves_full_before_state() {
     // Read current state
     let resp = ctx.get(&format!("/api/v1/components/{oracle_id}")).await;
     let before: Value = resp.json().await.unwrap();
-    let original_hostname = before["hostname"].as_str().unwrap().to_string();
+    let original_host = before["host"].as_str().unwrap().to_string();
 
     // Update
     ctx.put(
@@ -141,8 +141,8 @@ async fn test_snapshot_preserves_full_before_state() {
 
     let prev = v.before_snapshot.as_ref().unwrap();
     assert_eq!(
-        prev["hostname"].as_str(),
-        Some(original_hostname.as_str()),
+        prev["host"].as_str(),
+        Some(original_host.as_str()),
         "Snapshot should preserve the full before state"
     );
 
