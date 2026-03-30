@@ -176,7 +176,7 @@ pub async fn list_components(
         FROM components WHERE application_id = $1 ORDER BY name
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -212,7 +212,7 @@ pub async fn get_component(
         FROM components WHERE id = $1
         "#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -301,8 +301,8 @@ pub async fn create_component(
                position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
         "#,
     )
-    .bind(comp_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(comp_id))
+    .bind(crate::db::bind_id(app_id))
     .bind(&body.name)
     .bind(&body.component_type)
     .bind(&body.display_name)
@@ -392,7 +392,7 @@ pub async fn update_component(
     #[cfg(feature = "postgres")]
     let current =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -474,7 +474,7 @@ pub async fn update_component(
     // Special case: host and agent_id use COALESCE to preserve existing if not explicitly provided.
     #[cfg(feature = "postgres")]
     let component = sqlx::query_as::<_, ComponentRow>(&update_sql)
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(&body.name)
         .bind(&body.component_type)
         .bind(&body.display_name)
@@ -549,7 +549,7 @@ pub async fn delete_component(
     #[cfg(feature = "postgres")]
     let (app_id, agent_id): (Uuid, Option<Uuid>) =
         sqlx::query_as("SELECT application_id, agent_id FROM components WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -582,7 +582,7 @@ pub async fn delete_component(
 
     #[cfg(feature = "postgres")]
     sqlx::query("DELETE FROM components WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .execute(&state.db)
         .await?;
 
@@ -626,7 +626,7 @@ pub async fn update_position(
     #[cfg(feature = "postgres")]
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -654,7 +654,7 @@ pub async fn update_position(
 
     #[cfg(feature = "postgres")]
     sqlx::query(&pos_sql)
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(body.x)
         .bind(body.y)
         .execute(&state.db)
@@ -716,7 +716,7 @@ pub async fn update_positions_batch(
             .bind(pos.id)
             .bind(pos.x)
             .bind(pos.y)
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .execute(&mut *tx)
             .await?;
     }
@@ -741,7 +741,7 @@ pub async fn start_component(
     let comp_info = sqlx::query_as::<_, ComponentInfo>(
         "SELECT application_id, referenced_app_id FROM components WHERE id = $1",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -814,7 +814,7 @@ pub async fn stop_component(
     let comp_info = sqlx::query_as::<_, ComponentInfo>(
         "SELECT application_id, referenced_app_id FROM components WHERE id = $1",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -879,7 +879,7 @@ pub async fn force_stop_component(
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -920,7 +920,7 @@ pub async fn start_with_deps(
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -951,7 +951,7 @@ pub async fn start_with_deps(
     // Acquire operation lock
     let guard = state
         .operation_lock
-        .try_lock(app_id, "start_with_deps", user.user_id)
+        .try_lock(app_id, "start_with_deps", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -985,7 +985,7 @@ pub async fn restart_with_dependents(
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -1016,7 +1016,7 @@ pub async fn restart_with_dependents(
     // Acquire operation lock
     let guard = state
         .operation_lock
-        .try_lock(app_id, "restart_with_dependents", user.user_id)
+        .try_lock(app_id, "restart_with_dependents", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -1084,17 +1084,28 @@ pub async fn execute_command(
         check_cmd: Option<String>,
         start_cmd: Option<String>,
         stop_cmd: Option<String>,
-        restart_cmd: Option<String>,
         integrity_check_cmd: Option<String>,
         infra_check_cmd: Option<String>,
     }
 
+    #[cfg(feature = "postgres")]
     let comp = sqlx::query_as::<_, ComponentCmd>(
-        "SELECT application_id, agent_id, check_cmd, start_cmd, stop_cmd, restart_cmd, \
+        "SELECT application_id, agent_id, check_cmd, start_cmd, stop_cmd, \
                 integrity_check_cmd, infra_check_cmd \
          FROM components WHERE id = $1",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let comp = sqlx::query_as::<_, ComponentCmd>(
+        "SELECT application_id, agent_id, check_cmd, start_cmd, stop_cmd, \
+                integrity_check_cmd, infra_check_cmd \
+         FROM components WHERE id = $1",
+    )
+    .bind(DbUuid::from(id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -1115,7 +1126,7 @@ pub async fn execute_command(
         "check" => comp.check_cmd.clone(),
         "start" => comp.start_cmd.clone(),
         "stop" => comp.stop_cmd.clone(),
-        "restart" => comp.restart_cmd.clone(),
+        // restart_cmd is not a standard column; handled as custom command
         "integrity_check" => comp.integrity_check_cmd.clone(),
         "infra_check" => comp.infra_check_cmd.clone(),
         _ => None,
@@ -1130,7 +1141,7 @@ pub async fn execute_command(
         let cmd_row = sqlx::query_as::<_, (DbUuid, String, bool)>(
             "SELECT id, command, requires_confirmation FROM component_commands WHERE component_id = $1 AND name = $2",
         )
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(&cmd)
         .fetch_optional(&state.db)
         .await?
@@ -1147,7 +1158,7 @@ pub async fn execute_command(
             "SELECT id, command_id, name, description, default_value, validation_regex, required, display_order, created_at \
              FROM command_input_params WHERE command_id = $1 ORDER BY display_order, name",
         )
-        .bind(cid)
+        .bind(crate::db::bind_id(cid))
         .fetch_all(&state.db)
         .await?
     } else {
@@ -1194,8 +1205,8 @@ pub async fn execute_command(
          ON CONFLICT (request_id) DO NOTHING",
     )
     .bind(request_id)
-    .bind(id)
-    .bind(agent_id)
+    .bind(crate::db::bind_id(id))
+    .bind(crate::db::bind_id(agent_id))
     .bind(command_type_label)
     .bind(user.user_id)
     .bind(&final_command)
@@ -1253,7 +1264,7 @@ pub async fn list_dependencies(
     let deps = sqlx::query_as::<_, DependencyRow>(
         "SELECT id, application_id, from_component_id, to_component_id, created_at FROM dependencies WHERE application_id = $1",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1314,7 +1325,7 @@ pub async fn create_dependency(
         "#,
     )
     .bind(dep_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(body.from_component_id)
     .bind(body.to_component_id)
     .fetch_one(&state.db)
@@ -1346,7 +1357,7 @@ pub async fn delete_dependency(
     #[cfg(feature = "postgres")]
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM dependencies WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -1376,7 +1387,7 @@ pub async fn delete_dependency(
 
     #[cfg(feature = "postgres")]
     sqlx::query("DELETE FROM dependencies WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .execute(&state.db)
         .await?;
 
@@ -1413,7 +1424,7 @@ pub async fn list_custom_commands(
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -1427,7 +1438,7 @@ pub async fn list_custom_commands(
         "SELECT id, component_id, name, command, description, requires_confirmation, min_permission_level, created_at \
          FROM component_commands WHERE component_id = $1 ORDER BY name",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1470,7 +1481,7 @@ pub async fn list_command_executions(
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -1491,7 +1502,7 @@ pub async fn list_command_executions(
              WHERE component_id = $1 AND status = $2 \
              ORDER BY dispatched_at DESC LIMIT $3 OFFSET $4",
         )
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .bind(status_filter)
         .bind(limit)
         .bind(offset)
@@ -1505,7 +1516,7 @@ pub async fn list_command_executions(
              WHERE component_id = $1 \
              ORDER BY dispatched_at DESC LIMIT $2 OFFSET $3",
         )
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .bind(limit)
         .bind(offset)
         .fetch_all(&state.db)
@@ -1538,7 +1549,7 @@ pub async fn list_state_transitions(
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -1557,7 +1568,7 @@ pub async fn list_state_transitions(
          WHERE component_id = $1 \
          ORDER BY created_at DESC LIMIT $2 OFFSET $3",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(limit)
     .bind(offset)
     .fetch_all(&state.db)
@@ -1590,7 +1601,7 @@ pub async fn list_check_events(
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -1609,7 +1620,7 @@ pub async fn list_check_events(
          WHERE component_id = $1 \
          ORDER BY created_at DESC LIMIT $2 OFFSET $3",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(limit)
     .bind(offset)
     .fetch_all(&state.db)
@@ -1695,7 +1706,7 @@ pub async fn resolve_components_for_agent(
     // Match components by hostname
     let result =
         sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
-            .bind(agent_id)
+            .bind(crate::db::bind_id(agent_id))
             .bind(hostname)
             .execute(pool)
             .await;
@@ -1715,7 +1726,7 @@ pub async fn resolve_components_for_agent(
     for ip in ip_addresses {
         let result =
             sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
-                .bind(agent_id)
+                .bind(crate::db::bind_id(agent_id))
                 .bind(ip)
                 .execute(pool)
                 .await;
@@ -1746,7 +1757,7 @@ pub async fn get_component_metrics(
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -1764,7 +1775,7 @@ pub async fn get_component_metrics(
            ORDER BY created_at DESC
            LIMIT 1"#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -1791,7 +1802,7 @@ pub async fn get_component_metrics_history(
 ) -> Result<Json<Value>, ApiError> {
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -1809,7 +1820,7 @@ pub async fn get_component_metrics_history(
            ORDER BY created_at DESC
            LIMIT 100"#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1845,7 +1856,7 @@ pub async fn list_site_overrides(
     // First get the app_id to check permissions
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -1890,7 +1901,7 @@ pub async fn list_site_overrides(
         ORDER BY s.site_type, s.name
         "#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1941,7 +1952,7 @@ pub async fn upsert_site_override(
     // First get the app_id to check permissions
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -1953,7 +1964,7 @@ pub async fn upsert_site_override(
 
     // Verify site exists
     let _site_exists = sqlx::query_scalar::<_, DbUuid>("SELECT id FROM sites WHERE id = $1")
-        .bind(site_id)
+        .bind(crate::db::bind_id(site_id))
         .fetch_optional(&state.db)
         .await?
         .ok_or_not_found()?;
@@ -1990,8 +2001,8 @@ pub async fn upsert_site_override(
         RETURNING id
         "#,
     )
-    .bind(component_id)
-    .bind(site_id)
+    .bind(crate::db::bind_id(component_id))
+    .bind(crate::db::bind_id(site_id))
     .bind(req.agent_id_override)
     .bind(&req.check_cmd_override)
     .bind(&req.start_cmd_override)
@@ -2019,7 +2030,7 @@ pub async fn delete_site_override(
     // First get the app_id to check permissions
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -2042,8 +2053,8 @@ pub async fn delete_site_override(
     .ok();
 
     sqlx::query("DELETE FROM site_overrides WHERE component_id = $1 AND site_id = $2")
-        .bind(component_id)
-        .bind(site_id)
+        .bind(crate::db::bind_id(component_id))
+        .bind(crate::db::bind_id(site_id))
         .execute(&state.db)
         .await?;
 

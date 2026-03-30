@@ -42,8 +42,8 @@ pub async fn auth_middleware(
             let org_id: uuid::Uuid = claims.org.parse().map_err(|_| StatusCode::UNAUTHORIZED)?;
 
             AuthUser {
-                user_id,
-                organization_id: org_id,
+                user_id: crate::db::DbUuid::from(user_id),
+                organization_id: crate::db::DbUuid::from(org_id),
                 email: claims.email,
                 role: claims.role,
             }

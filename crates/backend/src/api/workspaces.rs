@@ -95,7 +95,7 @@ pub async fn create_workspace(
     sqlx::query(
         "INSERT INTO workspaces (id, organization_id, name, description) VALUES ($1, $2, $3, $4)",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.organization_id)
     .bind(&body.name)
     .bind(&body.description)
@@ -108,7 +108,7 @@ pub async fn create_workspace(
          VALUES ($1, 'create_workspace', 'workspace', $2, $3)",
     )
     .bind(user.user_id)
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(json!({"name": body.name}))
     .execute(&state.db)
     .await;
@@ -134,7 +134,7 @@ pub async fn delete_workspace(
     }
 
     let result = sqlx::query("DELETE FROM workspaces WHERE id = $1 AND organization_id = $2")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(user.organization_id)
         .execute(&state.db)
         .await?;
@@ -160,7 +160,7 @@ pub async fn list_workspace_sites(
     let exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND organization_id = $2)",
     )
-    .bind(workspace_id)
+    .bind(crate::db::bind_id(workspace_id))
     .bind(user.organization_id)
     .fetch_one(&state.db)
     .await?;
@@ -178,7 +178,7 @@ pub async fn list_workspace_sites(
         ORDER BY s.name
         "#,
     )
-    .bind(workspace_id)
+    .bind(crate::db::bind_id(workspace_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -204,7 +204,7 @@ pub async fn add_workspace_site(
     sqlx::query(
         "INSERT INTO workspace_sites (workspace_id, site_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
     )
-    .bind(workspace_id)
+    .bind(crate::db::bind_id(workspace_id))
     .bind(body.site_id)
     .execute(&state.db)
     .await?;
@@ -223,8 +223,8 @@ pub async fn remove_workspace_site(
     }
 
     sqlx::query("DELETE FROM workspace_sites WHERE workspace_id = $1 AND site_id = $2")
-        .bind(workspace_id)
-        .bind(site_id)
+        .bind(crate::db::bind_id(workspace_id))
+        .bind(crate::db::bind_id(site_id))
         .execute(&state.db)
         .await?;
 
@@ -245,7 +245,7 @@ pub async fn list_workspace_members(
     let exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND organization_id = $2)",
     )
-    .bind(workspace_id)
+    .bind(crate::db::bind_id(workspace_id))
     .bind(user.organization_id)
     .fetch_one(&state.db)
     .await?;
@@ -262,7 +262,7 @@ pub async fn list_workspace_members(
         ORDER BY wm.created_at
         "#,
     )
-    .bind(workspace_id)
+    .bind(crate::db::bind_id(workspace_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -303,7 +303,7 @@ pub async fn add_workspace_member(
          VALUES ($1, $2, $3, $4)
          ON CONFLICT DO NOTHING",
     )
-    .bind(workspace_id)
+    .bind(crate::db::bind_id(workspace_id))
     .bind(body.user_id)
     .bind(body.team_id)
     .bind(&body.role)
@@ -325,7 +325,7 @@ pub async fn remove_workspace_member(
 
     sqlx::query("DELETE FROM workspace_members WHERE id = $1 AND workspace_id = $2")
         .bind(member_id)
-        .bind(workspace_id)
+        .bind(crate::db::bind_id(workspace_id))
         .execute(&state.db)
         .await?;
 

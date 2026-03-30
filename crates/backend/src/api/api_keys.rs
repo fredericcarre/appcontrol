@@ -57,7 +57,7 @@ pub async fn create_api_key(
         VALUES ($1, $2, $3, encode(sha256($4::bytea), 'hex'), $5, $6, $7)
         "#,
     )
-    .bind(key_id)
+    .bind(crate::db::bind_id(key_id))
     .bind(user.user_id)
     .bind(&body.name)
     .bind(raw_key.as_bytes())
@@ -155,7 +155,7 @@ pub async fn delete_api_key(
     #[cfg(feature = "postgres")]
     let result =
         sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1 AND user_id = $2")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .bind(user.user_id)
             .execute(&state.db)
             .await?;

@@ -52,7 +52,7 @@ pub async fn list_links(
     #[cfg(feature = "postgres")]
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -75,7 +75,7 @@ pub async fn list_links(
         "SELECT id, component_id, label, url, link_type, display_order, created_at \
          FROM component_links WHERE component_id = $1 ORDER BY display_order, label",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -101,7 +101,7 @@ pub async fn create_link(
     #[cfg(feature = "postgres")]
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -142,8 +142,8 @@ pub async fn create_link(
         RETURNING id, component_id, label, url, link_type, display_order, created_at
         "#,
     )
-    .bind(link_id)
-    .bind(component_id)
+    .bind(crate::db::bind_id(link_id))
+    .bind(crate::db::bind_id(component_id))
     .bind(&body.label)
     .bind(&body.url)
     .bind(body.link_type.as_deref().unwrap_or("documentation"))
@@ -181,7 +181,7 @@ pub async fn update_link(
     #[cfg(feature = "postgres")]
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -229,8 +229,8 @@ pub async fn update_link(
         RETURNING id, component_id, label, url, link_type, display_order, created_at
         "#,
     )
-    .bind(component_id)
-    .bind(link_id)
+    .bind(crate::db::bind_id(component_id))
+    .bind(crate::db::bind_id(link_id))
     .bind(&body.label)
     .bind(&body.url)
     .bind(&body.link_type)
@@ -273,7 +273,7 @@ pub async fn delete_link(
     #[cfg(feature = "postgres")]
     let app_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await?
             .ok_or_not_found()?;
@@ -303,8 +303,8 @@ pub async fn delete_link(
 
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM component_links WHERE id = $1 AND component_id = $2")
-        .bind(link_id)
-        .bind(component_id)
+        .bind(crate::db::bind_id(link_id))
+        .bind(crate::db::bind_id(component_id))
         .execute(&state.db)
         .await?;
 

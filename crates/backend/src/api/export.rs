@@ -263,7 +263,7 @@ pub async fn export_app_json(
     let app = sqlx::query_as::<_, AppRow>(
         "SELECT name, description, tags FROM applications WHERE id = $1",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or(ApiError::NotFound)?;
@@ -278,7 +278,7 @@ pub async fn export_app_json(
     let var_rows = sqlx::query_as::<_, VarRow>(
         "SELECT name, value, description, is_secret FROM app_variables WHERE application_id = $1 ORDER BY name",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -300,7 +300,7 @@ pub async fn export_app_json(
     let group_rows = sqlx::query_as::<_, GroupRow>(
         "SELECT id, name, description, color, display_order FROM component_groups WHERE application_id = $1 ORDER BY display_order",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -328,7 +328,7 @@ pub async fn export_app_json(
         FROM components WHERE application_id = $1 ORDER BY name
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -346,7 +346,7 @@ pub async fn export_app_json(
         ORDER BY cc.name
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -362,7 +362,7 @@ pub async fn export_app_json(
         ORDER BY cip.display_order
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -407,7 +407,7 @@ pub async fn export_app_json(
         ORDER BY cl.display_order
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -496,7 +496,7 @@ pub async fn export_app_json(
     let dep_rows = sqlx::query_as::<_, DepRow>(
         "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 

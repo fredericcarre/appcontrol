@@ -55,7 +55,7 @@ fn require_super_admin(
 /// Fetch the platform_role for a user from the database.
 async fn get_platform_role(db: &crate::db::DbPool, user_id: DbUuid) -> Option<String> {
     sqlx::query_scalar::<_, Option<String>>("SELECT platform_role FROM users WHERE id = $1")
-        .bind(user_id)
+        .bind(crate::db::bind_id(user_id))
         .fetch_optional(db)
         .await
         .ok()
@@ -87,7 +87,7 @@ pub async fn get_organization(
     let platform_role = get_platform_role(&state.db, user.user_id.into()).await;
 
     // Super-admins can view any org; regular admins can view their own
-    if platform_role.as_deref() != Some("super_admin") && user.organization_id != id {
+    if platform_role.as_deref() != Some("super_admin") && *user.organization_id != id {
         return Err(ApiError::Forbidden);
     }
 
@@ -95,7 +95,7 @@ pub async fn get_organization(
     let org = sqlx::query_as::<_, OrgRow>(
         "SELECT id, name, slug, created_at, updated_at FROM organizations WHERE id = $1",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -231,7 +231,7 @@ pub async fn update_organization(
 
     #[cfg(feature = "postgres")]
     let org = sqlx::query_as::<_, OrgRow>(&update_org_sql)
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(&req.name)
         .fetch_optional(&state.db)
         .await?

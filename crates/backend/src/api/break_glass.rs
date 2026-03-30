@@ -94,7 +94,7 @@ pub async fn create_break_glass_account(
         "INSERT INTO break_glass_accounts (id, organization_id, username, password_hash) \
          VALUES ($1, $2, $3, $4)",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.organization_id)
     .bind(&body.username)
     .bind(&password_hash)

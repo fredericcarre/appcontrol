@@ -99,7 +99,7 @@ pub async fn issue_server_cert(
     // Load organization CA
     let ca_row: Option<(Option<String>, Option<String>)> =
         sqlx::query_as("SELECT ca_cert_pem, ca_key_pem FROM organizations WHERE id = $1")
-            .bind(user.organization_id)
+            .bind(*user.organization_id)
             .fetch_optional(&state.db)
             .await?;
 
@@ -130,10 +130,10 @@ pub async fn issue_server_cert(
     // Log the action
     crate::middleware::audit::log_action(
         &state.db,
-        user.user_id,
+        *user.user_id,
         "issue_server_cert",
         "organization",
-        user.organization_id,
+        *user.organization_id,
         json!({
             "common_name": &req.common_name,
             "san_dns": &req.san_dns,
@@ -218,7 +218,7 @@ pub async fn export_to_volume(
     // Load organization CA
     let ca_row: Option<(Option<String>, Option<String>)> =
         sqlx::query_as("SELECT ca_cert_pem, ca_key_pem FROM organizations WHERE id = $1")
-            .bind(user.organization_id)
+            .bind(*user.organization_id)
             .fetch_optional(&state.db)
             .await?;
 
@@ -272,10 +272,10 @@ pub async fn export_to_volume(
     // Log the action
     crate::middleware::audit::log_action(
         &state.db,
-        user.user_id,
+        *user.user_id,
         "export_certs_to_volume",
         "organization",
-        user.organization_id,
+        *user.organization_id,
         json!({
             "export_path": &export_path,
             "common_name": &req.common_name,
@@ -337,7 +337,7 @@ pub async fn get_pki_status(
         r#"SELECT ca_cert_pem, pending_ca_cert_pem, rotation_started_at
            FROM organizations WHERE id = $1"#,
     )
-    .bind(user.organization_id)
+    .bind(*user.organization_id)
     .fetch_optional(&state.db)
     .await?;
 
@@ -355,14 +355,14 @@ pub async fn get_pki_status(
     let agent_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM agents WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
     )
-    .bind(user.organization_id)
+    .bind(*user.organization_id)
     .fetch_one(&state.db)
     .await?;
 
     let gateway_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM gateways WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
     )
-    .bind(user.organization_id)
+    .bind(*user.organization_id)
     .fetch_one(&state.db)
     .await?;
 
@@ -534,10 +534,10 @@ pub async fn start_rotation(
     // Log before execute
     crate::middleware::audit::log_action(
         &state.db,
-        user.user_id,
+        *user.user_id,
         "start_certificate_rotation",
         "organization",
-        user.organization_id,
+        *user.organization_id,
         json!({ "grace_period_secs": req.grace_period_secs }),
     )
     .await
@@ -545,17 +545,17 @@ pub async fn start_rotation(
 
     let rotation_id = crate::core::certificate_rotation::start_rotation(
         &state.db,
-        user.organization_id,
+        *user.organization_id,
         &req.new_ca_cert_pem,
         &req.new_ca_key_pem,
         req.grace_period_secs,
-        user.user_id,
+        *user.user_id,
     )
     .await?;
 
     // Get progress for response
     let progress =
-        crate::core::certificate_rotation::get_rotation_progress(&state.db, user.organization_id)
+        crate::core::certificate_rotation::get_rotation_progress(&state.db, *user.organization_id)
             .await?;
 
     Ok(Json(json!({
@@ -573,7 +573,7 @@ pub async fn get_rotation_progress(
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
     let progress =
-        crate::core::certificate_rotation::get_rotation_progress(&state.db, user.organization_id)
+        crate::core::certificate_rotation::get_rotation_progress(&state.db, *user.organization_id)
             .await?;
 
     Ok(Json(json!({ "progress": progress })))
@@ -593,16 +593,16 @@ pub async fn finalize_rotation(
     // Log before execute
     crate::middleware::audit::log_action(
         &state.db,
-        user.user_id,
+        *user.user_id,
         "finalize_certificate_rotation",
         "organization",
-        user.organization_id,
+        *user.organization_id,
         json!({}),
     )
     .await
     .ok();
 
-    crate::core::certificate_rotation::finalize_rotation(&state.db, user.organization_id).await?;
+    crate::core::certificate_rotation::finalize_rotation(&state.db, *user.organization_id).await?;
 
     Ok(Json(json!({ "status": "finalized" })))
 }
@@ -621,16 +621,16 @@ pub async fn cancel_rotation(
     // Log before execute
     crate::middleware::audit::log_action(
         &state.db,
-        user.user_id,
+        *user.user_id,
         "cancel_certificate_rotation",
         "organization",
-        user.organization_id,
+        *user.organization_id,
         json!({}),
     )
     .await
     .ok();
 
-    crate::core::certificate_rotation::cancel_rotation(&state.db, user.organization_id).await?;
+    crate::core::certificate_rotation::cancel_rotation(&state.db, *user.organization_id).await?;
 
     Ok(Json(json!({ "status": "cancelled" })))
 }
@@ -643,7 +643,7 @@ pub async fn get_ca_bundle(
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
     let bundle =
-        crate::core::certificate_rotation::get_ca_bundle(&state.db, user.organization_id).await?;
+        crate::core::certificate_rotation::get_ca_bundle(&state.db, *user.organization_id).await?;
 
     Ok(Json(json!({ "ca_bundle_pem": bundle })))
 }

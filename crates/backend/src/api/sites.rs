@@ -100,7 +100,7 @@ pub async fn get_site(
            FROM sites
            WHERE id = $1 AND organization_id = $2"#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
@@ -222,7 +222,7 @@ pub async fn update_site(
            WHERE id = $1 AND organization_id = $2
            RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.organization_id)
     .bind(&req.name)
     .bind(&req.location)
@@ -276,7 +276,7 @@ pub async fn delete_site(
     // Check for applications linked to this site
     #[cfg(feature = "postgres")]
     let app_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM applications WHERE site_id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .fetch_one(&state.db)
         .await?;
 
@@ -298,7 +298,7 @@ pub async fn delete_site(
 
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM sites WHERE id = $1 AND organization_id = $2")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(user.organization_id)
         .execute(&state.db)
         .await?;

@@ -73,7 +73,7 @@ pub async fn diagnose_app(
     let components = sqlx::query_as::<_, (DbUuid, String)>(
         "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(pool)
     .await
     .map_err(|e| DiagnosticError::Database(e.to_string()))?;

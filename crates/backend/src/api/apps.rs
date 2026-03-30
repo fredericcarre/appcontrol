@@ -320,7 +320,7 @@ pub async fn get_app(
         "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
          FROM applications WHERE id = $1 AND organization_id = $2",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
@@ -389,7 +389,7 @@ pub async fn get_app(
            LEFT JOIN gateways g ON a.gateway_id = g.id
            WHERE c.application_id = $1 ORDER BY c.name"#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .fetch_all(&state.db)
     .await?;
 
@@ -445,7 +445,7 @@ pub async fn get_app(
         "SELECT id, from_component_id, to_component_id FROM dependencies \
          WHERE from_component_id IN (SELECT id FROM components WHERE application_id = $1)",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .fetch_all(&state.db)
     .await?;
 
@@ -648,11 +648,11 @@ pub async fn create_app(
         RETURNING id, name, description, organization_id, site_id, tags, created_at, updated_at
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&body.name)
     .bind(&body.description)
     .bind(user.organization_id)
-    .bind(site_id)
+    .bind(crate::db::bind_id(site_id))
     .bind(body.tags.as_ref().unwrap_or(&json!([])))
     .fetch_one(&state.db)
     .await?;
@@ -688,7 +688,7 @@ pub async fn create_app(
         "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) \
          VALUES ($1, $2, 'owner', $2)",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(user.user_id)
     .execute(&state.db)
     .await;
@@ -747,7 +747,7 @@ pub async fn update_app(
             crate::db::sql::now()
         ),
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(&body.name)
     .bind(&body.description)
     .bind(body.site_id)
@@ -814,7 +814,7 @@ pub async fn delete_app(
 
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(user.organization_id)
         .execute(&state.db)
         .await?;
@@ -869,7 +869,7 @@ pub async fn start_app(
     // Acquire operation lock — prevents concurrent start/stop on the same app
     let guard = state
         .operation_lock
-        .try_lock(id, "start", user.user_id)
+        .try_lock(id, "start", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -927,7 +927,7 @@ pub async fn stop_app(
     // Acquire operation lock — prevents concurrent start/stop on the same app
     let guard = state
         .operation_lock
-        .try_lock(id, "stop", user.user_id)
+        .try_lock(id, "stop", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -1076,7 +1076,7 @@ pub async fn start_branch(
         let ids = sqlx::query_scalar::<_, DbUuid>(
             "SELECT id FROM components WHERE application_id = $1 AND current_state = 'FAILED'",
         )
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .fetch_all(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1121,7 +1121,7 @@ pub async fn start_branch(
     // Acquire operation lock — prevents concurrent start/stop on the same app
     let guard = state
         .operation_lock
-        .try_lock(id, "start_branch", user.user_id)
+        .try_lock(id, "start_branch", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -1215,7 +1215,7 @@ pub async fn start_to(
                 #[cfg(feature = "postgres")]
                 let name =
                     sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
-                        .bind(comp_id)
+                        .bind(crate::db::bind_id(comp_id))
                         .fetch_optional(&state.db)
                         .await
                         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -1245,7 +1245,7 @@ pub async fn start_to(
     // Acquire operation lock
     let guard = state
         .operation_lock
-        .try_lock(id, "start_to", user.user_id)
+        .try_lock(id, "start_to", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -1292,7 +1292,7 @@ pub async fn suspend_application(
     #[cfg(feature = "postgres")]
     let is_suspended: bool =
         sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(&state.db)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -1321,7 +1321,7 @@ pub async fn suspend_application(
              WHERE id = $1",
         now = crate::db::sql::now()
     ))
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.user_id)
     .execute(&state.db)
     .await
@@ -1357,7 +1357,7 @@ pub async fn suspend_application(
     // Get app name for response
     #[cfg(feature = "postgres")]
     let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .fetch_one(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1403,7 +1403,7 @@ pub async fn resume_application(
     #[cfg(feature = "postgres")]
     let is_suspended: bool =
         sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(&state.db)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -1432,7 +1432,7 @@ pub async fn resume_application(
              WHERE id = $1",
         crate::db::sql::now()
     ))
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1466,7 +1466,7 @@ pub async fn resume_application(
     // Get app name for response
     #[cfg(feature = "postgres")]
     let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .fetch_one(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1518,7 +1518,7 @@ pub async fn get_site_overrides(
     let _app = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
@@ -1552,7 +1552,7 @@ pub async fn get_site_overrides(
         WHERE a.id = $1
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -1618,7 +1618,7 @@ pub async fn get_site_overrides(
         ORDER BY c.id, s.id, (c.agent_id = bpm.agent_id) DESC
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1676,7 +1676,7 @@ pub async fn get_site_overrides(
         WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 

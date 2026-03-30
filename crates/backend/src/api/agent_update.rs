@@ -80,7 +80,7 @@ pub async fn upload_binary(
         "INSERT INTO agent_binaries (id, version, platform, checksum_sha256, size_bytes, binary_data, uploaded_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(&body.version)
     .bind(&platform)
     .bind(&body.checksum_sha256)
@@ -190,7 +190,7 @@ pub async fn push_update_to_agent(
          VALUES ($1, $2, $3, 'in_progress', $4)",
     )
     .bind(update_id)
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(&body.version)
     .bind(total_chunks as i32)
     .execute(&state.db)

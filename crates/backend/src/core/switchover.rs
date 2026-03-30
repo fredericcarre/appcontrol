@@ -199,7 +199,7 @@ async fn execute_validate(
         let last_heartbeat = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
             "SELECT last_heartbeat_at FROM agents WHERE id = $1",
         )
-        .bind(agent_id)
+        .bind(crate::db::bind_id(**agent_id))
         .fetch_optional(&state.db)
         .await
         .map_err(|e| SwitchoverError::Database(e.to_string()))?;
@@ -600,7 +600,7 @@ async fn execute_start_target(
                 WHERE component_id = $1 AND site_id = $2
                 "#,
                 )
-                .bind(comp_id)
+                .bind(crate::db::bind_id(comp_id))
                 .bind(DbUuid::from(target_site_id))
                 .fetch_optional(&state.db)
                 .await
@@ -620,7 +620,7 @@ async fn execute_start_target(
                     WHERE id = $1",
                 crate::db::sql::now()
             ))
-            .bind(comp_id)
+            .bind(crate::db::bind_id(comp_id))
             .bind(new_agent_id)
             .bind(&check_override)
             .bind(&start_override)
@@ -644,7 +644,7 @@ async fn execute_start_target(
                 VALUES ('component_switchover', $1, $2, $3, $4)
                 "#,
             )
-            .bind(comp_id)
+            .bind(crate::db::bind_id(comp_id))
             .bind(DbUuid::from(initiated_by))
             .bind(DbJson::from(before))
             .bind(DbJson::from(after))
@@ -773,7 +773,7 @@ pub async fn advance_phase(
                 "#,
             )
             .bind(DbUuid::new_v4())
-            .bind(switchover_id)
+            .bind(crate::db::bind_id(switchover_id))
             .bind(DbUuid::from(app_id))
             .bind(&active_phase)
             .bind(DbJson::from(details.clone()))
@@ -790,7 +790,7 @@ pub async fn advance_phase(
                     "#,
                 )
                 .bind(DbUuid::new_v4())
-                .bind(switchover_id)
+                .bind(crate::db::bind_id(switchover_id))
                 .bind(DbUuid::from(app_id))
                 .bind(next)
                 .bind(DbJson::from(serde_json::json!({})))
@@ -837,7 +837,7 @@ pub async fn advance_phase(
                 "#,
             )
             .bind(DbUuid::new_v4())
-            .bind(switchover_id)
+            .bind(crate::db::bind_id(switchover_id))
             .bind(DbUuid::from(app_id))
             .bind(&active_phase)
             .bind(DbJson::from(error_details))
@@ -880,7 +880,7 @@ pub async fn rollback(
         "#,
     )
     .bind(DbUuid::new_v4())
-    .bind(switchover_id)
+    .bind(crate::db::bind_id(switchover_id))
     .bind(DbUuid::from(app_id))
     .bind(DbJson::from(serde_json::json!({"rolled_back_from": phase})))
     .execute(pool)
@@ -929,7 +929,7 @@ pub async fn commit(
         "#,
     )
     .bind(DbUuid::new_v4())
-    .bind(switchover_id)
+    .bind(crate::db::bind_id(switchover_id))
     .bind(DbUuid::from(app_id))
     .bind(DbJson::from(serde_json::json!({})))
     .execute(pool)

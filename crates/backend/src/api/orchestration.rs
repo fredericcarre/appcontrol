@@ -58,7 +58,7 @@ pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult 
         WHERE c.application_id = $1 AND c.is_optional = false
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
@@ -233,7 +233,7 @@ pub async fn start(
     // Acquire operation lock — prevents concurrent start/stop on the same app
     let guard = state
         .operation_lock
-        .try_lock(app_id, "orchestration_start", user.user_id)
+        .try_lock(app_id, "orchestration_start", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -268,7 +268,7 @@ pub async fn stop(
     // Acquire operation lock — prevents concurrent start/stop on the same app
     let guard = state
         .operation_lock
-        .try_lock(app_id, "orchestration_stop", user.user_id)
+        .try_lock(app_id, "orchestration_stop", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -311,7 +311,7 @@ pub async fn status(
         ORDER BY c.name
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -351,7 +351,7 @@ pub async fn wait_running(
             WHERE c.application_id = $1 AND c.is_optional = false
             "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&state.db)
         .await?;
 
@@ -471,7 +471,7 @@ pub async fn health(
         WHERE c.application_id = $1 AND c.is_optional = false
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 

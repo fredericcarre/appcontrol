@@ -26,7 +26,7 @@ pub async fn get_current_state(
     #[cfg(feature = "postgres")]
     let state_str =
         sqlx::query_scalar::<_, String>("SELECT current_state FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(pool)
             .await
             .map_err(|e| FsmError::Database(e.to_string()))?;
@@ -147,7 +147,7 @@ pub async fn transition_component(
         VALUES ($1, $2, $3, 'api')
         "#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(current.to_string())
     .bind(new_state.to_string())
     .execute(&mut *tx)
@@ -236,7 +236,7 @@ pub async fn force_transition_component(
         VALUES ($1, $2, $3, 'force')
         "#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(current.to_string())
     .bind(new_state.to_string())
     .execute(&mut *tx)
@@ -368,7 +368,7 @@ async fn fetch_component_for_transition<'a>(
            JOIN applications a ON c.application_id = a.id
            WHERE c.id = $1 FOR UPDATE OF c"#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_optional(&mut **tx)
     .await
 }
@@ -410,7 +410,7 @@ async fn update_component_state<'a>(
     new_state: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE components SET current_state = $2, updated_at = now() WHERE id = $1")
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .bind(new_state)
         .execute(&mut **tx)
         .await?;

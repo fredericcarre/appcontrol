@@ -205,7 +205,7 @@ pub async fn build_dag(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Res
     let components = sqlx::query_as::<_, (crate::db::DbUuid,)>(
         "SELECT id FROM components WHERE application_id = $1",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(pool)
     .await
     .map_err(|e| DagError::Database(e.to_string()))?;
@@ -223,7 +223,7 @@ pub async fn build_dag(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Res
     let deps = sqlx::query_as::<_, (crate::db::DbUuid, crate::db::DbUuid)>(
         "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(pool)
     .await
     .map_err(|e| DagError::Database(e.to_string()))?;

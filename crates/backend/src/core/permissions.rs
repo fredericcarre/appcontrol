@@ -33,8 +33,8 @@ pub async fn effective_permission(
 
     #[cfg(feature = "postgres")]
     let direct = sqlx::query_scalar::<_, String>(&direct_sql)
-        .bind(app_id)
-        .bind(user_id)
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(user_id))
         .fetch_optional(pool)
         .await
         .ok()
@@ -65,8 +65,8 @@ pub async fn effective_permission(
 
     #[cfg(feature = "postgres")]
     let team_perms = sqlx::query_as::<_, (String,)>(&team_sql)
-        .bind(app_id)
-        .bind(user_id)
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(user_id))
         .fetch_all(pool)
         .await
         .unwrap_or_default();
@@ -166,8 +166,8 @@ pub async fn can_access_site(
         )
         "#,
     )
-    .bind(site_id)
-    .bind(user_id)
+    .bind(crate::db::bind_id(site_id))
+    .bind(crate::db::bind_id(user_id))
     .fetch_one(pool)
     .await
     .unwrap_or(false);
@@ -222,7 +222,7 @@ pub async fn can_operate_component(
         WHERE c.id = $1
         "#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_optional(pool)
     .await
     .ok()
@@ -258,7 +258,7 @@ pub async fn can_operate_component(
     // Check site-level access via application's site
     #[cfg(feature = "postgres")]
     let site_id = sqlx::query_scalar::<_, DbUuid>("SELECT site_id FROM applications WHERE id = $1")
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_optional(pool)
         .await
         .ok()

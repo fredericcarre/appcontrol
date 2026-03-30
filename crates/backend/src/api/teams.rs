@@ -74,7 +74,7 @@ pub async fn get_team(
     let team = sqlx::query_as::<_, TeamRow>(
         "SELECT id, organization_id, name, description, created_at, updated_at FROM teams WHERE id = $1",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -119,7 +119,7 @@ pub async fn create_team(
         RETURNING id, organization_id, name, description, created_at, updated_at
         "#,
     )
-    .bind(team_id)
+    .bind(crate::db::bind_id(team_id))
     .bind(user.organization_id)
     .bind(&body.name)
     .bind(&body.description)
@@ -145,7 +145,7 @@ pub async fn create_team(
     #[cfg(feature = "postgres")]
     let _ =
         sqlx::query("INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, 'lead')")
-            .bind(team_id)
+            .bind(crate::db::bind_id(team_id))
             .bind(user.user_id)
             .execute(&state.db)
             .await;
@@ -197,7 +197,7 @@ pub async fn update_team(
 
     #[cfg(feature = "postgres")]
     let team = sqlx::query_as::<_, TeamRow>(&update_sql)
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(&body.name)
         .bind(&body.description)
         .fetch_optional(&state.db)
@@ -233,7 +233,7 @@ pub async fn delete_team(
 
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM teams WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .execute(&state.db)
         .await?;
 
@@ -275,7 +275,7 @@ pub async fn list_members(
         ORDER BY tm.role, u.display_name, u.email
         "#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .fetch_all(&state.db)
     .await?;
 
@@ -332,7 +332,7 @@ pub async fn add_member(
         let is_lead = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead')",
         )
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(user.user_id)
         .fetch_one(&state.db)
         .await?;
@@ -372,7 +372,7 @@ pub async fn add_member(
         RETURNING id
         "#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(body.user_id)
     .bind(body.role.as_deref().unwrap_or("member"))
     .fetch_one(&state.db)
@@ -410,7 +410,7 @@ pub async fn remove_member(
         let is_lead = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead')",
         )
-        .bind(team_id)
+        .bind(crate::db::bind_id(team_id))
         .bind(user.user_id)
         .fetch_one(&state.db)
         .await?;
@@ -444,8 +444,8 @@ pub async fn remove_member(
 
     #[cfg(feature = "postgres")]
     sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
-        .bind(team_id)
-        .bind(user_id)
+        .bind(crate::db::bind_id(team_id))
+        .bind(crate::db::bind_id(user_id))
         .execute(&state.db)
         .await?;
 

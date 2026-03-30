@@ -240,7 +240,7 @@ pub async fn correlate(
              WHERE agent_id = $1
              ORDER BY scanned_at DESC LIMIT 1",
         )
-        .bind(agent_id)
+        .bind(crate::db::bind_id(*agent_id))
         .fetch_optional(&state.db)
         .await?;
         if let Some(r) = row {
@@ -265,7 +265,7 @@ pub async fn correlate(
         let ips = sqlx::query_scalar::<_, serde_json::Value>(
             "SELECT COALESCE(ip_addresses, '[]'::jsonb) FROM agents WHERE id = $1",
         )
-        .bind(agent_id)
+        .bind(crate::db::bind_id(*agent_id))
         .fetch_optional(&state.db)
         .await?;
 
@@ -273,7 +273,7 @@ pub async fn correlate(
         let ips = sqlx::query_scalar::<_, serde_json::Value>(
             "SELECT COALESCE(ip_addresses, '[]') FROM agents WHERE id = $1",
         )
-        .bind(agent_id)
+        .bind(crate::db::bind_id(*agent_id))
         .fetch_optional(&state.db)
         .await?;
         if let Some(ips_val) = ips {
@@ -1332,7 +1332,7 @@ pub async fn create_draft(
               config_files, log_files, matched_service)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
         )
-        .bind(comp_id)
+        .bind(crate::db::bind_id(comp_id))
         .bind(draft_id)
         .bind(comp.agent_id)
         .bind(&comp.name)
@@ -1576,9 +1576,9 @@ pub async fn apply_draft(
         "INSERT INTO applications (id, organization_id, site_id, name, mode)
          VALUES ($1, $2, $3, $4, 'advisory')",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(org_id)
-    .bind(site_id)
+    .bind(crate::db::bind_id(site_id))
     .bind(&name)
     .execute(&state.db)
     .await?;
@@ -1663,7 +1663,7 @@ pub async fn apply_draft(
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'UNKNOWN')",
         )
         .bind(real_comp_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(comp_name)
         .bind(comp_type)
         .bind(host)
@@ -1734,7 +1734,7 @@ pub async fn apply_draft(
                 "INSERT INTO dependencies (application_id, from_component_id, to_component_id)
                  VALUES ($1, $2, $3)",
             )
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .bind(from_real)
             .bind(to_real)
             .execute(&state.db)
@@ -1748,7 +1748,7 @@ pub async fn apply_draft(
         "UPDATE discovery_drafts SET status = 'applied', applied_app_id = $2 WHERE id = $1",
     )
     .bind(draft_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .execute(&state.db)
     .await?;
 

@@ -148,7 +148,7 @@ pub async fn dispatch_event(
             Option<sqlx::types::Json<serde_json::Value>>,
         ),
     >(webhook_sql)
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(event_bind)
     .fetch_all(pool)
     .await

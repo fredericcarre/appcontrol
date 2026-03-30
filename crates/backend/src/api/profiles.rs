@@ -160,7 +160,7 @@ pub async fn list_profiles(
         ORDER BY p.profile_type, p.name
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -204,7 +204,7 @@ pub async fn get_profile(
         WHERE application_id = $1 AND name = $2
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&name)
     .fetch_optional(&state.db)
     .await?;
@@ -254,7 +254,7 @@ pub async fn create_profile(
     // Check if name already exists
     let exists: Option<(Uuid,)> =
         sqlx::query_as("SELECT id FROM binding_profiles WHERE application_id = $1 AND name = $2")
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .bind(&body.name)
             .fetch_optional(&state.db)
             .await?;
@@ -292,7 +292,7 @@ pub async fn create_profile(
         "#,
     )
     .bind(profile_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&body.name)
     .bind(&body.description)
     .bind(&body.profile_type)
@@ -356,7 +356,7 @@ pub async fn activate_profile(
     let profile: Option<BindingProfile> = sqlx::query_as(
         "SELECT id, application_id, name, description, profile_type, is_active, gateway_ids, auto_failover, created_at, created_by FROM binding_profiles WHERE application_id = $1 AND name = $2",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&name)
     .fetch_optional(&state.db)
     .await?;
@@ -375,7 +375,7 @@ pub async fn activate_profile(
     let current_active: Option<(String,)> = sqlx::query_as(
         "SELECT name FROM binding_profiles WHERE application_id = $1 AND is_active = true",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -405,7 +405,7 @@ pub async fn activate_profile(
     // Deactivate all profiles
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE binding_profiles SET is_active = false WHERE application_id = $1")
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .execute(&state.db)
         .await?;
 
@@ -440,7 +440,7 @@ pub async fn activate_profile(
           AND c.name = m.component_name
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(profile.id)
     .execute(&state.db)
     .await?;
@@ -453,8 +453,8 @@ pub async fn activate_profile(
         VALUES ($1, $2, 'COMMIT', 'completed', $3)
         "#,
     )
-    .bind(switchover_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(switchover_id))
+    .bind(crate::db::bind_id(app_id))
     .bind(json!({
         "type": "profile_activation",
         "profile_name": &name,
@@ -488,7 +488,7 @@ pub async fn delete_profile(
     let profile: Option<BindingProfile> = sqlx::query_as(
         "SELECT id, application_id, name, description, profile_type, is_active, gateway_ids, auto_failover, created_at, created_by FROM binding_profiles WHERE application_id = $1 AND name = $2",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&name)
     .fetch_optional(&state.db)
     .await?;

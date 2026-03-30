@@ -197,7 +197,7 @@ pub async fn app_history(
     let components = sqlx::query_as::<_, ComponentRow>(
         "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -460,7 +460,7 @@ async fn get_events(
         LIMIT $4
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(from)
     .bind(to)
     .bind(limit)

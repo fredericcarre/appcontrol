@@ -85,6 +85,7 @@ pub struct TestContext {
     pub editor_user_id: Uuid,
     pub organization_id: Uuid,
     pub default_site_id: Uuid,
+    pub db_pool: sqlx::SqlitePool,
     client: Client,
     pub admin_token: String,
     pub operator_token: String,
@@ -170,6 +171,8 @@ impl TestContext {
         .await
         .unwrap();
 
+        let db_pool = pool.clone();
+
         // Start backend
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -244,6 +247,7 @@ impl TestContext {
             editor_user_id: editor_id,
             organization_id: org_id,
             default_site_id,
+            db_pool,
             client: Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
@@ -577,7 +581,11 @@ impl TestContext {
     pub async fn component_id(&self, app_id: Uuid, name: &str) -> Uuid {
         let resp = self.get(&format!("/api/v1/apps/{app_id}/components")).await;
         assert!(resp.status().is_success(), "list comps: {}", resp.status());
-        let comps: Vec<Value> = resp.json().await.unwrap();
+        let body: Value = resp.json().await.unwrap();
+        // Handle both bare array and wrapped {"components": [...]}
+        let comps = body.as_array()
+            .or_else(|| body["components"].as_array())
+            .unwrap_or_else(|| panic!("Unexpected response format for components: {body}"));
         comps
             .iter()
             .find(|c| c["name"].as_str() == Some(name))
@@ -774,6 +782,8 @@ impl TestContext {
             .await
             .unwrap();
 
+        let db_pool = pool.clone();
+
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let api_url = format!("http://{}", addr);
@@ -856,6 +866,7 @@ impl TestContext {
             editor_user_id: editor_id,
             organization_id: org_id,
             default_site_id,
+            db_pool,
             client: Client::builder().timeout(Duration::from_secs(10)).build().unwrap(),
             admin_token,
             operator_token,
@@ -866,9 +877,252 @@ impl TestContext {
         }
     }
 
+    // ---- Token-based HTTP helpers (for cross-org tests) ----
+
+    pub async fn get_with_token(&self, token: &str, path: &str) -> Response {
+        self.client
+            .get(format!("{}{path}", self.api_url))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+    }
+
+    pub async fn post_with_token(&self, token: &str, path: &str, body: Value) -> Response {
+        self.client
+            .post(format!("{}{path}", self.api_url))
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+    }
+
+    // ---- WebSocket helper ----
+
+    pub async fn connect_websocket(
+        &self,
+        token: &str,
+    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
+    {
+        let url = format!("{}/ws?token={token}", self.ws_url);
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+        ws_stream
+    }
+
+    // ---- Extract ID helper ----
+
+    pub fn extract_id(value: &Value) -> Uuid {
+        value["id"].as_str().unwrap().parse().unwrap()
+    }
+
+    // ---- Second org for isolation tests ----
+
+    pub async fn create_second_org(&self) -> (Uuid, Uuid, String) {
+        let org2_id = Uuid::new_v4();
+        let user2_id = Uuid::new_v4();
+
+        sqlx::query(
+            "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Other Org', 'other-org')",
+        )
+        .bind(DbUuid::from(org2_id))
+        .execute(&self.db_pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO users (id, organization_id, external_id, display_name, role, email)
+             VALUES ($1, $2, 'other_admin', 'Other Admin', 'admin', 'other@test.local')",
+        )
+        .bind(DbUuid::from(user2_id))
+        .bind(DbUuid::from(org2_id))
+        .execute(&self.db_pool)
+        .await
+        .unwrap();
+
+        let token = Self::make_jwt(user2_id, org2_id, "admin", "test-jwt-secret");
+        (org2_id, user2_id, token)
+    }
+
+    // ---- Ten-component app for branch restart tests ----
+
+    pub async fn create_ten_component_app(&self) -> Uuid {
+        let resp = self
+            .post(
+                "/api/v1/apps",
+                json!({
+                    "name": "Multi-Branch-App",
+                    "description": "10-component app with two branches",
+                    "site_id": self.default_site_id,
+                }),
+            )
+            .await;
+        let app: Value = resp.json().await.unwrap();
+        let app_id: Uuid = app["id"].as_str().unwrap().parse().unwrap();
+
+        let names = [
+            "DB-1", "App-1", "Front-1", "Queue-1", "Worker-1", "DB-2", "App-2", "Front-2",
+            "Queue-2", "Worker-2",
+        ];
+        let mut ids: std::collections::HashMap<String, Uuid> = std::collections::HashMap::new();
+        for name in &names {
+            let resp = self
+                .post(
+                    &format!("/api/v1/apps/{app_id}/components"),
+                    json!({
+                        "name": name,
+                        "component_type": "service",
+                        "hostname": format!("srv-{}", name.to_lowercase()),
+                        "check_cmd": format!("check_{}.sh", name.to_lowercase()),
+                        "start_cmd": format!("start_{}.sh", name.to_lowercase()),
+                        "stop_cmd": format!("stop_{}.sh", name.to_lowercase()),
+                    }),
+                )
+                .await;
+            let c: Value = resp.json().await.unwrap();
+            ids.insert(name.to_string(), c["id"].as_str().unwrap().parse().unwrap());
+        }
+
+        let deps = [
+            ("DB-1", "App-1"),
+            ("App-1", "Front-1"),
+            ("App-1", "Queue-1"),
+            ("Queue-1", "Worker-1"),
+            ("DB-2", "App-2"),
+            ("App-2", "Front-2"),
+            ("App-2", "Queue-2"),
+            ("Queue-2", "Worker-2"),
+        ];
+        for (from, to) in &deps {
+            self.post(
+                &format!("/api/v1/apps/{app_id}/dependencies"),
+                json!({
+                    "from_component_id": ids[*from],
+                    "to_component_id": ids[*to],
+                }),
+            )
+            .await;
+        }
+
+        app_id
+    }
+
+    // ---- State helpers ----
+
+    pub async fn set_all_running(&self, app_id: Uuid) {
+        let comp_ids = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM components WHERE application_id = $1",
+        )
+        .bind(DbUuid::from(app_id))
+        .fetch_all(&self.db_pool)
+        .await
+        .unwrap();
+        for cid in comp_ids {
+            sqlx::query(
+                "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
+                 VALUES ($1, 'UNKNOWN', 'RUNNING', 'test_setup')",
+            )
+            .bind(&cid)
+            .execute(&self.db_pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    // ---- Config version helper ----
+
+    pub async fn get_config_versions(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+    ) -> Vec<ConfigVersion> {
+        let rows = sqlx::query_as::<_, ConfigVersionRow>(
+            "SELECT changed_by, before_snapshot, after_snapshot
+             FROM config_versions WHERE resource_type = $1 AND resource_id = $2
+             ORDER BY created_at",
+        )
+        .bind(resource_type)
+        .bind(DbUuid::from(resource_id))
+        .fetch_all(&self.db_pool)
+        .await
+        .unwrap();
+        rows.into_iter()
+            .map(|r| ConfigVersion {
+                changed_by: r.changed_by.parse().unwrap_or_default(),
+                before_snapshot: r.before_snapshot.map(|s| serde_json::from_str(&s).unwrap_or_default()),
+                after_snapshot: r.after_snapshot.map(|s| serde_json::from_str(&s).unwrap_or_default()).unwrap_or(Value::Null),
+            })
+            .collect()
+    }
+
+    // ---- Team helper ----
+
+    pub async fn create_team(&self, name: &str, members: Vec<Uuid>) -> Uuid {
+        let resp = self
+            .post(
+                "/api/v1/teams",
+                json!({
+                    "name": name,
+                    "description": format!("Test team: {name}"),
+                }),
+            )
+            .await;
+        let team: Value = resp.json().await.unwrap();
+        let team_id: Uuid = team["id"].as_str().unwrap().parse().unwrap();
+
+        for member_id in members {
+            self.post(
+                &format!("/api/v1/teams/{team_id}/members"),
+                json!({
+                    "user_id": member_id,
+                    "role": "member",
+                }),
+            )
+            .await;
+        }
+
+        team_id
+    }
+
+    // ---- Custom command helper ----
+
+    pub async fn create_command(&self, component_id: Uuid, name: &str, cmd: &str, confirm: bool) {
+        self.put(
+            &format!("/api/v1/components/{component_id}"),
+            json!({
+                "commands": [{
+                    "name": name,
+                    "display_name": name,
+                    "command": cmd,
+                    "category": "custom",
+                    "requires_confirmation": confirm,
+                    "timeout_seconds": 30,
+                }]
+            }),
+        )
+        .await;
+    }
+
     pub async fn cleanup(&self) {
         // Cleanup is handled by Drop
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helper types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, sqlx::FromRow)]
+struct ConfigVersionRow {
+    pub changed_by: String,
+    pub before_snapshot: Option<String>,
+    pub after_snapshot: Option<String>,
+}
+
+pub struct ConfigVersion {
+    pub changed_by: Uuid,
+    pub before_snapshot: Option<Value>,
+    pub after_snapshot: Value,
 }
 
 impl Drop for TestContext {

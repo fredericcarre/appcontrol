@@ -186,7 +186,7 @@ async fn get_target_info(
     if let Some(app_id) = application_id {
         let name: Option<String> =
             sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-                .bind(app_id)
+                .bind(crate::db::bind_id(app_id))
                 .fetch_optional(db)
                 .await
                 .ok()
@@ -199,7 +199,7 @@ async fn get_target_info(
     } else if let Some(comp_id) = component_id {
         let name: Option<String> =
             sqlx::query_scalar("SELECT COALESCE(display_name, name) FROM components WHERE id = $1")
-                .bind(comp_id)
+                .bind(crate::db::bind_id(comp_id))
                 .fetch_optional(db)
                 .await
                 .ok()
@@ -249,7 +249,7 @@ fn row_to_response(
 /// Get app_id from component_id for permission checks
 async fn get_app_id_for_component(db: &crate::db::DbPool, component_id: DbUuid) -> Option<DbUuid> {
     sqlx::query_scalar("SELECT application_id FROM components WHERE id = $1")
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .fetch_optional(db)
         .await
         .ok()
@@ -287,7 +287,7 @@ pub async fn list_app_schedules(
             ORDER BY created_at DESC
             "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -303,7 +303,7 @@ pub async fn list_app_schedules(
             ORDER BY created_at DESC
             "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -312,7 +312,7 @@ pub async fn list_app_schedules(
     // Get app name once for all schedules
     let app_name: Option<String> =
         sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .fetch_optional(&state.db)
             .await
             .ok()
@@ -378,7 +378,7 @@ pub async fn create_app_schedule(
 
     // Get org_id from application
     let org_id: Uuid = sqlx::query_scalar("SELECT organization_id FROM applications WHERE id = $1")
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_optional(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -416,7 +416,7 @@ pub async fn create_app_schedule(
     )
     .bind(schedule_id)
     .bind(org_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&req.name)
     .bind(&req.description)
     .bind(&req.operation)
@@ -446,7 +446,7 @@ pub async fn create_app_schedule(
 
     let app_name: Option<String> =
         sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .fetch_optional(&state.db)
             .await
             .ok()
@@ -493,7 +493,7 @@ pub async fn list_component_schedules(
             ORDER BY created_at DESC
             "#,
         )
-        .bind(comp_id)
+        .bind(crate::db::bind_id(comp_id))
         .fetch_all(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -509,7 +509,7 @@ pub async fn list_component_schedules(
             ORDER BY created_at DESC
             "#,
         )
-        .bind(comp_id)
+        .bind(crate::db::bind_id(comp_id))
         .fetch_all(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -518,7 +518,7 @@ pub async fn list_component_schedules(
     // Get component name
     let comp_name: Option<String> =
         sqlx::query_scalar("SELECT COALESCE(display_name, name) FROM components WHERE id = $1")
-            .bind(comp_id)
+            .bind(crate::db::bind_id(comp_id))
             .fetch_optional(&state.db)
             .await
             .ok()
@@ -588,7 +588,7 @@ pub async fn create_component_schedule(
 
     // Get org_id from application
     let org_id: Uuid = sqlx::query_scalar("SELECT organization_id FROM applications WHERE id = $1")
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_optional(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -626,7 +626,7 @@ pub async fn create_component_schedule(
     )
     .bind(schedule_id)
     .bind(org_id)
-    .bind(comp_id)
+    .bind(crate::db::bind_id(comp_id))
     .bind(&req.name)
     .bind(&req.description)
     .bind(&req.operation)
@@ -656,7 +656,7 @@ pub async fn create_component_schedule(
 
     let comp_name: Option<String> =
         sqlx::query_scalar("SELECT COALESCE(display_name, name) FROM components WHERE id = $1")
-            .bind(comp_id)
+            .bind(crate::db::bind_id(comp_id))
             .fetch_optional(&state.db)
             .await
             .ok()

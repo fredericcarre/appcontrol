@@ -6,11 +6,16 @@ pub mod saml;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::db::DbUuid;
+
 /// Authenticated user context extracted from JWT or API key.
+///
+/// Uses DbUuid for user_id and organization_id to ensure correct SQLite TEXT
+/// encoding when these values are used in query bind parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthUser {
-    pub user_id: Uuid,
-    pub organization_id: Uuid,
+    pub user_id: DbUuid,
+    pub organization_id: DbUuid,
     pub email: String,
     pub role: String,
 }
@@ -152,8 +157,8 @@ pub async fn login(
         axum::Json(LoginResponse {
             token: jwt_token,
             user: AuthUser {
-                user_id,
-                organization_id: org_id,
+                user_id: DbUuid::from(user_id),
+                organization_id: DbUuid::from(org_id),
                 email,
                 role,
             },

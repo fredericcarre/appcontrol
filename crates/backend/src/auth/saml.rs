@@ -231,14 +231,14 @@ pub async fn saml_acs(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Sync group→team mappings
-    let _teams_synced = sync_saml_groups(&state.db, auth_user.user_id, &assertion.groups)
+    let _teams_synced = sync_saml_groups(&state.db, *auth_user.user_id, &assertion.groups)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Generate JWT
     let jwt_token = super::jwt::create_token(
-        auth_user.user_id,
-        auth_user.organization_id,
+        *auth_user.user_id,
+        *auth_user.organization_id,
         &auth_user.email,
         &auth_user.role,
         &state.config.jwt_secret,
@@ -428,8 +428,8 @@ async fn find_or_create_saml_user(
         .await;
 
         return Ok(AuthUser {
-            user_id: *user_id,
-            organization_id: *org_id,
+            user_id,
+            organization_id: org_id,
             email,
             role: effective_role.to_string(),
         });
@@ -456,8 +456,8 @@ async fn find_or_create_saml_user(
     .await?;
 
     Ok(AuthUser {
-        user_id,
-        organization_id: *org_id,
+        user_id: DbUuid::from(user_id),
+        organization_id: org_id,
         email: email.to_string(),
         role: role.to_string(),
     })

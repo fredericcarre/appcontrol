@@ -168,7 +168,7 @@ pub async fn list_log_sources(
         ORDER BY display_order, name
         "#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_all(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -251,8 +251,8 @@ pub async fn create_log_source(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $18)
         "#,
     )
-    .bind(id)
-    .bind(component_id)
+    .bind(crate::db::bind_id(id))
+    .bind(crate::db::bind_id(component_id))
     .bind(component.organization_id)
     .bind(&req.name)
     .bind(&req.source_type)
@@ -482,7 +482,7 @@ pub async fn get_component_logs(
                 "SELECT * FROM component_log_sources WHERE id = $1 AND component_id = $2",
             )
             .bind(source_id)
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -573,7 +573,7 @@ pub async fn run_diagnostic_command(
         WHERE component_id = $1 AND source_type = 'command' AND name = $2
         "#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(&command_name)
     .fetch_optional(&state.db)
     .await
@@ -692,7 +692,7 @@ async fn get_component_with_permission(
     let component = sqlx::query_as::<_, ComponentRow>(
         "SELECT id, application_id, organization_id, name, agent_id FROM components WHERE id = $1",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_optional(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -724,7 +724,7 @@ async fn log_access_audit(
 ) -> Result<(), ApiError> {
     let org_id =
         sqlx::query_scalar::<_, DbUuid>("SELECT organization_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_one(&state.db)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -740,7 +740,7 @@ async fn log_access_audit(
     .bind(Uuid::new_v4())
     .bind(org_id)
     .bind(user.user_id)
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(log_source_id)
     .bind(source_type)
     .bind(source_name)

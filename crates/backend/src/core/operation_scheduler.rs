@@ -108,7 +108,7 @@ async fn execute_single_schedule(state: &Arc<AppState>, schedule: &DueSchedule) 
     let (resource_type, resource_id, target_name) = if let Some(app_id) = schedule.application_id {
         let app_name: Option<String> =
             sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-                .bind(app_id)
+                .bind(crate::db::bind_id(app_id))
                 .fetch_optional(&state.db)
                 .await
                 .ok()
@@ -121,7 +121,7 @@ async fn execute_single_schedule(state: &Arc<AppState>, schedule: &DueSchedule) 
     } else if let Some(comp_id) = schedule.component_id {
         let comp_name: Option<String> =
             sqlx::query_scalar("SELECT COALESCE(display_name, name) FROM components WHERE id = $1")
-                .bind(comp_id)
+                .bind(crate::db::bind_id(comp_id))
                 .fetch_optional(&state.db)
                 .await
                 .ok()

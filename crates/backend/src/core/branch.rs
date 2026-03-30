@@ -52,7 +52,7 @@ pub async fn detect_error_branch(
     let mut branch_components = Vec::new();
     for &comp_id in &affected {
         let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
-            .bind(comp_id)
+            .bind(crate::db::bind_id(comp_id))
             .fetch_optional(pool)
             .await
             .map_err(|e| BranchError::Database(e.to_string()))?
@@ -61,7 +61,7 @@ pub async fn detect_error_branch(
         let state = sqlx::query_scalar::<_, String>(
             "SELECT COALESCE((SELECT to_state FROM state_transitions WHERE component_id = $1 ORDER BY created_at DESC LIMIT 1), 'UNKNOWN')",
         )
-        .bind(comp_id)
+        .bind(crate::db::bind_id(comp_id))
         .fetch_one(pool)
         .await
         .map_err(|e| BranchError::Database(e.to_string()))?;

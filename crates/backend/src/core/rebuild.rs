@@ -107,7 +107,7 @@ async fn fetch_rebuild_targets(
                 FROM components c WHERE id = $1
                 "#,
             )
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(pool)
             .await
             .map_err(|e| RebuildError::Database(e.to_string()))?;
@@ -130,7 +130,7 @@ async fn fetch_rebuild_targets(
             FROM components c WHERE application_id = $1
             "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(pool)
         .await
         .map_err(|e| RebuildError::Database(e.to_string()))
@@ -170,7 +170,7 @@ pub async fn execute_rebuild(
         "INSERT INTO action_log (user_id, action, resource_type, resource_id, details) VALUES ($1, 'rebuild_execute', 'application', $2, $3)",
     )
     .bind(initiated_by)
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(serde_json::json!({"components": targets.len(), "status": "started"}))
     .execute(&state.db)
     .await;
@@ -396,7 +396,7 @@ async fn get_component_agent(pool: &crate::db::DbPool, component_id: Uuid) -> Op
     sqlx::query_scalar::<_, DbUuid>(
         "SELECT agent_id FROM components WHERE id = $1 AND agent_id IS NOT NULL",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_optional(pool)
     .await
     .ok()

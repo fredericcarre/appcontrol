@@ -21,9 +21,10 @@ async fn test_apps_invisible_across_orgs() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
     // Handle both bare array and wrapped {"apps": [...]}
+    let empty = vec![];
     let apps = body.as_array()
         .or_else(|| body["apps"].as_array())
-        .unwrap_or(&vec![]);
+        .unwrap_or(&empty);
     let app_ids: Vec<&str> = apps
         .iter()
         .filter_map(|a| a["id"].as_str())
@@ -101,9 +102,10 @@ async fn test_teams_scoped_to_org() {
 
     let resp = ctx.get_with_token(&org2_token, "/api/v1/teams").await;
     let body: Value = resp.json().await.unwrap();
+    let empty = vec![];
     let teams = body.as_array()
         .or_else(|| body["teams"].as_array())
-        .unwrap_or(&vec![]);
+        .unwrap_or(&empty);
     let team_names: Vec<&str> = teams
         .iter()
         .filter_map(|t| t["name"].as_str())
