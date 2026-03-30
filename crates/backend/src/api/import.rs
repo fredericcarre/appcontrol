@@ -234,7 +234,7 @@ pub async fn import_yaml_map(
                 sqlx::query(
                     "INSERT INTO component_groups (id, application_id, name, display_order) VALUES ($1, $2, $3, $4)",
                 )
-                .bind(group_id)
+                .bind(crate::db::bind_id(group_id))
                 .bind(crate::db::bind_id(app_id))
                 .bind(group_name)
                 .bind(groups_created as i32)
@@ -295,7 +295,7 @@ pub async fn import_yaml_map(
         .bind(comp.description.as_deref())
         .bind(comp_type)
         .bind(icon)
-        .bind(group_id)
+        .bind(group_id.map(crate::db::bind_id))
         .bind(&check_cmd)
         .bind(&start_cmd)
         .bind(&stop_cmd)
@@ -332,7 +332,7 @@ pub async fn import_yaml_map(
                 r#"INSERT INTO component_commands (id, component_id, name, command, description, requires_confirmation)
                 VALUES ($1, $2, $3, $4, $5, $6)"#,
             )
-            .bind(cmd_id)
+            .bind(crate::db::bind_id(cmd_id))
             .bind(crate::db::bind_id(comp_id))
             .bind(display)
             .bind(cmd_text)
@@ -354,7 +354,7 @@ pub async fn import_yaml_map(
                     r#"INSERT INTO command_input_params (command_id, name, description, default_value, validation_regex, required, display_order)
                     VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
                 )
-                .bind(cmd_id)
+                .bind(crate::db::bind_id(cmd_id))
                 .bind(param_name)
                 .bind(param.description.as_deref())
                 .bind(param.default_value.as_deref())
@@ -421,8 +421,8 @@ pub async fn import_yaml_map(
                 "INSERT INTO dependencies (application_id, from_component_id, to_component_id) VALUES ($1, $2, $3)",
             )
             .bind(crate::db::bind_id(app_id))
-            .bind(from_id)
-            .bind(to_id)
+            .bind(crate::db::bind_id(from_id))
+            .bind(crate::db::bind_id(to_id))
             .execute(&state.db)
             .await?;
 
@@ -788,7 +788,7 @@ pub async fn import_json_map(
         sqlx::query(
             "INSERT INTO component_groups (id, application_id, name, description, color, display_order) VALUES ($1, $2, $3, $4, $5, $6)",
         )
-        .bind(group_id)
+        .bind(crate::db::bind_id(group_id))
         .bind(crate::db::bind_id(app_id))
         .bind(&group.name)
         .bind(&group.description)
@@ -875,7 +875,7 @@ pub async fn import_json_map(
         .bind(&comp.description)
         .bind(comp_type)
         .bind(icon)
-        .bind(group_id)
+        .bind(group_id.map(crate::db::bind_id))
         .bind(&comp.host)
         .bind(&check_cmd)
         .bind(&start_cmd)
@@ -907,7 +907,7 @@ pub async fn import_json_map(
                 r#"INSERT INTO component_commands (id, component_id, name, command, description, requires_confirmation)
                 VALUES ($1, $2, $3, $4, $5, $6)"#,
             )
-            .bind(cmd_id)
+            .bind(crate::db::bind_id(cmd_id))
             .bind(crate::db::bind_id(comp_id))
             .bind(&custom_cmd.name)
             .bind(&custom_cmd.command)
@@ -931,7 +931,7 @@ pub async fn import_json_map(
                         required, param_type, enum_values, display_order
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
                 )
-                .bind(cmd_id)
+                .bind(crate::db::bind_id(cmd_id))
                 .bind(&param.name)
                 .bind(&param.description)
                 .bind(&param.default_value)
@@ -994,8 +994,8 @@ pub async fn import_json_map(
             "INSERT INTO dependencies (application_id, from_component_id, to_component_id, dep_type) VALUES ($1, $2, $3, $4)",
         )
         .bind(crate::db::bind_id(app_id))
-        .bind(from_id)
-        .bind(to_id)
+        .bind(crate::db::bind_id(from_id))
+        .bind(crate::db::bind_id(to_id))
         .bind(dep_type)
         .execute(&state.db)
         .await?;

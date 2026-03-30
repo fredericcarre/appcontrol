@@ -598,24 +598,23 @@ impl TestContext {
     }
 
     pub async fn force_component_state(&self, app_id: Uuid, name: &str, state: &str) {
-        // Use the component state endpoint or insert via API if available.
-        // Since there's no direct API for this, use the orchestration status check
-        // after inserting a state transition. We use the internal pool.
         let comp_id = self.component_id(app_id, name).await;
-        // Insert a state_transition to force the state — this is the only
-        // place we use direct DB access in tests, as there's no HTTP API to
-        // force component state for testing.
-        let resp = self
-            .post(
-                &format!("/api/v1/components/{comp_id}/force-state"),
-                json!({"state": state}),
-            )
-            .await;
-        // If the force-state endpoint doesn't exist, that's OK — the test
-        // will work with whatever state the component is in.
-        if !resp.status().is_success() {
-            eprintln!("force-state returned {}, tests may not behave as expected", resp.status());
-        }
+        // Directly update the component's current_state and insert a state_transition
+        sqlx::query("UPDATE components SET current_state = $1 WHERE id = $2")
+            .bind(state)
+            .bind(DbUuid::from(comp_id))
+            .execute(&self.db_pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
+             VALUES ($1, 'UNKNOWN', $2, 'test_force')",
+        )
+        .bind(DbUuid::from(comp_id))
+        .bind(state)
+        .execute(&self.db_pool)
+        .await
+        .unwrap();
     }
 
     pub async fn grant_permission(&self, app_id: Uuid, user_id: Uuid, level: &str) {
@@ -1018,6 +1017,11 @@ impl TestContext {
         .await
         .unwrap();
         for cid in comp_ids {
+            sqlx::query("UPDATE components SET current_state = 'RUNNING' WHERE id = $1")
+                .bind(&cid)
+                .execute(&self.db_pool)
+                .await
+                .unwrap();
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
                  VALUES ($1, 'UNKNOWN', 'RUNNING', 'test_setup')",
