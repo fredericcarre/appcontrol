@@ -68,5 +68,8 @@ async fn test_all_components_start_as_stopped() {
         .iter()
         .filter(|c| c["current_state"] == "STOPPED" || c["current_state"] == "UNKNOWN")
         .count();
-    assert_eq!(initial_state, 5, "All 5 components should start as STOPPED or UNKNOWN");
+    assert_eq!(
+        initial_state, 5,
+        "All 5 components should start as STOPPED or UNKNOWN"
+    );
 }

@@ -88,9 +88,7 @@ async fn test_delete_component() {
     let comp: Value = resp.json().await.unwrap();
     let comp_id = comp["id"].as_str().unwrap();
 
-    let resp = ctx
-        .delete(&format!("/api/v1/components/{comp_id}"))
-        .await;
+    let resp = ctx.delete(&format!("/api/v1/components/{comp_id}")).await;
     assert!(
         resp.status().is_success(),
         "Delete component should succeed"

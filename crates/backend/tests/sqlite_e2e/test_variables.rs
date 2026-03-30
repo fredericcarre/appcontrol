@@ -22,7 +22,9 @@ async fn test_create_and_list_variables() {
     let resp = ctx.get(&format!("/api/v1/apps/{app_id}/variables")).await;
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
-    let vars = body["variables"].as_array().expect("Should have variables array");
+    let vars = body["variables"]
+        .as_array()
+        .expect("Should have variables array");
     assert!(!vars.is_empty(), "Should have at least 1 variable");
 }
 

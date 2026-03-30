@@ -151,13 +151,14 @@ pub async fn create_team(
             .await;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let _ =
-        sqlx::query("INSERT INTO team_members (id, team_id, user_id, role) VALUES ($1, $2, $3, 'lead')")
-            .bind(DbUuid::new_v4())
-            .bind(DbUuid::from(team_id))
-            .bind(DbUuid::from(user.user_id))
-            .execute(&state.db)
-            .await;
+    let _ = sqlx::query(
+        "INSERT INTO team_members (id, team_id, user_id, role) VALUES ($1, $2, $3, 'lead')",
+    )
+    .bind(DbUuid::new_v4())
+    .bind(DbUuid::from(team_id))
+    .bind(DbUuid::from(user.user_id))
+    .execute(&state.db)
+    .await;
 
     Ok((StatusCode::CREATED, Json(json!(team))))
 }
