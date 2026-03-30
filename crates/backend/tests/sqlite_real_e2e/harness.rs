@@ -416,14 +416,13 @@ impl TestHarness {
         .await
         .unwrap_or(None);
 
-        result.map(|(s,)| s).unwrap_or_else(|| "UNKNOWN".to_string())
+        result
+            .map(|(s,)| s)
+            .unwrap_or_else(|| "UNKNOWN".to_string())
     }
 
     /// Get state transitions for a component, ordered by time.
-    pub async fn get_transitions(
-        &self,
-        component_id: Uuid,
-    ) -> Vec<(String, String, String)> {
+    pub async fn get_transitions(&self, component_id: Uuid) -> Vec<(String, String, String)> {
         sqlx::query_as::<_, (String, String, String)>(
             "SELECT from_state, to_state, created_at FROM state_transitions WHERE component_id = $1 ORDER BY created_at",
         )
@@ -517,8 +516,7 @@ async fn run_sqlite_migrations(pool: &SqlitePool) {
     .await
     .expect("Failed to create _migrations table");
 
-    let migrations_dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let migrations_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
     let migrations_dir = migrations_dir
         .canonicalize()
         .expect("Cannot find migrations/sqlite directory");

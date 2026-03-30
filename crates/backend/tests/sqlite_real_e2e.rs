@@ -14,3 +14,5 @@
 mod harness;
 #[path = "sqlite_real_e2e/test_start_stop.rs"]
 mod test_start_stop;
+#[path = "sqlite_real_e2e/test_switchover.rs"]
+mod test_switchover;
