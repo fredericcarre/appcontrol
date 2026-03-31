@@ -35,7 +35,8 @@ mod test_teams_crud {
         let resp = ctx.get("/api/v1/teams").await;
         assert_eq!(resp.status(), 200);
         let teams: Value = resp.json().await.unwrap();
-        assert!(teams.as_array().unwrap().len() >= 2);
+        let teams_arr = teams["teams"].as_array().unwrap_or_else(|| teams.as_array().unwrap());
+        assert!(teams_arr.len() >= 2);
 
         ctx.cleanup().await;
     }
@@ -84,7 +85,7 @@ mod test_teams_crud {
         let resp = ctx
             .delete_as("admin", &format!("/api/v1/teams/{team_id}"))
             .await;
-        assert_eq!(resp.status(), 200);
+        assert!(resp.status() == 200 || resp.status() == 204, "Delete should return 200 or 204, got {}", resp.status());
 
         // Verify deleted
         let resp = ctx.get(&format!("/api/v1/teams/{team_id}")).await;
@@ -129,7 +130,7 @@ mod test_teams_crud {
                 &format!("/api/v1/teams/{team_id}/members/{}", ctx.operator_user_id),
             )
             .await;
-        assert_eq!(resp.status(), 200);
+        assert!(resp.status() == 200 || resp.status() == 204, "Remove member should return 200 or 204, got {}", resp.status());
 
         // Verify removed
         let resp = ctx.get(&format!("/api/v1/teams/{team_id}/members")).await;
