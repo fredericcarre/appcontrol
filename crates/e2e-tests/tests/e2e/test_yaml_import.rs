@@ -131,7 +131,7 @@ async fn test_import_yaml_map() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD')",
     )
-    .bind(site_id)
+    .bind(bind_id(site_id))
     .bind(ctx.organization_id)
     .execute(&ctx.db_pool)
     .await
@@ -221,7 +221,7 @@ async fn test_import_creates_links() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD2')",
     )
-    .bind(site_id)
+    .bind(bind_id(site_id))
     .bind(ctx.organization_id)
     .execute(&ctx.db_pool)
     .await
@@ -274,7 +274,7 @@ async fn test_import_creates_command_params() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD3')",
     )
-    .bind(site_id)
+    .bind(bind_id(site_id))
     .bind(ctx.organization_id)
     .execute(&ctx.db_pool)
     .await
@@ -344,7 +344,7 @@ async fn test_import_invalid_yaml() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD4')",
     )
-    .bind(site_id)
+    .bind(bind_id(site_id))
     .bind(ctx.organization_id)
     .execute(&ctx.db_pool)
     .await
@@ -370,7 +370,7 @@ async fn test_import_missing_dependency_warns() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD5')",
     )
-    .bind(site_id)
+    .bind(bind_id(site_id))
     .bind(ctx.organization_id)
     .execute(&ctx.db_pool)
     .await
@@ -418,7 +418,7 @@ async fn test_import_audit_trail() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD6')",
     )
-    .bind(site_id)
+    .bind(bind_id(site_id))
     .bind(ctx.organization_id)
     .execute(&ctx.db_pool)
     .await

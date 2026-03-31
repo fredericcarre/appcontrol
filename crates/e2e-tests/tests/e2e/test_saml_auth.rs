@@ -153,7 +153,7 @@ mod test_saml_auth {
         assert!(body.contains("/dashboard"), "Should redirect to RelayState");
 
         // Verify user was created in the database
-        let user = sqlx::query_as::<_, (Uuid, String, String)>(
+        let user = sqlx::query_as::<_, (appcontrol_backend::db::DbUuid, String, String)>(
             "SELECT id, email, role FROM users WHERE email = 'jean.dupont@example.com'",
         )
         .fetch_optional(&ctx.db_pool)
@@ -168,7 +168,7 @@ mod test_saml_auth {
         // Verify saml_name_id was set
         let name_id =
             sqlx::query_scalar::<_, Option<String>>("SELECT saml_name_id FROM users WHERE id = $1")
-                .bind(user_id)
+                .bind(bind_id(user_id))
                 .fetch_one(&ctx.db_pool)
                 .await
                 .unwrap();
@@ -307,7 +307,7 @@ mod test_saml_auth {
         .await;
 
         // Verify user was added to the team
-        let user_id = sqlx::query_scalar::<_, Uuid>(
+        let user_id = sqlx::query_scalar::<_, appcontrol_backend::db::DbUuid>(
             "SELECT id FROM users WHERE email = 'sync.user@example.com'",
         )
         .fetch_one(&ctx.db_pool)
@@ -319,7 +319,7 @@ mod test_saml_auth {
             "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
         )
         .bind(team_id_uuid)
-        .bind(user_id)
+        .bind(bind_id(user_id))
         .fetch_one(&ctx.db_pool)
         .await
         .unwrap();
@@ -416,7 +416,7 @@ mod test_saml_auth {
         )
         .await;
 
-        let user_id = sqlx::query_scalar::<_, Uuid>(
+        let user_id = sqlx::query_scalar::<_, appcontrol_backend::db::DbUuid>(
             "SELECT id FROM users WHERE email = 'removal.user@example.com'",
         )
         .fetch_one(&ctx.db_pool)
@@ -431,7 +431,7 @@ mod test_saml_auth {
             "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
         )
         .bind(team_a_uuid)
-        .bind(user_id)
+        .bind(bind_id(user_id))
         .fetch_one(&ctx.db_pool)
         .await
         .unwrap();
@@ -439,7 +439,7 @@ mod test_saml_auth {
             "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
         )
         .bind(team_b_uuid)
-        .bind(user_id)
+        .bind(bind_id(user_id))
         .fetch_one(&ctx.db_pool)
         .await
         .unwrap();
@@ -458,7 +458,7 @@ mod test_saml_auth {
             "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
         )
         .bind(team_a_uuid)
-        .bind(user_id)
+        .bind(bind_id(user_id))
         .fetch_one(&ctx.db_pool)
         .await
         .unwrap();
@@ -466,7 +466,7 @@ mod test_saml_auth {
             "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
         )
         .bind(team_b_uuid)
-        .bind(user_id)
+        .bind(bind_id(user_id))
         .fetch_one(&ctx.db_pool)
         .await
         .unwrap();

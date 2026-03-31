@@ -10,6 +10,7 @@ mod common;
 pub use common::*;
 
 // Re-export dependencies used by test modules via `use super::*;`
+pub use appcontrol_backend::db::bind_id;
 pub use serde_json::{json, Value};
 pub use std::time::Duration;
 pub use uuid::Uuid;

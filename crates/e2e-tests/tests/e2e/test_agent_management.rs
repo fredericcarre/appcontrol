@@ -37,7 +37,7 @@ mod test_agent_management {
         let agent_id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO agents (id, organization_id, hostname, labels, version, last_heartbeat_at)
-             VALUES ($1, $2, 'srv-oracle', '{\"role\": \"database\", \"env\": \"prod\"}', '0.1.0', NOW())"
+             VALUES ($1, $2, 'srv-oracle', '{\"role\": \"database\", \"env\": \"prod\"}', '0.1.0', chrono::Utc::now().to_rfc3339())"
         )
         .bind(agent_id)
         .bind(ctx.organization_id)
@@ -64,7 +64,7 @@ mod test_agent_management {
         let agent_id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO agents (id, organization_id, hostname, labels, version, last_heartbeat_at)
-             VALUES ($1, $2, 'srv-org1', '{}', '0.1.0', NOW())",
+             VALUES ($1, $2, 'srv-org1', '{}', '0.1.0', chrono::Utc::now().to_rfc3339())",
         )
         .bind(agent_id)
         .bind(ctx.organization_id)

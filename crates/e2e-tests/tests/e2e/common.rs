@@ -185,7 +185,7 @@ async fn seed_data(
     #[cfg(feature = "postgres")]
     {
         sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')")
-            .bind(org_id)
+            .bind(bind_id(org_id))
             .execute(pool)
             .await
             .unwrap();
@@ -201,7 +201,7 @@ async fn seed_data(
                  VALUES ($1, $2, $3, $3, $4, $3 || '@test.local')",
             )
             .bind(id)
-            .bind(org_id)
+            .bind(bind_id(org_id))
             .bind(name)
             .bind(role)
             .execute(pool)
@@ -210,8 +210,8 @@ async fn seed_data(
         }
 
         sqlx::query("INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')")
-            .bind(default_site_id)
-            .bind(org_id)
+            .bind(bind_id(default_site_id))
+            .bind(bind_id(org_id))
             .execute(pool)
             .await
             .unwrap();

@@ -276,7 +276,7 @@ async fn test_command_input_params_crud() {
          VALUES ($1, $2, 'purge_logs', 'purge_logs.sh --days=$(days) --env=$(env)', 'Purge old log files', true)"
     )
     .bind(Uuid::new_v4())
-    .bind(comp_id)
+    .bind(bind_id(comp_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -284,7 +284,7 @@ async fn test_command_input_params_crud() {
     let cmd_id: Uuid = sqlx::query_scalar(
         "SELECT id FROM component_commands WHERE component_id = $1 AND name = 'purge_logs'",
     )
-    .bind(comp_id)
+    .bind(bind_id(comp_id))
     .fetch_one(&ctx.db_pool)
     .await
     .unwrap();
@@ -354,7 +354,7 @@ async fn test_invalid_regex_rejected() {
          VALUES ($1, $2, 'test_cmd', 'test.sh')",
     )
     .bind(Uuid::new_v4())
-    .bind(comp_id)
+    .bind(bind_id(comp_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -362,7 +362,7 @@ async fn test_invalid_regex_rejected() {
     let cmd_id: Uuid = sqlx::query_scalar(
         "SELECT id FROM component_commands WHERE component_id = $1 AND name = 'test_cmd'",
     )
-    .bind(comp_id)
+    .bind(bind_id(comp_id))
     .fetch_one(&ctx.db_pool)
     .await
     .unwrap();

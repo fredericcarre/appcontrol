@@ -59,7 +59,7 @@ mod test_incident_lifecycle {
         // Record the failure transition (RUNNING → FAILED)
         sqlx::query(
             "INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details, created_at)
-             VALUES ($1, 'RUNNING', 'FAILED', 'check', $2, NOW())"
+             VALUES ($1, 'RUNNING', 'FAILED', 'check', $2, chrono::Utc::now().to_rfc3339())"
         )
         .bind(app1_id)
         .bind(serde_json::json!({
@@ -207,9 +207,9 @@ mod test_incident_lifecycle {
         for (comp_id, name) in [(app1_id, "App-1"), (queue1_id, "Queue-1")] {
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details, created_at)
-                 VALUES ($1, 'RUNNING', 'FAILED', 'check', '{}', NOW())"
+                 VALUES ($1, 'RUNNING', 'FAILED', 'check', '{}', chrono::Utc::now().to_rfc3339())"
             )
-            .bind(comp_id)
+            .bind(bind_id(comp_id))
             .execute(&ctx.db_pool).await.unwrap();
             ctx.force_component_state(app_id, name, "FAILED").await;
         }
@@ -264,7 +264,7 @@ mod test_incident_lifecycle {
              JOIN components c ON c.id = st.component_id
              WHERE c.application_id = $1",
         )
-        .bind(app_id)
+        .bind(bind_id(app_id))
         .fetch_one(&ctx.db_pool)
         .await
         .unwrap();
@@ -272,7 +272,7 @@ mod test_incident_lifecycle {
         // Simulate failure
         sqlx::query(
             "INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details, created_at)
-             VALUES ($1, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"OOM\"}', NOW())"
+             VALUES ($1, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"OOM\"}', chrono::Utc::now().to_rfc3339())"
         )
         .bind(app1_id)
         .execute(&ctx.db_pool).await.unwrap();
@@ -291,7 +291,7 @@ mod test_incident_lifecycle {
              JOIN components c ON c.id = st.component_id
              WHERE c.application_id = $1",
         )
-        .bind(app_id)
+        .bind(bind_id(app_id))
         .fetch_one(&ctx.db_pool)
         .await
         .unwrap();
@@ -331,7 +331,7 @@ mod test_incident_lifecycle {
         let db1_id = ctx.component_id(app_id, "DB-1").await;
         sqlx::query(
             "INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details, created_at)
-             VALUES ($1, 'RUNNING', 'FAILED', 'check', '{}', NOW())"
+             VALUES ($1, 'RUNNING', 'FAILED', 'check', '{}', chrono::Utc::now().to_rfc3339())"
         )
         .bind(db1_id)
         .execute(&ctx.db_pool).await.unwrap();

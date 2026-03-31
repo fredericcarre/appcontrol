@@ -125,14 +125,14 @@ mod test_reports {
         for _ in 0..3 {
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details, created_at)
-                 VALUES ($1, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"ORA-12541\"}', NOW())"
+                 VALUES ($1, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"ORA-12541\"}', chrono::Utc::now().to_rfc3339())"
             )
             .bind(oracle_id)
             .execute(&ctx.db_pool).await.unwrap();
         }
         sqlx::query(
             "INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details, created_at)
-             VALUES ($1, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"java.lang.OutOfMemoryError\"}', NOW())"
+             VALUES ($1, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"java.lang.OutOfMemoryError\"}', chrono::Utc::now().to_rfc3339())"
         )
         .bind(tomcat_id)
         .execute(&ctx.db_pool).await.unwrap();
@@ -210,8 +210,8 @@ mod test_reports {
                 "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
                  VALUES ($1, $2, $3, $4, $5, NOW() + interval '1 minute' * $6)"
             )
-            .bind(switchover_id)
-            .bind(app_id)
+            .bind(bind_id(switchover_id))
+            .bind(bind_id(app_id))
             .bind(phase)
             .bind(status)
             .bind(serde_json::json!({"source_site": "PRD", "target_site": "DR"}))
@@ -265,12 +265,12 @@ mod test_reports {
         for (action, resource_type) in &actions {
             sqlx::query(
                 "INSERT INTO action_log (user_id, action, resource_type, resource_id, details, created_at)
-                 VALUES ($1, $2, $3, $4, $5, NOW())"
+                 VALUES ($1, $2, $3, $4, $5, chrono::Utc::now().to_rfc3339())"
             )
             .bind(ctx.admin_user_id)
             .bind(action)
             .bind(resource_type)
-            .bind(app_id)
+            .bind(bind_id(app_id))
             .bind(serde_json::json!({"source": "e2e_test"}))
             .execute(&ctx.db_pool).await.unwrap();
         }
@@ -350,16 +350,16 @@ mod test_reports {
              VALUES ($1, 'old_action', 'application', $2, '{}', '2023-01-15T12:00:00Z')"
         )
         .bind(ctx.admin_user_id)
-        .bind(app_id)
+        .bind(bind_id(app_id))
         .execute(&ctx.db_pool).await.unwrap();
 
         // Seed an entry now
         sqlx::query(
             "INSERT INTO action_log (user_id, action, resource_type, resource_id, details, created_at)
-             VALUES ($1, 'recent_action', 'application', $2, '{}', NOW())"
+             VALUES ($1, 'recent_action', 'application', $2, '{}', chrono::Utc::now().to_rfc3339())"
         )
         .bind(ctx.admin_user_id)
-        .bind(app_id)
+        .bind(bind_id(app_id))
         .execute(&ctx.db_pool).await.unwrap();
 
         // Query only recent entries (2025+)
@@ -397,11 +397,11 @@ mod test_reports {
         for i in 0..7 {
             sqlx::query(
                 "INSERT INTO action_log (user_id, action, resource_type, resource_id, details, created_at)
-                 VALUES ($1, $2, 'application', $3, '{}', NOW())"
+                 VALUES ($1, $2, 'application', $3, '{}', chrono::Utc::now().to_rfc3339())"
             )
             .bind(ctx.admin_user_id)
             .bind(format!("action_{i}"))
-            .bind(app_id)
+            .bind(bind_id(app_id))
             .execute(&ctx.db_pool).await.unwrap();
         }
 
@@ -439,22 +439,22 @@ mod test_reports {
         sqlx::query(
             "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
              VALUES ($1, $2, 'PREPARE', 'completed', '{}', '2026-02-01T10:00:00Z')"
-        ).bind(sw1).bind(app_id).execute(&ctx.db_pool).await.unwrap();
+        ).bind(sw1).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
         sqlx::query(
             "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
              VALUES ($1, $2, 'COMMIT', 'completed', '{}', '2026-02-01T10:02:00Z')"
-        ).bind(sw1).bind(app_id).execute(&ctx.db_pool).await.unwrap();
+        ).bind(sw1).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
 
         // Seed switchover #2: PREPARE at T, COMMIT at T+180s → RTO = 180s
         let sw2 = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
              VALUES ($1, $2, 'PREPARE', 'completed', '{}', '2026-02-15T10:00:00Z')"
-        ).bind(sw2).bind(app_id).execute(&ctx.db_pool).await.unwrap();
+        ).bind(sw2).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
         sqlx::query(
             "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
              VALUES ($1, $2, 'COMMIT', 'completed', '{}', '2026-02-15T10:03:00Z')"
-        ).bind(sw2).bind(app_id).execute(&ctx.db_pool).await.unwrap();
+        ).bind(sw2).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
 
         // Call RTO report
         let resp = ctx.get(&format!("/api/v1/apps/{app_id}/reports/rto")).await;
