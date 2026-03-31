@@ -949,10 +949,22 @@ impl TestContext {
                 .unwrap(),
         );
         for cid in comp_ids {
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
                  VALUES ($1, 'UNKNOWN', 'RUNNING', 'test_setup')",
             )
+            .bind(bind_id(cid))
+            .execute(&self.db_pool)
+            .await
+            .unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger)
+                 VALUES ($1, $2, 'UNKNOWN', 'RUNNING', 'test_setup')",
+            )
+            .bind(bind_id(Uuid::new_v4()))
             .bind(bind_id(cid))
             .execute(&self.db_pool)
             .await
@@ -979,10 +991,23 @@ impl TestContext {
 
     pub async fn force_component_state(&self, app_id: Uuid, name: &str, state: &str) {
         let comp_id = self.component_id(app_id, name).await;
+        #[cfg(feature = "postgres")]
         sqlx::query(
             "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
              VALUES ($1, 'UNKNOWN', $2, 'test_setup')",
         )
+        .bind(bind_id(comp_id))
+        .bind(state)
+        .execute(&self.db_pool)
+        .await
+        .unwrap();
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        sqlx::query(
+            "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger)
+             VALUES ($1, $2, 'UNKNOWN', $3, 'test_setup')",
+        )
+        .bind(bind_id(Uuid::new_v4()))
         .bind(bind_id(comp_id))
         .bind(state)
         .execute(&self.db_pool)
@@ -1339,10 +1364,22 @@ impl TestContext {
             .unwrap(),
         );
         for cid in comp_ids {
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
                  VALUES ($1, 'RUNNING', 'UNREACHABLE', 'agent_disconnect')",
             )
+            .bind(bind_id(cid))
+            .execute(&self.db_pool)
+            .await
+            .unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger)
+                 VALUES ($1, $2, 'RUNNING', 'UNREACHABLE', 'agent_disconnect')",
+            )
+            .bind(bind_id(Uuid::new_v4()))
             .bind(bind_id(cid))
             .execute(&self.db_pool)
             .await
@@ -1363,10 +1400,22 @@ impl TestContext {
             .unwrap(),
         );
         for cid in comp_ids {
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
                  VALUES ($1, 'UNREACHABLE', 'RUNNING', 'agent_reconnect')",
             )
+            .bind(bind_id(cid))
+            .execute(&self.db_pool)
+            .await
+            .unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger)
+                 VALUES ($1, $2, 'UNREACHABLE', 'RUNNING', 'agent_reconnect')",
+            )
+            .bind(bind_id(Uuid::new_v4()))
             .bind(bind_id(cid))
             .execute(&self.db_pool)
             .await

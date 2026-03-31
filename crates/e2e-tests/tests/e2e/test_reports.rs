@@ -27,6 +27,8 @@ mod test_reports {
         // Seed state_transitions: Oracle-DB had 10 transitions to RUNNING today
         // Tomcat-App had 5 transitions to RUNNING today
         for i in 0..10 {
+            let ts = format!("{}T{:02}:00:00Z", today, i);
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details, created_at)
                  VALUES ($1, 'STOPPED', 'RUNNING', 'check', '{}',
@@ -36,8 +38,20 @@ mod test_reports {
             .bind(today)
             .bind(i as i32)
             .execute(&ctx.db_pool).await.unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details, created_at)
+                 VALUES ($1, $2, 'STOPPED', 'RUNNING', 'check', '{}', $3)"
+            )
+            .bind(bind_id(Uuid::new_v4()))
+            .bind(bind_id(oracle_id))
+            .bind(&ts)
+            .execute(&ctx.db_pool).await.unwrap();
         }
         for i in 0..5 {
+            let ts = format!("{}T{:02}:00:00Z", today, i);
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details, created_at)
                  VALUES ($1, 'STOPPED', 'RUNNING', 'check', '{}',
@@ -47,9 +61,21 @@ mod test_reports {
             .bind(today)
             .bind(i as i32)
             .execute(&ctx.db_pool).await.unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details, created_at)
+                 VALUES ($1, $2, 'STOPPED', 'RUNNING', 'check', '{}', $3)"
+            )
+            .bind(bind_id(Uuid::new_v4()))
+            .bind(bind_id(tomcat_id))
+            .bind(&ts)
+            .execute(&ctx.db_pool).await.unwrap();
         }
 
         // Refresh the materialized view so the report picks up our data
+        // SQLite doesn't have materialized views — the report queries directly
+        #[cfg(feature = "postgres")]
         sqlx::query("REFRESH MATERIALIZED VIEW component_daily_stats")
             .execute(&ctx.db_pool)
             .await
@@ -121,20 +147,47 @@ mod test_reports {
         let oracle_id = ctx.component_id(app_id, "Oracle-DB").await;
         let tomcat_id = ctx.component_id(app_id, "Tomcat-App").await;
 
+        let now = chrono::Utc::now().to_rfc3339();
+
         // Seed 3 FAILED transitions for Oracle-DB and 1 for Tomcat-App
         for _ in 0..3 {
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details, created_at)
-                 VALUES ($1, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"ORA-12541\"}', chrono::Utc::now().to_rfc3339())"
+                 VALUES ($1, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"ORA-12541\"}', $2)"
             )
             .bind(oracle_id)
+            .bind(&now)
+            .execute(&ctx.db_pool).await.unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details, created_at)
+                 VALUES ($1, $2, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"ORA-12541\"}', $3)"
+            )
+            .bind(bind_id(Uuid::new_v4()))
+            .bind(bind_id(oracle_id))
+            .bind(&now)
             .execute(&ctx.db_pool).await.unwrap();
         }
+
+        #[cfg(feature = "postgres")]
         sqlx::query(
             "INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details, created_at)
-             VALUES ($1, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"java.lang.OutOfMemoryError\"}', chrono::Utc::now().to_rfc3339())"
+             VALUES ($1, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"java.lang.OutOfMemoryError\"}', $2)"
         )
         .bind(tomcat_id)
+        .bind(&now)
+        .execute(&ctx.db_pool).await.unwrap();
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        sqlx::query(
+            "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details, created_at)
+             VALUES ($1, $2, 'RUNNING', 'FAILED', 'check', '{\"reason\": \"java.lang.OutOfMemoryError\"}', $3)"
+        )
+        .bind(bind_id(Uuid::new_v4()))
+        .bind(bind_id(tomcat_id))
+        .bind(&now)
         .execute(&ctx.db_pool).await.unwrap();
 
         // Call incidents report
@@ -206,16 +259,33 @@ mod test_reports {
             ("COMMIT", "completed"),
         ];
         for (i, (phase, status)) in phases.iter().enumerate() {
+            let ts = format!("2026-03-01T10:{:02}:00Z", i);
+
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
-                 VALUES ($1, $2, $3, $4, $5, NOW() + interval '1 minute' * $6)"
+                 VALUES ($1, $2, $3, $4, $5, $6)"
             )
             .bind(bind_id(switchover_id))
             .bind(bind_id(app_id))
             .bind(phase)
             .bind(status)
             .bind(serde_json::json!({"source_site": "PRD", "target_site": "DR"}))
-            .bind(i as i32)
+            .bind(&ts)
+            .execute(&ctx.db_pool).await.unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)"
+            )
+            .bind(bind_id(Uuid::new_v4()))
+            .bind(bind_id(switchover_id))
+            .bind(bind_id(app_id))
+            .bind(phase)
+            .bind(status)
+            .bind(serde_json::json!({"source_site": "PRD", "target_site": "DR"}).to_string())
+            .bind(&ts)
             .execute(&ctx.db_pool).await.unwrap();
         }
 
@@ -255,6 +325,8 @@ mod test_reports {
         let ctx = TestContext::new().await;
         let app_id = ctx.create_payments_app().await;
 
+        let now = chrono::Utc::now().to_rfc3339();
+
         // Seed specific action_log entries with known values
         let actions = [
             ("start", "application"),
@@ -263,15 +335,31 @@ mod test_reports {
             ("diagnose", "application"),
         ];
         for (action, resource_type) in &actions {
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO action_log (user_id, action, resource_type, resource_id, details, created_at)
-                 VALUES ($1, $2, $3, $4, $5, chrono::Utc::now().to_rfc3339())"
+                 VALUES ($1, $2, $3, $4, $5, $6)"
             )
             .bind(ctx.admin_user_id)
             .bind(action)
             .bind(resource_type)
             .bind(bind_id(app_id))
             .bind(serde_json::json!({"source": "e2e_test"}))
+            .bind(&now)
+            .execute(&ctx.db_pool).await.unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)"
+            )
+            .bind(bind_id(Uuid::new_v4()))
+            .bind(bind_id(ctx.admin_user_id))
+            .bind(action)
+            .bind(resource_type)
+            .bind(bind_id(app_id))
+            .bind(serde_json::json!({"source": "e2e_test"}).to_string())
+            .bind(&now)
             .execute(&ctx.db_pool).await.unwrap();
         }
 
@@ -344,7 +432,10 @@ mod test_reports {
         let ctx = TestContext::new().await;
         let app_id = ctx.create_payments_app().await;
 
+        let now = chrono::Utc::now().to_rfc3339();
+
         // Seed an entry in the past
+        #[cfg(feature = "postgres")]
         sqlx::query(
             "INSERT INTO action_log (user_id, action, resource_type, resource_id, details, created_at)
              VALUES ($1, 'old_action', 'application', $2, '{}', '2023-01-15T12:00:00Z')"
@@ -353,13 +444,36 @@ mod test_reports {
         .bind(bind_id(app_id))
         .execute(&ctx.db_pool).await.unwrap();
 
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        sqlx::query(
+            "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details, created_at)
+             VALUES ($1, $2, 'old_action', 'application', $3, '{}', '2023-01-15T12:00:00Z')"
+        )
+        .bind(bind_id(Uuid::new_v4()))
+        .bind(bind_id(ctx.admin_user_id))
+        .bind(bind_id(app_id))
+        .execute(&ctx.db_pool).await.unwrap();
+
         // Seed an entry now
+        #[cfg(feature = "postgres")]
         sqlx::query(
             "INSERT INTO action_log (user_id, action, resource_type, resource_id, details, created_at)
-             VALUES ($1, 'recent_action', 'application', $2, '{}', chrono::Utc::now().to_rfc3339())"
+             VALUES ($1, 'recent_action', 'application', $2, '{}', $3)"
         )
         .bind(ctx.admin_user_id)
         .bind(bind_id(app_id))
+        .bind(&now)
+        .execute(&ctx.db_pool).await.unwrap();
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        sqlx::query(
+            "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details, created_at)
+             VALUES ($1, $2, 'recent_action', 'application', $3, '{}', $4)"
+        )
+        .bind(bind_id(Uuid::new_v4()))
+        .bind(bind_id(ctx.admin_user_id))
+        .bind(bind_id(app_id))
+        .bind(&now)
         .execute(&ctx.db_pool).await.unwrap();
 
         // Query only recent entries (2025+)
@@ -393,15 +507,31 @@ mod test_reports {
         let ctx = TestContext::new().await;
         let app_id = ctx.create_payments_app().await;
 
+        let now = chrono::Utc::now().to_rfc3339();
+
         // Seed exactly 7 action_log entries with resource_id = app_id
         for i in 0..7 {
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO action_log (user_id, action, resource_type, resource_id, details, created_at)
-                 VALUES ($1, $2, 'application', $3, '{}', chrono::Utc::now().to_rfc3339())"
+                 VALUES ($1, $2, 'application', $3, '{}', $4)"
             )
             .bind(ctx.admin_user_id)
             .bind(format!("action_{i}"))
             .bind(bind_id(app_id))
+            .bind(&now)
+            .execute(&ctx.db_pool).await.unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details, created_at)
+                 VALUES ($1, $2, $3, 'application', $4, '{}', $5)"
+            )
+            .bind(bind_id(Uuid::new_v4()))
+            .bind(bind_id(ctx.admin_user_id))
+            .bind(format!("action_{i}"))
+            .bind(bind_id(app_id))
+            .bind(&now)
             .execute(&ctx.db_pool).await.unwrap();
         }
 
@@ -436,25 +566,53 @@ mod test_reports {
 
         // Seed switchover #1: PREPARE at T, COMMIT at T+120s → RTO = 120s
         let sw1 = Uuid::new_v4();
-        sqlx::query(
-            "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
-             VALUES ($1, $2, 'PREPARE', 'completed', '{}', '2026-02-01T10:00:00Z')"
-        ).bind(sw1).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
-        sqlx::query(
-            "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
-             VALUES ($1, $2, 'COMMIT', 'completed', '{}', '2026-02-01T10:02:00Z')"
-        ).bind(sw1).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
+        #[cfg(feature = "postgres")]
+        {
+            sqlx::query(
+                "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
+                 VALUES ($1, $2, 'PREPARE', 'completed', '{}', '2026-02-01T10:00:00Z')"
+            ).bind(sw1).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
+            sqlx::query(
+                "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
+                 VALUES ($1, $2, 'COMMIT', 'completed', '{}', '2026-02-01T10:02:00Z')"
+            ).bind(sw1).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
+        }
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        {
+            sqlx::query(
+                "INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details, created_at)
+                 VALUES ($1, $2, $3, 'PREPARE', 'completed', '{}', '2026-02-01T10:00:00Z')"
+            ).bind(bind_id(Uuid::new_v4())).bind(bind_id(sw1)).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
+            sqlx::query(
+                "INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details, created_at)
+                 VALUES ($1, $2, $3, 'COMMIT', 'completed', '{}', '2026-02-01T10:02:00Z')"
+            ).bind(bind_id(Uuid::new_v4())).bind(bind_id(sw1)).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
+        }
 
         // Seed switchover #2: PREPARE at T, COMMIT at T+180s → RTO = 180s
         let sw2 = Uuid::new_v4();
-        sqlx::query(
-            "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
-             VALUES ($1, $2, 'PREPARE', 'completed', '{}', '2026-02-15T10:00:00Z')"
-        ).bind(sw2).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
-        sqlx::query(
-            "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
-             VALUES ($1, $2, 'COMMIT', 'completed', '{}', '2026-02-15T10:03:00Z')"
-        ).bind(sw2).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
+        #[cfg(feature = "postgres")]
+        {
+            sqlx::query(
+                "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
+                 VALUES ($1, $2, 'PREPARE', 'completed', '{}', '2026-02-15T10:00:00Z')"
+            ).bind(sw2).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
+            sqlx::query(
+                "INSERT INTO switchover_log (switchover_id, application_id, phase, status, details, created_at)
+                 VALUES ($1, $2, 'COMMIT', 'completed', '{}', '2026-02-15T10:03:00Z')"
+            ).bind(sw2).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
+        }
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        {
+            sqlx::query(
+                "INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details, created_at)
+                 VALUES ($1, $2, $3, 'PREPARE', 'completed', '{}', '2026-02-15T10:00:00Z')"
+            ).bind(bind_id(Uuid::new_v4())).bind(bind_id(sw2)).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
+            sqlx::query(
+                "INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details, created_at)
+                 VALUES ($1, $2, $3, 'COMMIT', 'completed', '{}', '2026-02-15T10:03:00Z')"
+            ).bind(bind_id(Uuid::new_v4())).bind(bind_id(sw2)).bind(bind_id(app_id)).execute(&ctx.db_pool).await.unwrap();
+        }
 
         // Call RTO report
         let resp = ctx.get(&format!("/api/v1/apps/{app_id}/reports/rto")).await;
