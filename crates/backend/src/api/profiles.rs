@@ -447,6 +447,7 @@ pub async fn activate_profile(
 
     // Log to switchover_log
     let switchover_id = Uuid::new_v4();
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"
         INSERT INTO switchover_log (switchover_id, application_id, phase, status, details)
@@ -460,6 +461,24 @@ pub async fn activate_profile(
         "profile_name": &name,
         "profile_id": profile.id
     }))
+    .execute(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"
+        INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
+        VALUES ($1, $2, $3, 'COMMIT', 'completed', $4)
+        "#,
+    )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
+    .bind(crate::db::bind_id(switchover_id))
+    .bind(crate::db::bind_id(app_id))
+    .bind(json!({
+        "type": "profile_activation",
+        "profile_name": &name,
+        "profile_id": profile.id
+    }).to_string())
     .execute(&state.db)
     .await?;
 

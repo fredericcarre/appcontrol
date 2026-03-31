@@ -2160,10 +2160,11 @@ async fn mark_agent_components_unreachable(
             });
             sqlx::query(
                 r#"
-                INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
-                VALUES ($1, $2, 'UNREACHABLE', $3, $4)
+                INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details)
+                VALUES ($1, $2, $3, 'UNREACHABLE', $4, $5)
                 "#,
             )
+            .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
             .bind(comp.id)
             .bind(&comp.current_state)
             .bind(trigger)

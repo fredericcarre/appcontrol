@@ -103,6 +103,7 @@ pub async fn create_workspace(
     .await?;
 
     // Audit log
+    #[cfg(feature = "postgres")]
     let _ = sqlx::query(
         "INSERT INTO action_log (user_id, action, resource_type, resource_id, details)
          VALUES ($1, 'create_workspace', 'workspace', $2, $3)",
@@ -110,6 +111,18 @@ pub async fn create_workspace(
     .bind(user.user_id)
     .bind(crate::db::bind_id(id))
     .bind(json!({"name": body.name}))
+    .execute(&state.db)
+    .await;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let _ = sqlx::query(
+        "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details)
+         VALUES ($1, $2, 'create_workspace', 'workspace', $3, $4)",
+    )
+    .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
+    .bind(user.user_id)
+    .bind(crate::db::bind_id(id))
+    .bind(json!({"name": body.name}).to_string())
     .execute(&state.db)
     .await;
 

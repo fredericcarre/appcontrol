@@ -1112,6 +1112,7 @@ async fn transition_gateway_agent_components_to_unreachable(
             "agent_id": agent_id.to_string(),
             "gateway_id": gateway_id.to_string(),
         });
+        #[cfg(feature = "postgres")]
         let result = sqlx::query(
             r#"
             INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
@@ -1120,7 +1121,21 @@ async fn transition_gateway_agent_components_to_unreachable(
         )
         .bind(comp.id)
         .bind(current_state.to_string())
-        .bind(details_json)
+        .bind(&details_json)
+        .execute(&state.db)
+        .await;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let result = sqlx::query(
+            r#"
+            INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details)
+            VALUES ($1, $2, $3, 'UNREACHABLE', 'gateway_blocked', $4)
+            "#,
+        )
+        .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
+        .bind(comp.id)
+        .bind(current_state.to_string())
+        .bind(serde_json::to_string(&details_json).unwrap_or_default())
         .execute(&state.db)
         .await;
 

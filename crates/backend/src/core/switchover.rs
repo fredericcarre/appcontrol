@@ -638,12 +638,28 @@ async fn execute_start_target(
             });
 
             // Record config snapshot (append-only)
+            #[cfg(feature = "postgres")]
             let _ = sqlx::query(
                 r#"
                 INSERT INTO config_versions (resource_type, resource_id, changed_by, before_snapshot, after_snapshot)
                 VALUES ('component_switchover', $1, $2, $3, $4)
                 "#,
             )
+            .bind(crate::db::bind_id(comp_id))
+            .bind(DbUuid::from(initiated_by))
+            .bind(DbJson::from(before.clone()))
+            .bind(DbJson::from(after.clone()))
+            .execute(&state.db)
+            .await;
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO config_versions (id, resource_type, resource_id, changed_by, before_snapshot, after_snapshot)
+                VALUES ($1, 'component_switchover', $2, $3, $4, $5)
+                "#,
+            )
+            .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
             .bind(crate::db::bind_id(comp_id))
             .bind(DbUuid::from(initiated_by))
             .bind(DbJson::from(before))

@@ -969,6 +969,13 @@ impl TestContext {
             .execute(&self.db_pool)
             .await
             .unwrap();
+
+            // Also update the cached current_state column
+            sqlx::query("UPDATE components SET current_state = 'RUNNING' WHERE id = $1")
+                .bind(bind_id(cid))
+                .execute(&self.db_pool)
+                .await
+                .unwrap();
         }
     }
 
@@ -1013,6 +1020,14 @@ impl TestContext {
         .execute(&self.db_pool)
         .await
         .unwrap();
+
+        // Also update the cached current_state column
+        sqlx::query("UPDATE components SET current_state = $1 WHERE id = $2")
+            .bind(state)
+            .bind(bind_id(comp_id))
+            .execute(&self.db_pool)
+            .await
+            .unwrap();
     }
 
     pub async fn component_id(&self, app_id: Uuid, name: &str) -> Uuid {
@@ -1384,6 +1399,12 @@ impl TestContext {
             .execute(&self.db_pool)
             .await
             .unwrap();
+
+            sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
+                .bind(bind_id(cid))
+                .execute(&self.db_pool)
+                .await
+                .unwrap();
         }
     }
 
@@ -1420,6 +1441,12 @@ impl TestContext {
             .execute(&self.db_pool)
             .await
             .unwrap();
+
+            sqlx::query("UPDATE components SET current_state = 'RUNNING' WHERE id = $1")
+                .bind(bind_id(cid))
+                .execute(&self.db_pool)
+                .await
+                .unwrap();
         }
     }
 

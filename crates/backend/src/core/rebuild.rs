@@ -166,12 +166,24 @@ pub async fn execute_rebuild(
     }
 
     // Log action BEFORE execution (Critical Rule #3: log before execute)
+    #[cfg(feature = "postgres")]
     let _ = sqlx::query(
         "INSERT INTO action_log (user_id, action, resource_type, resource_id, details) VALUES ($1, 'rebuild_execute', 'application', $2, $3)",
     )
     .bind(initiated_by)
     .bind(crate::db::bind_id(app_id))
     .bind(serde_json::json!({"components": targets.len(), "status": "started"}))
+    .execute(&state.db)
+    .await;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let _ = sqlx::query(
+        "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details) VALUES ($1, $2, 'rebuild_execute', 'application', $3, $4)",
+    )
+    .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
+    .bind(initiated_by)
+    .bind(crate::db::bind_id(app_id))
+    .bind(serde_json::json!({"components": targets.len(), "status": "started"}).to_string())
     .execute(&state.db)
     .await;
 

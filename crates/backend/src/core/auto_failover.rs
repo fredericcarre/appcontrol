@@ -321,6 +321,15 @@ async fn trigger_auto_failover(
 
     // Log to action_log (use system user ID placeholder)
     let system_user_id = DbUuid::nil(); // System-initiated action
+    let failover_details = DbJson::from(json!({
+        "switchover_id": switchover_id,
+        "trigger": "auto_failover",
+        "from_profile": active_profile_name,
+        "to_profile": dr_profile_name,
+        "unreachable_agents": unreachable_agents
+    }));
+
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"
         INSERT INTO action_log (user_id, action, resource_type, resource_id, details)
@@ -329,13 +338,21 @@ async fn trigger_auto_failover(
     )
     .bind(system_user_id)
     .bind(DbUuid::from(*app_id))
-    .bind(DbJson::from(json!({
-        "switchover_id": switchover_id,
-        "trigger": "auto_failover",
-        "from_profile": active_profile_name,
-        "to_profile": dr_profile_name,
-        "unreachable_agents": unreachable_agents
-    })))
+    .bind(failover_details)
+    .execute(pool)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"
+        INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details)
+        VALUES ($1, $2, 'auto_failover', 'application', $3, $4)
+        "#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(system_user_id)
+    .bind(DbUuid::from(*app_id))
+    .bind(failover_details)
     .execute(pool)
     .await?;
 
