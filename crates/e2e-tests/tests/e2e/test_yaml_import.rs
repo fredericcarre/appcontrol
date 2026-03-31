@@ -132,7 +132,7 @@ async fn test_import_yaml_map() {
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD')",
     )
     .bind(bind_id(site_id))
-    .bind(ctx.organization_id)
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -222,7 +222,7 @@ async fn test_import_creates_links() {
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD2')",
     )
     .bind(bind_id(site_id))
-    .bind(ctx.organization_id)
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -275,7 +275,7 @@ async fn test_import_creates_command_params() {
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD3')",
     )
     .bind(bind_id(site_id))
-    .bind(ctx.organization_id)
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -292,13 +292,14 @@ async fn test_import_creates_command_params() {
 
     // Find the purge_logs command for oracle-db
     let oracle_id = ctx.component_id(app_id, "oracle-db").await;
-    let cmd_id: Uuid = sqlx::query_scalar(
+    let cmd_id: Uuid = sqlx::query_scalar::<_, appcontrol_backend::db::DbUuid>(
         "SELECT id FROM component_commands WHERE component_id = $1 AND name = 'Purge Logs'",
     )
-    .bind(oracle_id)
+    .bind(bind_id(oracle_id))
     .fetch_one(&ctx.db_pool)
     .await
-    .unwrap();
+    .unwrap()
+    .into_inner();
 
     // Check input params
     let resp = ctx.get(&format!("/api/v1/commands/{cmd_id}/params")).await;
@@ -312,13 +313,14 @@ async fn test_import_creates_command_params() {
 
     // Find the deploy command for tomcat-app
     let tomcat_id = ctx.component_id(app_id, "tomcat-app").await;
-    let deploy_cmd_id: Uuid = sqlx::query_scalar(
+    let deploy_cmd_id: Uuid = sqlx::query_scalar::<_, appcontrol_backend::db::DbUuid>(
         "SELECT id FROM component_commands WHERE component_id = $1 AND name = 'Deploy WAR'",
     )
-    .bind(tomcat_id)
+    .bind(bind_id(tomcat_id))
     .fetch_one(&ctx.db_pool)
     .await
-    .unwrap();
+    .unwrap()
+    .into_inner();
 
     let resp = ctx
         .get(&format!("/api/v1/commands/{deploy_cmd_id}/params"))
@@ -345,7 +347,7 @@ async fn test_import_invalid_yaml() {
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD4')",
     )
     .bind(bind_id(site_id))
-    .bind(ctx.organization_id)
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -371,7 +373,7 @@ async fn test_import_missing_dependency_warns() {
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD5')",
     )
     .bind(bind_id(site_id))
-    .bind(ctx.organization_id)
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -419,7 +421,7 @@ async fn test_import_audit_trail() {
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD6')",
     )
     .bind(bind_id(site_id))
-    .bind(ctx.organization_id)
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();

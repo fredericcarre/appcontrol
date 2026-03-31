@@ -315,14 +315,17 @@ mod test_saml_auth {
         .unwrap();
 
         let team_id_uuid: Uuid = team_id.parse().unwrap();
-        let is_member = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
-        )
-        .bind(team_id_uuid)
-        .bind(bind_id(user_id))
-        .fetch_one(&ctx.db_pool)
-        .await
-        .unwrap();
+        let is_member = {
+            let count: i32 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
+            )
+            .bind(bind_id(team_id_uuid))
+            .bind(bind_id(user_id))
+            .fetch_one(&ctx.db_pool)
+            .await
+            .unwrap();
+            count > 0
+        };
 
         assert!(
             is_member,
@@ -427,22 +430,24 @@ mod test_saml_auth {
         let team_b_uuid: Uuid = team_b_id.parse().unwrap();
 
         // Should be member of both teams
-        let in_a = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
-        )
-        .bind(team_a_uuid)
-        .bind(bind_id(user_id))
-        .fetch_one(&ctx.db_pool)
-        .await
-        .unwrap();
-        let in_b = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
-        )
-        .bind(team_b_uuid)
-        .bind(bind_id(user_id))
-        .fetch_one(&ctx.db_pool)
-        .await
-        .unwrap();
+        let in_a = {
+            let c: i32 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
+            )
+            .bind(bind_id(team_a_uuid))
+            .bind(bind_id(user_id))
+            .fetch_one(&ctx.db_pool).await.unwrap();
+            c > 0
+        };
+        let in_b = {
+            let c: i32 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
+            )
+            .bind(bind_id(team_b_uuid))
+            .bind(bind_id(user_id))
+            .fetch_one(&ctx.db_pool).await.unwrap();
+            c > 0
+        };
         assert!(in_a, "Should be in Team-A after first login");
         assert!(in_b, "Should be in Team-B after first login");
 
@@ -454,22 +459,24 @@ mod test_saml_auth {
         )
         .await;
 
-        let in_a = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
-        )
-        .bind(team_a_uuid)
-        .bind(bind_id(user_id))
-        .fetch_one(&ctx.db_pool)
-        .await
-        .unwrap();
-        let in_b = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
-        )
-        .bind(team_b_uuid)
-        .bind(bind_id(user_id))
-        .fetch_one(&ctx.db_pool)
-        .await
-        .unwrap();
+        let in_a = {
+            let c: i32 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
+            )
+            .bind(bind_id(team_a_uuid))
+            .bind(bind_id(user_id))
+            .fetch_one(&ctx.db_pool).await.unwrap();
+            c > 0
+        };
+        let in_b = {
+            let c: i32 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
+            )
+            .bind(bind_id(team_b_uuid))
+            .bind(bind_id(user_id))
+            .fetch_one(&ctx.db_pool).await.unwrap();
+            c > 0
+        };
         assert!(in_a, "Should still be in Team-A after second login");
         assert!(!in_b, "Should be removed from Team-B after second login");
 

@@ -138,7 +138,7 @@ mod test_org_isolation {
         // Create a site for org2
         let org2_site_id = Uuid::new_v4();
         sqlx::query("INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Org2-Default', 'O2D')")
-            .bind(org2_site_id)
+            .bind(bind_id(org2_site_id))
             .bind(bind_id(org2_id))
             .execute(&ctx.db_pool)
             .await

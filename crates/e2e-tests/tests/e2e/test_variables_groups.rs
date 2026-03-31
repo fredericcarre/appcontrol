@@ -275,19 +275,20 @@ async fn test_command_input_params_crud() {
         "INSERT INTO component_commands (id, component_id, name, command, description, requires_confirmation)
          VALUES ($1, $2, 'purge_logs', 'purge_logs.sh --days=$(days) --env=$(env)', 'Purge old log files', true)"
     )
-    .bind(Uuid::new_v4())
+    .bind(bind_id(Uuid::new_v4()))
     .bind(bind_id(comp_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
 
-    let cmd_id: Uuid = sqlx::query_scalar(
+    let cmd_id: Uuid = sqlx::query_scalar::<_, appcontrol_backend::db::DbUuid>(
         "SELECT id FROM component_commands WHERE component_id = $1 AND name = 'purge_logs'",
     )
     .bind(bind_id(comp_id))
     .fetch_one(&ctx.db_pool)
     .await
-    .unwrap();
+    .unwrap()
+    .into_inner();
 
     // Create input parameters
     let resp = ctx
@@ -353,19 +354,20 @@ async fn test_invalid_regex_rejected() {
         "INSERT INTO component_commands (id, component_id, name, command)
          VALUES ($1, $2, 'test_cmd', 'test.sh')",
     )
-    .bind(Uuid::new_v4())
+    .bind(bind_id(Uuid::new_v4()))
     .bind(bind_id(comp_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
 
-    let cmd_id: Uuid = sqlx::query_scalar(
+    let cmd_id: Uuid = sqlx::query_scalar::<_, appcontrol_backend::db::DbUuid>(
         "SELECT id FROM component_commands WHERE component_id = $1 AND name = 'test_cmd'",
     )
     .bind(bind_id(comp_id))
     .fetch_one(&ctx.db_pool)
     .await
-    .unwrap();
+    .unwrap()
+    .into_inner();
 
     // Invalid regex should be rejected
     let resp = ctx
