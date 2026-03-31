@@ -1378,6 +1378,29 @@ pub async fn create_dependency(
         return Err(ApiError::Forbidden);
     }
 
+    // Validate both components belong to this application
+    let from_app_id = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT application_id FROM components WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(body.from_component_id))
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::Validation("from_component_id not found".to_string()))?;
+
+    let to_app_id = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT application_id FROM components WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(body.to_component_id))
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::Validation("to_component_id not found".to_string()))?;
+
+    if *from_app_id != app_id || *to_app_id != app_id {
+        return Err(ApiError::Validation(
+            "Both components must belong to this application".to_string(),
+        ));
+    }
+
     // Check for cycles before inserting
     if crate::core::dag::validate_no_cycle(
         &state.db,

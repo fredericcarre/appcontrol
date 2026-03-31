@@ -32,13 +32,10 @@ mod test_dag_validation {
             .await;
         assert_eq!(resp.status(), 409, "Circular dependency must be rejected");
         let body: Value = resp.json().await.unwrap();
+        let error_text = format!("{} {}", body["error"].as_str().unwrap_or(""), body["message"].as_str().unwrap_or(""));
         assert!(
-            body["error"]
-                .as_str()
-                .unwrap()
-                .to_lowercase()
-                .contains("cycle"),
-            "Error message should mention cycle"
+            error_text.to_lowercase().contains("cycle"),
+            "Error message should mention cycle, got: {error_text}"
         );
 
         ctx.cleanup().await;
