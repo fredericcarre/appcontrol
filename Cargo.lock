@@ -245,6 +245,7 @@ dependencies = [
  "appcontrol-common",
  "axum",
  "base64 0.22.1",
+ "bcrypt",
  "chrono",
  "futures-util",
  "jsonwebtoken",
