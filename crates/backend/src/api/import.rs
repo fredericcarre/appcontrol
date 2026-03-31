@@ -287,8 +287,8 @@ pub async fn import_yaml_map(
         sqlx::query(
             r#"INSERT INTO components (id, application_id, name, display_name, description, component_type,
                 icon, group_id, check_cmd, start_cmd, stop_cmd, integrity_check_cmd,
-                position_x, position_y)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
+                position_x, position_y, current_state)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'STOPPED')"#,
         )
         .bind(crate::db::bind_id(comp_id))
         .bind(crate::db::bind_id(app_id))
@@ -870,9 +870,9 @@ pub async fn import_json_map(
                 integrity_check_cmd, post_start_check_cmd, infra_check_cmd,
                 rebuild_cmd, rebuild_infra_cmd,
                 check_interval_seconds, start_timeout_seconds, stop_timeout_seconds,
-                is_optional, position_x, position_y, cluster_size, cluster_nodes
+                is_optional, position_x, position_y, cluster_size, cluster_nodes, current_state
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, 'STOPPED'
             )"#,
         )
         .bind(crate::db::bind_id(comp_id))

@@ -299,8 +299,8 @@ pub async fn create_component(
         INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id,
                                 host, agent_id, check_cmd, start_cmd, stop_cmd,
                                 check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-                                position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+                                position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, current_state)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, 'STOPPED')
         RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
                host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
@@ -340,8 +340,8 @@ pub async fn create_component(
         INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id,
                                 host, agent_id, check_cmd, start_cmd, stop_cmd,
                                 check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-                                position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+                                position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, current_state)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, 'STOPPED')
         RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
                host, agent_id, check_cmd, start_cmd, stop_cmd,
                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
