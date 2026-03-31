@@ -337,13 +337,16 @@ async fn sync_saml_groups(
     for mapping in &mappings {
         if saml_groups.contains(&mapping.saml_group) {
             // Check if already a member
-            let exists = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
-            )
-            .bind(mapping.team_id)
-            .bind(user_id)
-            .fetch_one(pool)
-            .await?;
+            let exists = {
+                let count: i32 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
+                )
+                .bind(mapping.team_id)
+                .bind(crate::db::bind_id(user_id))
+                .fetch_one(pool)
+                .await?;
+                count > 0
+            };
 
             if !exists {
                 sqlx::query(
@@ -351,7 +354,7 @@ async fn sync_saml_groups(
                      ON CONFLICT DO NOTHING",
                 )
                 .bind(mapping.team_id)
-                .bind(user_id)
+                .bind(crate::db::bind_id(user_id))
                 .execute(pool)
                 .await?;
 
@@ -374,7 +377,7 @@ async fn sync_saml_groups(
         if !target_team_ids.contains(team_id) {
             sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
                 .bind(team_id)
-                .bind(user_id)
+                .bind(crate::db::bind_id(user_id))
                 .execute(pool)
                 .await?;
         }
@@ -445,8 +448,8 @@ async fn find_or_create_saml_user(
         "INSERT INTO users (id, organization_id, external_id, email, display_name, role, saml_name_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
-    .bind(user_id)
-    .bind(org_id)
+    .bind(crate::db::bind_id(user_id))
+    .bind(crate::db::bind_id(org_id))
     .bind(format!("saml:{name_id}"))
     .bind(email)
     .bind(display_name)

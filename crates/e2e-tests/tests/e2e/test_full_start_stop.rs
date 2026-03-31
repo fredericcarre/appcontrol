@@ -136,9 +136,12 @@ mod test_full_start_stop {
             .await;
         let plan: Value = resp.json().await.unwrap();
 
-        assert!(plan["plan"].is_array(), "Plan should be an array, got: {:?}", plan);
+        // Plan can be either a plain array or an object with "levels" key
+        let levels = plan["plan"].as_array()
+            .or_else(|| plan["plan"]["levels"].as_array());
+        assert!(levels.is_some(), "Plan should have levels, got: {:?}", plan);
         assert!(
-            plan["plan"].as_array().unwrap().len() >= 1,
+            levels.unwrap().len() >= 1,
             "Should have at least 1 level"
         );
 

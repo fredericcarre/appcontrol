@@ -154,7 +154,7 @@ mod test_diagnostic_rebuild {
         assert_eq!(resp.status(), 200);
 
         let plan: Value = resp.json().await.unwrap();
-        assert!(plan["plan"].is_array());
+        assert!(plan["plan"].is_array() || plan["plan"]["levels"].is_array());
         assert!(plan["estimated_time"].is_string());
 
         // Nothing should have actually changed

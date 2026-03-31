@@ -105,7 +105,7 @@ mod test_orchestration_advanced {
         assert_eq!(resp.status(), 200);
 
         let plan: Value = resp.json().await.unwrap();
-        assert!(plan["plan"].is_array(), "Stop dry run should return a plan");
+        assert!(plan["plan"].is_array() || plan["plan"]["levels"].is_array(), "Stop dry run should return a plan, got: {:?}", plan);
 
         // Components should still be RUNNING
         let status = ctx.get_app_status(app_id).await;

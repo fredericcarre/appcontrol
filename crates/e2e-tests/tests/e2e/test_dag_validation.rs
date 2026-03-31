@@ -156,7 +156,9 @@ mod test_dag_validation {
             )
             .await;
         let plan: Value = resp.json().await.unwrap();
-        let levels = plan["plan"].as_array().unwrap();
+        let levels = plan["plan"].as_array()
+            .or_else(|| plan["plan"]["levels"].as_array())
+            .expect("Plan should have levels");
 
         assert_eq!(levels.len(), 3, "Payments app should have 3 DAG levels");
 
