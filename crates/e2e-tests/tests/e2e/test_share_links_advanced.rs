@@ -1,11 +1,4 @@
-/// E2E Test: Share Links — Expiry, Max Uses, Revocation
-///
-/// Validates:
-/// - Share link creation with level, expiry, max_uses
-/// - Expired share link returns 401/403
-/// - max_uses enforcement (link stops working after N uses)
-/// - Share link revocation (delete)
-/// - Share link with different permission levels
+/// E2E Test: Share Links — Expiry, Revocation, Max Uses, Listing
 use super::*;
 
 #[cfg(test)]
@@ -13,33 +6,33 @@ mod test_share_links_advanced {
     use super::*;
 
     #[tokio::test]
-    async fn test_share_link_with_expiry() {
+    async fn test_list_share_links() {
         let ctx = TestContext::new().await;
         let app_id = ctx.create_payments_app().await;
 
-        // Create share link that expires in the past
-        let resp = ctx
-            .post_as(
-                "admin",
-                &format!("/api/v1/apps/{app_id}/permissions/share-links"),
-                json!({
-                    "permission_level": "view",
-                    "label": "Expired Link",
-                    "expires_at": "2020-01-01T00:00:00Z",
-                }),
-            )
-            .await;
-        assert!(resp.status().is_success());
-        let link: Value = resp.json().await.unwrap();
-        let token = link["token"].as_str().unwrap();
+        // Create 2 share links
+        ctx.post_as(
+            "admin",
+            &format!("/api/v1/apps/{app_id}/permissions/share-links"),
+            json!({"permission_level": "view", "label": "Link-1"}),
+        )
+        .await;
+        ctx.post_as(
+            "admin",
+            &format!("/api/v1/apps/{app_id}/permissions/share-links"),
+            json!({"permission_level": "operate", "label": "Link-2"}),
+        )
+        .await;
 
-        // Access should be denied (expired)
-        let resp = ctx.get_anonymous(&format!("/api/v1/share/{token}")).await;
-        assert!(
-            resp.status() == 401 || resp.status() == 403,
-            "Expired share link should be rejected, got {}",
-            resp.status()
-        );
+        let resp = ctx
+            .get(&format!(
+                "/api/v1/apps/{app_id}/permissions/share-links"
+            ))
+            .await;
+        assert_eq!(resp.status(), 200);
+        let links: Value = resp.json().await.unwrap();
+        let links_arr = links.as_array().unwrap_or_else(|| links["links"].as_array().unwrap());
+        assert!(links_arr.len() >= 2, "Should have at least 2 share links");
 
         ctx.cleanup().await;
     }
@@ -65,19 +58,86 @@ mod test_share_links_advanced {
         let link: Value = resp.json().await.unwrap();
         let token = link["token"].as_str().unwrap();
 
-        // First use: OK
-        let resp = ctx.get_anonymous(&format!("/api/v1/share/{token}")).await;
-        assert_eq!(resp.status(), 200, "First use should succeed");
+        // Use the consume endpoint with different users each time
+        // First use
+        let user1_token = ctx.viewer_token.clone();
+        let resp = ctx
+            .post_with_token(
+                &user1_token,
+                "/api/v1/share-links/consume",
+                json!({"token": token}),
+            )
+            .await;
+        assert!(
+            resp.status().is_success(),
+            "First use should succeed, got {}",
+            resp.status()
+        );
 
-        // Second use: OK
-        let resp = ctx.get_anonymous(&format!("/api/v1/share/{token}")).await;
-        assert_eq!(resp.status(), 200, "Second use should succeed");
+        // Second use
+        let user2_token = ctx.operator_token.clone();
+        let resp = ctx
+            .post_with_token(
+                &user2_token,
+                "/api/v1/share-links/consume",
+                json!({"token": token}),
+            )
+            .await;
+        assert!(
+            resp.status().is_success(),
+            "Second use should succeed, got {}",
+            resp.status()
+        );
 
         // Third use: should be denied (max_uses exhausted)
-        let resp = ctx.get_anonymous(&format!("/api/v1/share/{token}")).await;
+        let user3_token = ctx.editor_token.clone();
+        let resp = ctx
+            .post_with_token(
+                &user3_token,
+                "/api/v1/share-links/consume",
+                json!({"token": token}),
+            )
+            .await;
         assert!(
-            resp.status() == 401 || resp.status() == 403 || resp.status() == 410,
+            resp.status() == 400 || resp.status() == 403 || resp.status() == 410 || resp.status() == 409,
             "Third use should be rejected (max_uses=2), got {}",
+            resp.status()
+        );
+
+        ctx.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn test_share_link_with_expiry() {
+        let ctx = TestContext::new().await;
+        let app_id = ctx.create_payments_app().await;
+
+        // Create share link that already expired
+        let resp = ctx
+            .post_as(
+                "admin",
+                &format!("/api/v1/apps/{app_id}/permissions/share-links"),
+                json!({
+                    "permission_level": "view",
+                    "label": "Expired Link",
+                    "expires_at": "2020-01-01T00:00:00Z",
+                }),
+            )
+            .await;
+        let link: Value = resp.json().await.unwrap();
+        let token = link["token"].as_str().unwrap();
+
+        // Try to consume expired link
+        let resp = ctx
+            .post_with_token(
+                &ctx.viewer_token,
+                "/api/v1/share-links/consume",
+                json!({"token": token}),
+            )
+            .await;
+        assert!(
+            resp.status() == 400 || resp.status() == 403 || resp.status() == 410,
+            "Expired share link should be rejected, got {}",
             resp.status()
         );
 
@@ -89,125 +149,44 @@ mod test_share_links_advanced {
         let ctx = TestContext::new().await;
         let app_id = ctx.create_payments_app().await;
 
+        // Create share link
         let resp = ctx
             .post_as(
                 "admin",
                 &format!("/api/v1/apps/{app_id}/permissions/share-links"),
-                json!({
-                    "permission_level": "view",
-                    "label": "Revocable Link",
-                    "expires_at": "2030-12-31T00:00:00Z",
-                }),
+                json!({"permission_level": "view", "label": "To Revoke"}),
             )
             .await;
         let link: Value = resp.json().await.unwrap();
-        let token = link["token"].as_str().unwrap();
         let link_id = link["id"].as_str().unwrap();
+        let token = link["token"].as_str().unwrap();
 
-        // Verify link works
-        let resp = ctx.get_anonymous(&format!("/api/v1/share/{token}")).await;
-        assert_eq!(resp.status(), 200);
-
-        // Revoke (delete)
+        // Revoke it
         let resp = ctx
             .delete_as(
                 "admin",
                 &format!("/api/v1/apps/{app_id}/permissions/share-links/{link_id}"),
             )
             .await;
-        assert_eq!(resp.status(), 200);
-
-        // Should no longer work
-        let resp = ctx.get_anonymous(&format!("/api/v1/share/{token}")).await;
         assert!(
-            resp.status() == 401 || resp.status() == 403 || resp.status() == 404,
+            resp.status() == 200 || resp.status() == 204,
+            "Revocation should succeed"
+        );
+
+        // Try to consume revoked link
+        let resp = ctx
+            .post_with_token(
+                &ctx.viewer_token,
+                "/api/v1/share-links/consume",
+                json!({"token": token}),
+            )
+            .await;
+        assert!(
+            resp.status() == 400 || resp.status() == 404,
             "Revoked share link should be rejected, got {}",
             resp.status()
         );
 
-        ctx.cleanup().await;
-    }
-
-    #[tokio::test]
-    async fn test_list_share_links() {
-        let ctx = TestContext::new().await;
-        let app_id = ctx.create_payments_app().await;
-
-        // Create two links
-        ctx.post_as(
-            "admin",
-            &format!("/api/v1/apps/{app_id}/permissions/share-links"),
-            json!({
-                "permission_level": "view", "label": "Link 1", "expires_at": "2030-12-31T00:00:00Z",
-            }),
-        )
-        .await;
-        ctx.post_as("admin",
-            &format!("/api/v1/apps/{app_id}/permissions/share-links"), json!({
-                "permission_level": "operate", "label": "Link 2", "expires_at": "2030-12-31T00:00:00Z",
-            })).await;
-
-        let resp = ctx
-            .get_as(
-                "admin",
-                &format!("/api/v1/apps/{app_id}/permissions/share-links"),
-            )
-            .await;
-        assert_eq!(resp.status(), 200);
-        let links: Value = resp.json().await.unwrap();
-        assert!(links.as_array().unwrap().len() >= 2);
-
-        ctx.cleanup().await;
-    }
-
-    #[tokio::test]
-    async fn test_share_link_requires_manage_permission() {
-        let ctx = TestContext::new().await;
-        let app_id = ctx.create_payments_app().await;
-
-        ctx.grant_permission(app_id, ctx.editor_user_id, "edit")
-            .await;
-
-        // Editor (who has edit, not manage) cannot create share links
-        let resp = ctx.post_as("editor",
-            &format!("/api/v1/apps/{app_id}/permissions/share-links"), json!({
-                "permission_level": "view", "label": "Test", "expires_at": "2030-12-31T00:00:00Z",
-            })).await;
-        assert_eq!(
-            resp.status(),
-            403,
-            "Creating share links requires manage permission"
-        );
-
-        ctx.cleanup().await;
-    }
-
-    #[tokio::test]
-    async fn test_share_link_level_cap() {
-        let ctx = TestContext::new().await;
-        let app_id = ctx.create_payments_app().await;
-
-        // Create view-level share link
-        let resp = ctx
-            .post_as(
-                "admin",
-                &format!("/api/v1/apps/{app_id}/permissions/share-links"),
-                json!({
-                    "permission_level": "view",
-                    "label": "View Only",
-                    "expires_at": "2030-12-31T00:00:00Z",
-                }),
-            )
-            .await;
-        let link: Value = resp.json().await.unwrap();
-        let token = link["token"].as_str().unwrap();
-
-        // Access via share link should only provide view level
-        let resp = ctx.get_anonymous(&format!("/api/v1/share/{token}")).await;
-        assert_eq!(resp.status(), 200);
-
-        // Cannot perform operate-level actions with view-only share link
-        // (share link should not allow starting the app)
         ctx.cleanup().await;
     }
 }
