@@ -184,7 +184,7 @@ mod test_incident_lifecycle {
         let all_logs = ctx.get_all_action_logs().await;
         let branch_logs: Vec<_> = all_logs
             .iter()
-            .filter(|l| l.action.contains("start") && l.resource_id == app_id)
+            .filter(|l| l.action.contains("start") && *l.resource_id == app_id)
             .collect();
         assert!(
             !branch_logs.is_empty(),
