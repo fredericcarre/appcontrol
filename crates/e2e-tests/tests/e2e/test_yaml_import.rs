@@ -155,7 +155,7 @@ async fn test_import_yaml_map() {
     // Verify counts
     assert_eq!(result["application_name"], "LYNX-PRD");
     assert_eq!(result["components_created"], 5);
-    assert_eq!(result["groups_created"], 4); // Bases de données, Serveurs applicatifs, Fronts web, Middlewares, Traitements batch
+    assert_eq!(result["groups_created"], 5); // Bases de données, Serveurs applicatifs, Fronts web, Middlewares, Traitements batch
     assert_eq!(result["variables_created"], 3);
     assert!(result["dependencies_created"].as_i64().unwrap() >= 4);
     assert!(result["commands_created"].as_i64().unwrap() >= 2); // purge_logs + deploy (standard actions excluded)
