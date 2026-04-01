@@ -11,6 +11,7 @@
 use std::time::Duration;
 
 #[tokio::test]
+#[ignore = "requires pre-built binaries — run with --ignored"]
 async fn test_site_switchover() {
     let h = super::harness::TestHarness::start().await;
     let site_a_id = h.default_site_id().await;

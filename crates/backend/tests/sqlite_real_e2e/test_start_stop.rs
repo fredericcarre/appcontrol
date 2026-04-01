@@ -85,6 +85,7 @@ fn verify_stop_transitions(transitions: &[(String, String, String)], name: &str)
 }
 
 #[tokio::test]
+#[ignore = "requires pre-built binaries — run with --ignored"]
 async fn test_start_stop_full_sequence() {
     let h = super::harness::TestHarness::start().await;
     let site_id = h.default_site_id().await;
