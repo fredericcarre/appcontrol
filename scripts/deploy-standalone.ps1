@@ -353,7 +353,6 @@ function Create-ServiceScripts {
         # SQLite mode: simpler scripts, no PostgreSQL
         $startScript = @'
 @echo off
-setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo Starting AppControl (SQLite mode)...
@@ -375,35 +374,25 @@ set "SEED_ORG_SLUG=appcontrol"
 set "APP_ENV=development"
 set "RUST_LOG=info"
 
-REM Start Backend (foreground — logs visible in console)
-echo [1/2] Starting Backend...
-start "AppControl Backend" cmd /c "bin\appcontrol-backend.exe"
-timeout /t 5 /nobreak >nul
-echo Backend started on port 3000
+REM Start Gateway in background
+echo [1/2] Starting Gateway...
+start "" /b bin\appcontrol-gateway.exe > logs\gateway.log 2>&1
+echo Gateway started
 
-REM Start Gateway
-echo [2/2] Starting Gateway...
-start "AppControl Gateway" /min cmd /c "set RUST_LOG=info && bin\appcontrol-gateway.exe > logs\gateway.log 2>&1"
-echo Gateway started on port 8443
-
+REM Start Backend (foreground — keeps console open, logs visible)
+echo [2/2] Starting Backend...
 echo.
 echo ========================================
-echo   AppControl is running!
+echo   AppControl is starting...
 echo ========================================
 echo.
 echo   Web UI: http://localhost:3000
-echo   Gateway: localhost:8443
-echo   Database: %~dp0data\appcontrol.db
-echo.
 echo   Default login:
 echo     Email: admin@localhost
 echo     Password: admin
 echo.
-echo   Logs: %~dp0logs\
-echo.
-echo Press any key to open the Web UI...
-pause >nul
-start http://localhost:3000
+
+bin\appcontrol-backend.exe
 '@
         $stopScript = @'
 @echo off
