@@ -244,7 +244,7 @@ pub async fn grant_team_permission(
         let has_ws = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM workspace_sites ws JOIN workspaces w ON w.id = ws.workspace_id WHERE w.organization_id = $1)",
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_one(&state.db)
         .await
         .unwrap_or(false);
@@ -261,7 +261,7 @@ pub async fn grant_team_permission(
                 "#,
             )
             .bind(crate::db::bind_id(site_id))
-            .bind(body.team_id)
+            .bind(crate::db::bind_id(body.team_id))
             .fetch_one(&state.db)
             .await
             .unwrap_or(false);
@@ -294,7 +294,7 @@ pub async fn grant_team_permission(
         ),
     )
     .bind(crate::db::bind_id(app_id))
-    .bind(body.team_id)
+    .bind(crate::db::bind_id(body.team_id))
     .bind(&body.permission_level)
     .bind(user.user_id)
     .bind(body.expires_at)
