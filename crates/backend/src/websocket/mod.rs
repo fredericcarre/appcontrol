@@ -791,7 +791,7 @@ async fn process_gateway_message(
             .bind(DbUuid::from(gateway_id))
             .bind(DbUuid::from(org_id))
             .bind(&display_name)
-            .bind(&zone)
+            .bind(zone.as_deref().unwrap_or("default"))
             .bind(resolved_site_id.map(DbUuid::from))
             .execute(&state.db)
             .await

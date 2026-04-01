@@ -162,7 +162,7 @@ fn normalize_path(path: &str) -> String {
 pub fn create_router(state: Arc<AppState>) -> Router {
     let cors = build_cors_layer(&state.config);
 
-    Router::new()
+    let router = Router::new()
         .route("/health", get(api::health::health))
         .route("/ready", get(api::health::ready))
         .route("/metrics", get(api::health::metrics))
@@ -188,13 +188,58 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Protected API routes (includes auth middleware layer)
         .nest("/api/v1", api::api_routes(state.clone()))
         .route("/ws", get(websocket::ws_handler))
-        .route("/ws/gateway", get(websocket::gateway_ws_handler))
+        .route("/ws/gateway", get(websocket::gateway_ws_handler));
+
+    // Serve frontend static files if a frontend directory exists.
+    // This enables standalone deployment without nginx.
+    // Looks for: <exe_dir>/frontend/, <exe_dir>/../frontend/, ./frontend/
+    let frontend_dir = find_frontend_dir();
+    let router = if let Some(dir) = frontend_dir {
+        tracing::info!(path = %dir.display(), "Serving frontend static files");
+        router.fallback_service(
+            tower_http::services::ServeDir::new(&dir)
+                .fallback(tower_http::services::ServeFile::new(dir.join("index.html"))),
+        )
+    } else {
+        tracing::debug!("No frontend directory found — static file serving disabled");
+        router
+    };
+
+    router
         .layer(axum::middleware::from_fn(metrics_middleware))
         .layer(axum::middleware::from_fn(security_headers_middleware))
         .layer(security_headers_layer())
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state)
+}
+
+/// Find the frontend static files directory.
+/// Checks multiple locations for standalone deployment compatibility.
+fn find_frontend_dir() -> Option<std::path::PathBuf> {
+    let candidates = [
+        // Relative to executable (standalone deployment)
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("frontend"))),
+        // Relative to exe parent (exe in bin/, frontend as sibling)
+        std::env::current_exe().ok().and_then(|p| {
+            p.parent()
+                .and_then(|d| d.parent())
+                .map(|d| d.join("frontend"))
+        }),
+        // Current working directory
+        Some(std::path::PathBuf::from("frontend")),
+        // Parent of CWD (CWD is bin/)
+        Some(std::path::PathBuf::from("../frontend")),
+    ];
+
+    for candidate in candidates.into_iter().flatten() {
+        if candidate.join("index.html").exists() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

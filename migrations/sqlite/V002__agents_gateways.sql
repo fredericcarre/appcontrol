@@ -4,7 +4,7 @@ CREATE TABLE gateways (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL REFERENCES organizations(id),
     name TEXT NOT NULL,
-    zone TEXT NOT NULL,
+    zone TEXT NOT NULL DEFAULT 'default',
     hostname TEXT,
     port INTEGER DEFAULT 443,
     is_active INTEGER NOT NULL DEFAULT 1,
