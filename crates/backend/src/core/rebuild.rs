@@ -42,7 +42,7 @@ pub async fn build_rebuild_plan(
     // Check for protected components
     for (id, _name, protected, _, _, _) in &targets {
         if *protected {
-            return Err(RebuildError::ProtectedComponent(*id));
+            return Err(RebuildError::ProtectedComponent(id.into_inner()));
         }
     }
 
@@ -55,7 +55,7 @@ pub async fn build_rebuild_plan(
         let mut level_components = Vec::new();
         for &comp_id in level {
             if let Some((_, name, _, rebuild_cmd, infra_cmd, bastion_agent)) =
-                targets.iter().find(|(id, _, _, _, _, _)| *id == comp_id)
+                targets.iter().find(|(id, _, _, _, _, _)| id.into_inner() == comp_id)
             {
                 level_components.push(serde_json::json!({
                     "component_id": comp_id,
@@ -78,12 +78,12 @@ pub async fn build_rebuild_plan(
 }
 
 type RebuildTarget = (
-    Uuid,
+    crate::db::DbUuid,
     String,
     bool,
     Option<String>,
     Option<String>,
-    Option<Uuid>,
+    Option<crate::db::DbUuid>,
 );
 
 /// Fetch rebuild target components with effective rebuild commands.
@@ -161,7 +161,7 @@ pub async fn execute_rebuild(
     // Check for protected components
     for (id, _name, protected, _, _, _) in &targets {
         if *protected {
-            return Err(RebuildError::ProtectedComponent(*id));
+            return Err(RebuildError::ProtectedComponent(id.into_inner()));
         }
     }
 
@@ -193,7 +193,7 @@ pub async fn execute_rebuild(
 
     // Collect target IDs for quick lookup
     let target_ids: std::collections::HashSet<Uuid> =
-        targets.iter().map(|(id, _, _, _, _, _)| *id).collect();
+        targets.iter().map(|(id, _, _, _, _, _)| id.into_inner()).collect();
 
     // Phase 1: Stop affected components in reverse DAG order
     let mut reverse_levels = levels.clone();
@@ -238,7 +238,7 @@ pub async fn execute_rebuild(
 
             let target = targets
                 .iter()
-                .find(|(id, _, _, _, _, _)| *id == comp_id)
+                .find(|(id, _, _, _, _, _)| id.into_inner() == comp_id)
                 .unwrap();
             let (_, name, _, rebuild_cmd, infra_cmd, bastion_agent) = target;
 
@@ -247,7 +247,7 @@ pub async fn execute_rebuild(
 
             // Run infrastructure rebuild first (if defined) — WAIT for completion
             if let Some(infra_cmd) = infra_cmd {
-                let exec_agent = bastion_agent.or(agent_id.map(|id| id.into_inner()));
+                let exec_agent = bastion_agent.map(|b| b.into_inner()).or(agent_id.map(|id| id.into_inner()));
                 if let Some(exec_agent_id) = exec_agent {
                     let request_id = Uuid::new_v4();
                     let message = BackendMessage::ExecuteCommand {
