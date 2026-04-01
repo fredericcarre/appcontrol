@@ -94,14 +94,19 @@ mod test_incident_lifecycle {
         let now = chrono::Utc::now().to_rfc3339();
 
         insert_state_transition(
-            &ctx.db_pool, app1_id, "RUNNING", "FAILED", "check",
+            &ctx.db_pool,
+            app1_id,
+            "RUNNING",
+            "FAILED",
+            "check",
             serde_json::json!({
                 "reason": "Process exited with signal 9 (SIGKILL)",
                 "check_exit_code": 2,
                 "pid": 12345,
             }),
             &now,
-        ).await;
+        )
+        .await;
 
         // Update component state to FAILED
         ctx.force_component_state(app_id, "App-1", "FAILED").await;
@@ -173,9 +178,15 @@ mod test_incident_lifecycle {
 
         for (comp_id, name) in [(app1_id, "App-1"), (queue1_id, "Queue-1")] {
             insert_state_transition(
-                &ctx.db_pool, comp_id, "RUNNING", "FAILED", "check",
-                serde_json::json!({}), &now,
-            ).await;
+                &ctx.db_pool,
+                comp_id,
+                "RUNNING",
+                "FAILED",
+                "check",
+                serde_json::json!({}),
+                &now,
+            )
+            .await;
             ctx.force_component_state(app_id, name, "FAILED").await;
         }
 
@@ -221,9 +232,15 @@ mod test_incident_lifecycle {
 
         let now = chrono::Utc::now().to_rfc3339();
         insert_state_transition(
-            &ctx.db_pool, app1_id, "RUNNING", "FAILED", "check",
-            serde_json::json!({"reason": "OOM"}), &now,
-        ).await;
+            &ctx.db_pool,
+            app1_id,
+            "RUNNING",
+            "FAILED",
+            "check",
+            serde_json::json!({"reason": "OOM"}),
+            &now,
+        )
+        .await;
         ctx.force_component_state(app_id, "App-1", "FAILED").await;
 
         ctx.post(&format!("/api/v1/apps/{}/start-branch", app_id), json!({}))
@@ -271,9 +288,15 @@ mod test_incident_lifecycle {
         let db1_id = ctx.component_id(app_id, "DB-1").await;
         let now = chrono::Utc::now().to_rfc3339();
         insert_state_transition(
-            &ctx.db_pool, db1_id, "RUNNING", "FAILED", "check",
-            serde_json::json!({}), &now,
-        ).await;
+            &ctx.db_pool,
+            db1_id,
+            "RUNNING",
+            "FAILED",
+            "check",
+            serde_json::json!({}),
+            &now,
+        )
+        .await;
         ctx.force_component_state(app_id, "DB-1", "FAILED").await;
 
         // Verify: Branch 2 components are all still RUNNING
@@ -318,9 +341,15 @@ mod test_incident_lifecycle {
         for i in 0..2 {
             let ts = format!("2026-03-01T10:{:02}:00Z", i);
             insert_state_transition(
-                &ctx.db_pool, oracle_id, "RUNNING", "FAILED", "check",
-                serde_json::json!({"incident_number": i + 1}), &ts,
-            ).await;
+                &ctx.db_pool,
+                oracle_id,
+                "RUNNING",
+                "FAILED",
+                "check",
+                serde_json::json!({"incident_number": i + 1}),
+                &ts,
+            )
+            .await;
         }
 
         let resp = ctx.get(&format!(

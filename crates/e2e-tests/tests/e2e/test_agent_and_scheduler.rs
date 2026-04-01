@@ -12,12 +12,14 @@ mod test_agent_offline {
         ctx.set_all_running(app_id).await;
 
         // Simulate agent disconnect by forcing state to UNREACHABLE
-        ctx.force_component_state(app_id, "Oracle-DB", "UNREACHABLE").await;
+        ctx.force_component_state(app_id, "Oracle-DB", "UNREACHABLE")
+            .await;
         let status = ctx.get_component_state(app_id, "Oracle-DB").await;
         assert_eq!(status, "UNREACHABLE");
 
         // Simulate reconnect by forcing state back to RUNNING
-        ctx.force_component_state(app_id, "Oracle-DB", "RUNNING").await;
+        ctx.force_component_state(app_id, "Oracle-DB", "RUNNING")
+            .await;
         let status = ctx.get_component_state(app_id, "Oracle-DB").await;
         assert_eq!(status, "RUNNING", "Should have recovered from UNREACHABLE");
 
@@ -61,7 +63,10 @@ mod test_scheduler_integration {
         let resp = ctx
             .get_with_api_key_timeout(
                 &api_key,
-                &format!("/api/v1/orchestration/apps/{}/wait-running?timeout=2", app_id),
+                &format!(
+                    "/api/v1/orchestration/apps/{}/wait-running?timeout=2",
+                    app_id
+                ),
                 Duration::from_secs(10),
             )
             .await;
@@ -88,7 +93,10 @@ mod test_scheduler_integration {
 
         // Status OK — use orchestration endpoint
         let resp = ctx
-            .get_with_api_key(&api_key, &format!("/api/v1/orchestration/apps/{}/status", app_id))
+            .get_with_api_key(
+                &api_key,
+                &format!("/api/v1/orchestration/apps/{}/status", app_id),
+            )
             .await;
         assert_eq!(resp.status(), 200);
 

@@ -79,11 +79,7 @@ async fn test_rebuild_endpoint_exists() {
         )
         .await;
     // Should not be 404 — endpoint exists
-    assert_ne!(
-        resp.status().as_u16(),
-        404,
-        "Rebuild endpoint should exist"
-    );
+    assert_ne!(resp.status().as_u16(), 404, "Rebuild endpoint should exist");
     ctx.cleanup().await;
 }
 
@@ -118,9 +114,6 @@ async fn test_diagnose_audit_trail() {
         .await;
 
     let logs = ctx.get_action_log(app_id, "diagnose").await;
-    assert!(
-        !logs.is_empty(),
-        "Diagnose should be logged in action_log"
-    );
+    assert!(!logs.is_empty(), "Diagnose should be logged in action_log");
     ctx.cleanup().await;
 }

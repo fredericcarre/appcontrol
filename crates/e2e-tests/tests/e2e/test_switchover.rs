@@ -41,8 +41,7 @@ mod test_switchover {
             resp.status()
         );
         let sw_body: Value = resp.json().await.unwrap();
-        let sw_id_str = sw_body["switchover_id"].as_str()
-            .or(sw_body["id"].as_str());
+        let sw_id_str = sw_body["switchover_id"].as_str().or(sw_body["id"].as_str());
 
         // Advance through phases — some may fail without agents
         for phase in ["prepare", "freeze", "stop_source", "start_target", "verify"] {
@@ -61,11 +60,17 @@ mod test_switchover {
 
         // Commit (point of no return) — may fail if phases didn't all complete
         let resp = ctx
-            .post(&format!("/api/v1/apps/{}/switchover/commit", app_id), json!({}))
+            .post(
+                &format!("/api/v1/apps/{}/switchover/commit", app_id),
+                json!({}),
+            )
             .await;
         // Accept 409 if phases didn't complete (common without agents)
         assert!(
-            resp.status() == 200 || resp.status() == 202 || resp.status() == 409 || resp.status() == 400,
+            resp.status() == 200
+                || resp.status() == 202
+                || resp.status() == 409
+                || resp.status() == 400,
             "Commit should succeed or be rejected if phases incomplete, got {}",
             resp.status()
         );
@@ -74,7 +79,10 @@ mod test_switchover {
         let app = ctx.get_app(app_id).await;
         // May or may not be set depending on implementation
         if let Some(active) = app.active_site_id {
-            assert_eq!(active, site_b, "Active site should be site_b after switchover");
+            assert_eq!(
+                active, site_b,
+                "Active site should be site_b after switchover"
+            );
         }
 
         // Verify switchover_log
@@ -143,7 +151,10 @@ mod test_switchover {
         let app = ctx.get_app(app_id).await;
         // After rollback, active_site should remain the original
         if let Some(active) = app.active_site_id {
-            assert_eq!(active, site_a, "Active site should still be site_a after rollback");
+            assert_eq!(
+                active, site_a,
+                "Active site should still be site_a after rollback"
+            );
         }
 
         ctx.cleanup().await;

@@ -19,7 +19,11 @@ async fn test_share_link_with_expiry() {
             }),
         )
         .await;
-    assert!(resp.status().is_success(), "create share link: {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "create share link: {}",
+        resp.status()
+    );
     let link: Value = resp.json().await.unwrap();
     let token = link["token"].as_str().unwrap();
 
@@ -113,7 +117,10 @@ async fn test_list_share_links() {
     }
 
     let resp = ctx
-        .get_as("admin", &format!("/api/v1/apps/{app_id}/permissions/share-links"))
+        .get_as(
+            "admin",
+            &format!("/api/v1/apps/{app_id}/permissions/share-links"),
+        )
         .await;
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
@@ -129,7 +136,8 @@ async fn test_share_link_requires_manage_permission() {
     let ctx = TestContext::new().await;
     let app_id = ctx.create_payments_app().await;
 
-    ctx.grant_permission(app_id, ctx.editor_user_id, "edit").await;
+    ctx.grant_permission(app_id, ctx.editor_user_id, "edit")
+        .await;
 
     let resp = ctx
         .post_as(

@@ -12,7 +12,11 @@ mod test_agent_management {
         let resp = ctx.get("/api/v1/agents").await;
         assert_eq!(resp.status(), 200);
         let agents: Value = resp.json().await.unwrap();
-        assert!(agents["agents"].is_array() || agents.is_array(), "Expected agents array, got: {:?}", agents);
+        assert!(
+            agents["agents"].is_array() || agents.is_array(),
+            "Expected agents array, got: {:?}",
+            agents
+        );
 
         ctx.cleanup().await;
     }
@@ -108,7 +112,9 @@ mod test_agent_management {
         let (_org2_id, _, org2_token) = ctx.create_second_org().await;
         let resp = ctx.get_with_token(&org2_token, "/api/v1/agents").await;
         let agents: Value = resp.json().await.unwrap();
-        let agents_arr = agents["agents"].as_array().unwrap_or_else(|| agents.as_array().unwrap());
+        let agents_arr = agents["agents"]
+            .as_array()
+            .unwrap_or_else(|| agents.as_array().unwrap());
         let hostnames: Vec<&str> = agents_arr
             .iter()
             .filter_map(|a| a["hostname"].as_str())

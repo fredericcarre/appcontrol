@@ -52,18 +52,22 @@ mod test_full_start_stop {
 
         // Verify the start was initiated (action_log should have an entry)
         let all_logs = ctx.get_all_action_logs().await;
-        let has_start = all_logs.iter().any(|l| {
-            l.action.contains("start") || l.action.contains("orchestration")
-        });
+        let has_start = all_logs
+            .iter()
+            .any(|l| l.action.contains("start") || l.action.contains("orchestration"));
         assert!(has_start, "action_log must record the start operation");
 
         // Verify dry run plan shows correct DAG ordering
         let resp = ctx
-            .post(&format!("/api/v1/apps/{}/start?dry_run=true", app_id), json!({}))
+            .post(
+                &format!("/api/v1/apps/{}/start?dry_run=true", app_id),
+                json!({}),
+            )
             .await;
         if resp.status() == 200 {
             let plan: Value = resp.json().await.unwrap();
-            let levels = plan["plan"]["levels"].as_array()
+            let levels = plan["plan"]["levels"]
+                .as_array()
                 .or_else(|| plan["plan"].as_array());
             if let Some(levels) = levels {
                 assert!(levels.len() >= 2, "Should have at least 2 DAG levels");
@@ -80,7 +84,8 @@ mod test_full_start_stop {
         ctx.set_all_running(app_id).await;
 
         // Stop the application
-        let resp = ctx.post(&format!("/api/v1/apps/{}/stop", app_id), json!({}))
+        let resp = ctx
+            .post(&format!("/api/v1/apps/{}/stop", app_id), json!({}))
             .await;
         assert!(
             resp.status().is_success() || resp.status() == 202,
@@ -93,23 +98,28 @@ mod test_full_start_stop {
 
         // Verify dry run stop plan shows reverse DAG ordering
         let resp = ctx
-            .post(&format!("/api/v1/apps/{}/stop?dry_run=true", app_id), json!({}))
+            .post(
+                &format!("/api/v1/apps/{}/stop?dry_run=true", app_id),
+                json!({}),
+            )
             .await;
         if resp.status() == 200 {
             let plan: Value = resp.json().await.unwrap();
-            let levels = plan["plan"]["levels"].as_array()
+            let levels = plan["plan"]["levels"]
+                .as_array()
                 .or_else(|| plan["plan"].as_array());
             if let Some(levels) = levels {
-                assert!(levels.len() >= 2, "Should have at least 2 DAG levels for stop");
+                assert!(
+                    levels.len() >= 2,
+                    "Should have at least 2 DAG levels for stop"
+                );
             }
         }
 
         // Verify action_log records the stop
         let all_logs = ctx.get_all_action_logs().await;
         let has_stop = all_logs.iter().any(|l| l.action.contains("stop"));
-        assert!(has_stop,
-            "Apache must stop before Oracle"
-        );
+        assert!(has_stop, "Apache must stop before Oracle");
 
         ctx.cleanup().await;
     }
@@ -128,13 +138,11 @@ mod test_full_start_stop {
         let plan: Value = resp.json().await.unwrap();
 
         // Plan can be either a plain array or an object with "levels" key
-        let levels = plan["plan"]["levels"].as_array()
+        let levels = plan["plan"]["levels"]
+            .as_array()
             .or_else(|| plan["plan"].as_array());
         assert!(levels.is_some(), "Plan should have levels, got: {:?}", plan);
-        assert!(
-            levels.unwrap().len() >= 1,
-            "Should have at least 1 level"
-        );
+        assert!(levels.unwrap().len() >= 1, "Should have at least 1 level");
 
         // Components should still be STOPPED (dry run didn't execute)
         let status = ctx.get_app_status(app_id).await;
@@ -172,7 +180,11 @@ mod test_full_start_stop {
         let status = ctx.get_app_status(app_id).await;
         let oracle_state = ctx.component_state(&status, "Oracle-DB");
         assert!(
-            oracle_state == "RUNNING" || oracle_state == "STARTING" || oracle_state == "STOPPED" || oracle_state == "UNKNOWN" || oracle_state == "FAILED",
+            oracle_state == "RUNNING"
+                || oracle_state == "STARTING"
+                || oracle_state == "STOPPED"
+                || oracle_state == "UNKNOWN"
+                || oracle_state == "FAILED",
             "Oracle-DB should be in a valid state, got {oracle_state}"
         );
 

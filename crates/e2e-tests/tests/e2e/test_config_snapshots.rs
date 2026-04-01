@@ -156,7 +156,8 @@ mod test_config_snapshots {
         // Read current state
         let resp = ctx.get(&format!("/api/v1/components/{oracle_id}")).await;
         let before: Value = resp.json().await.unwrap();
-        let original_hostname = before["hostname"].as_str()
+        let original_hostname = before["hostname"]
+            .as_str()
             .or(before["host"].as_str())
             .unwrap_or("unknown")
             .to_string();

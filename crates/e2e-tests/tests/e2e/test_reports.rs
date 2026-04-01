@@ -87,7 +87,8 @@ mod test_reports {
         )).await;
         assert_eq!(resp.status(), 200);
         let report: Value = resp.json().await.unwrap();
-        let data = report["data"].as_array()
+        let data = report["data"]
+            .as_array()
             .expect("Report should have data array");
 
         // On SQLite, component_daily_stats may be empty (no materialized view refresh)
@@ -101,8 +102,14 @@ mod test_reports {
                 .collect();
             if !oracle_entries.is_empty() {
                 let oracle_running = oracle_entries[0]["running_seconds"].as_i64().unwrap_or(0);
-                assert!(oracle_running >= 0, "Running seconds should be non-negative");
-                assert_eq!(oracle_entries[0]["total_seconds"].as_i64().unwrap_or(86400), 86400);
+                assert!(
+                    oracle_running >= 0,
+                    "Running seconds should be non-negative"
+                );
+                assert_eq!(
+                    oracle_entries[0]["total_seconds"].as_i64().unwrap_or(86400),
+                    86400
+                );
             }
 
             // Verify Tomcat-App entry if present
@@ -112,7 +119,10 @@ mod test_reports {
                 .collect();
             if !tomcat_entries.is_empty() {
                 let tomcat_running = tomcat_entries[0]["running_seconds"].as_i64().unwrap_or(0);
-                assert!(tomcat_running >= 0, "Running seconds should be non-negative");
+                assert!(
+                    tomcat_running >= 0,
+                    "Running seconds should be non-negative"
+                );
             }
         }
 

@@ -54,8 +54,9 @@ pub async fn build_rebuild_plan(
     for level in &levels {
         let mut level_components = Vec::new();
         for &comp_id in level {
-            if let Some((_, name, _, rebuild_cmd, infra_cmd, bastion_agent)) =
-                targets.iter().find(|(id, _, _, _, _, _)| id.into_inner() == comp_id)
+            if let Some((_, name, _, rebuild_cmd, infra_cmd, bastion_agent)) = targets
+                .iter()
+                .find(|(id, _, _, _, _, _)| id.into_inner() == comp_id)
             {
                 level_components.push(serde_json::json!({
                     "component_id": comp_id,
@@ -192,8 +193,10 @@ pub async fn execute_rebuild(
     let levels = dag.topological_levels()?;
 
     // Collect target IDs for quick lookup
-    let target_ids: std::collections::HashSet<Uuid> =
-        targets.iter().map(|(id, _, _, _, _, _)| id.into_inner()).collect();
+    let target_ids: std::collections::HashSet<Uuid> = targets
+        .iter()
+        .map(|(id, _, _, _, _, _)| id.into_inner())
+        .collect();
 
     // Phase 1: Stop affected components in reverse DAG order
     let mut reverse_levels = levels.clone();
@@ -247,7 +250,9 @@ pub async fn execute_rebuild(
 
             // Run infrastructure rebuild first (if defined) — WAIT for completion
             if let Some(infra_cmd) = infra_cmd {
-                let exec_agent = bastion_agent.map(|b| b.into_inner()).or(agent_id.map(|id| id.into_inner()));
+                let exec_agent = bastion_agent
+                    .map(|b| b.into_inner())
+                    .or(agent_id.map(|id| id.into_inner()));
                 if let Some(exec_agent_id) = exec_agent {
                     let request_id = Uuid::new_v4();
                     let message = BackendMessage::ExecuteCommand {

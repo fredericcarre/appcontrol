@@ -48,10 +48,8 @@ impl IntoResponse for ApiError {
             ),
             ApiError::Database(sqlx::Error::Database(db_err)) => {
                 // PostgreSQL unique violation = "23505", SQLite UNIQUE constraint = "2067"
-                let is_unique_violation = matches!(
-                    db_err.code().as_deref(),
-                    Some("23505") | Some("2067")
-                );
+                let is_unique_violation =
+                    matches!(db_err.code().as_deref(), Some("23505") | Some("2067"));
                 // Also check message for SQLite which may not always set code
                 let is_unique_msg = db_err
                     .message()

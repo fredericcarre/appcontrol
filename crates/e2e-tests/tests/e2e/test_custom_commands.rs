@@ -62,7 +62,10 @@ mod test_custom_commands {
             )
             .await;
         assert!(
-            resp.status() == 400 || resp.status() == 403 || resp.status() == 409 || resp.status() == 404,
+            resp.status() == 400
+                || resp.status() == 403
+                || resp.status() == 409
+                || resp.status() == 404,
             "Should require confirmation or command not found, got {}",
             resp.status()
         );

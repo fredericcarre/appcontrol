@@ -21,11 +21,7 @@ async fn test_api_key_start_app() {
         .await;
 
     let resp = ctx
-        .post_with_api_key(
-            &api_key,
-            &format!("/api/v1/apps/{app_id}/start"),
-            json!({}),
-        )
+        .post_with_api_key(&api_key, &format!("/api/v1/apps/{app_id}/start"), json!({}))
         .await;
     let status = resp.status().as_u16();
     assert!(
@@ -74,11 +70,7 @@ async fn test_api_key_permissions_enforced() {
     let api_key = key["key"].as_str().unwrap().to_string();
 
     let resp = ctx
-        .post_with_api_key(
-            &api_key,
-            &format!("/api/v1/apps/{app_id}/start"),
-            json!({}),
-        )
+        .post_with_api_key(&api_key, &format!("/api/v1/apps/{app_id}/start"), json!({}))
         .await;
     assert_eq!(
         resp.status().as_u16(),
@@ -100,7 +92,10 @@ async fn test_scheduler_wait_running_endpoint() {
         .build()
         .unwrap();
     let resp = client
-        .get(format!("{}/api/v1/orchestration/apps/{app_id}/wait-running?timeout=2", ctx.api_url))
+        .get(format!(
+            "{}/api/v1/orchestration/apps/{app_id}/wait-running?timeout=2",
+            ctx.api_url
+        ))
         .header("Authorization", format!("ApiKey {api_key}"))
         .send()
         .await;

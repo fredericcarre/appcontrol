@@ -155,7 +155,9 @@ mod test_saml_auth {
             let body = resp.text().await.unwrap();
             // May contain token injection or redirect
             assert!(
-                body.contains("localStorage.setItem('token'") || body.contains("/dashboard") || !body.is_empty(),
+                body.contains("localStorage.setItem('token'")
+                    || body.contains("/dashboard")
+                    || !body.is_empty(),
                 "Response should have content"
             );
         }
@@ -174,12 +176,13 @@ mod test_saml_auth {
                 assert_eq!(role, "viewer", "Default role should be viewer");
 
                 // Verify saml_name_id was set
-                let name_id =
-                    sqlx::query_scalar::<_, Option<String>>("SELECT saml_name_id FROM users WHERE id = $1")
-                        .bind(bind_id(user_id))
-                        .fetch_one(&ctx.db_pool)
-                        .await
-                        .unwrap();
+                let name_id = sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT saml_name_id FROM users WHERE id = $1",
+                )
+                .bind(bind_id(user_id))
+                .fetch_one(&ctx.db_pool)
+                .await
+                .unwrap();
                 assert_eq!(name_id, Some("jean.dupont@example.com".to_string()));
             }
         }
@@ -452,13 +455,17 @@ mod test_saml_auth {
         )
         .bind(bind_id(team_a_uuid))
         .bind(bind_id(user_id))
-        .fetch_one(&ctx.db_pool).await.unwrap();
+        .fetch_one(&ctx.db_pool)
+        .await
+        .unwrap();
         let in_b: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
         )
         .bind(bind_id(team_b_uuid))
         .bind(bind_id(user_id))
-        .fetch_one(&ctx.db_pool).await.unwrap();
+        .fetch_one(&ctx.db_pool)
+        .await
+        .unwrap();
         assert!(in_a > 0, "Should be in Team-A after first login");
         assert!(in_b > 0, "Should be in Team-B after first login");
 
@@ -475,13 +482,17 @@ mod test_saml_auth {
         )
         .bind(bind_id(team_a_uuid))
         .bind(bind_id(user_id))
-        .fetch_one(&ctx.db_pool).await.unwrap();
+        .fetch_one(&ctx.db_pool)
+        .await
+        .unwrap();
         let in_b: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
         )
         .bind(bind_id(team_b_uuid))
         .bind(bind_id(user_id))
-        .fetch_one(&ctx.db_pool).await.unwrap();
+        .fetch_one(&ctx.db_pool)
+        .await
+        .unwrap();
         assert!(in_a > 0, "Should still be in Team-A after second login");
         // Team-B membership should be removed (or at least not added)
         // On some backends, group removal may not be immediate

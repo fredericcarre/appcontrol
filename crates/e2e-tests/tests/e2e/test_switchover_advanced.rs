@@ -79,28 +79,44 @@ mod test_switchover_advanced {
                 }),
             )
             .await;
-        assert!(resp.status().is_success(), "Start switchover should succeed, got {}", resp.status());
+        assert!(
+            resp.status().is_success(),
+            "Start switchover should succeed, got {}",
+            resp.status()
+        );
 
         // Advance through phases (may not all succeed without agents)
         for _ in 0..5 {
-            let r = ctx.post(
-                &format!("/api/v1/apps/{app_id}/switchover/next-phase"),
-                json!({}),
-            )
-            .await;
+            let r = ctx
+                .post(
+                    &format!("/api/v1/apps/{app_id}/switchover/next-phase"),
+                    json!({}),
+                )
+                .await;
             if r.status() != 200 && r.status() != 202 {
                 break;
             }
         }
-        let commit_resp = ctx.post(&format!("/api/v1/apps/{app_id}/switchover/commit"), json!({}))
+        let commit_resp = ctx
+            .post(
+                &format!("/api/v1/apps/{app_id}/switchover/commit"),
+                json!({}),
+            )
             .await;
 
         // Try rollback after commit → should be rejected (or 404 if commit didn't work)
         let resp = ctx
-            .post(&format!("/api/v1/apps/{app_id}/switchover/rollback"), json!({}))
+            .post(
+                &format!("/api/v1/apps/{app_id}/switchover/rollback"),
+                json!({}),
+            )
             .await;
         assert!(
-            resp.status() == 400 || resp.status() == 409 || resp.status() == 404 || resp.status() == 500 || resp.status() == 200,
+            resp.status() == 400
+                || resp.status() == 409
+                || resp.status() == 404
+                || resp.status() == 500
+                || resp.status() == 200,
             "Rollback after COMMIT should be rejected or accepted, got {}",
             resp.status()
         );
@@ -203,7 +219,11 @@ mod test_switchover_advanced {
                 }),
             )
             .await;
-        assert!(resp.status().is_success(), "Start switchover should succeed, got {}", resp.status());
+        assert!(
+            resp.status().is_success(),
+            "Start switchover should succeed, got {}",
+            resp.status()
+        );
 
         // Check status
         let resp = ctx
@@ -213,7 +233,9 @@ mod test_switchover_advanced {
         let status: Value = resp.json().await.unwrap();
         // Status should have some indication of switchover state
         assert!(
-            status["status"].as_str().is_some() || status["phase"].as_str().is_some() || status["switchover_id"].as_str().is_some(),
+            status["status"].as_str().is_some()
+                || status["phase"].as_str().is_some()
+                || status["switchover_id"].as_str().is_some(),
             "Status should contain switchover info, got: {:?}",
             status
         );
@@ -237,9 +259,9 @@ mod test_switchover_advanced {
 
         // Verify switchover is logged in action_log
         let all_logs = ctx.get_all_action_logs().await;
-        let has_switchover = all_logs.iter().any(|l| {
-            l.action.contains("switchover") || l.action.contains("start_switchover")
-        });
+        let has_switchover = all_logs
+            .iter()
+            .any(|l| l.action.contains("switchover") || l.action.contains("start_switchover"));
         assert!(
             has_switchover,
             "Switchover should be recorded in action_log"

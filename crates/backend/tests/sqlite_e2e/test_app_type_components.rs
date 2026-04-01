@@ -166,8 +166,7 @@ async fn create_linked_apps(ctx: &TestContext) -> (Uuid, Uuid, Uuid) {
 #[tokio::test]
 async fn test_app_type_component_accepts_degraded_state() {
     let ctx = TestContext::new().await;
-    let (_metrics_app_id, core_app_id, _backend_ref_id) =
-        create_linked_apps(&ctx).await;
+    let (_metrics_app_id, core_app_id, _backend_ref_id) = create_linked_apps(&ctx).await;
 
     // Set Core-Backend: Core-DB=RUNNING, Core-API=DEGRADED
     ctx.force_component_state(core_app_id, "Core-DB", "RUNNING")

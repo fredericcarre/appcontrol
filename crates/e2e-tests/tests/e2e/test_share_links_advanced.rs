@@ -25,13 +25,12 @@ mod test_share_links_advanced {
         .await;
 
         let resp = ctx
-            .get(&format!(
-                "/api/v1/apps/{app_id}/permissions/share-links"
-            ))
+            .get(&format!("/api/v1/apps/{app_id}/permissions/share-links"))
             .await;
         assert_eq!(resp.status(), 200);
         let links: Value = resp.json().await.unwrap();
-        let links_arr = links.as_array()
+        let links_arr = links
+            .as_array()
             .or_else(|| links["links"].as_array())
             .or_else(|| links["share_links"].as_array())
             .expect("Response should contain links array");
@@ -102,7 +101,10 @@ mod test_share_links_advanced {
             )
             .await;
         assert!(
-            resp.status() == 400 || resp.status() == 403 || resp.status() == 410 || resp.status() == 409,
+            resp.status() == 400
+                || resp.status() == 403
+                || resp.status() == 410
+                || resp.status() == 409,
             "Third use should be rejected (max_uses=2), got {}",
             resp.status()
         );

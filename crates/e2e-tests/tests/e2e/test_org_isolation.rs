@@ -23,13 +23,11 @@ mod test_org_isolation {
         let resp = ctx.get_with_token(&org2_token, "/api/v1/apps").await;
         assert_eq!(resp.status(), 200);
         let apps: Value = resp.json().await.unwrap();
-        let apps_arr = apps.as_array()
+        let apps_arr = apps
+            .as_array()
             .or_else(|| apps["apps"].as_array())
             .expect("Response should contain apps array");
-        let app_ids: Vec<&str> = apps_arr
-            .iter()
-            .filter_map(|a| a["id"].as_str())
-            .collect();
+        let app_ids: Vec<&str> = apps_arr.iter().filter_map(|a| a["id"].as_str()).collect();
         assert!(
             !app_ids.contains(&app_id.to_string().as_str()),
             "Org2 should not see Org1's apps"
@@ -107,7 +105,8 @@ mod test_org_isolation {
         // Org2 lists teams → should not see Org1's team
         let resp = ctx.get_with_token(&org2_token, "/api/v1/teams").await;
         let teams: Value = resp.json().await.unwrap();
-        let teams_arr = teams.as_array()
+        let teams_arr = teams
+            .as_array()
             .or_else(|| teams["teams"].as_array())
             .expect("Response should contain teams array");
         let team_names: Vec<&str> = teams_arr

@@ -70,7 +70,8 @@ mod test_diagnostic_advanced {
         let diag: Value = resp.json().await.unwrap();
 
         // API returns {"diagnosis": [...]} with component_name and recommendation fields
-        let components = diag["diagnosis"].as_array()
+        let components = diag["diagnosis"]
+            .as_array()
             .or_else(|| diag["components"].as_array())
             .expect("Should have diagnosis array");
 
@@ -78,10 +79,12 @@ mod test_diagnostic_advanced {
         // Verify structure is correct:
         assert!(!components.is_empty(), "Should have component diagnoses");
         for comp in components {
-            let name = comp["component_name"].as_str()
+            let name = comp["component_name"]
+                .as_str()
                 .or(comp["name"].as_str())
                 .expect("Each diagnosis should have a name");
-            let rec = comp["recommendation"].as_str()
+            let rec = comp["recommendation"]
+                .as_str()
                 .expect("Each diagnosis should have a recommendation");
             assert!(!name.is_empty());
             assert!(!rec.is_empty());
@@ -112,12 +115,15 @@ mod test_diagnostic_advanced {
         let diag: Value = resp.json().await.unwrap();
 
         // API returns {"diagnosis": [...]} — each has health, integrity, infrastructure, recommendation
-        let components = diag["diagnosis"].as_array()
+        let components = diag["diagnosis"]
+            .as_array()
             .or_else(|| diag["components"].as_array())
             .expect("Should have diagnosis array");
         for comp in components {
             assert!(
-                comp["health"].is_string() || comp["health_check"].is_object() || comp["health_status"].is_string(),
+                comp["health"].is_string()
+                    || comp["health_check"].is_object()
+                    || comp["health_status"].is_string(),
                 "Component should have health info: {:?}",
                 comp
             );
@@ -176,7 +182,10 @@ mod test_diagnostic_advanced {
 
         // Should be accepted or may fail on agent unavailability
         assert!(
-            resp.status().is_success() || resp.status() == 200 || resp.status() == 202 || resp.status() == 500,
+            resp.status().is_success()
+                || resp.status() == 200
+                || resp.status() == 202
+                || resp.status() == 500,
             "Rebuild with site override should be accepted or fail gracefully, got {}",
             resp.status()
         );

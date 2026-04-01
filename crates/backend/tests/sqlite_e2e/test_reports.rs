@@ -76,9 +76,7 @@ async fn test_rto_report_returns_null_with_no_data() {
     let ctx = TestContext::new().await;
     let app_id = ctx.create_payments_app().await;
 
-    let resp = ctx
-        .get(&format!("/api/v1/apps/{app_id}/reports/rto"))
-        .await;
+    let resp = ctx.get(&format!("/api/v1/apps/{app_id}/reports/rto")).await;
     assert_eq!(resp.status(), 200);
     let report: Value = resp.json().await.unwrap();
     assert!(

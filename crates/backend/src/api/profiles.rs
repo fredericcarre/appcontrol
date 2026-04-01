@@ -474,11 +474,14 @@ pub async fn activate_profile(
     .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(switchover_id))
     .bind(crate::db::bind_id(app_id))
-    .bind(json!({
-        "type": "profile_activation",
-        "profile_name": &name,
-        "profile_id": profile.id
-    }).to_string())
+    .bind(
+        json!({
+            "type": "profile_activation",
+            "profile_name": &name,
+            "profile_id": profile.id
+        })
+        .to_string(),
+    )
     .execute(&state.db)
     .await?;
 

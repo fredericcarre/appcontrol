@@ -76,8 +76,11 @@ mod test_permissions_sharing {
                 json!({}),
             )
             .await;
-        assert!(resp.status() == 200 || resp.status() == 202 || resp.status() == 409,
-            "Editor should be able to start (edit >= operate), got {}", resp.status());
+        assert!(
+            resp.status() == 200 || resp.status() == 202 || resp.status() == 409,
+            "Editor should be able to start (edit >= operate), got {}",
+            resp.status()
+        );
 
         ctx.cleanup().await;
     }
@@ -274,7 +277,10 @@ mod test_permissions_sharing {
                 || (l.details["level"].as_str() == Some("operate"))
                 || (l.details["permission_level"].as_str() == Some("operate"))
         });
-        assert!(has_perm_log, "Permission grant must be audited in action_log");
+        assert!(
+            has_perm_log,
+            "Permission grant must be audited in action_log"
+        );
 
         ctx.cleanup().await;
     }

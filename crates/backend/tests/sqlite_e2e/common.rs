@@ -482,7 +482,11 @@ impl TestContext {
                 }),
             )
             .await;
-        assert!(resp.status().is_success(), "create diag app: {}", resp.status());
+        assert!(
+            resp.status().is_success(),
+            "create diag app: {}",
+            resp.status()
+        );
         let app: Value = resp.json().await.unwrap();
         let app_id: Uuid = app["id"].as_str().unwrap().parse().unwrap();
 
@@ -509,7 +513,12 @@ impl TestContext {
                     }),
                 )
                 .await;
-            assert!(resp.status().is_success(), "create comp {}: {}", name, resp.status());
+            assert!(
+                resp.status().is_success(),
+                "create comp {}: {}",
+                name,
+                resp.status()
+            );
         }
 
         // Oracle -> Tomcat dependency
@@ -529,14 +538,22 @@ impl TestContext {
         let resp = self
             .post("/api/v1/sites", json!({"name": "PRD", "code": "PRD"}))
             .await;
-        assert!(resp.status().is_success(), "create PRD site: {}", resp.status());
+        assert!(
+            resp.status().is_success(),
+            "create PRD site: {}",
+            resp.status()
+        );
         let site_a: Value = resp.json().await.unwrap();
         let site_a_id: Uuid = site_a["id"].as_str().unwrap().parse().unwrap();
 
         let resp = self
             .post("/api/v1/sites", json!({"name": "DR", "code": "DR"}))
             .await;
-        assert!(resp.status().is_success(), "create DR site: {}", resp.status());
+        assert!(
+            resp.status().is_success(),
+            "create DR site: {}",
+            resp.status()
+        );
         let site_b: Value = resp.json().await.unwrap();
         let site_b_id: Uuid = site_b["id"].as_str().unwrap().parse().unwrap();
 
@@ -550,7 +567,11 @@ impl TestContext {
                 }),
             )
             .await;
-        assert!(resp.status().is_success(), "create DR app: {}", resp.status());
+        assert!(
+            resp.status().is_success(),
+            "create DR app: {}",
+            resp.status()
+        );
         let app: Value = resp.json().await.unwrap();
         let app_id: Uuid = app["id"].as_str().unwrap().parse().unwrap();
 
@@ -570,7 +591,11 @@ impl TestContext {
                         }),
                     )
                     .await;
-                assert!(resp.status().is_success(), "create comp {name}-{suffix}: {}", resp.status());
+                assert!(
+                    resp.status().is_success(),
+                    "create comp {name}-{suffix}: {}",
+                    resp.status()
+                );
             }
         }
 
@@ -583,14 +608,14 @@ impl TestContext {
         assert!(resp.status().is_success(), "list comps: {}", resp.status());
         let body: Value = resp.json().await.unwrap();
         // Handle both bare array and wrapped {"components": [...]}
-        let comps = body.as_array()
+        let comps = body
+            .as_array()
             .or_else(|| body["components"].as_array())
             .unwrap_or_else(|| panic!("Unexpected response format for components: {body}"));
         comps
             .iter()
             .find(|c| c["name"].as_str() == Some(name))
-            .unwrap_or_else(|| panic!("Component {name} not found in app {app_id}"))
-            ["id"]
+            .unwrap_or_else(|| panic!("Component {name} not found in app {app_id}"))["id"]
             .as_str()
             .unwrap()
             .parse()
@@ -748,11 +773,13 @@ impl TestContext {
         let editor_id = Uuid::new_v4();
         let default_site_id = Uuid::new_v4();
 
-        sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')")
-            .bind(DbUuid::from(org_id))
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')",
+        )
+        .bind(DbUuid::from(org_id))
+        .execute(&pool)
+        .await
+        .unwrap();
 
         for (id, name, role) in [
             (admin_id, "admin", "admin"),
@@ -774,12 +801,14 @@ impl TestContext {
             .unwrap();
         }
 
-        sqlx::query("INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')")
-            .bind(DbUuid::from(default_site_id))
-            .bind(DbUuid::from(org_id))
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')",
+        )
+        .bind(DbUuid::from(default_site_id))
+        .bind(DbUuid::from(org_id))
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let db_pool = pool.clone();
 
@@ -866,7 +895,10 @@ impl TestContext {
             organization_id: org_id,
             default_site_id,
             db_pool,
-            client: Client::builder().timeout(Duration::from_secs(10)).build().unwrap(),
+            client: Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .unwrap(),
             admin_token,
             operator_token,
             viewer_token,
@@ -1009,13 +1041,12 @@ impl TestContext {
     // ---- State helpers ----
 
     pub async fn set_all_running(&self, app_id: Uuid) {
-        let comp_ids = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM components WHERE application_id = $1",
-        )
-        .bind(DbUuid::from(app_id))
-        .fetch_all(&self.db_pool)
-        .await
-        .unwrap();
+        let comp_ids =
+            sqlx::query_scalar::<_, String>("SELECT id FROM components WHERE application_id = $1")
+                .bind(DbUuid::from(app_id))
+                .fetch_all(&self.db_pool)
+                .await
+                .unwrap();
         for cid in comp_ids {
             sqlx::query("UPDATE components SET current_state = 'RUNNING' WHERE id = $1")
                 .bind(&cid)
@@ -1053,8 +1084,13 @@ impl TestContext {
         rows.into_iter()
             .map(|r| ConfigVersion {
                 changed_by: r.changed_by.parse().unwrap_or_default(),
-                before_snapshot: r.before_snapshot.map(|s| serde_json::from_str(&s).unwrap_or_default()),
-                after_snapshot: r.after_snapshot.map(|s| serde_json::from_str(&s).unwrap_or_default()).unwrap_or(Value::Null),
+                before_snapshot: r
+                    .before_snapshot
+                    .map(|s| serde_json::from_str(&s).unwrap_or_default()),
+                after_snapshot: r
+                    .after_snapshot
+                    .map(|s| serde_json::from_str(&s).unwrap_or_default())
+                    .unwrap_or(Value::Null),
             })
             .collect()
     }

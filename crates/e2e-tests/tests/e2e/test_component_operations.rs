@@ -37,13 +37,20 @@ mod test_component_operations {
         // Without a real agent, the component may stay UNKNOWN/STOPPED (no agent_id assigned)
         // or transition to STARTING/RUNNING if agent is connected. Accept any valid state.
         assert!(
-            state == "RUNNING" || state == "STARTING" || state == "UNKNOWN" || state == "STOPPED" || state == "FAILED",
+            state == "RUNNING"
+                || state == "STARTING"
+                || state == "UNKNOWN"
+                || state == "STOPPED"
+                || state == "FAILED",
             "Oracle-DB should be in a valid state, got {state}"
         );
 
         // Other components should still be in their initial state
         let state = ctx.get_component_state(app_id, "Tomcat-App").await;
-        assert!(state == "STOPPED" || state == "UNKNOWN", "Tomcat-App should still be STOPPED/UNKNOWN, got {state}");
+        assert!(
+            state == "STOPPED" || state == "UNKNOWN",
+            "Tomcat-App should still be STOPPED/UNKNOWN, got {state}"
+        );
 
         ctx.cleanup().await;
     }
@@ -149,7 +156,10 @@ mod test_component_operations {
         let comp: Value = resp.json().await.unwrap();
         assert_eq!(comp["name"], "Test-Component");
         // API may return the field as "host" or "hostname"
-        let host = comp["hostname"].as_str().or(comp["host"].as_str()).unwrap_or("");
+        let host = comp["hostname"]
+            .as_str()
+            .or(comp["host"].as_str())
+            .unwrap_or("");
         assert_eq!(host, "srv-test");
 
         // Update component
@@ -167,14 +177,21 @@ mod test_component_operations {
         // Verify update
         let resp = ctx.get(&format!("/api/v1/components/{comp_id}")).await;
         let comp: Value = resp.json().await.unwrap();
-        let host = comp["hostname"].as_str().or(comp["host"].as_str()).unwrap_or("");
+        let host = comp["hostname"]
+            .as_str()
+            .or(comp["host"].as_str())
+            .unwrap_or("");
         assert_eq!(host, "srv-test-updated");
 
         // Delete component
         let resp = ctx
             .delete_as("admin", &format!("/api/v1/components/{comp_id}"))
             .await;
-        assert!(resp.status() == 200 || resp.status() == 204, "Delete should succeed, got {}", resp.status());
+        assert!(
+            resp.status() == 200 || resp.status() == 204,
+            "Delete should succeed, got {}",
+            resp.status()
+        );
 
         // Verify deleted
         let resp = ctx.get(&format!("/api/v1/components/{comp_id}")).await;
@@ -277,7 +294,11 @@ mod test_component_operations {
         let resp = ctx
             .delete_as("editor", &format!("/api/v1/components/{oracle_id}"))
             .await;
-        assert!(resp.status() == 200 || resp.status() == 204, "Delete should succeed, got {}", resp.status());
+        assert!(
+            resp.status() == 200 || resp.status() == 204,
+            "Delete should succeed, got {}",
+            resp.status()
+        );
 
         ctx.cleanup().await;
     }
@@ -290,14 +311,11 @@ mod test_component_operations {
         let resp = ctx.get(&format!("/api/v1/apps/{app_id}/components")).await;
         assert_eq!(resp.status(), 200);
         let components: Value = resp.json().await.unwrap();
-        let arr = components.as_array()
+        let arr = components
+            .as_array()
             .or_else(|| components["components"].as_array())
             .expect("Response should contain components array");
-        assert_eq!(
-            arr.len(),
-            5,
-            "Payments app should have 5 components"
-        );
+        assert_eq!(arr.len(), 5, "Payments app should have 5 components");
 
         ctx.cleanup().await;
     }

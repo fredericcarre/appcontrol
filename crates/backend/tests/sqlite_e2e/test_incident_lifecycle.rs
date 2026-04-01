@@ -33,9 +33,7 @@ async fn test_dag_endpoint_returns_graph() {
     if status == 200 {
         let dag: Value = resp.json().await.unwrap();
         assert!(
-            dag["nodes"].is_array()
-                || dag["components"].is_array()
-                || dag["levels"].is_array(),
+            dag["nodes"].is_array() || dag["components"].is_array() || dag["levels"].is_array(),
             "DAG should contain graph data"
         );
     }

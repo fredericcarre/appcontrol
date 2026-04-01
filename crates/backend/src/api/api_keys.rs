@@ -132,8 +132,7 @@ pub async fn list_api_keys(
     let data: Vec<Value> = keys
         .iter()
         .map(|k| {
-            let scopes_val: Value =
-                serde_json::from_str(&k.scopes).unwrap_or(json!([]));
+            let scopes_val: Value = serde_json::from_str(&k.scopes).unwrap_or(json!([]));
             json!({
                 "id": k.id,
                 "name": k.name,

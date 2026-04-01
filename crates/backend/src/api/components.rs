@@ -1224,13 +1224,11 @@ pub async fn execute_command(
         // Check confirmation requirement
         let requires_confirmation = cmd_row.2;
         if requires_confirmation {
-            let confirmed = body
-                .as_ref()
-                .and_then(|b| b.confirmed)
-                .unwrap_or(false);
+            let confirmed = body.as_ref().and_then(|b| b.confirmed).unwrap_or(false);
             if !confirmed {
                 return Err(ApiError::Validation(
-                    "This command requires confirmation. Set 'confirmed: true' to execute.".to_string(),
+                    "This command requires confirmation. Set 'confirmed: true' to execute."
+                        .to_string(),
                 ));
             }
         }
@@ -1379,21 +1377,23 @@ pub async fn create_dependency(
     }
 
     // Validate both components belong to this application
-    let from_app_id = sqlx::query_scalar::<_, DbUuid>(
-        "SELECT application_id FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(body.from_component_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::Validation("from_component_id not found".to_string()))?;
+    let from_app_id =
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(crate::db::bind_id(body.from_component_id))
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(ApiError::Validation(
+                "from_component_id not found".to_string(),
+            ))?;
 
-    let to_app_id = sqlx::query_scalar::<_, DbUuid>(
-        "SELECT application_id FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(body.to_component_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::Validation("to_component_id not found".to_string()))?;
+    let to_app_id =
+        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
+            .bind(crate::db::bind_id(body.to_component_id))
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(ApiError::Validation(
+                "to_component_id not found".to_string(),
+            ))?;
 
     if *from_app_id != app_id || *to_app_id != app_id {
         return Err(ApiError::Validation(

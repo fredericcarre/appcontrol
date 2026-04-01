@@ -210,14 +210,10 @@ pub async fn preview_import(
             .unwrap_or_else(|| "service".to_string());
 
         let resolution = if let Some(ref host) = comp.host {
-            let result = resolve_host_with_options(
-                &state.db,
-                host,
-                &body.gateway_ids,
-                user.organization_id,
-            )
-            .await
-            .map_err(|e| ApiError::Internal(format!("Resolution failed: {}", e)))?;
+            let result =
+                resolve_host_with_options(&state.db, host, &body.gateway_ids, user.organization_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(format!("Resolution failed: {}", e)))?;
 
             match result {
                 ResolutionResult::Resolved {

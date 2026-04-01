@@ -228,7 +228,11 @@ mod test_app_type_components {
         let resp = ctx
             .post(&format!("/api/v1/apps/{metrics_app_id}/start"), json!({}))
             .await;
-        assert!(resp.status().is_success() || resp.status() == 202, "Start should succeed, got {}", resp.status());
+        assert!(
+            resp.status().is_success() || resp.status() == 202,
+            "Start should succeed, got {}",
+            resp.status()
+        );
 
         // Without agents, components won't actually start. Wait briefly.
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -256,7 +260,11 @@ mod test_app_type_components {
         let resp = ctx
             .post(&format!("/api/v1/apps/{metrics_app_id}/stop"), json!({}))
             .await;
-        assert!(resp.status().is_success() || resp.status() == 202, "Stop should succeed, got {}", resp.status());
+        assert!(
+            resp.status().is_success() || resp.status() == 202,
+            "Stop should succeed, got {}",
+            resp.status()
+        );
 
         // Without agents, components won't actually stop. Wait briefly.
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -296,7 +304,11 @@ mod test_app_type_components {
         let resp = ctx
             .post(&format!("/api/v1/apps/{metrics_app_id}/start"), json!({}))
             .await;
-        assert!(resp.status().is_success() || resp.status() == 202, "Start should be accepted, got {}", resp.status());
+        assert!(
+            resp.status().is_success() || resp.status() == 202,
+            "Start should be accepted, got {}",
+            resp.status()
+        );
 
         // Without agents, components won't actually start/fail.
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -305,7 +317,10 @@ mod test_app_type_components {
         let core_status = ctx.get_app_status(core_app_id).await;
         let core_api_state = ctx.component_state(&core_status, "Core-API");
         assert!(
-            core_api_state == "FAILED" || core_api_state == "STARTING" || core_api_state == "STOPPED" || core_api_state == "UNKNOWN",
+            core_api_state == "FAILED"
+                || core_api_state == "STARTING"
+                || core_api_state == "STOPPED"
+                || core_api_state == "UNKNOWN",
             "Core-API should be in a valid state, got {core_api_state}"
         );
 

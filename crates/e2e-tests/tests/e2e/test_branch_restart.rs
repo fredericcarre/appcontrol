@@ -34,9 +34,7 @@ mod test_branch_restart {
         ctx.force_component_state(app_id, "App-1", "FAILED").await;
 
         // Use the topology endpoint to see component states
-        let resp = ctx
-            .get(&format!("/api/v1/apps/{}/topology", app_id))
-            .await;
+        let resp = ctx.get(&format!("/api/v1/apps/{}/topology", app_id)).await;
         let topo: Value = resp.json().await.unwrap();
 
         // The error branch concept: App-1 is FAILED, and its dependents

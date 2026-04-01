@@ -22,13 +22,11 @@ async fn test_apps_invisible_across_orgs() {
     let body: Value = resp.json().await.unwrap();
     // Handle both bare array and wrapped {"apps": [...]}
     let empty = vec![];
-    let apps = body.as_array()
+    let apps = body
+        .as_array()
         .or_else(|| body["apps"].as_array())
         .unwrap_or(&empty);
-    let app_ids: Vec<&str> = apps
-        .iter()
-        .filter_map(|a| a["id"].as_str())
-        .collect();
+    let app_ids: Vec<&str> = apps.iter().filter_map(|a| a["id"].as_str()).collect();
     assert!(
         !app_ids.contains(&app_id.to_string().as_str()),
         "Org2 should not see Org1's apps"
@@ -47,11 +45,7 @@ async fn test_cross_org_app_access_returns_404() {
     let resp = ctx
         .get_with_token(&org2_token, &format!("/api/v1/apps/{app_id}"))
         .await;
-    assert_eq!(
-        resp.status(),
-        404,
-        "Cross-org app access should return 404"
-    );
+    assert_eq!(resp.status(), 404, "Cross-org app access should return 404");
 
     ctx.cleanup().await;
 }
@@ -103,13 +97,11 @@ async fn test_teams_scoped_to_org() {
     let resp = ctx.get_with_token(&org2_token, "/api/v1/teams").await;
     let body: Value = resp.json().await.unwrap();
     let empty = vec![];
-    let teams = body.as_array()
+    let teams = body
+        .as_array()
         .or_else(|| body["teams"].as_array())
         .unwrap_or(&empty);
-    let team_names: Vec<&str> = teams
-        .iter()
-        .filter_map(|t| t["name"].as_str())
-        .collect();
+    let team_names: Vec<&str> = teams.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(
         !team_names.contains(&"Org1-Team"),
         "Org2 should not see Org1's teams"

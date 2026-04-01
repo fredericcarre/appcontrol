@@ -41,9 +41,18 @@ mod test_audit_trail {
         // Verify each action type is present
         let logs = ctx.get_all_action_logs().await;
         let actions: Vec<&str> = logs.iter().map(|l| l.action.as_str()).collect();
-        assert!(actions.contains(&"create_app") || actions.contains(&"app_create"), "Should log app creation");
-        assert!(actions.contains(&"start_app") || actions.contains(&"start"), "Should log start");
-        assert!(actions.contains(&"stop_app") || actions.contains(&"stop"), "Should log stop");
+        assert!(
+            actions.contains(&"create_app") || actions.contains(&"app_create"),
+            "Should log app creation"
+        );
+        assert!(
+            actions.contains(&"start_app") || actions.contains(&"start"),
+            "Should log start"
+        );
+        assert!(
+            actions.contains(&"stop_app") || actions.contains(&"stop"),
+            "Should log stop"
+        );
 
         ctx.cleanup().await;
     }
@@ -69,9 +78,8 @@ mod test_audit_trail {
         );
 
         // Verify transitions exist with to_state = RUNNING
-        assert!(oracle_transitions
-            .iter()
-            .any(|t| t.to_state == "RUNNING"),
+        assert!(
+            oracle_transitions.iter().any(|t| t.to_state == "RUNNING"),
             "Should have a transition to RUNNING"
         );
 
@@ -149,7 +157,10 @@ mod test_audit_trail {
 
         // Call via API key (simulating scheduler)
         let resp = ctx
-            .get_with_api_key(&api_key, &format!("/api/v1/orchestration/apps/{}/status", app_id))
+            .get_with_api_key(
+                &api_key,
+                &format!("/api/v1/orchestration/apps/{}/status", app_id),
+            )
             .await;
         assert_eq!(resp.status(), 200);
 

@@ -19,9 +19,7 @@ async fn test_detect_error_branch() {
     ctx.force_component_state(app_id, "App-1", "FAILED").await;
 
     // Use the topology endpoint to verify the DAG structure and component states
-    let resp = ctx
-        .get(&format!("/api/v1/apps/{}/topology", app_id))
-        .await;
+    let resp = ctx.get(&format!("/api/v1/apps/{}/topology", app_id)).await;
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
     assert_eq!(status, 200, "GET topology failed: {body_text}");

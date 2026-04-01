@@ -41,7 +41,8 @@ mod test_diagnostic_rebuild {
         let diag: Value = resp.json().await.unwrap();
 
         // API returns {"diagnosis": [...]} - each item has component_name + recommendation
-        let components = diag["diagnosis"].as_array()
+        let components = diag["diagnosis"]
+            .as_array()
             .or_else(|| diag["components"].as_array())
             .expect("Should have diagnosis array");
 
@@ -54,10 +55,12 @@ mod test_diagnostic_rebuild {
 
         // Check that each component has a recommendation field
         for comp in components {
-            let name = comp["component_name"].as_str()
+            let name = comp["component_name"]
+                .as_str()
                 .or(comp["name"].as_str())
                 .expect("Each diagnosis should have a name");
-            let rec = comp["recommendation"].as_str()
+            let rec = comp["recommendation"]
+                .as_str()
                 .expect("Each diagnosis should have a recommendation");
             assert!(!name.is_empty());
             assert!(!rec.is_empty());
@@ -146,7 +149,9 @@ mod test_diagnostic_rebuild {
         if resp.status() == 200 {
             let plan: Value = resp.json().await.unwrap();
             assert!(
-                plan["plan"]["levels"].is_array() || plan["plan"].is_array() || plan["dry_run"].is_boolean(),
+                plan["plan"]["levels"].is_array()
+                    || plan["plan"].is_array()
+                    || plan["dry_run"].is_boolean(),
                 "Dry run should return a plan, got: {:?}",
                 plan
             );

@@ -184,11 +184,13 @@ async fn seed_data(
 ) {
     #[cfg(feature = "postgres")]
     {
-        sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')")
-            .bind(bind_id(org_id))
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')",
+        )
+        .bind(bind_id(org_id))
+        .execute(pool)
+        .await
+        .unwrap();
 
         for (id, name, role) in [
             (admin_id, "admin", "admin"),
@@ -209,23 +211,27 @@ async fn seed_data(
             .unwrap();
         }
 
-        sqlx::query("INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')")
-            .bind(bind_id(default_site_id))
-            .bind(bind_id(org_id))
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')",
+        )
+        .bind(bind_id(default_site_id))
+        .bind(bind_id(org_id))
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
         use appcontrol_backend::db::DbUuid;
 
-        sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')")
-            .bind(DbUuid::from(org_id))
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')",
+        )
+        .bind(DbUuid::from(org_id))
+        .execute(pool)
+        .await
+        .unwrap();
 
         for (id, name, role) in [
             (admin_id, "admin", "admin"),
@@ -247,12 +253,14 @@ async fn seed_data(
             .unwrap();
         }
 
-        sqlx::query("INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')")
-            .bind(DbUuid::from(default_site_id))
-            .bind(DbUuid::from(org_id))
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')",
+        )
+        .bind(DbUuid::from(default_site_id))
+        .bind(DbUuid::from(org_id))
+        .execute(pool)
+        .await
+        .unwrap();
     }
 }
 
@@ -398,7 +406,16 @@ impl TestContext {
         let editor_id = Uuid::new_v4();
         let default_site_id = Uuid::new_v4();
 
-        seed_data(&pool, org_id, admin_id, operator_id, viewer_id, editor_id, default_site_id).await;
+        seed_data(
+            &pool,
+            org_id,
+            admin_id,
+            operator_id,
+            viewer_id,
+            editor_id,
+            default_site_id,
+        )
+        .await;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
@@ -1265,8 +1282,14 @@ impl TestContext {
                     infra_check_cmd = CASE WHEN $5 = 0 THEN 'exit 0' ELSE 'exit ' || CAST($5 AS TEXT) END
                  WHERE application_id = $1 AND name = $2";
             sqlx::query(sql)
-                .bind(bind_id(app_id)).bind(name).bind(health).bind(integrity).bind(infra)
-                .execute(&self.db_pool).await.unwrap();
+                .bind(bind_id(app_id))
+                .bind(name)
+                .bind(health)
+                .bind(integrity)
+                .bind(infra)
+                .execute(&self.db_pool)
+                .await
+                .unwrap();
         }
     }
 
@@ -1492,8 +1515,9 @@ impl TestContext {
     pub async fn cleanup(&self) {
         #[cfg(feature = "postgres")]
         {
-            let admin_url = std::env::var("TEST_DATABASE_ADMIN_URL")
-                .unwrap_or_else(|_| "postgres://appcontrol:test@localhost:5432/postgres".to_string());
+            let admin_url = std::env::var("TEST_DATABASE_ADMIN_URL").unwrap_or_else(|_| {
+                "postgres://appcontrol:test@localhost:5432/postgres".to_string()
+            });
             let admin_pool = PgPool::connect(&admin_url).await.unwrap();
             sqlx::query(&format!(
                 "DROP DATABASE IF EXISTS {} WITH (FORCE)",

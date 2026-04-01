@@ -106,7 +106,11 @@ async fn test_api_key_crud() {
     let resp = ctx
         .delete_as("admin", &format!("/api/v1/api-keys/{key_id}"))
         .await;
-    assert!(resp.status().is_success(), "Delete API key failed: {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "Delete API key failed: {}",
+        resp.status()
+    );
     ctx.cleanup().await;
 }
 

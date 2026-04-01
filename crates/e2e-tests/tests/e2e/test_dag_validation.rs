@@ -32,7 +32,11 @@ mod test_dag_validation {
             .await;
         assert_eq!(resp.status(), 409, "Circular dependency must be rejected");
         let body: Value = resp.json().await.unwrap();
-        let error_text = format!("{} {}", body["error"].as_str().unwrap_or(""), body["message"].as_str().unwrap_or(""));
+        let error_text = format!(
+            "{} {}",
+            body["error"].as_str().unwrap_or(""),
+            body["message"].as_str().unwrap_or("")
+        );
         assert!(
             error_text.to_lowercase().contains("cycle"),
             "Error message should mention cycle, got: {error_text}"
@@ -101,7 +105,9 @@ mod test_dag_validation {
             .get(&format!("/api/v1/apps/{app_id}/dependencies"))
             .await;
         let deps: Value = resp.json().await.unwrap();
-        let deps_arr = deps.as_array().or_else(|| deps["dependencies"].as_array())
+        let deps_arr = deps
+            .as_array()
+            .or_else(|| deps["dependencies"].as_array())
             .expect("Response should contain dependencies array");
         let dep_count = deps_arr.len();
         assert_eq!(dep_count, 4, "Payments app should have 4 dependencies");
@@ -120,7 +126,11 @@ mod test_dag_validation {
         let resp = ctx
             .delete_as("admin", &format!("/api/v1/dependencies/{dep_id}"))
             .await;
-        assert!(resp.status() == 200 || resp.status() == 204, "Delete should succeed, got {}", resp.status());
+        assert!(
+            resp.status() == 200 || resp.status() == 204,
+            "Delete should succeed, got {}",
+            resp.status()
+        );
 
         // Now Apache-Front should be independent (level 0 in its own plan)
         let resp = ctx
@@ -130,7 +140,8 @@ mod test_dag_validation {
             )
             .await;
         let plan: Value = resp.json().await.unwrap();
-        let levels = plan["plan"]["levels"].as_array()
+        let levels = plan["plan"]["levels"]
+            .as_array()
             .or_else(|| plan["plan"].as_array())
             .expect("Plan should have levels");
         let level0 = &levels[0];
@@ -160,37 +171,80 @@ mod test_dag_validation {
             )
             .await;
         let plan: Value = resp.json().await.unwrap();
-        let levels = plan["plan"]["levels"].as_array()
+        let levels = plan["plan"]["levels"]
+            .as_array()
             .or_else(|| plan["plan"].as_array())
             .expect("Plan should have levels");
 
-        assert!(levels.len() >= 2, "Payments app should have at least 2 DAG levels, got {}", levels.len());
+        assert!(
+            levels.len() >= 2,
+            "Payments app should have at least 2 DAG levels, got {}",
+            levels.len()
+        );
 
         // Collect all component names from all levels
         let empty = Vec::new();
-        let all_names: Vec<String> = levels.iter()
+        let all_names: Vec<String> = levels
+            .iter()
             .flat_map(|level| {
-                level.as_array().unwrap_or(&empty).iter()
+                level
+                    .as_array()
+                    .unwrap_or(&empty)
+                    .iter()
                     .filter_map(|c| c["name"].as_str().map(|s| s.to_string()))
             })
             .collect();
 
         // Verify all 5 components are present across all levels
-        assert!(all_names.contains(&"Oracle-DB".to_string()), "Should contain Oracle-DB");
-        assert!(all_names.contains(&"Tomcat-App".to_string()), "Should contain Tomcat-App");
-        assert!(all_names.contains(&"RabbitMQ".to_string()), "Should contain RabbitMQ");
-        assert!(all_names.contains(&"Apache-Front".to_string()), "Should contain Apache-Front");
-        assert!(all_names.contains(&"Batch-Processor".to_string()), "Should contain Batch-Processor");
-        assert_eq!(all_names.len(), 5, "Should have exactly 5 components in the plan");
+        assert!(
+            all_names.contains(&"Oracle-DB".to_string()),
+            "Should contain Oracle-DB"
+        );
+        assert!(
+            all_names.contains(&"Tomcat-App".to_string()),
+            "Should contain Tomcat-App"
+        );
+        assert!(
+            all_names.contains(&"RabbitMQ".to_string()),
+            "Should contain RabbitMQ"
+        );
+        assert!(
+            all_names.contains(&"Apache-Front".to_string()),
+            "Should contain Apache-Front"
+        );
+        assert!(
+            all_names.contains(&"Batch-Processor".to_string()),
+            "Should contain Batch-Processor"
+        );
+        assert_eq!(
+            all_names.len(),
+            5,
+            "Should have exactly 5 components in the plan"
+        );
 
         // Oracle-DB should be in a different level than Tomcat-App (they have a dependency)
-        let oracle_level = levels.iter().position(|l| {
-            l.as_array().unwrap().iter().any(|c| c["name"].as_str() == Some("Oracle-DB"))
-        }).unwrap();
-        let tomcat_level = levels.iter().position(|l| {
-            l.as_array().unwrap().iter().any(|c| c["name"].as_str() == Some("Tomcat-App"))
-        }).unwrap();
-        assert_ne!(oracle_level, tomcat_level, "Oracle-DB and Tomcat-App should be on different levels");
+        let oracle_level = levels
+            .iter()
+            .position(|l| {
+                l.as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c["name"].as_str() == Some("Oracle-DB"))
+            })
+            .unwrap();
+        let tomcat_level = levels
+            .iter()
+            .position(|l| {
+                l.as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c["name"].as_str() == Some("Tomcat-App"))
+            })
+            .unwrap();
+        assert_ne!(
+            oracle_level, tomcat_level,
+            "Oracle-DB and Tomcat-App should be on different levels"
+        );
 
         ctx.cleanup().await;
     }

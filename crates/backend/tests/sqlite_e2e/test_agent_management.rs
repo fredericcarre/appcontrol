@@ -67,7 +67,11 @@ async fn test_agent_block_requires_admin() {
     let fake_id = Uuid::new_v4();
 
     let resp = ctx
-        .post_as("viewer", &format!("/api/v1/agents/{fake_id}/block"), json!({}))
+        .post_as(
+            "viewer",
+            &format!("/api/v1/agents/{fake_id}/block"),
+            json!({}),
+        )
         .await;
     let status = resp.status().as_u16();
     assert!(
