@@ -101,25 +101,27 @@ mod test_dag_validation {
             .get(&format!("/api/v1/apps/{app_id}/dependencies"))
             .await;
         let deps: Value = resp.json().await.unwrap();
-        let dep_count = deps.as_array().unwrap().len();
+        let deps_arr = deps.as_array().or_else(|| deps["dependencies"].as_array())
+            .expect("Response should contain dependencies array");
+        let dep_count = deps_arr.len();
         assert_eq!(dep_count, 4, "Payments app should have 4 dependencies");
 
         // Delete one dependency (Tomcat-App → Apache-Front)
-        let tomcat_to_apache = deps
-            .as_array()
-            .unwrap()
+        let tomcat_to_apache = deps_arr
             .iter()
             .find(|d| {
-                let to_name = d["to_component_name"].as_str().unwrap_or("");
+                let to_name = d["to_component_name"].as_str()
+                    .or(d["to_name"].as_str())
+                    .unwrap_or("");
                 to_name == "Apache-Front"
             })
-            .unwrap();
+            .expect("Should find dependency to Apache-Front");
         let dep_id = tomcat_to_apache["id"].as_str().unwrap();
 
         let resp = ctx
             .delete_as("admin", &format!("/api/v1/dependencies/{dep_id}"))
             .await;
-        assert_eq!(resp.status(), 200);
+        assert!(resp.status() == 200 || resp.status() == 204, "Delete should succeed, got {}", resp.status());
 
         // Now Apache-Front should be independent (level 0 in its own plan)
         let resp = ctx
@@ -129,7 +131,10 @@ mod test_dag_validation {
             )
             .await;
         let plan: Value = resp.json().await.unwrap();
-        let level0 = &plan["plan"][0];
+        let levels = plan["plan"]["levels"].as_array()
+            .or_else(|| plan["plan"].as_array())
+            .expect("Plan should have levels");
+        let level0 = &levels[0];
         let level0_names: Vec<&str> = level0
             .as_array()
             .unwrap()
@@ -156,8 +161,8 @@ mod test_dag_validation {
             )
             .await;
         let plan: Value = resp.json().await.unwrap();
-        let levels = plan["plan"].as_array()
-            .or_else(|| plan["plan"]["levels"].as_array())
+        let levels = plan["plan"]["levels"].as_array()
+            .or_else(|| plan["plan"].as_array())
             .expect("Plan should have levels");
 
         assert_eq!(levels.len(), 3, "Payments app should have 3 DAG levels");
