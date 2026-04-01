@@ -101,8 +101,8 @@ mod test_orchestration_advanced {
 
         let resp = ctx
             .post(
-                &format!("/api/v1/apps/{app_id}/stop?dry_run=true"),
-                json!({}),
+                &format!("/api/v1/apps/{app_id}/stop"),
+                json!({"dry_run": true}),
             )
             .await;
         assert_eq!(resp.status(), 200);

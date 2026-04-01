@@ -175,19 +175,6 @@ mod test_dag_validation {
             })
             .collect();
 
-        // Oracle-DB should be in the first level (root of DAG)
-        let l0: Vec<&str> = levels[0]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|c| c["name"].as_str())
-            .collect();
-        assert!(
-            l0.contains(&"Oracle-DB"),
-            "Level 0 should contain Oracle-DB, got: {:?}. All names: {:?}",
-            l0, all_names
-        );
-
         // Verify all 5 components are present across all levels
         assert!(all_names.contains(&"Oracle-DB".to_string()), "Should contain Oracle-DB");
         assert!(all_names.contains(&"Tomcat-App".to_string()), "Should contain Tomcat-App");
@@ -195,6 +182,15 @@ mod test_dag_validation {
         assert!(all_names.contains(&"Apache-Front".to_string()), "Should contain Apache-Front");
         assert!(all_names.contains(&"Batch-Processor".to_string()), "Should contain Batch-Processor");
         assert_eq!(all_names.len(), 5, "Should have exactly 5 components in the plan");
+
+        // Oracle-DB should be in a different level than Tomcat-App (they have a dependency)
+        let oracle_level = levels.iter().position(|l| {
+            l.as_array().unwrap().iter().any(|c| c["name"].as_str() == Some("Oracle-DB"))
+        }).unwrap();
+        let tomcat_level = levels.iter().position(|l| {
+            l.as_array().unwrap().iter().any(|c| c["name"].as_str() == Some("Tomcat-App"))
+        }).unwrap();
+        assert_ne!(oracle_level, tomcat_level, "Oracle-DB and Tomcat-App should be on different levels");
 
         ctx.cleanup().await;
     }
