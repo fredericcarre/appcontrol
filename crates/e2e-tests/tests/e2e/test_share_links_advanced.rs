@@ -31,7 +31,10 @@ mod test_share_links_advanced {
             .await;
         assert_eq!(resp.status(), 200);
         let links: Value = resp.json().await.unwrap();
-        let links_arr = links.as_array().unwrap_or_else(|| links["links"].as_array().unwrap());
+        let links_arr = links.as_array()
+            .or_else(|| links["links"].as_array())
+            .or_else(|| links["share_links"].as_array())
+            .expect("Response should contain links array");
         assert!(links_arr.len() >= 2, "Should have at least 2 share links");
 
         ctx.cleanup().await;

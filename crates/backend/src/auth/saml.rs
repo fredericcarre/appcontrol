@@ -676,7 +676,7 @@ pub async fn create_group_mapping(
         "INSERT INTO saml_group_mappings (id, saml_group, team_id, default_role)
          VALUES ($1, $2, $3, $4)",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(&body.saml_group)
     .bind(body.team_id)
     .bind(&role)
@@ -698,7 +698,7 @@ pub async fn delete_group_mapping(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
 ) -> Result<StatusCode, StatusCode> {
     sqlx::query("DELETE FROM saml_group_mappings WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .execute(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
