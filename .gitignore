@@ -36,3 +36,4 @@ docker/certs/
 docker/frontend-dist/
 target-sqlite/
 target-sqlite-e2e/
+appcontrol.db*
