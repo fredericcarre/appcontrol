@@ -30,9 +30,22 @@ pub async fn effective_permission(
          AND (expires_at IS NULL OR expires_at > {})",
         db::sql::now()
     );
+
+    #[cfg(feature = "postgres")]
     let direct = sqlx::query_scalar::<_, String>(&direct_sql)
-        .bind(app_id)
-        .bind(user_id)
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(user_id))
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| PermissionLevel::from_str_level(&s))
+        .unwrap_or(PermissionLevel::None);
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let direct = sqlx::query_scalar::<_, String>(&direct_sql)
+        .bind(DbUuid::from(app_id))
+        .bind(DbUuid::from(user_id))
         .fetch_optional(pool)
         .await
         .ok()
@@ -49,9 +62,19 @@ pub async fn effective_permission(
          AND (apt.expires_at IS NULL OR apt.expires_at > {})",
         db::sql::now()
     );
+
+    #[cfg(feature = "postgres")]
     let team_perms = sqlx::query_as::<_, (String,)>(&team_sql)
-        .bind(app_id)
-        .bind(user_id)
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(user_id))
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let team_perms = sqlx::query_as::<_, (String,)>(&team_sql)
+        .bind(DbUuid::from(app_id))
+        .bind(DbUuid::from(user_id))
         .fetch_all(pool)
         .await
         .unwrap_or_default();
@@ -90,6 +113,7 @@ pub async fn can_access_site(
 
     // Check if workspace-site access control is configured at all.
     // If no workspace_sites rows exist for this org, the feature is not enabled → open access.
+    #[cfg(feature = "postgres")]
     let has_any_workspace_sites = sqlx::query_scalar::<_, bool>(
         r#"
         SELECT EXISTS(
@@ -104,12 +128,29 @@ pub async fn can_access_site(
     .await
     .unwrap_or(false);
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let has_any_workspace_sites = {
+        let count = sqlx::query_scalar::<_, i32>(
+            r#"
+            SELECT COUNT(*) FROM workspace_sites ws
+            JOIN workspaces w ON w.id = ws.workspace_id
+            WHERE w.organization_id = $1
+            "#,
+        )
+        .bind(DbUuid::from(organization_id))
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+        count > 0
+    };
+
     if !has_any_workspace_sites {
         return true; // Workspace feature not configured → open access
     }
 
     // Check if user has access to this site via workspace membership
     // (direct user membership OR team membership)
+    #[cfg(feature = "postgres")]
     let has_access = sqlx::query_scalar::<_, bool>(
         r#"
         SELECT EXISTS(
@@ -125,11 +166,34 @@ pub async fn can_access_site(
         )
         "#,
     )
-    .bind(site_id)
-    .bind(user_id)
+    .bind(crate::db::bind_id(site_id))
+    .bind(crate::db::bind_id(user_id))
     .fetch_one(pool)
     .await
     .unwrap_or(false);
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let has_access = {
+        let count = sqlx::query_scalar::<_, i32>(
+            r#"
+            SELECT COUNT(*) FROM workspace_sites ws
+            JOIN workspace_members wm ON wm.workspace_id = ws.workspace_id
+            WHERE ws.site_id = $1
+              AND (
+                  wm.user_id = $2
+                  OR wm.team_id IN (
+                      SELECT team_id FROM team_members WHERE user_id = $2
+                  )
+              )
+            "#,
+        )
+        .bind(DbUuid::from(site_id))
+        .bind(DbUuid::from(user_id))
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+        count > 0
+    };
 
     has_access
 }
@@ -148,6 +212,7 @@ pub async fn can_operate_component(
     let user_id: Uuid = user_id.into();
     let component_id: Uuid = component_id.into();
     // Get component's app_id and site info
+    #[cfg(feature = "postgres")]
     let comp_info = sqlx::query_as::<_, (DbUuid, Option<DbUuid>, DbUuid)>(
         r#"
         SELECT c.application_id, a.gateway_id, app.organization_id
@@ -157,7 +222,23 @@ pub async fn can_operate_component(
         WHERE c.id = $1
         "#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let comp_info = sqlx::query_as::<_, (DbUuid, Option<DbUuid>, DbUuid)>(
+        r#"
+        SELECT c.application_id, a.gateway_id, app.organization_id
+        FROM components c
+        JOIN applications app ON app.id = c.application_id
+        LEFT JOIN agents a ON a.id = c.agent_id
+        WHERE c.id = $1
+        "#,
+    )
+    .bind(DbUuid::from(component_id))
     .fetch_optional(pool)
     .await
     .ok()
@@ -175,8 +256,18 @@ pub async fn can_operate_component(
     }
 
     // Check site-level access via application's site
+    #[cfg(feature = "postgres")]
     let site_id = sqlx::query_scalar::<_, DbUuid>("SELECT site_id FROM applications WHERE id = $1")
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .map(DbUuid::into_inner);
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let site_id = sqlx::query_scalar::<_, DbUuid>("SELECT site_id FROM applications WHERE id = $1")
+        .bind(DbUuid::from(app_id))
         .fetch_optional(pool)
         .await
         .ok()

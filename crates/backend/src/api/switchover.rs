@@ -48,7 +48,7 @@ pub async fn start_switchover(
         body.target_site_id,
         &body.mode,
         body.component_ids,
-        user.user_id,
+        *user.user_id,
     )
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;

@@ -263,7 +263,7 @@ pub async fn get_gateway(
            FROM gateways
            WHERE id = $1 AND organization_id = $2"#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
@@ -287,7 +287,7 @@ pub async fn update_gateway(
         let site_exists: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM sites WHERE id = $1 AND organization_id = $2)",
         )
-        .bind(site_id)
+        .bind(crate::db::bind_id(site_id))
         .bind(user.organization_id)
         .fetch_one(&state.db)
         .await?;
@@ -304,7 +304,7 @@ pub async fn update_gateway(
         let gw_info: Option<(Option<DbUuid>, String)> = sqlx::query_as(
             "SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2",
         )
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(user.organization_id)
         .fetch_optional(&state.db)
         .await?;
@@ -317,7 +317,7 @@ pub async fn update_gateway(
                 )
                 .bind(user.organization_id)
                 .bind(sid)
-                .bind(id)
+                .bind(crate::db::bind_id(id))
                 .execute(&state.db)
                 .await?;
             } else {
@@ -327,7 +327,7 @@ pub async fn update_gateway(
                 )
                 .bind(user.organization_id)
                 .bind(&zone)
-                .bind(id)
+                .bind(crate::db::bind_id(id))
                 .execute(&state.db)
                 .await?;
             }
@@ -364,7 +364,7 @@ pub async fn update_gateway(
                      COALESCE(priority, 0) as priority,
                      version, last_heartbeat_at, created_at"#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.organization_id)
     .bind(&req.name)
     .bind(req.site_id)
@@ -558,7 +558,7 @@ pub async fn suspend_gateway(
                      version, last_heartbeat_at, created_at"#,
     )
     .bind(DbUuid::from(gateway_id))
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -614,7 +614,7 @@ pub async fn activate_gateway(
                      version, last_heartbeat_at, created_at"#,
     )
     .bind(DbUuid::from(gateway_id))
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -809,7 +809,7 @@ pub async fn revoke_agent_cert(
     let agent: Option<(Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT certificate_fingerprint, certificate_cn FROM agents WHERE id = $1 AND organization_id = $2",
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?;
@@ -846,7 +846,7 @@ pub async fn revoke_agent_cert(
     .bind(user.organization_id)
     .bind(&fingerprint)
     .bind(&cn)
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(&req.reason)
     .bind(user.user_id)
     .execute(&mut *tx)
@@ -857,7 +857,7 @@ pub async fn revoke_agent_cert(
         r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
            VALUES ($1, 'revoked', $2, $3)"#,
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(&fingerprint)
     .bind(&cn)
     .execute(&mut *tx)
@@ -866,7 +866,7 @@ pub async fn revoke_agent_cert(
     // Deactivate the agent
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE agents SET is_active = false, identity_verified = false WHERE id = $1")
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .execute(&mut *tx)
         .await?;
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -1042,7 +1042,7 @@ pub async fn verify_agent_cert_pinning(
     let stored: Option<Option<String>> = sqlx::query_scalar(
         "SELECT certificate_fingerprint FROM agents WHERE id = $1 AND is_active = true AND identity_verified = true",
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .fetch_optional(db)
     .await
     .ok()
@@ -1051,7 +1051,7 @@ pub async fn verify_agent_cert_pinning(
     let stored: Option<Option<String>> = sqlx::query_scalar(
         "SELECT certificate_fingerprint FROM agents WHERE id = $1 AND is_active = 1 AND identity_verified = 1",
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .fetch_optional(db)
     .await
     .ok()
@@ -1086,7 +1086,7 @@ async fn transition_gateway_agent_components_to_unreachable(
            JOIN applications a ON c.application_id = a.id
            WHERE c.agent_id = $1"#,
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
@@ -1112,6 +1112,7 @@ async fn transition_gateway_agent_components_to_unreachable(
             "agent_id": agent_id.to_string(),
             "gateway_id": gateway_id.to_string(),
         });
+        #[cfg(feature = "postgres")]
         let result = sqlx::query(
             r#"
             INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
@@ -1120,7 +1121,21 @@ async fn transition_gateway_agent_components_to_unreachable(
         )
         .bind(comp.id)
         .bind(current_state.to_string())
-        .bind(details_json)
+        .bind(&details_json)
+        .execute(&state.db)
+        .await;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let result = sqlx::query(
+            r#"
+            INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details)
+            VALUES ($1, $2, $3, 'UNREACHABLE', 'gateway_blocked', $4)
+            "#,
+        )
+        .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
+        .bind(comp.id)
+        .bind(current_state.to_string())
+        .bind(serde_json::to_string(&details_json).unwrap_or_default())
         .execute(&state.db)
         .await;
 

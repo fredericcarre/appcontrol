@@ -31,7 +31,7 @@ async fn get_component_name(pool: &crate::db::DbPool, component_id: Uuid) -> Str
     sqlx::query_scalar::<_, String>(
         "SELECT COALESCE(display_name, name) FROM components WHERE id = $1",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_optional(pool)
     .await
     .ok()
@@ -51,8 +51,17 @@ pub async fn build_start_plan(
     for level in &levels {
         let mut level_info = Vec::new();
         for &comp_id in level {
+            #[cfg(feature = "postgres")]
             let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
-                .bind(comp_id)
+                .bind(crate::db::bind_id(comp_id))
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| SequencerError::Database(e.to_string()))?
+                .unwrap_or_else(|| comp_id.to_string());
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
+                .bind(crate::db::DbUuid::from(comp_id))
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| SequencerError::Database(e.to_string()))?
@@ -160,7 +169,7 @@ async fn execute_start_internal(
         for comp_id in to_start {
             let ref_app_id: Option<Uuid> =
                 sqlx::query_scalar("SELECT referenced_app_id FROM components WHERE id = $1")
-                    .bind(comp_id)
+                    .bind(crate::db::bind_id(comp_id))
                     .fetch_optional(&state.db)
                     .await
                     .map_err(|e| SequencerError::Database(e.to_string()))?
@@ -387,7 +396,7 @@ async fn execute_stop_internal(
             // Check if this is an application-type component
             let ref_app_id: Option<Uuid> =
                 sqlx::query_scalar("SELECT referenced_app_id FROM components WHERE id = $1")
-                    .bind(comp_id)
+                    .bind(crate::db::bind_id(comp_id))
                     .fetch_optional(&state.db)
                     .await
                     .map_err(|e| SequencerError::Database(e.to_string()))?
@@ -563,7 +572,7 @@ pub async fn start_single_component(
     let info = sqlx::query_as::<_, ComponentInfo>(
         "SELECT start_cmd, start_timeout_seconds, agent_id, referenced_app_id FROM components WHERE id = $1",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_one(&state.db)
     .await
     .map_err(|e| SequencerError::Database(e.to_string()))?;
@@ -654,7 +663,7 @@ pub async fn start_single_component(
     // Get the app_id for checking cancellation
     let app_id: Option<DbUuid> =
         sqlx::query_scalar("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(&state.db)
             .await
             .ok()
@@ -737,7 +746,7 @@ pub async fn stop_single_component(
     let info = sqlx::query_as::<_, ComponentInfo>(
         "SELECT stop_cmd, stop_timeout_seconds, agent_id, referenced_app_id, application_id FROM components WHERE id = $1",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_one(&state.db)
     .await
     .map_err(|e| SequencerError::Database(e.to_string()))?;
@@ -902,8 +911,8 @@ async fn record_command_dispatch(
          ON CONFLICT (request_id) DO NOTHING",
     )
     .bind(request_id)
-    .bind(component_id)
-    .bind(agent_id)
+    .bind(crate::db::bind_id(component_id))
+    .bind(crate::db::bind_id(agent_id))
     .bind(command_type)
     .execute(pool)
     .await
@@ -1122,7 +1131,7 @@ async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), 
     let row = sqlx::query_as::<_, (Option<String>, i32, Option<crate::db::DbUuid>)>(
         "SELECT stop_cmd, stop_timeout_seconds, agent_id FROM components WHERE id = $1",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_one(&state.db)
     .await
     .map_err(|e| SequencerError::Database(e.to_string()))?;
@@ -1219,7 +1228,7 @@ pub async fn stop_with_dependents(
     let app_id: Uuid = sqlx::query_scalar::<_, crate::db::DbUuid>(
         "SELECT application_id FROM components WHERE id = $1",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_one(&state.db)
     .await
     .map_err(|e| SequencerError::Database(e.to_string()))?
@@ -1342,7 +1351,7 @@ pub async fn force_stop_single_component(
     let row = sqlx::query_as::<_, (Option<String>, i32, Option<crate::db::DbUuid>)>(
         "SELECT stop_cmd, stop_timeout_seconds, agent_id FROM components WHERE id = $1",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_one(&state.db)
     .await
     .map_err(|e| SequencerError::Database(e.to_string()))?;

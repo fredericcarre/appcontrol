@@ -56,8 +56,8 @@ pub async fn validate_api_key(pool: &DbPool, key: &str) -> Result<AuthUser, ApiK
     .await;
 
     Ok(AuthUser {
-        user_id: *row.user_id,
-        organization_id: *row.organization_id,
+        user_id: row.user_id,
+        organization_id: row.organization_id,
         email: row.email,
         role: row.role,
     })

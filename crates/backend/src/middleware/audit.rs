@@ -20,10 +20,10 @@ pub async fn log_action(
         "INSERT INTO action_log (user_id, action, resource_type, resource_id, details, status) \
          VALUES ($1, $2, $3, $4, $5, 'in_progress') RETURNING id",
     )
-    .bind(user_id)
+    .bind(crate::db::bind_id(user_id))
     .bind(action)
     .bind(resource_type)
-    .bind(resource_id)
+    .bind(crate::db::bind_id(resource_id))
     .bind(&details)
     .fetch_one(pool)
     .await?;
@@ -35,7 +35,7 @@ pub async fn log_action(
             "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details, status) \
              VALUES ($1, $2, $3, $4, $5, $6, 'in_progress')",
         )
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(DbUuid::from(user_id))
         .bind(action)
         .bind(resource_type)

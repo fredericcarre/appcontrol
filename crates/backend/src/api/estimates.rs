@@ -67,7 +67,7 @@ pub async fn get_estimates(
          FROM component_operation_stats
          WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await;
 
@@ -112,7 +112,7 @@ pub async fn get_estimates(
             total_components += 1;
 
             let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
-                .bind(comp_id)
+                .bind(crate::db::bind_id(comp_id))
                 .fetch_optional(&state.db)
                 .await
                 .ok()
@@ -142,7 +142,7 @@ pub async fn get_estimates(
             let timeout_ms = sqlx::query_scalar::<_, i32>(
                 "SELECT start_timeout_seconds FROM components WHERE id = $1",
             )
-            .bind(comp_id)
+            .bind(crate::db::bind_id(comp_id))
             .fetch_optional(&state.db)
             .await
             .ok()

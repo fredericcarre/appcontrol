@@ -23,9 +23,10 @@ mod test_org_isolation {
         let resp = ctx.get_with_token(&org2_token, "/api/v1/apps").await;
         assert_eq!(resp.status(), 200);
         let apps: Value = resp.json().await.unwrap();
-        let app_ids: Vec<&str> = apps
-            .as_array()
-            .unwrap()
+        let apps_arr = apps.as_array()
+            .or_else(|| apps["apps"].as_array())
+            .expect("Response should contain apps array");
+        let app_ids: Vec<&str> = apps_arr
             .iter()
             .filter_map(|a| a["id"].as_str())
             .collect();
@@ -106,9 +107,10 @@ mod test_org_isolation {
         // Org2 lists teams → should not see Org1's team
         let resp = ctx.get_with_token(&org2_token, "/api/v1/teams").await;
         let teams: Value = resp.json().await.unwrap();
-        let team_names: Vec<&str> = teams
-            .as_array()
-            .unwrap()
+        let teams_arr = teams.as_array()
+            .or_else(|| teams["teams"].as_array())
+            .expect("Response should contain teams array");
+        let team_names: Vec<&str> = teams_arr
             .iter()
             .filter_map(|t| t["name"].as_str())
             .collect();
@@ -138,8 +140,8 @@ mod test_org_isolation {
         // Create a site for org2
         let org2_site_id = Uuid::new_v4();
         sqlx::query("INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Org2-Default', 'O2D')")
-            .bind(org2_site_id)
-            .bind(org2_id)
+            .bind(bind_id(org2_site_id))
+            .bind(bind_id(org2_id))
             .execute(&ctx.db_pool)
             .await
             .unwrap();

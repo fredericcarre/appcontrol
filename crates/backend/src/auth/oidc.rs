@@ -187,8 +187,8 @@ pub async fn oidc_callback(
 
     // Generate our own JWT
     let jwt_token = super::jwt::create_token(
-        auth_user.user_id,
-        auth_user.organization_id,
+        *auth_user.user_id,
+        *auth_user.organization_id,
         &auth_user.email,
         &auth_user.role,
         &state.config.jwt_secret,
@@ -248,8 +248,8 @@ async fn find_or_create_oidc_user(
             .await;
 
         return Ok(AuthUser {
-            user_id: *user_id,
-            organization_id: *org_id,
+            user_id,
+            organization_id: org_id,
             email,
             role,
         });
@@ -275,8 +275,8 @@ async fn find_or_create_oidc_user(
     .await?;
 
     Ok(AuthUser {
-        user_id,
-        organization_id: *org_id,
+        user_id: DbUuid::from(user_id),
+        organization_id: org_id,
         email: email.to_string(),
         role: "viewer".to_string(),
     })

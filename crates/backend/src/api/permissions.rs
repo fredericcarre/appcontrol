@@ -63,7 +63,7 @@ pub async fn list_user_permissions(
         WHERE apu.application_id = $1
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -77,15 +77,29 @@ pub async fn list_user_permissions(
 
 /// Resolve the site_id and organization_id for an application.
 async fn app_site_info(pool: &crate::db::DbPool, app_id: Uuid) -> Option<(Uuid, Uuid)> {
-    sqlx::query_as::<_, (DbUuid, DbUuid)>(
+    #[cfg(feature = "postgres")]
+    let result = sqlx::query_as::<_, (DbUuid, DbUuid)>(
         "SELECT site_id, organization_id FROM applications WHERE id = $1",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_optional(pool)
     .await
     .ok()
     .flatten()
-    .map(|(s, o)| (s.into_inner(), o.into_inner()))
+    .map(|(s, o)| (s.into_inner(), o.into_inner()));
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query_as::<_, (DbUuid, DbUuid)>(
+        "SELECT site_id, organization_id FROM applications WHERE id = $1",
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .map(|(s, o)| (s.into_inner(), o.into_inner()));
+
+    result
 }
 
 /// Validate that a target user has workspace access to the app's site.
@@ -131,6 +145,7 @@ pub async fn grant_user_permission(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let id = sqlx::query_scalar::<_, DbUuid>(
         &format!(
             "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
@@ -140,8 +155,26 @@ pub async fn grant_user_permission(
             crate::db::sql::now()
         ),
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(body.user_id)
+    .bind(&body.permission_level)
+    .bind(user.user_id)
+    .bind(body.expires_at)
+    .fetch_one(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let id = sqlx::query_scalar::<_, DbUuid>(
+        &format!(
+            "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (application_id, user_id) DO UPDATE SET permission_level = $3, expires_at = $5, updated_at = {}
+             RETURNING id",
+            crate::db::sql::now()
+        ),
+    )
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(body.user_id))
     .bind(&body.permission_level)
     .bind(user.user_id)
     .bind(body.expires_at)
@@ -179,7 +212,7 @@ pub async fn list_team_permissions(
         WHERE apt.application_id = $1
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -211,7 +244,7 @@ pub async fn grant_team_permission(
         let has_ws = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM workspace_sites ws JOIN workspaces w ON w.id = ws.workspace_id WHERE w.organization_id = $1)",
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_one(&state.db)
         .await
         .unwrap_or(false);
@@ -227,8 +260,8 @@ pub async fn grant_team_permission(
                 )
                 "#,
             )
-            .bind(site_id)
-            .bind(body.team_id)
+            .bind(crate::db::bind_id(site_id))
+            .bind(crate::db::bind_id(body.team_id))
             .fetch_one(&state.db)
             .await
             .unwrap_or(false);
@@ -260,8 +293,8 @@ pub async fn grant_team_permission(
             crate::db::sql::now()
         ),
     )
-    .bind(app_id)
-    .bind(body.team_id)
+    .bind(crate::db::bind_id(app_id))
+    .bind(crate::db::bind_id(body.team_id))
     .bind(&body.permission_level)
     .bind(user.user_id)
     .bind(body.expires_at)
@@ -302,7 +335,7 @@ pub async fn list_share_links(
         WHERE application_id = $1 AND is_active = true
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -323,7 +356,7 @@ pub async fn list_share_links(
         WHERE application_id = $1 AND is_active = 1
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -360,6 +393,10 @@ pub async fn create_share_link(
     )
     .await?;
 
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let new_id = DbUuid::new_v4();
+
+    #[cfg(feature = "postgres")]
     let id = sqlx::query_scalar::<_, DbUuid>(
         r#"
         INSERT INTO app_share_links (application_id, token, permission_level, created_by, expires_at, max_uses)
@@ -367,7 +404,7 @@ pub async fn create_share_link(
         RETURNING id
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&token)
     .bind(&body.permission_level)
     .bind(user.user_id)
@@ -375,6 +412,24 @@ pub async fn create_share_link(
     .bind(body.max_uses)
     .fetch_one(&state.db)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let id = {
+        sqlx::query(
+            "INSERT INTO app_share_links (id, application_id, token, permission_level, created_by, expires_at, max_uses)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(new_id)
+        .bind(crate::db::bind_id(app_id))
+        .bind(&token)
+        .bind(&body.permission_level)
+        .bind(user.user_id)
+        .bind(body.expires_at)
+        .bind(body.max_uses)
+        .execute(&state.db)
+        .await?;
+        new_id
+    };
 
     Ok((StatusCode::CREATED, Json(json!({"id": id, "token": token}))))
 }
@@ -408,7 +463,7 @@ pub async fn delete_permission(
     let deleted =
         sqlx::query("DELETE FROM app_permissions_users WHERE id = $1 AND application_id = $2")
             .bind(perm_id)
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .execute(&state.db)
             .await?;
 
@@ -416,7 +471,7 @@ pub async fn delete_permission(
         let deleted_team =
             sqlx::query("DELETE FROM app_permissions_teams WHERE id = $1 AND application_id = $2")
                 .bind(perm_id)
-                .bind(app_id)
+                .bind(crate::db::bind_id(app_id))
                 .execute(&state.db)
                 .await?;
 
@@ -480,7 +535,7 @@ pub async fn search_users(
     } else {
         // Search by email or display name (case-insensitive)
         let pattern = format!("%{}%", query);
-        search_users_by_pattern(&state.db, user.organization_id, &pattern, limit).await?
+        search_users_by_pattern(&state.db, *user.organization_id, &pattern, limit).await?
     };
 
     let data: Vec<Value> = users
@@ -578,7 +633,7 @@ pub async fn consume_share_link(
     }
 
     // Validate workspace access for the consuming user
-    validate_workspace_access(&state.db, user.user_id, app_id).await?;
+    validate_workspace_access(&state.db, *user.user_id, app_id).await?;
 
     // Grant permission to the user
     sqlx::query(
@@ -595,7 +650,7 @@ pub async fn consume_share_link(
             crate::db::sql::now()
         ),
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(user.user_id)
     .bind(&permission_level)
     .bind(user.user_id)
@@ -604,7 +659,7 @@ pub async fn consume_share_link(
 
     // Increment use count
     sqlx::query("UPDATE app_share_links SET use_count = use_count + 1 WHERE id = $1")
-        .bind(link_id)
+        .bind(crate::db::bind_id(link_id))
         .execute(&state.db)
         .await?;
 
@@ -643,8 +698,8 @@ pub async fn revoke_share_link(
     let result = sqlx::query(
         "UPDATE app_share_links SET is_active = false WHERE id = $1 AND application_id = $2",
     )
-    .bind(link_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(link_id))
+    .bind(crate::db::bind_id(app_id))
     .execute(&state.db)
     .await?;
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -694,7 +749,7 @@ pub async fn list_all_permissions(
         WHERE apu.application_id = $1
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -715,7 +770,7 @@ pub async fn list_all_permissions(
         WHERE apt.application_id = $1
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 

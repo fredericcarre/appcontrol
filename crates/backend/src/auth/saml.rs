@@ -231,14 +231,14 @@ pub async fn saml_acs(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Sync group→team mappings
-    let _teams_synced = sync_saml_groups(&state.db, auth_user.user_id, &assertion.groups)
+    let _teams_synced = sync_saml_groups(&state.db, *auth_user.user_id, &assertion.groups)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Generate JWT
     let jwt_token = super::jwt::create_token(
-        auth_user.user_id,
-        auth_user.organization_id,
+        *auth_user.user_id,
+        *auth_user.organization_id,
         &auth_user.email,
         &auth_user.role,
         &state.config.jwt_secret,
@@ -337,13 +337,16 @@ async fn sync_saml_groups(
     for mapping in &mappings {
         if saml_groups.contains(&mapping.saml_group) {
             // Check if already a member
-            let exists = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2)",
-            )
-            .bind(mapping.team_id)
-            .bind(user_id)
-            .fetch_one(pool)
-            .await?;
+            let exists = {
+                let count: i32 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
+                )
+                .bind(mapping.team_id)
+                .bind(crate::db::bind_id(user_id))
+                .fetch_one(pool)
+                .await?;
+                count > 0
+            };
 
             if !exists {
                 sqlx::query(
@@ -351,7 +354,7 @@ async fn sync_saml_groups(
                      ON CONFLICT DO NOTHING",
                 )
                 .bind(mapping.team_id)
-                .bind(user_id)
+                .bind(crate::db::bind_id(user_id))
                 .execute(pool)
                 .await?;
 
@@ -374,7 +377,7 @@ async fn sync_saml_groups(
         if !target_team_ids.contains(team_id) {
             sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
                 .bind(team_id)
-                .bind(user_id)
+                .bind(crate::db::bind_id(user_id))
                 .execute(pool)
                 .await?;
         }
@@ -428,8 +431,8 @@ async fn find_or_create_saml_user(
         .await;
 
         return Ok(AuthUser {
-            user_id: *user_id,
-            organization_id: *org_id,
+            user_id,
+            organization_id: org_id,
             email,
             role: effective_role.to_string(),
         });
@@ -445,8 +448,8 @@ async fn find_or_create_saml_user(
         "INSERT INTO users (id, organization_id, external_id, email, display_name, role, saml_name_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
-    .bind(user_id)
-    .bind(org_id)
+    .bind(crate::db::bind_id(user_id))
+    .bind(crate::db::bind_id(org_id))
     .bind(format!("saml:{name_id}"))
     .bind(email)
     .bind(display_name)
@@ -456,8 +459,8 @@ async fn find_or_create_saml_user(
     .await?;
 
     Ok(AuthUser {
-        user_id,
-        organization_id: *org_id,
+        user_id: DbUuid::from(user_id),
+        organization_id: org_id,
         email: email.to_string(),
         role: role.to_string(),
     })
@@ -673,7 +676,7 @@ pub async fn create_group_mapping(
         "INSERT INTO saml_group_mappings (id, saml_group, team_id, default_role)
          VALUES ($1, $2, $3, $4)",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(&body.saml_group)
     .bind(body.team_id)
     .bind(&role)
@@ -695,7 +698,7 @@ pub async fn delete_group_mapping(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
 ) -> Result<StatusCode, StatusCode> {
     sqlx::query("DELETE FROM saml_group_mappings WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .execute(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

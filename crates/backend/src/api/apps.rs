@@ -92,6 +92,11 @@ pub struct StartAppRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct StopAppRequest {
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct StartBranchRequest {
     pub component_id: Option<DbUuid>,
     pub dry_run: Option<bool>,
@@ -245,7 +250,7 @@ pub async fn list_apps(
         LIMIT $4 OFFSET $5
         "#,
     )
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .bind(&params.search)
     .bind(params.site_id.map(DbUuid::from))
     .bind(limit)
@@ -315,7 +320,7 @@ pub async fn get_app(
         "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
          FROM applications WHERE id = $1 AND organization_id = $2",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
@@ -327,7 +332,7 @@ pub async fn get_app(
          FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(DbUuid::from(id))
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -384,7 +389,7 @@ pub async fn get_app(
            LEFT JOIN gateways g ON a.gateway_id = g.id
            WHERE c.application_id = $1 ORDER BY c.name"#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .fetch_all(&state.db)
     .await?;
 
@@ -440,7 +445,7 @@ pub async fn get_app(
         "SELECT id, from_component_id, to_component_id FROM dependencies \
          WHERE from_component_id IN (SELECT id FROM components WHERE application_id = $1)",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .fetch_all(&state.db)
     .await?;
 
@@ -579,7 +584,7 @@ pub async fn create_app(
                 "SELECT id FROM sites WHERE organization_id = $1 AND is_active = 1 \
                  ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
             )
-            .bind(DbUuid::from(user.organization_id))
+            .bind(user.organization_id)
             .fetch_optional(&state.db)
             .await?;
 
@@ -610,7 +615,7 @@ pub async fn create_app(
                          VALUES ($1, $2, $3, $4, $5)",
                     )
                     .bind(DbUuid::from(new_site_id))
-                    .bind(DbUuid::from(user.organization_id))
+                    .bind(user.organization_id)
                     .bind("Default Site")
                     .bind("DEFAULT")
                     .bind("primary")
@@ -643,11 +648,11 @@ pub async fn create_app(
         RETURNING id, name, description, organization_id, site_id, tags, created_at, updated_at
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&body.name)
     .bind(&body.description)
     .bind(user.organization_id)
-    .bind(site_id)
+    .bind(crate::db::bind_id(site_id))
     .bind(body.tags.as_ref().unwrap_or(&json!([])))
     .fetch_one(&state.db)
     .await?;
@@ -662,7 +667,7 @@ pub async fn create_app(
         .bind(DbUuid::from(app_id))
         .bind(&body.name)
         .bind(&body.description)
-        .bind(DbUuid::from(user.organization_id))
+        .bind(user.organization_id)
         .bind(DbUuid::from(site_id))
         .bind(serde_json::to_string(&tags_val).unwrap_or_else(|_| "[]".to_string()))
         .execute(&state.db)
@@ -683,7 +688,7 @@ pub async fn create_app(
         "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) \
          VALUES ($1, $2, 'owner', $2)",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(user.user_id)
     .execute(&state.db)
     .await;
@@ -694,7 +699,7 @@ pub async fn create_app(
          VALUES ($1, $2, 'owner', $2)",
     )
     .bind(DbUuid::from(app_id))
-    .bind(DbUuid::from(user.user_id))
+    .bind(user.user_id)
     .execute(&state.db)
     .await;
 
@@ -728,6 +733,33 @@ pub async fn update_app(
     )
     .await?;
 
+    // Snapshot before state for config_versions
+    #[cfg(feature = "postgres")]
+    let before_snapshot = {
+        let row = sqlx::query_as::<_, AppRow>(
+            "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
+             FROM applications WHERE id = $1 AND organization_id = $2",
+        )
+        .bind(crate::db::bind_id(id))
+        .bind(user.organization_id)
+        .fetch_optional(&state.db)
+        .await?;
+        row.map(|r| json!(r))
+    };
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let before_snapshot = {
+        let row = sqlx::query_as::<_, AppRow>(
+            "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
+             FROM applications WHERE id = $1 AND organization_id = $2",
+        )
+        .bind(DbUuid::from(id))
+        .bind(user.organization_id)
+        .fetch_optional(&state.db)
+        .await?;
+        row.map(|r| json!(r))
+    };
+
     #[cfg(feature = "postgres")]
     let app = sqlx::query_as::<_, AppRow>(
         &format!(
@@ -742,7 +774,7 @@ pub async fn update_app(
             crate::db::sql::now()
         ),
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(&body.name)
     .bind(&body.description)
     .bind(body.site_id)
@@ -769,7 +801,7 @@ pub async fn update_app(
         .bind(&body.description)
         .bind(body.site_id.map(DbUuid::from))
         .bind(&body.tags)
-        .bind(DbUuid::from(user.organization_id))
+        .bind(user.organization_id)
         .execute(&state.db)
         .await?;
 
@@ -778,11 +810,44 @@ pub async fn update_app(
              FROM applications WHERE id = $1 AND organization_id = $2",
         )
         .bind(DbUuid::from(id))
-        .bind(DbUuid::from(user.organization_id))
+        .bind(user.organization_id)
         .fetch_optional(&state.db)
         .await?
         .ok_or_not_found()?
     };
+
+    // Record config_versions snapshot
+    let after_snapshot = json!(app);
+    let before_json = before_snapshot
+        .as_ref()
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "null".to_string());
+    let after_json = after_snapshot.to_string();
+
+    #[cfg(feature = "postgres")]
+    sqlx::query(
+        "INSERT INTO config_versions (resource_type, resource_id, changed_by, before_snapshot, after_snapshot) \
+         VALUES ('application', $1, $2, $3::jsonb, $4::jsonb)",
+    )
+    .bind(crate::db::bind_id(id))
+    .bind(user.user_id)
+    .bind(&before_json)
+    .bind(&after_json)
+    .execute(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        "INSERT INTO config_versions (id, resource_type, resource_id, changed_by, before_snapshot, after_snapshot) \
+         VALUES ($1, 'application', $2, $3, $4, $5)",
+    )
+    .bind(DbUuid::new_v4())
+    .bind(DbUuid::from(id))
+    .bind(user.user_id)
+    .bind(&before_json)
+    .bind(&after_json)
+    .execute(&state.db)
+    .await?;
 
     Ok(Json(json!(app)))
 }
@@ -809,7 +874,7 @@ pub async fn delete_app(
 
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(user.organization_id)
         .execute(&state.db)
         .await?;
@@ -817,7 +882,7 @@ pub async fn delete_app(
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
         .bind(DbUuid::from(id))
-        .bind(DbUuid::from(user.organization_id))
+        .bind(user.organization_id)
         .execute(&state.db)
         .await?;
 
@@ -834,6 +899,27 @@ pub async fn start_app(
     Path(id): Path<Uuid>,
     Json(body): Json<Option<StartAppRequest>>,
 ) -> Result<Json<Value>, ApiError> {
+    // Verify app belongs to user's org
+    #[cfg(feature = "postgres")]
+    let _org_check = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(crate::db::bind_id(id))
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let _org_check = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(DbUuid::from(id))
+    .bind(user.organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
@@ -864,7 +950,7 @@ pub async fn start_app(
     // Acquire operation lock — prevents concurrent start/stop on the same app
     let guard = state
         .operation_lock
-        .try_lock(id, "start", user.user_id)
+        .try_lock(id, "start", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -891,18 +977,14 @@ pub async fn stop_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
+    Json(body): Json<Option<StopAppRequest>>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
     }
 
-    // Acquire operation lock — prevents concurrent start/stop on the same app
-    let guard = state
-        .operation_lock
-        .try_lock(id, "stop", user.user_id)
-        .await
-        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+    let dry_run = body.and_then(|b| b.dry_run).unwrap_or(false);
 
     let action_id = log_action(
         &state.db,
@@ -910,9 +992,25 @@ pub async fn stop_app(
         "stop_app",
         "application",
         id,
-        json!({}),
+        json!({"dry_run": dry_run}),
     )
     .await?;
+
+    if dry_run {
+        // Build a stop plan (reverse of start plan)
+        let plan = crate::core::sequencer::build_start_plan(&state.db, id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        let _ = complete_action_success(&state.db, action_id).await;
+        return Ok(Json(json!({ "dry_run": true, "plan": plan })));
+    }
+
+    // Acquire operation lock — prevents concurrent start/stop on the same app
+    let guard = state
+        .operation_lock
+        .try_lock(id, "stop", *user.user_id)
+        .await
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     let state_clone = state.clone();
     tokio::spawn(async move {
@@ -1059,7 +1157,7 @@ pub async fn start_branch(
         let ids = sqlx::query_scalar::<_, DbUuid>(
             "SELECT id FROM components WHERE application_id = $1 AND current_state = 'FAILED'",
         )
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .fetch_all(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1104,7 +1202,7 @@ pub async fn start_branch(
     // Acquire operation lock — prevents concurrent start/stop on the same app
     let guard = state
         .operation_lock
-        .try_lock(id, "start_branch", user.user_id)
+        .try_lock(id, "start_branch", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -1198,7 +1296,7 @@ pub async fn start_to(
                 #[cfg(feature = "postgres")]
                 let name =
                     sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
-                        .bind(comp_id)
+                        .bind(crate::db::bind_id(comp_id))
                         .fetch_optional(&state.db)
                         .await
                         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -1228,7 +1326,7 @@ pub async fn start_to(
     // Acquire operation lock
     let guard = state
         .operation_lock
-        .try_lock(id, "start_to", user.user_id)
+        .try_lock(id, "start_to", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -1275,7 +1373,7 @@ pub async fn suspend_application(
     #[cfg(feature = "postgres")]
     let is_suspended: bool =
         sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(&state.db)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -1304,7 +1402,7 @@ pub async fn suspend_application(
              WHERE id = $1",
         now = crate::db::sql::now()
     ))
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.user_id)
     .execute(&state.db)
     .await
@@ -1318,7 +1416,7 @@ pub async fn suspend_application(
         now = crate::db::sql::now()
     ))
     .bind(DbUuid::from(id))
-    .bind(DbUuid::from(user.user_id))
+    .bind(user.user_id)
     .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1340,7 +1438,7 @@ pub async fn suspend_application(
     // Get app name for response
     #[cfg(feature = "postgres")]
     let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .fetch_one(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1386,7 +1484,7 @@ pub async fn resume_application(
     #[cfg(feature = "postgres")]
     let is_suspended: bool =
         sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .fetch_optional(&state.db)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -1415,7 +1513,7 @@ pub async fn resume_application(
              WHERE id = $1",
         crate::db::sql::now()
     ))
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1449,7 +1547,7 @@ pub async fn resume_application(
     // Get app name for response
     #[cfg(feature = "postgres")]
     let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .fetch_one(&state.db)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1501,7 +1599,7 @@ pub async fn get_site_overrides(
     let _app = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
@@ -1512,7 +1610,7 @@ pub async fn get_site_overrides(
         "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(DbUuid::from(app_id))
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -1535,7 +1633,7 @@ pub async fn get_site_overrides(
         WHERE a.id = $1
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -1601,7 +1699,7 @@ pub async fn get_site_overrides(
         ORDER BY c.id, s.id, (c.agent_id = bpm.agent_id) DESC
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1659,7 +1757,7 @@ pub async fn get_site_overrides(
         WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 

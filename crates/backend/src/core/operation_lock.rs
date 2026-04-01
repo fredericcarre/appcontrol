@@ -84,9 +84,9 @@ impl OperationLock {
             RETURNING app_id
             "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(operation)
-        .bind(user_id)
+        .bind(crate::db::bind_id(user_id))
         .bind(&self.instance_id)
         .fetch_optional(&self.pool)
         .await
@@ -162,7 +162,7 @@ impl OperationLock {
             WHERE app_id = $1
             "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| LockError::Database(e.to_string()))?;
@@ -193,7 +193,7 @@ impl OperationLock {
         // Use try_send to avoid blocking - if we can't check, assume not cancelled
         let handle = tokio::task::spawn(async move {
             sqlx::query_scalar::<_, String>("SELECT status FROM operation_locks WHERE app_id = $1")
-                .bind(app_id)
+                .bind(crate::db::bind_id(app_id))
                 .fetch_optional(&pool)
                 .await
                 .ok()
@@ -213,7 +213,7 @@ impl OperationLock {
         let app_id: Uuid = app_id.into();
 
         sqlx::query_scalar::<_, String>("SELECT status FROM operation_locks WHERE app_id = $1")
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .fetch_optional(&self.pool)
             .await
             .ok()
@@ -235,7 +235,7 @@ impl OperationLock {
             WHERE app_id = $1 AND status = 'running'
             "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .execute(&self.pool)
         .await
         .map_err(|e| LockError::Database(e.to_string()))?;
@@ -258,7 +258,7 @@ impl OperationLock {
 
         // Then force delete the lock
         let result = sqlx::query("DELETE FROM operation_locks WHERE app_id = $1")
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .execute(&self.pool)
             .await
             .map_err(|e| LockError::Database(e.to_string()))?;
@@ -282,7 +282,7 @@ impl OperationLock {
               AND last_heartbeat < NOW() - INTERVAL '1 second' * $2
             "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(STALE_THRESHOLD_SECONDS)
         .execute(&self.pool)
         .await
@@ -296,7 +296,7 @@ impl OperationLock {
               AND last_heartbeat < datetime('now', '-' || $2 || ' seconds')
             "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(STALE_THRESHOLD_SECONDS)
         .execute(&self.pool)
         .await
@@ -422,7 +422,7 @@ async fn heartbeat_loop(
                 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
                 let hb_sql = "UPDATE operation_locks SET last_heartbeat = datetime('now') WHERE app_id = $1";
                 if let Err(e) = sqlx::query(hb_sql)
-                .bind(app_id)
+                .bind(crate::db::bind_id(app_id))
                 .execute(&pool)
                 .await
                 {
@@ -470,7 +470,7 @@ impl Drop for OperationGuard {
 
         tokio::spawn(async move {
             match sqlx::query("DELETE FROM operation_locks WHERE app_id = $1")
-                .bind(app_id)
+                .bind(crate::db::bind_id(app_id))
                 .execute(&pool)
                 .await
             {

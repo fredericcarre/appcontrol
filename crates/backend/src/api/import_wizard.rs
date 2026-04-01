@@ -194,7 +194,7 @@ pub async fn preview_import(
 
     // List all available agents on selected gateways
     let available_agents =
-        list_available_agents(&state.db, &body.gateway_ids, user.organization_id.into())
+        list_available_agents(&state.db, &body.gateway_ids, user.organization_id)
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to list agents: {}", e)))?;
 
@@ -214,7 +214,7 @@ pub async fn preview_import(
                 &state.db,
                 host,
                 &body.gateway_ids,
-                user.organization_id.into(),
+                user.organization_id,
             )
             .await
             .map_err(|e| ApiError::Internal(format!("Resolution failed: {}", e)))?;
@@ -279,7 +279,7 @@ pub async fn preview_import(
             for comp in &import_data.application.components {
                 if let Some(ref host) = comp.host {
                     let dr_result =
-                        resolve_dr_agent(&state.db, user.organization_id.into(), dr_gw_ids, host)
+                        resolve_dr_agent(&state.db, user.organization_id, dr_gw_ids, host)
                             .await
                             .map_err(|e| {
                                 ApiError::Internal(format!("DR resolution failed: {}", e))
@@ -345,7 +345,7 @@ pub async fn preview_import(
     let dr_available_agents = if let Some(ref dr_gw_ids) = body.dr_gateway_ids {
         if !dr_gw_ids.is_empty() {
             Some(
-                list_available_agents(&state.db, dr_gw_ids, user.organization_id.into())
+                list_available_agents(&state.db, dr_gw_ids, user.organization_id)
                     .await
                     .map_err(|e| ApiError::Internal(format!("Failed to list DR agents: {}", e)))?,
             )
@@ -639,9 +639,9 @@ pub async fn execute_import(
             &format!("UPDATE applications SET description = $1, site_id = $2, tags = $3, updated_at = {} WHERE id = $4", crate::db::sql::now()),
         )
         .bind(&import_data.application.description)
-        .bind(site_id)
+        .bind(crate::db::bind_id(site_id))
         .bind(&tags_json)
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .execute(&state.db)
         .await?;
         warnings.push("Existing application updated with new components and profiles.".to_string());
@@ -649,11 +649,11 @@ pub async fn execute_import(
         sqlx::query(
             "INSERT INTO applications (id, name, description, organization_id, site_id, tags) VALUES ($1, $2, $3, $4, $5, $6)",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(&app_name)
         .bind(&import_data.application.description)
         .bind(user.organization_id)
-        .bind(site_id)
+        .bind(crate::db::bind_id(site_id))
         .bind(&tags_json)
         .execute(&state.db)
         .await?;
@@ -663,7 +663,7 @@ pub async fn execute_import(
     let _ = sqlx::query(
         "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) VALUES ($1, $2, 'owner', $2)",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(user.user_id)
     .execute(&state.db)
     .await;
@@ -673,7 +673,7 @@ pub async fn execute_import(
         sqlx::query(
             "INSERT INTO app_variables (application_id, name, value, description, is_secret) VALUES ($1, $2, $3, $4, $5)",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(&var.name)
         .bind(&var.value)
         .bind(&var.description)
@@ -690,7 +690,7 @@ pub async fn execute_import(
             "INSERT INTO component_groups (id, application_id, name, description, color, display_order) VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(group_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(&group.name)
         .bind(&group.description)
         .bind(&group.color)
@@ -788,8 +788,8 @@ pub async fn execute_import(
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26
             )"#,
         )
-        .bind(comp_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(comp_id))
+        .bind(crate::db::bind_id(app_id))
         .bind(&comp_name)
         .bind(&comp.display_name)
         .bind(&comp.description)
@@ -797,7 +797,7 @@ pub async fn execute_import(
         .bind(icon)
         .bind(group_id)
         .bind(&comp.host)
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .bind(check_cmd)
         .bind(start_cmd)
         .bind(stop_cmd)
@@ -828,7 +828,7 @@ pub async fn execute_import(
                 VALUES ($1, $2, $3, $4, $5, $6)"#,
             )
             .bind(cmd_id)
-            .bind(comp_id)
+            .bind(crate::db::bind_id(comp_id))
             .bind(&custom_cmd.name)
             .bind(&custom_cmd.command)
             .bind(&custom_cmd.description)
@@ -868,7 +868,7 @@ pub async fn execute_import(
             sqlx::query(
                 "INSERT INTO component_links (component_id, label, url, link_type, display_order) VALUES ($1, $2, $3, $4, $5)",
             )
-            .bind(comp_id)
+            .bind(crate::db::bind_id(comp_id))
             .bind(&link.label)
             .bind(&link.url)
             .bind(&link.link_type)
@@ -967,7 +967,7 @@ pub async fn execute_import(
                     rebuild_cmd_override = EXCLUDED.rebuild_cmd_override,
                     env_vars_override = EXCLUDED.env_vars_override"#,
             )
-            .bind(comp_id)
+            .bind(crate::db::bind_id(comp_id))
             .bind(override_site_id)
             .bind(agent_id_override)
             .bind(&override_data.check_cmd_override)
@@ -1006,7 +1006,7 @@ pub async fn execute_import(
         sqlx::query(
             "INSERT INTO dependencies (application_id, from_component_id, to_component_id) VALUES ($1, $2, $3)",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(from_id)
         .bind(to_id)
         .execute(&state.db)
@@ -1028,7 +1028,7 @@ pub async fn execute_import(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
     )
     .bind(primary_profile_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&body.profile.name)
     .bind(&body.profile.description)
     .bind(&body.profile.profile_type)
@@ -1075,7 +1075,7 @@ pub async fn execute_import(
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
         )
         .bind(dr_profile_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(&dr_profile.name)
         .bind(&dr_profile.description)
         .bind(&dr_profile.profile_type)

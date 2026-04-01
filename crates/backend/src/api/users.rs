@@ -97,7 +97,7 @@ pub async fn list_users(
              AND ($4 IS NULL OR email LIKE '%' || $4 || '%' OR display_name LIKE '%' || $4 || '%')
            ORDER BY display_name"#,
     )
-    .bind(DbUuid::from(user.organization_id))
+    .bind(user.organization_id)
     .bind(&query.role)
     .bind(query.is_active)
     .bind(&query.search)
@@ -112,7 +112,7 @@ pub async fn get_user(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    if !user.is_admin() && user.user_id != id {
+    if !user.is_admin() && *user.user_id != id {
         return Err(ApiError::Forbidden);
     }
 
@@ -122,7 +122,7 @@ pub async fn get_user(
            FROM users
            WHERE id = $1 AND organization_id = $2"#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
@@ -254,7 +254,7 @@ pub async fn update_user(
            RETURNING id, organization_id, email, display_name, role, auth_provider,
                      is_active, last_login_at, created_at"#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.organization_id)
     .bind(&req.display_name)
     .bind(&req.role)

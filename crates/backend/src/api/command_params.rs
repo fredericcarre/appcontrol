@@ -66,7 +66,7 @@ async fn app_id_for_command(
          JOIN components c ON c.id = cc.component_id \
          WHERE cc.id = $1",
     )
-    .bind(command_id)
+    .bind(crate::db::bind_id(command_id))
     .fetch_optional(db)
     .await?
     .ok_or_not_found()?;
@@ -90,7 +90,7 @@ pub async fn list_params(
          param_type, enum_values, created_at \
          FROM command_input_params WHERE command_id = $1 ORDER BY display_order, name",
     )
-    .bind(command_id)
+    .bind(crate::db::bind_id(command_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -143,8 +143,8 @@ pub async fn create_param(
         RETURNING id, command_id, name, description, default_value, validation_regex, required, display_order, param_type, enum_values, created_at
         "#,
     )
-    .bind(param_id)
-    .bind(command_id)
+    .bind(crate::db::bind_id(param_id))
+    .bind(crate::db::bind_id(command_id))
     .bind(&body.name)
     .bind(&body.description)
     .bind(&body.default_value)
@@ -182,8 +182,8 @@ pub async fn delete_param(
     .await?;
 
     let result = sqlx::query("DELETE FROM command_input_params WHERE id = $1 AND command_id = $2")
-        .bind(param_id)
-        .bind(command_id)
+        .bind(crate::db::bind_id(param_id))
+        .bind(crate::db::bind_id(command_id))
         .execute(&state.db)
         .await?;
 

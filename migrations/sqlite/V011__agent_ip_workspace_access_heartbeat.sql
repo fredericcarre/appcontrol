@@ -1,7 +1,7 @@
 -- V011: Agent IP addresses, workspace-site access control, heartbeat timeout (SQLite)
 
--- 1. Agent IP addresses (already included in base agents table for SQLite)
--- ALTER TABLE agents ADD COLUMN ip_addresses TEXT DEFAULT '[]';
+-- 1. Agent IP addresses
+ALTER TABLE agents ADD COLUMN ip_addresses TEXT DEFAULT '[]';
 
 -- 2. Workspace-site access control
 CREATE TABLE workspace_sites (

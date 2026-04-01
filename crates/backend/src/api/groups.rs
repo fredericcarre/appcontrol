@@ -59,7 +59,7 @@ pub async fn list_groups(
         "SELECT id, application_id, name, description, color, display_order, created_at \
          FROM component_groups WHERE application_id = $1 ORDER BY display_order, name",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -111,7 +111,7 @@ pub async fn create_group(
         "#,
     )
     .bind(group_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&body.name)
     .bind(&body.description)
     .bind(body.color.as_deref().unwrap_or("#6366F1"))
@@ -179,7 +179,7 @@ pub async fn update_group(
         RETURNING id, application_id, name, description, color, display_order, created_at
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(group_id)
     .bind(&body.name)
     .bind(&body.description)
@@ -238,7 +238,7 @@ pub async fn delete_group(
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM component_groups WHERE id = $1 AND application_id = $2")
         .bind(group_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .execute(&state.db)
         .await?;
 

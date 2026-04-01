@@ -12,7 +12,7 @@ mod test_agent_management {
         let resp = ctx.get("/api/v1/agents").await;
         assert_eq!(resp.status(), 200);
         let agents: Value = resp.json().await.unwrap();
-        assert!(agents.is_array());
+        assert!(agents["agents"].is_array() || agents.is_array(), "Expected agents array, got: {:?}", agents);
 
         ctx.cleanup().await;
     }
@@ -31,16 +31,32 @@ mod test_agent_management {
     #[tokio::test]
     async fn test_agent_heartbeat_tracking() {
         let ctx = TestContext::new().await;
-        let app_id = ctx.create_payments_app().await;
+        let _app_id = ctx.create_payments_app().await;
 
         // Simulate agent registration by inserting directly
         let agent_id = Uuid::new_v4();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        #[cfg(feature = "postgres")]
         sqlx::query(
             "INSERT INTO agents (id, organization_id, hostname, labels, version, last_heartbeat_at)
-             VALUES ($1, $2, 'srv-oracle', '{\"role\": \"database\", \"env\": \"prod\"}', '0.1.0', NOW())"
+             VALUES ($1, $2, 'srv-oracle', '{\"role\": \"database\", \"env\": \"prod\"}', '0.1.0', $3)"
         )
         .bind(agent_id)
         .bind(ctx.organization_id)
+        .bind(&now)
+        .execute(&ctx.db_pool)
+        .await
+        .unwrap();
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        sqlx::query(
+            "INSERT INTO agents (id, organization_id, hostname, labels, version, last_heartbeat_at)
+             VALUES ($1, $2, 'srv-oracle', '{\"role\": \"database\", \"env\": \"prod\"}', '0.1.0', $3)"
+        )
+        .bind(bind_id(agent_id))
+        .bind(bind_id(ctx.organization_id))
+        .bind(&now)
         .execute(&ctx.db_pool)
         .await
         .unwrap();
@@ -62,23 +78,38 @@ mod test_agent_management {
 
         // Insert agent for org1
         let agent_id = Uuid::new_v4();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        #[cfg(feature = "postgres")]
         sqlx::query(
             "INSERT INTO agents (id, organization_id, hostname, labels, version, last_heartbeat_at)
-             VALUES ($1, $2, 'srv-org1', '{}', '0.1.0', NOW())",
+             VALUES ($1, $2, 'srv-org1', '{}', '0.1.0', $3)",
         )
         .bind(agent_id)
         .bind(ctx.organization_id)
+        .bind(&now)
+        .execute(&ctx.db_pool)
+        .await
+        .unwrap();
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        sqlx::query(
+            "INSERT INTO agents (id, organization_id, hostname, labels, version, last_heartbeat_at)
+             VALUES ($1, $2, 'srv-org1', '{}', '0.1.0', $3)",
+        )
+        .bind(bind_id(agent_id))
+        .bind(bind_id(ctx.organization_id))
+        .bind(&now)
         .execute(&ctx.db_pool)
         .await
         .unwrap();
 
         // Org2 should not see org1's agent
-        let (org2_id, _, org2_token) = ctx.create_second_org().await;
+        let (_org2_id, _, org2_token) = ctx.create_second_org().await;
         let resp = ctx.get_with_token(&org2_token, "/api/v1/agents").await;
         let agents: Value = resp.json().await.unwrap();
-        let hostnames: Vec<&str> = agents
-            .as_array()
-            .unwrap()
+        let agents_arr = agents["agents"].as_array().unwrap_or_else(|| agents.as_array().unwrap());
+        let hostnames: Vec<&str> = agents_arr
             .iter()
             .filter_map(|a| a["hostname"].as_str())
             .collect();

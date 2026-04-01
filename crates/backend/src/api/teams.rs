@@ -46,6 +46,15 @@ pub async fn list_teams(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
+    #[cfg(feature = "postgres")]
+    let teams = sqlx::query_as::<_, TeamRow>(
+        "SELECT id, organization_id, name, description, created_at, updated_at FROM teams WHERE organization_id = $1 ORDER BY name",
+    )
+    .bind(user.organization_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let teams = sqlx::query_as::<_, TeamRow>(
         "SELECT id, organization_id, name, description, created_at, updated_at FROM teams WHERE organization_id = $1 ORDER BY name",
     )
@@ -61,10 +70,20 @@ pub async fn get_team(
     Extension(_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
+    #[cfg(feature = "postgres")]
     let team = sqlx::query_as::<_, TeamRow>(
         "SELECT id, organization_id, name, description, created_at, updated_at FROM teams WHERE id = $1",
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let team = sqlx::query_as::<_, TeamRow>(
+        "SELECT id, organization_id, name, description, created_at, updated_at FROM teams WHERE id = $1",
+    )
+    .bind(DbUuid::from(id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -92,6 +111,7 @@ pub async fn create_team(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let team = sqlx::query_as::<_, TeamRow>(
         r#"
         INSERT INTO teams (id, organization_id, name, description)
@@ -99,7 +119,22 @@ pub async fn create_team(
         RETURNING id, organization_id, name, description, created_at, updated_at
         "#,
     )
-    .bind(team_id)
+    .bind(crate::db::bind_id(team_id))
+    .bind(user.organization_id)
+    .bind(&body.name)
+    .bind(&body.description)
+    .fetch_one(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let team = sqlx::query_as::<_, TeamRow>(
+        r#"
+        INSERT INTO teams (id, organization_id, name, description)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, organization_id, name, description, created_at, updated_at
+        "#,
+    )
+    .bind(DbUuid::from(team_id))
     .bind(user.organization_id)
     .bind(&body.name)
     .bind(&body.description)
@@ -107,12 +142,23 @@ pub async fn create_team(
     .await?;
 
     // Add creator as team lead
+    #[cfg(feature = "postgres")]
     let _ =
         sqlx::query("INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, 'lead')")
-            .bind(team_id)
+            .bind(crate::db::bind_id(team_id))
             .bind(user.user_id)
             .execute(&state.db)
             .await;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let _ = sqlx::query(
+        "INSERT INTO team_members (id, team_id, user_id, role) VALUES ($1, $2, $3, 'lead')",
+    )
+    .bind(DbUuid::new_v4())
+    .bind(DbUuid::from(team_id))
+    .bind(user.user_id)
+    .execute(&state.db)
+    .await;
 
     Ok((StatusCode::CREATED, Json(json!(team))))
 }
@@ -139,7 +185,7 @@ pub async fn update_team(
     )
     .await?;
 
-    let team = sqlx::query_as::<_, TeamRow>(&format!(
+    let update_sql = format!(
         "UPDATE teams SET
                 name = COALESCE($2, name),
                 description = COALESCE($3, description),
@@ -147,13 +193,25 @@ pub async fn update_team(
             WHERE id = $1
             RETURNING id, organization_id, name, description, created_at, updated_at",
         crate::db::sql::now()
-    ))
-    .bind(id)
-    .bind(&body.name)
-    .bind(&body.description)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    );
+
+    #[cfg(feature = "postgres")]
+    let team = sqlx::query_as::<_, TeamRow>(&update_sql)
+        .bind(crate::db::bind_id(id))
+        .bind(&body.name)
+        .bind(&body.description)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let team = sqlx::query_as::<_, TeamRow>(&update_sql)
+        .bind(DbUuid::from(id))
+        .bind(&body.name)
+        .bind(&body.description)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_not_found()?;
 
     Ok(Json(json!(team)))
 }
@@ -173,8 +231,15 @@ pub async fn delete_team(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM teams WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
+        .execute(&state.db)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query("DELETE FROM teams WHERE id = $1")
+        .bind(DbUuid::from(id))
         .execute(&state.db)
         .await?;
 
@@ -190,6 +255,7 @@ pub async fn list_members(
     Extension(_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
+    #[cfg(feature = "postgres")]
     let members = sqlx::query_as::<
         _,
         (
@@ -209,7 +275,31 @@ pub async fn list_members(
         ORDER BY tm.role, u.display_name, u.email
         "#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let members = sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            DbUuid,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            String,
+            Option<String>,
+        ),
+    >(
+        r#"
+        SELECT tm.id, tm.user_id, tm.role, tm.joined_at, u.email, u.display_name
+        FROM team_members tm
+        JOIN users u ON u.id = tm.user_id
+        WHERE tm.team_id = $1
+        ORDER BY tm.role, u.display_name, u.email
+        "#,
+    )
+    .bind(DbUuid::from(id))
     .fetch_all(&state.db)
     .await?;
 
@@ -238,13 +328,26 @@ pub async fn add_member(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     // Only admins and team leads can add members
     if !user.is_admin() {
+        #[cfg(feature = "postgres")]
         let is_lead = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead')",
         )
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(user.user_id)
         .fetch_one(&state.db)
         .await?;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let is_lead = {
+            let count = sqlx::query_scalar::<_, i32>(
+                "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead'",
+            )
+            .bind(DbUuid::from(id))
+            .bind(user.user_id)
+            .fetch_one(&state.db)
+            .await?;
+            count > 0
+        };
 
         if !is_lead {
             return Err(ApiError::Forbidden);
@@ -261,6 +364,7 @@ pub async fn add_member(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     let member_id = sqlx::query_scalar::<_, DbUuid>(
         r#"
         INSERT INTO team_members (team_id, user_id, role)
@@ -268,11 +372,29 @@ pub async fn add_member(
         RETURNING id
         "#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(body.user_id)
     .bind(body.role.as_deref().unwrap_or("member"))
     .fetch_one(&state.db)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let member_id = {
+        let new_id = DbUuid::new_v4();
+        sqlx::query_scalar::<_, DbUuid>(
+            r#"
+            INSERT INTO team_members (id, team_id, user_id, role)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+            "#,
+        )
+        .bind(new_id)
+        .bind(DbUuid::from(id))
+        .bind(DbUuid::from(body.user_id))
+        .bind(body.role.as_deref().unwrap_or("member"))
+        .fetch_one(&state.db)
+        .await?
+    };
 
     Ok((StatusCode::CREATED, Json(json!({"id": member_id}))))
 }
@@ -284,13 +406,26 @@ pub async fn remove_member(
 ) -> Result<StatusCode, ApiError> {
     // Only admins and team leads can remove members
     if !user.is_admin() {
+        #[cfg(feature = "postgres")]
         let is_lead = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead')",
         )
-        .bind(team_id)
+        .bind(crate::db::bind_id(team_id))
         .bind(user.user_id)
         .fetch_one(&state.db)
         .await?;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let is_lead = {
+            let count = sqlx::query_scalar::<_, i32>(
+                "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead'",
+            )
+            .bind(DbUuid::from(team_id))
+            .bind(user.user_id)
+            .fetch_one(&state.db)
+            .await?;
+            count > 0
+        };
 
         if !is_lead {
             return Err(ApiError::Forbidden);
@@ -307,9 +442,17 @@ pub async fn remove_member(
     )
     .await?;
 
+    #[cfg(feature = "postgres")]
     sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
-        .bind(team_id)
-        .bind(user_id)
+        .bind(crate::db::bind_id(team_id))
+        .bind(crate::db::bind_id(user_id))
+        .execute(&state.db)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
+        .bind(DbUuid::from(team_id))
+        .bind(DbUuid::from(user_id))
         .execute(&state.db)
         .await?;
 

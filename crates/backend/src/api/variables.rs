@@ -60,7 +60,7 @@ pub async fn list_variables(
         "SELECT id, application_id, name, value, description, is_secret, created_at, updated_at \
          FROM app_variables WHERE application_id = $1 ORDER BY name",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -142,7 +142,7 @@ pub async fn create_variable(
         "#,
     )
     .bind(var_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&body.name)
     .bind(&body.value)
     .bind(&body.description)
@@ -208,7 +208,7 @@ pub async fn update_variable(
 
     #[cfg(feature = "postgres")]
     let variable = sqlx::query_as::<_, VariableRow>(&update_var_sql)
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(var_id)
         .bind(&body.value)
         .bind(&body.description)
@@ -255,7 +255,7 @@ pub async fn delete_variable(
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM app_variables WHERE id = $1 AND application_id = $2")
         .bind(var_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .execute(&state.db)
         .await?;
 
@@ -283,7 +283,7 @@ pub async fn resolve_variables(
     let rows = sqlx::query_as::<_, (String, String)>(
         "SELECT name, value FROM app_variables WHERE application_id = $1",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(db)
     .await?;
 

@@ -66,7 +66,7 @@ appcontrol/
 
 ## Critical Rules (NEVER violate)
 
-1. **PostgreSQL 16 only.** No SQLite, not even for dev/test.
+1. **PostgreSQL 16 + SQLite dual support.** Both backends MUST be feature-equivalent. Every SQL query MUST have a `#[cfg(feature = "postgres")]` and `#[cfg(all(feature = "sqlite", not(feature = "postgres")))]` variant when using PostgreSQL-specific syntax (FILTER, ::cast, ILIKE, ANY, UNNEST, DISTINCT ON, JSONB operators, gen_random_uuid, interval arithmetic). Use `DbUuid` for UUID binds/decodes on SQLite (TEXT encoding). Use `DbJson` for JSONB columns on SQLite.
 2. **Event tables are APPEND-ONLY.** `action_log`, `state_transitions`, `check_events`, `switchover_log`: NO UPDATE, NO DELETE. Ever.
 3. **Log before execute.** Every user action → `action_log` INSERT **before** the action runs.
 4. **Trace every transition.** Every component state change → `state_transitions` table.
@@ -77,6 +77,7 @@ appcontrol/
 9. **Delta-only sync.** Agent sends changes only, not full status on every check.
 10. **Config snapshots.** Every config change → `config_versions` with before/after JSONB.
 11. **No hardcoded credentials or seed data.** No emails, passwords, organization names, user accounts, or default values baked into source code. All configurable values MUST come from environment variables (SEED_*, JWT_SECRET, DATABASE_URL, etc.). The docker-compose files are the single source of truth for configuration — reading them should tell you everything needed to run the system.
+12. **E2E tests MUST deploy ALL components.** E2E tests must launch the real backend, gateway, AND agent binaries. Tests that only make HTTP calls to a backend without gateway+agent are integration tests, NOT E2E. Both PostgreSQL and SQLite backends must have real E2E tests that verify the full chain: backend → gateway → agent → process start/stop/health-check.
 
 ## How to Work
 

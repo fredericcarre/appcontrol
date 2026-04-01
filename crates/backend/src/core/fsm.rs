@@ -23,9 +23,18 @@ pub async fn get_current_state(
 ) -> Result<ComponentState, FsmError> {
     let component_id: Uuid = component_id.into();
 
+    #[cfg(feature = "postgres")]
     let state_str =
         sqlx::query_scalar::<_, String>("SELECT current_state FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let state_str =
+        sqlx::query_scalar::<_, String>("SELECT current_state FROM components WHERE id = $1")
+            .bind(crate::db::DbUuid::from(component_id))
             .fetch_optional(pool)
             .await
             .map_err(|e| FsmError::Database(e.to_string()))?;
@@ -132,13 +141,29 @@ pub async fn transition_component(
     }
 
     // Insert state transition (append-only audit trail)
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"
         INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
         VALUES ($1, $2, $3, 'api')
         "#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
+    .bind(current.to_string())
+    .bind(new_state.to_string())
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"
+        INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger)
+        VALUES ($1, $2, $3, $4, 'api')
+        "#,
+    )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
+    .bind(crate::db::bind_id(component_id))
     .bind(current.to_string())
     .bind(new_state.to_string())
     .execute(&mut *tx)
@@ -221,13 +246,29 @@ pub async fn force_transition_component(
 
     // No FSM validation — force the transition
 
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"
         INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
         VALUES ($1, $2, $3, 'force')
         "#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
+    .bind(current.to_string())
+    .bind(new_state.to_string())
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"
+        INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger)
+        VALUES ($1, $2, $3, $4, 'force')
+        "#,
+    )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
+    .bind(crate::db::bind_id(component_id))
     .bind(current.to_string())
     .bind(new_state.to_string())
     .execute(&mut *tx)
@@ -359,7 +400,7 @@ async fn fetch_component_for_transition<'a>(
            JOIN applications a ON c.application_id = a.id
            WHERE c.id = $1 FOR UPDATE OF c"#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_optional(&mut **tx)
     .await
 }
@@ -401,7 +442,7 @@ async fn update_component_state<'a>(
     new_state: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE components SET current_state = $2, updated_at = now() WHERE id = $1")
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .bind(new_state)
         .execute(&mut **tx)
         .await?;

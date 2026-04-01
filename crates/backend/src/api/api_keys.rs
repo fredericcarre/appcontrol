@@ -57,7 +57,7 @@ pub async fn create_api_key(
         VALUES ($1, $2, $3, encode(sha256($4::bytea), 'hex'), $5, $6, $7)
         "#,
     )
-    .bind(key_id)
+    .bind(crate::db::bind_id(key_id))
     .bind(user.user_id)
     .bind(&body.name)
     .bind(raw_key.as_bytes())
@@ -80,7 +80,7 @@ pub async fn create_api_key(
             "#,
         )
         .bind(DbUuid::from(key_id))
-        .bind(DbUuid::from(user.user_id))
+        .bind(user.user_id)
         .bind(&body.name)
         .bind(&key_hash)
         .bind(key_prefix)
@@ -106,18 +106,18 @@ pub async fn list_api_keys(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let keys = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            String,
-            Value,
-            bool,
-            Option<chrono::DateTime<chrono::Utc>>,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
+    #[derive(Debug, sqlx::FromRow)]
+    struct ApiKeyListRow {
+        id: DbUuid,
+        name: String,
+        key_prefix: String,
+        scopes: String,
+        is_active: bool,
+        expires_at: Option<String>,
+        created_at: String,
+    }
+
+    let keys = sqlx::query_as::<_, ApiKeyListRow>(
         r#"
         SELECT id, name, key_prefix, scopes, is_active, expires_at, created_at
         FROM api_keys
@@ -125,21 +125,23 @@ pub async fn list_api_keys(
         ORDER BY created_at DESC
         "#,
     )
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .fetch_all(&state.db)
     .await?;
 
     let data: Vec<Value> = keys
         .iter()
-        .map(|(id, name, prefix, scopes, active, expires, created)| {
+        .map(|k| {
+            let scopes_val: Value =
+                serde_json::from_str(&k.scopes).unwrap_or(json!([]));
             json!({
-                "id": id,
-                "name": name,
-                "key_prefix": prefix,
-                "scopes": scopes,
-                "is_active": active,
-                "expires_at": expires,
-                "created_at": created,
+                "id": k.id,
+                "name": k.name,
+                "key_prefix": k.key_prefix,
+                "scopes": scopes_val,
+                "is_active": k.is_active,
+                "expires_at": k.expires_at,
+                "created_at": k.created_at,
             })
         })
         .collect();
@@ -155,7 +157,7 @@ pub async fn delete_api_key(
     #[cfg(feature = "postgres")]
     let result =
         sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1 AND user_id = $2")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .bind(user.user_id)
             .execute(&state.db)
             .await?;
@@ -163,7 +165,7 @@ pub async fn delete_api_key(
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let result = sqlx::query("UPDATE api_keys SET is_active = 0 WHERE id = $1 AND user_id = $2")
         .bind(DbUuid::from(id))
-        .bind(DbUuid::from(user.user_id))
+        .bind(user.user_id)
         .execute(&state.db)
         .await?;
 

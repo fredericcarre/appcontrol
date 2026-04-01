@@ -45,7 +45,7 @@ pub async fn global_audit(
     // We also LEFT JOIN various tables to resolve target names
     let logs = fetch_global_audit_logs(
         &state.db,
-        user.organization_id,
+        *user.organization_id,
         params.app_id,
         params.user_id,
         limit,
@@ -155,7 +155,7 @@ pub async fn incidents(
         ORDER BY st.created_at DESC
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(from)
     .bind(to)
     .fetch_all(&state.db)
@@ -204,7 +204,7 @@ pub async fn drp_report(
     let app_info = sqlx::query_as::<_, (String, Option<DbUuid>, Option<String>)>(
         "SELECT a.name, a.site_id, s.name FROM applications a LEFT JOIN sites s ON a.site_id = s.id WHERE a.id = $1"
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -219,7 +219,7 @@ pub async fn drp_report(
         ORDER BY switchover_id, created_at ASC
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -352,7 +352,7 @@ pub async fn drp_report(
                 ORDER BY st.created_at ASC
                 "#,
                 )
-                .bind(app_id)
+                .bind(crate::db::bind_id(app_id))
                 .bind(start)
                 .bind(end)
                 .fetch_all(&state.db)
@@ -380,7 +380,7 @@ pub async fn drp_report(
         {
             if let Ok(user_id) = uuid::Uuid::parse_str(user_id_str) {
                 sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
-                    .bind(user_id)
+                    .bind(crate::db::bind_id(user_id))
                     .fetch_optional(&state.db)
                     .await
                     .ok()
@@ -422,7 +422,7 @@ pub async fn drp_report(
                 ORDER BY st.created_at ASC
                 "#,
             )
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .bind(start)
             .bind(end)
             .fetch_all(&state.db)
@@ -505,7 +505,7 @@ pub async fn drp_report(
         WHERE d.application_id = $1
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
@@ -572,7 +572,7 @@ pub async fn audit(
         LIMIT 500
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(from)
     .bind(to)
     .fetch_all(&state.db)
@@ -599,7 +599,7 @@ pub async fn compliance(
     // Check DORA compliance metrics
     let action_count =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM action_log WHERE resource_id = $1")
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .fetch_one(&state.db)
             .await
             .unwrap_or(0);
@@ -655,7 +655,7 @@ pub async fn export_pdf(
 
     // Get app name
     let app_name = sqlx::query_scalar::<_, String>("SELECT name FROM applications WHERE id = $1")
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_optional(&state.db)
         .await?
         .unwrap_or_else(|| "Unknown".to_string());
@@ -674,7 +674,7 @@ pub async fn export_pdf(
           AND st.created_at >= $2 AND st.created_at <= $3
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(from)
     .bind(to)
     .fetch_one(&state.db)
@@ -685,7 +685,7 @@ pub async fn export_pdf(
     let switchover_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(DISTINCT switchover_id) FROM switchover_log WHERE application_id = $1",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_one(&state.db)
     .await
     .unwrap_or(0);
@@ -694,7 +694,7 @@ pub async fn export_pdf(
     let audit_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM action_log WHERE resource_id = $1 AND created_at >= $2 AND created_at <= $3",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(from)
     .bind(to)
     .fetch_one(&state.db)
@@ -897,7 +897,7 @@ pub async fn activity_feed(
         LIMIT $3
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(cursor)
     .bind(limit)
     .fetch_all(&state.db)
@@ -926,7 +926,7 @@ pub async fn activity_feed(
         LIMIT $3
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(cursor)
     .bind(limit)
     .fetch_all(&state.db)
@@ -958,7 +958,7 @@ pub async fn activity_feed(
         LIMIT $3
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(cursor)
     .bind(limit)
     .fetch_all(&state.db)
@@ -988,7 +988,7 @@ pub async fn activity_feed(
         LIMIT $3
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(cursor)
     .bind(limit)
     .fetch_all(&state.db)
@@ -1005,7 +1005,7 @@ pub async fn activity_feed(
         LIMIT $3
         "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(cursor)
         .bind(limit)
         .fetch_all(&state.db)
@@ -1185,7 +1185,7 @@ pub async fn health_summary(
         ORDER BY cnt DESC
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1205,7 +1205,7 @@ pub async fn health_summary(
         ORDER BY c.updated_at DESC
         "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&state.db)
         .await?;
 
@@ -1227,7 +1227,7 @@ pub async fn health_summary(
         ORDER BY a.hostname
         "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&state.db)
         .await?;
 
@@ -1265,7 +1265,7 @@ pub async fn health_summary(
         LIMIT 10
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1278,7 +1278,7 @@ pub async fn health_summary(
 
     let total_components =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM components WHERE application_id = $1")
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .fetch_one(&state.db)
             .await
             .unwrap_or(0);
@@ -1530,7 +1530,7 @@ async fn fetch_availability_stats(
         ORDER BY date
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(from)
     .bind(to)
     .fetch_all(db)
@@ -1555,7 +1555,7 @@ async fn fetch_availability_stats(
         ORDER BY date
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(from)
     .bind(to)
     .fetch_all(db)
@@ -1594,7 +1594,7 @@ async fn fetch_switchover_logs(
         LIMIT 100
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(db)
     .await
 }
@@ -1631,7 +1631,7 @@ async fn fetch_switchover_logs(
         LIMIT 100
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(db)
     .await
 }
@@ -1651,7 +1651,7 @@ async fn fetch_topology_components(
         ORDER BY name
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(db)
     .await
 }
@@ -1671,7 +1671,7 @@ async fn fetch_topology_components(
         ORDER BY name
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(db)
     .await
 }
@@ -1688,7 +1688,7 @@ async fn fetch_avg_rto(db: &crate::db::DbPool, app_id: Uuid) -> Option<f64> {
         WHERE sl.application_id = $1 AND sl.phase = 'PREPARE'
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_one(db)
     .await
     .unwrap_or(None)
@@ -1707,7 +1707,7 @@ async fn fetch_avg_rto(db: &crate::db::DbPool, app_id: Uuid) -> Option<f64> {
         WHERE sl.application_id = $1 AND sl.phase = 'PREPARE'
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_one(db)
     .await
     .unwrap_or(None)
@@ -1728,7 +1728,7 @@ async fn fetch_availability_summary(
           AND date >= $2::date AND date <= $3::date
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(from)
     .bind(to)
     .fetch_one(db)
@@ -1751,7 +1751,7 @@ async fn fetch_availability_summary(
           AND date >= date($2) AND date <= date($3)
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(from)
     .bind(to)
     .fetch_one(db)
@@ -1830,7 +1830,7 @@ async fn fetch_mttr_recoveries(
         LIMIT 100
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(from)
     .bind(to)
     .fetch_all(db)
@@ -1902,7 +1902,7 @@ async fn fetch_mttr_recoveries(
         LIMIT 100
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(from)
     .bind(to)
     .fetch_all(db)

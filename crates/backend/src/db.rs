@@ -145,6 +145,18 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DbUuid {
     }
 }
 
+/// Convert a Uuid for use in SQL query bind parameters.
+///
+/// On PostgreSQL, DbUuid is transparent to Uuid (native UUID type).
+/// On SQLite, DbUuid encodes as TEXT (hyphenated string) matching our schema.
+///
+/// Use this when binding UUID values from `Path<Uuid>` or other non-DbUuid
+/// sources in queries that must work on both databases.
+#[inline]
+pub fn bind_id(id: impl Into<Uuid>) -> DbUuid {
+    DbUuid::from(id.into())
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // DbJson — cross-database JSON value type
 // ══════════════════════════════════════════════════════════════════════════════

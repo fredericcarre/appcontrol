@@ -127,7 +127,7 @@ pub async fn get_agent(
         WHERE id = $1 AND organization_id = $2
         "#,
     )
-    .bind(id)
+    .bind(crate::db::bind_id(id))
     .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?
@@ -153,7 +153,7 @@ pub async fn block_agent(
     let agent: Option<(String, Option<Uuid>)> = sqlx::query_as(
         "SELECT hostname, gateway_id FROM agents WHERE id = $1 AND organization_id = $2",
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(user.organization_id)
     .fetch_optional(&state.db)
     .await?;
@@ -180,7 +180,7 @@ pub async fn block_agent(
     // 1. Suspend the agent and clear gateway association
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE agents SET is_active = false, gateway_id = NULL WHERE id = $1")
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .execute(&mut *tx)
         .await?;
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -195,7 +195,7 @@ pub async fn block_agent(
            SELECT $1, 'blocked', certificate_fingerprint, certificate_cn
            FROM agents WHERE id = $1"#,
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .execute(&mut *tx)
     .await
     .ok(); // Don't fail if table doesn't exist yet
@@ -235,7 +235,7 @@ pub async fn unblock_agent(
     // Get the agent to verify it exists
     let agent: Option<(String,)> =
         sqlx::query_as("SELECT hostname FROM agents WHERE id = $1 AND organization_id = $2")
-            .bind(agent_id)
+            .bind(crate::db::bind_id(agent_id))
             .bind(user.organization_id)
             .fetch_optional(&state.db)
             .await?;
@@ -260,7 +260,7 @@ pub async fn unblock_agent(
     // Reactivate the agent
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE agents SET is_active = true WHERE id = $1")
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .execute(&state.db)
         .await?;
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -314,7 +314,7 @@ pub async fn get_agent_metrics(
     // Verify agent belongs to user's organization
     let agent_exists: Option<(DbUuid,)> =
         sqlx::query_as("SELECT id FROM agents WHERE id = $1 AND organization_id = $2")
-            .bind(agent_id)
+            .bind(crate::db::bind_id(agent_id))
             .bind(user.organization_id)
             .fetch_optional(&state.db)
             .await?;
@@ -357,7 +357,7 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
         WHERE c.agent_id = $1
         "#,
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
@@ -384,6 +384,7 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
             "previous_state": current_state.to_string(),
             "agent_id": agent_id.to_string(),
         });
+        #[cfg(feature = "postgres")]
         let result = sqlx::query(
             r#"
             INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
@@ -392,7 +393,21 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
         )
         .bind(*comp.id)
         .bind(current_state.to_string())
-        .bind(details_json)
+        .bind(&details_json)
+        .execute(&state.db)
+        .await;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let result = sqlx::query(
+            r#"
+            INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details)
+            VALUES ($1, $2, $3, 'UNREACHABLE', 'agent_blocked', $4)
+            "#,
+        )
+        .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
+        .bind(*comp.id)
+        .bind(current_state.to_string())
+        .bind(serde_json::to_string(&details_json).unwrap_or_default())
         .execute(&state.db)
         .await;
 
@@ -447,7 +462,7 @@ pub async fn delete_agent(
     // Verify agent exists and belongs to user's organization
     let agent: Option<(DbUuid, String)> =
         sqlx::query_as("SELECT id, hostname FROM agents WHERE id = $1 AND organization_id = $2")
-            .bind(agent_id)
+            .bind(crate::db::bind_id(agent_id))
             .bind(user.organization_id)
             .fetch_optional(&state.db)
             .await?;
@@ -473,31 +488,31 @@ pub async fn delete_agent(
 
     // 2. Clear agent_id from components (don't delete components)
     sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = $1")
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .execute(&state.db)
         .await?;
 
     // 3. Delete discovery reports for this agent
     sqlx::query("DELETE FROM discovery_reports WHERE agent_id = $1")
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .execute(&state.db)
         .await?;
 
     // 4. Delete certificate events for this agent
     sqlx::query("DELETE FROM certificate_events WHERE agent_id = $1")
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .execute(&state.db)
         .await?;
 
     // 5. Delete binding profile mappings for this agent
     sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = $1")
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .execute(&state.db)
         .await?;
 
     // 6. Delete the agent
     sqlx::query("DELETE FROM agents WHERE id = $1")
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .execute(&state.db)
         .await?;
 
@@ -548,7 +563,7 @@ pub async fn bulk_delete_agents(
 
     // Verify all agents belong to the user's organization
     let valid_agents =
-        verify_agents_in_org(&state.db, &body.agent_ids, user.organization_id).await?;
+        verify_agents_in_org(&state.db, &body.agent_ids, *user.organization_id).await?;
 
     if valid_agents.is_empty() {
         return Err(ApiError::NotFound);
@@ -618,7 +633,7 @@ async fn fetch_agent_metrics(
              ORDER BY created_at ASC",
         crate::db::sql::now()
     ))
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(minutes)
     .fetch_all(db)
     .await
@@ -636,7 +651,7 @@ async fn fetch_agent_metrics(
              WHERE agent_id = $1 AND created_at > datetime('now', '-' || $2 || ' minutes')
              ORDER BY created_at ASC",
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(minutes)
     .fetch_all(db)
     .await

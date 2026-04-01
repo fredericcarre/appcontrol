@@ -180,19 +180,20 @@ pub async fn import_yaml_map(
     sqlx::query(
         "INSERT INTO applications (id, name, description, organization_id, site_id) VALUES ($1, $2, $3, $4, $5)",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(app_name)
     .bind(app_desc)
     .bind(user.organization_id)
-    .bind(body.site_id)
+    .bind(crate::db::bind_id(body.site_id))
     .execute(&state.db)
     .await?;
 
     // Grant owner to importing user
     let _ = sqlx::query(
-        "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) VALUES ($1, $2, 'owner', $2)",
+        "INSERT INTO app_permissions_users (id, application_id, user_id, permission_level, granted_by) VALUES ($1, $2, $3, 'owner', $3)",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(Uuid::new_v4()))
+    .bind(crate::db::bind_id(app_id))
     .bind(user.user_id)
     .execute(&state.db)
     .await;
@@ -210,9 +211,10 @@ pub async fn import_yaml_map(
         let value = var.value.as_deref().unwrap_or("");
 
         sqlx::query(
-            "INSERT INTO app_variables (application_id, name, value, description) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO app_variables (id, application_id, name, value, description) VALUES ($1, $2, $3, $4, $5)",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(Uuid::new_v4()))
+        .bind(crate::db::bind_id(app_id))
         .bind(name)
         .bind(value)
         .bind(var.description.as_deref())
@@ -234,8 +236,8 @@ pub async fn import_yaml_map(
                 sqlx::query(
                     "INSERT INTO component_groups (id, application_id, name, display_order) VALUES ($1, $2, $3, $4)",
                 )
-                .bind(group_id)
-                .bind(app_id)
+                .bind(crate::db::bind_id(group_id))
+                .bind(crate::db::bind_id(app_id))
                 .bind(group_name)
                 .bind(groups_created as i32)
                 .execute(&state.db)
@@ -285,17 +287,17 @@ pub async fn import_yaml_map(
         sqlx::query(
             r#"INSERT INTO components (id, application_id, name, display_name, description, component_type,
                 icon, group_id, check_cmd, start_cmd, stop_cmd, integrity_check_cmd,
-                position_x, position_y)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
+                position_x, position_y, current_state)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'STOPPED')"#,
         )
-        .bind(comp_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(comp_id))
+        .bind(crate::db::bind_id(app_id))
         .bind(comp_name)
         .bind(comp.display_name.as_deref())
         .bind(comp.description.as_deref())
         .bind(comp_type)
         .bind(icon)
-        .bind(group_id)
+        .bind(group_id.map(crate::db::bind_id))
         .bind(&check_cmd)
         .bind(&start_cmd)
         .bind(&stop_cmd)
@@ -332,8 +334,8 @@ pub async fn import_yaml_map(
                 r#"INSERT INTO component_commands (id, component_id, name, command, description, requires_confirmation)
                 VALUES ($1, $2, $3, $4, $5, $6)"#,
             )
-            .bind(cmd_id)
-            .bind(comp_id)
+            .bind(crate::db::bind_id(cmd_id))
+            .bind(crate::db::bind_id(comp_id))
             .bind(display)
             .bind(cmd_text)
             .bind(action.description.as_deref())
@@ -351,10 +353,11 @@ pub async fn import_yaml_map(
                 };
 
                 sqlx::query(
-                    r#"INSERT INTO command_input_params (command_id, name, description, default_value, validation_regex, required, display_order)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+                    r#"INSERT INTO command_input_params (id, command_id, name, description, default_value, validation_regex, required, display_order)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
                 )
-                .bind(cmd_id)
+                .bind(crate::db::bind_id(Uuid::new_v4()))
+                .bind(crate::db::bind_id(cmd_id))
                 .bind(param_name)
                 .bind(param.description.as_deref())
                 .bind(param.default_value.as_deref())
@@ -380,9 +383,10 @@ pub async fn import_yaml_map(
             let link_type = map_link_type(link.link_type.as_deref());
 
             sqlx::query(
-                "INSERT INTO component_links (component_id, label, url, link_type) VALUES ($1, $2, $3, $4)",
+                "INSERT INTO component_links (id, component_id, label, url, link_type) VALUES ($1, $2, $3, $4, $5)",
             )
-            .bind(comp_id)
+            .bind(crate::db::bind_id(Uuid::new_v4()))
+            .bind(crate::db::bind_id(comp_id))
             .bind(label)
             .bind(url)
             .bind(link_type)
@@ -418,11 +422,12 @@ pub async fn import_yaml_map(
             };
 
             sqlx::query(
-                "INSERT INTO dependencies (application_id, from_component_id, to_component_id) VALUES ($1, $2, $3)",
+                "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id) VALUES ($1, $2, $3, $4)",
             )
-            .bind(app_id)
-            .bind(from_id)
-            .bind(to_id)
+            .bind(crate::db::bind_id(Uuid::new_v4()))
+            .bind(crate::db::bind_id(app_id))
+            .bind(crate::db::bind_id(from_id))
+            .bind(crate::db::bind_id(to_id))
             .execute(&state.db)
             .await?;
 
@@ -744,20 +749,21 @@ pub async fn import_json_map(
     sqlx::query(
         "INSERT INTO applications (id, name, description, organization_id, site_id, tags) VALUES ($1, $2, $3, $4, $5, $6)",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(&app_data.name)
     .bind(&app_data.description)
     .bind(user.organization_id)
-    .bind(body.site_id)
+    .bind(crate::db::bind_id(body.site_id))
     .bind(&tags_json)
     .execute(&state.db)
     .await?;
 
     // Grant owner to importing user
     let _ = sqlx::query(
-        "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) VALUES ($1, $2, 'owner', $2)",
+        "INSERT INTO app_permissions_users (id, application_id, user_id, permission_level, granted_by) VALUES ($1, $2, $3, 'owner', $3)",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(Uuid::new_v4()))
+    .bind(crate::db::bind_id(app_id))
     .bind(user.user_id)
     .execute(&state.db)
     .await;
@@ -766,9 +772,10 @@ pub async fn import_json_map(
     let mut variables_created = 0;
     for var in &app_data.variables {
         sqlx::query(
-            "INSERT INTO app_variables (application_id, name, value, description, is_secret) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO app_variables (id, application_id, name, value, description, is_secret) VALUES ($1, $2, $3, $4, $5, $6)",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(Uuid::new_v4()))
+        .bind(crate::db::bind_id(app_id))
         .bind(&var.name)
         .bind(&var.value)
         .bind(&var.description)
@@ -788,8 +795,8 @@ pub async fn import_json_map(
         sqlx::query(
             "INSERT INTO component_groups (id, application_id, name, description, color, display_order) VALUES ($1, $2, $3, $4, $5, $6)",
         )
-        .bind(group_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(group_id))
+        .bind(crate::db::bind_id(app_id))
         .bind(&group.name)
         .bind(&group.description)
         .bind(&group.color)
@@ -863,19 +870,19 @@ pub async fn import_json_map(
                 integrity_check_cmd, post_start_check_cmd, infra_check_cmd,
                 rebuild_cmd, rebuild_infra_cmd,
                 check_interval_seconds, start_timeout_seconds, stop_timeout_seconds,
-                is_optional, position_x, position_y, cluster_size, cluster_nodes
+                is_optional, position_x, position_y, cluster_size, cluster_nodes, current_state
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, 'STOPPED'
             )"#,
         )
-        .bind(comp_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(comp_id))
+        .bind(crate::db::bind_id(app_id))
         .bind(&comp.name)
         .bind(&comp.display_name)
         .bind(&comp.description)
         .bind(comp_type)
         .bind(icon)
-        .bind(group_id)
+        .bind(group_id.map(crate::db::bind_id))
         .bind(&comp.host)
         .bind(&check_cmd)
         .bind(&start_cmd)
@@ -907,8 +914,8 @@ pub async fn import_json_map(
                 r#"INSERT INTO component_commands (id, component_id, name, command, description, requires_confirmation)
                 VALUES ($1, $2, $3, $4, $5, $6)"#,
             )
-            .bind(cmd_id)
-            .bind(comp_id)
+            .bind(crate::db::bind_id(cmd_id))
+            .bind(crate::db::bind_id(comp_id))
             .bind(&custom_cmd.name)
             .bind(&custom_cmd.command)
             .bind(&custom_cmd.description)
@@ -927,11 +934,12 @@ pub async fn import_json_map(
 
                 sqlx::query(
                     r#"INSERT INTO command_input_params (
-                        command_id, name, description, default_value, validation_regex,
+                        id, command_id, name, description, default_value, validation_regex,
                         required, param_type, enum_values, display_order
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
                 )
-                .bind(cmd_id)
+                .bind(crate::db::bind_id(Uuid::new_v4()))
+                .bind(crate::db::bind_id(cmd_id))
                 .bind(&param.name)
                 .bind(&param.description)
                 .bind(&param.default_value)
@@ -948,9 +956,10 @@ pub async fn import_json_map(
         // ── Import links ───────────────────────────────────────────────
         for (lidx, link) in comp.links.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO component_links (component_id, label, url, link_type, display_order) VALUES ($1, $2, $3, $4, $5)",
+                "INSERT INTO component_links (id, component_id, label, url, link_type, display_order) VALUES ($1, $2, $3, $4, $5, $6)",
             )
-            .bind(comp_id)
+            .bind(crate::db::bind_id(Uuid::new_v4()))
+            .bind(crate::db::bind_id(comp_id))
             .bind(&link.label)
             .bind(&link.url)
             .bind(&link.link_type)
@@ -991,11 +1000,12 @@ pub async fn import_json_map(
         let dep_type = dep.dep_type.as_deref().unwrap_or("strong");
 
         sqlx::query(
-            "INSERT INTO dependencies (application_id, from_component_id, to_component_id, dep_type) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id, dep_type) VALUES ($1, $2, $3, $4, $5)",
         )
-        .bind(app_id)
-        .bind(from_id)
-        .bind(to_id)
+        .bind(crate::db::bind_id(Uuid::new_v4()))
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(from_id))
+        .bind(crate::db::bind_id(to_id))
         .bind(dep_type)
         .execute(&state.db)
         .await?;

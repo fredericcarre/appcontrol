@@ -41,7 +41,7 @@ pub async fn get_topology(
 
     // Fetch application name
     let app_name = sqlx::query_scalar::<_, String>("SELECT name FROM applications WHERE id = $1")
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_optional(&state.db)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -55,7 +55,7 @@ pub async fn get_topology(
         ORDER BY c.name
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -77,7 +77,7 @@ pub async fn get_topology(
     let deps = sqlx::query_as::<_, (DbUuid, DbUuid)>(
         "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -267,7 +267,7 @@ pub async fn get_plan(
             let row = sqlx::query_as::<_, (String, String, Option<String>, bool)>(
                 "SELECT name, current_state, host, is_optional FROM components WHERE id = $1",
             )
-            .bind(comp_id)
+            .bind(crate::db::bind_id(comp_id))
             .fetch_optional(&state.db)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -356,7 +356,7 @@ pub async fn validate_sequence(
     let components = sqlx::query_as::<_, (DbUuid, String)>(
         "SELECT id, name FROM components WHERE application_id = $1",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -407,7 +407,7 @@ pub async fn validate_sequence(
     let deps = sqlx::query_as::<_, (DbUuid, DbUuid)>(
         "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -514,7 +514,7 @@ pub async fn dependency_history(
         LIMIT $2 OFFSET $3
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(limit)
     .bind(offset)
     .fetch_all(&state.db)
@@ -528,7 +528,7 @@ pub async fn dependency_history(
           AND cv.change_type IN ('create_dependency', 'delete_dependency', 'import_yaml', 'update_app')
         "#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_one(&state.db)
     .await
     .unwrap_or(0);
