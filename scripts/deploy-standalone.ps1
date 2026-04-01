@@ -359,9 +359,12 @@ cd /d "%~dp0"
 echo Starting AppControl (SQLite mode)...
 echo.
 
+REM Create data directory if needed
+if not exist "data" mkdir data
+if not exist "logs" mkdir logs
+
 REM Set environment variables for SQLite mode
-REM Note: DATABASE_TYPE is not needed - the binary knows its database type at compile time
-set "DATABASE_URL=sqlite:%~dp0data\appcontrol.db"
+set "DATABASE_URL=sqlite:data\appcontrol.db"
 set "JWT_SECRET=standalone-deployment-secret-change-me"
 set "LOCAL_AUTH_ENABLED=true"
 set "SEED_ENABLED=true"
@@ -372,13 +375,9 @@ set "SEED_ORG_SLUG=appcontrol"
 set "APP_ENV=development"
 set "RUST_LOG=info"
 
-REM Create data directory if needed
-if not exist "data" mkdir data
-if not exist "logs" mkdir logs
-
-REM Start Backend with environment variables
+REM Start Backend (foreground — logs visible in console)
 echo [1/2] Starting Backend...
-start "AppControl Backend" /min cmd /c "set DATABASE_URL=sqlite:%~dp0data\appcontrol.db && set JWT_SECRET=standalone-deployment-secret-change-me && set LOCAL_AUTH_ENABLED=true && set SEED_ENABLED=true && set SEED_ADMIN_EMAIL=admin@localhost && set SEED_ADMIN_PASSWORD=admin && set SEED_ORG_NAME=AppControl && set SEED_ORG_SLUG=appcontrol && set APP_ENV=development && set RUST_LOG=info && bin\appcontrol-backend.exe > logs\backend.log 2>&1"
+start "AppControl Backend" cmd /c "bin\appcontrol-backend.exe"
 timeout /t 5 /nobreak >nul
 echo Backend started on port 3000
 
