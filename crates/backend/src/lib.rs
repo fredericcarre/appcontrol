@@ -234,12 +234,10 @@ fn find_frontend_dir() -> Option<std::path::PathBuf> {
         Some(std::path::PathBuf::from("../frontend")),
     ];
 
-    for candidate in candidates.into_iter().flatten() {
-        if candidate.join("index.html").exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|candidate| candidate.join("index.html").exists())
 }
 
 #[cfg(test)]
