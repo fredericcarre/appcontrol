@@ -7,13 +7,12 @@ use axum::{
     extract::{Extension, Path, Query, State},
     response::Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::DbUuid;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::AppState;
 
@@ -39,54 +38,37 @@ pub struct ListSitesQuery {
     pub is_active: Option<bool>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct SiteRow {
-    pub id: DbUuid,
-    pub organization_id: DbUuid,
-    pub name: String,
-    pub code: String,
-    pub site_type: String,
-    pub location: Option<String>,
-    pub is_active: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
 pub async fn list_sites(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Query(query): Query<ListSitesQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    #[cfg(feature = "postgres")]
-    let sites = sqlx::query_as::<_, SiteRow>(
-        r#"SELECT id, organization_id, name, code, site_type, location, is_active, created_at
-           FROM sites
-           WHERE organization_id = $1
-             AND ($2::text IS NULL OR site_type = $2)
-             AND ($3::bool IS NULL OR is_active = $3)
-           ORDER BY code"#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&query.site_type)
-    .bind(query.is_active)
-    .fetch_all(&state.db)
-    .await?;
+    let sites = state
+        .site_repo
+        .list_sites(
+            *user.organization_id,
+            query.site_type.as_deref(),
+            query.is_active,
+        )
+        .await?;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let sites = sqlx::query_as::<_, SiteRow>(
-        r#"SELECT id, organization_id, name, code, site_type, location, is_active, created_at
-           FROM sites
-           WHERE organization_id = $1
-             AND ($2 IS NULL OR site_type = $2)
-             AND ($3 IS NULL OR is_active = $3)
-           ORDER BY code"#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&query.site_type)
-    .bind(query.is_active)
-    .fetch_all(&state.db)
-    .await?;
+    let result: Vec<Value> = sites
+        .into_iter()
+        .map(|s| {
+            json!({
+                "id": s.id,
+                "organization_id": s.organization_id,
+                "name": s.name,
+                "code": s.code,
+                "site_type": s.site_type,
+                "location": s.location,
+                "is_active": s.is_active,
+                "created_at": s.created_at,
+            })
+        })
+        .collect();
 
-    Ok(Json(json!({ "sites": sites })))
+    Ok(Json(json!({ "sites": result })))
 }
 
 pub async fn get_site(
@@ -94,31 +76,22 @@ pub async fn get_site(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    #[cfg(feature = "postgres")]
-    let site = sqlx::query_as::<_, SiteRow>(
-        r#"SELECT id, organization_id, name, code, site_type, location, is_active, created_at
-           FROM sites
-           WHERE id = $1 AND organization_id = $2"#,
-    )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let site = state
+        .site_repo
+        .get_site(id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let site = sqlx::query_as::<_, SiteRow>(
-        r#"SELECT id, organization_id, name, code, site_type, location, is_active, created_at
-           FROM sites
-           WHERE id = $1 AND organization_id = $2"#,
-    )
-    .bind(DbUuid::from(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
-
-    Ok(Json(json!(site)))
+    Ok(Json(json!({
+        "id": site.id,
+        "organization_id": site.organization_id,
+        "name": site.name,
+        "code": site.code,
+        "site_type": site.site_type,
+        "location": site.location,
+        "is_active": site.is_active,
+        "created_at": site.created_at,
+    })))
 }
 
 pub async fn create_site(
@@ -153,39 +126,27 @@ pub async fn create_site(
     .await
     .ok();
 
-    #[cfg(feature = "postgres")]
-    let site = sqlx::query_as::<_, SiteRow>(
-        r#"INSERT INTO sites (organization_id, name, code, site_type, location)
-           VALUES ($1, $2, $3, $4, $5)
-           RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&req.name)
-    .bind(&req.code)
-    .bind(site_type)
-    .bind(&req.location)
-    .fetch_one(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let site = {
-        let new_id = DbUuid::new_v4();
-        sqlx::query_as::<_, SiteRow>(
-            r#"INSERT INTO sites (id, organization_id, name, code, site_type, location)
-               VALUES ($1, $2, $3, $4, $5, $6)
-               RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
+    let site = state
+        .site_repo
+        .create_site(
+            *user.organization_id,
+            &req.name,
+            &req.code,
+            site_type,
+            req.location.as_deref(),
         )
-        .bind(new_id)
-        .bind(crate::db::bind_id(user.organization_id))
-        .bind(&req.name)
-        .bind(&req.code)
-        .bind(site_type)
-        .bind(&req.location)
-        .fetch_one(&state.db)
-        .await?
-    };
+        .await?;
 
-    Ok(Json(json!(site)))
+    Ok(Json(json!({
+        "id": site.id,
+        "organization_id": site.organization_id,
+        "name": site.name,
+        "code": site.code,
+        "site_type": site.site_type,
+        "location": site.location,
+        "is_active": site.is_active,
+        "created_at": site.created_at,
+    })))
 }
 
 pub async fn update_site(
@@ -213,43 +174,28 @@ pub async fn update_site(
     .await
     .ok();
 
-    #[cfg(feature = "postgres")]
-    let site = sqlx::query_as::<_, SiteRow>(
-        r#"UPDATE sites SET
-               name = COALESCE($3, name),
-               location = COALESCE($4, location),
-               is_active = COALESCE($5, is_active)
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
-    )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&req.name)
-    .bind(&req.location)
-    .bind(req.is_active)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let site = state
+        .site_repo
+        .update_site(
+            id,
+            *user.organization_id,
+            req.name.as_deref(),
+            req.location.as_deref(),
+            req.is_active,
+        )
+        .await?
+        .ok_or_not_found()?;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let site = sqlx::query_as::<_, SiteRow>(
-        r#"UPDATE sites SET
-               name = COALESCE($3, name),
-               location = COALESCE($4, location),
-               is_active = COALESCE($5, is_active)
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
-    )
-    .bind(DbUuid::from(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&req.name)
-    .bind(&req.location)
-    .bind(req.is_active)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
-
-    Ok(Json(json!(site)))
+    Ok(Json(json!({
+        "id": site.id,
+        "organization_id": site.organization_id,
+        "name": site.name,
+        "code": site.code,
+        "site_type": site.site_type,
+        "location": site.location,
+        "is_active": site.is_active,
+        "created_at": site.created_at,
+    })))
 }
 
 pub async fn delete_site(
@@ -274,21 +220,7 @@ pub async fn delete_site(
     .ok();
 
     // Check for applications linked to this site
-    #[cfg(feature = "postgres")]
-    let app_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM applications WHERE site_id = $1")
-        .bind(crate::db::bind_id(id))
-        .fetch_one(&state.db)
-        .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let app_count: i64 = {
-        let count: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM applications WHERE site_id = $1")
-            .bind(DbUuid::from(id))
-            .fetch_one(&state.db)
-            .await?;
-        count as i64
-    };
-
+    let app_count = state.site_repo.count_apps_in_site(id).await?;
     if app_count > 0 {
         return Err(ApiError::Conflict(format!(
             "Cannot delete site: {} application(s) are linked to it",
@@ -296,21 +228,8 @@ pub async fn delete_site(
         )));
     }
 
-    #[cfg(feature = "postgres")]
-    let result = sqlx::query("DELETE FROM sites WHERE id = $1 AND organization_id = $2")
-        .bind(crate::db::bind_id(id))
-        .bind(crate::db::bind_id(user.organization_id))
-        .execute(&state.db)
-        .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let result = sqlx::query("DELETE FROM sites WHERE id = $1 AND organization_id = $2")
-        .bind(DbUuid::from(id))
-        .bind(crate::db::bind_id(user.organization_id))
-        .execute(&state.db)
-        .await?;
-
-    if result.rows_affected() == 0 {
+    let deleted = state.site_repo.delete_site(id, *user.organization_id).await?;
+    if !deleted {
         return Err(ApiError::NotFound);
     }
 
@@ -319,8 +238,6 @@ pub async fn delete_site(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_site_type_validation() {
         assert!(["primary", "dr", "staging", "development"].contains(&"primary"));
