@@ -209,3 +209,307 @@ pub async fn delete_component_link(
 
     Ok(result.rows_affected() > 0)
 }
+
+// ============================================================================
+// Application Variables
+// ============================================================================
+
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct VariableInfo {
+    pub id: DbUuid,
+    pub application_id: DbUuid,
+    pub name: String,
+    pub value: String,
+    pub description: Option<String>,
+    pub is_secret: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub async fn list_app_variables(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<VariableInfo>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    return sqlx::query_as::<_, VariableInfo>(
+        "SELECT id, application_id, name, value, description, is_secret, created_at, updated_at \
+         FROM app_variables WHERE application_id = $1 ORDER BY name",
+    )
+    .bind(app_id)
+    .fetch_all(pool)
+    .await;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    return sqlx::query_as::<_, VariableInfo>(
+        "SELECT id, application_id, name, value, description, is_secret, created_at, updated_at \
+         FROM app_variables WHERE application_id = $1 ORDER BY name",
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_all(pool)
+    .await;
+}
+
+pub async fn create_app_variable(
+    pool: &DbPool,
+    var_id: Uuid,
+    app_id: Uuid,
+    name: &str,
+    value: &str,
+    description: Option<&str>,
+    is_secret: bool,
+) -> Result<VariableInfo, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    return sqlx::query_as::<_, VariableInfo>(
+        r#"INSERT INTO app_variables (id, application_id, name, value, description, is_secret)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, application_id, name, value, description, is_secret, created_at, updated_at"#,
+    )
+    .bind(var_id)
+    .bind(app_id)
+    .bind(name)
+    .bind(value)
+    .bind(description)
+    .bind(is_secret)
+    .fetch_one(pool)
+    .await;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    return sqlx::query_as::<_, VariableInfo>(
+        r#"INSERT INTO app_variables (id, application_id, name, value, description, is_secret)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, application_id, name, value, description, is_secret, created_at, updated_at"#,
+    )
+    .bind(DbUuid::from(var_id))
+    .bind(DbUuid::from(app_id))
+    .bind(name)
+    .bind(value)
+    .bind(description)
+    .bind(is_secret)
+    .fetch_one(pool)
+    .await;
+}
+
+pub async fn update_app_variable(
+    pool: &DbPool,
+    app_id: Uuid,
+    var_id: Uuid,
+    value: Option<&str>,
+    description: Option<&str>,
+    is_secret: Option<bool>,
+) -> Result<Option<VariableInfo>, sqlx::Error> {
+    let sql = format!(
+        "UPDATE app_variables SET \
+            value = COALESCE($3, value), \
+            description = COALESCE($4, description), \
+            is_secret = COALESCE($5, is_secret), \
+            updated_at = {} \
+        WHERE id = $2 AND application_id = $1 \
+        RETURNING id, application_id, name, value, description, is_secret, created_at, updated_at",
+        crate::db::sql::now()
+    );
+
+    #[cfg(feature = "postgres")]
+    return sqlx::query_as::<_, VariableInfo>(&sql)
+        .bind(app_id)
+        .bind(var_id)
+        .bind(value)
+        .bind(description)
+        .bind(is_secret)
+        .fetch_optional(pool)
+        .await;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    return sqlx::query_as::<_, VariableInfo>(&sql)
+        .bind(DbUuid::from(app_id))
+        .bind(DbUuid::from(var_id))
+        .bind(value)
+        .bind(description)
+        .bind(is_secret)
+        .fetch_optional(pool)
+        .await;
+}
+
+pub async fn delete_app_variable(
+    pool: &DbPool,
+    var_id: Uuid,
+    app_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    let result = sqlx::query("DELETE FROM app_variables WHERE id = $1 AND application_id = $2")
+        .bind(var_id)
+        .bind(app_id)
+        .execute(pool)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query("DELETE FROM app_variables WHERE id = $1 AND application_id = $2")
+        .bind(DbUuid::from(var_id))
+        .bind(DbUuid::from(app_id))
+        .execute(pool)
+        .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Resolve variables for an application into a HashMap (used by executor).
+pub async fn resolve_variables(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<std::collections::HashMap<String, String>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT name, value FROM app_variables WHERE application_id = $1",
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().collect())
+}
+
+// ============================================================================
+// Component Groups
+// ============================================================================
+
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct GroupInfo {
+    pub id: DbUuid,
+    pub application_id: DbUuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub color: Option<String>,
+    pub display_order: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub async fn list_component_groups(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<GroupInfo>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    return sqlx::query_as::<_, GroupInfo>(
+        "SELECT id, application_id, name, description, color, display_order, created_at \
+         FROM component_groups WHERE application_id = $1 ORDER BY display_order, name",
+    )
+    .bind(app_id)
+    .fetch_all(pool)
+    .await;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    return sqlx::query_as::<_, GroupInfo>(
+        "SELECT id, application_id, name, description, color, display_order, created_at \
+         FROM component_groups WHERE application_id = $1 ORDER BY display_order, name",
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_all(pool)
+    .await;
+}
+
+pub async fn create_component_group(
+    pool: &DbPool,
+    group_id: Uuid,
+    app_id: Uuid,
+    name: &str,
+    description: Option<&str>,
+    color: &str,
+    display_order: i32,
+) -> Result<GroupInfo, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    return sqlx::query_as::<_, GroupInfo>(
+        r#"INSERT INTO component_groups (id, application_id, name, description, color, display_order)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, application_id, name, description, color, display_order, created_at"#,
+    )
+    .bind(group_id)
+    .bind(app_id)
+    .bind(name)
+    .bind(description)
+    .bind(color)
+    .bind(display_order)
+    .fetch_one(pool)
+    .await;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    return sqlx::query_as::<_, GroupInfo>(
+        r#"INSERT INTO component_groups (id, application_id, name, description, color, display_order)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, application_id, name, description, color, display_order, created_at"#,
+    )
+    .bind(DbUuid::from(group_id))
+    .bind(DbUuid::from(app_id))
+    .bind(name)
+    .bind(description)
+    .bind(color)
+    .bind(display_order)
+    .fetch_one(pool)
+    .await;
+}
+
+pub async fn update_component_group(
+    pool: &DbPool,
+    app_id: Uuid,
+    group_id: Uuid,
+    name: Option<&str>,
+    description: Option<&str>,
+    color: Option<&str>,
+    display_order: Option<i32>,
+) -> Result<Option<GroupInfo>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    return sqlx::query_as::<_, GroupInfo>(
+        r#"UPDATE component_groups SET
+               name = COALESCE($3, name),
+               description = COALESCE($4, description),
+               color = COALESCE($5, color),
+               display_order = COALESCE($6, display_order)
+           WHERE id = $2 AND application_id = $1
+           RETURNING id, application_id, name, description, color, display_order, created_at"#,
+    )
+    .bind(app_id)
+    .bind(group_id)
+    .bind(name)
+    .bind(description)
+    .bind(color)
+    .bind(display_order)
+    .fetch_optional(pool)
+    .await;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    return sqlx::query_as::<_, GroupInfo>(
+        r#"UPDATE component_groups SET
+               name = COALESCE($3, name),
+               description = COALESCE($4, description),
+               color = COALESCE($5, color),
+               display_order = COALESCE($6, display_order)
+           WHERE id = $2 AND application_id = $1
+           RETURNING id, application_id, name, description, color, display_order, created_at"#,
+    )
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(group_id))
+    .bind(name)
+    .bind(description)
+    .bind(color)
+    .bind(display_order)
+    .fetch_optional(pool)
+    .await;
+}
+
+pub async fn delete_component_group(
+    pool: &DbPool,
+    group_id: Uuid,
+    app_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    let result = sqlx::query("DELETE FROM component_groups WHERE id = $1 AND application_id = $2")
+        .bind(group_id)
+        .bind(app_id)
+        .execute(pool)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query("DELETE FROM component_groups WHERE id = $1 AND application_id = $2")
+        .bind(DbUuid::from(group_id))
+        .bind(DbUuid::from(app_id))
+        .execute(pool)
+        .await?;
+
+    Ok(result.rows_affected() > 0)
+}
