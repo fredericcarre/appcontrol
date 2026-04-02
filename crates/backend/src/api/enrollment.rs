@@ -90,6 +90,7 @@ pub async fn create_enrollment_token(
     .await
     .ok();
 
+    #[cfg(feature = "postgres")]
     let id = sqlx::query_scalar::<_, DbUuid>(
         r#"INSERT INTO enrollment_tokens
            (organization_id, token_hash, token_prefix, name, max_uses, expires_at, scope, created_by)
@@ -106,6 +107,28 @@ pub async fn create_enrollment_token(
     .bind(crate::db::bind_id(user.user_id))
     .fetch_one(&state.db)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let id = {
+        let new_id = DbUuid::new_v4();
+        sqlx::query(
+            "INSERT INTO enrollment_tokens \
+             (id, organization_id, token_hash, token_prefix, name, max_uses, expires_at, scope, created_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(new_id)
+        .bind(crate::db::bind_id(user.organization_id))
+        .bind(&token_hash)
+        .bind(token_prefix)
+        .bind(&req.name)
+        .bind(req.max_uses)
+        .bind(expires_at.to_rfc3339())
+        .bind(scope)
+        .bind(crate::db::bind_id(user.user_id))
+        .execute(&state.db)
+        .await?;
+        new_id
+    };
 
     Ok(Json(json!({
         "id": id,
