@@ -49,7 +49,7 @@ pub struct GatewayRow {
 /// Response struct for gateway list with additional computed fields
 #[derive(Debug, Serialize)]
 pub struct GatewayListItem {
-    pub id: DbUuid,
+    pub id: Uuid,
     pub name: String,
     pub zone: String,
     pub status: String, // "active", "suspended"
@@ -61,7 +61,7 @@ pub struct GatewayListItem {
     pub version: Option<String>,
     pub last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
     // Site information
-    pub site_id: Option<DbUuid>,
+    pub site_id: Option<Uuid>,
     pub site_name: Option<String>,
     pub site_code: Option<String>,
 }
@@ -69,14 +69,14 @@ pub struct GatewayListItem {
 /// Site summary for grouping gateways
 #[derive(Debug, Serialize)]
 pub struct SiteSummary {
-    pub site_id: Option<DbUuid>,
+    pub site_id: Option<Uuid>,
     pub site_name: String,
     pub site_code: String,
     /// DEPRECATED: Legacy zone field for backward compatibility. Same as site_code.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zone: Option<String>,
     pub gateway_count: i64,
-    pub active_gateway_id: Option<DbUuid>,
+    pub active_gateway_id: Option<Uuid>,
     pub failover_active: bool,
     pub gateways: Vec<GatewayListItem>,
 }
@@ -219,22 +219,28 @@ pub async fn get_gateway(
         return Err(ApiError::Forbidden);
     }
 
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"SELECT id, organization_id, name, zone, hostname, port, site_id,
-                  certificate_fingerprint, is_active,
-                  COALESCE(is_primary, false) as is_primary,
-                  COALESCE(priority, 0) as priority,
-                  version, last_heartbeat_at, created_at
-           FROM gateways
-           WHERE id = $1 AND organization_id = $2"#,
-    )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let gw = state
+        .gateway_repo
+        .get_gateway(id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
-    Ok(Json(json!(gw)))
+    Ok(Json(json!({
+        "id": gw.id,
+        "organization_id": gw.organization_id,
+        "name": gw.name,
+        "zone": gw.zone,
+        "hostname": gw.hostname,
+        "port": gw.port,
+        "site_id": gw.site_id,
+        "certificate_fingerprint": gw.certificate_fingerprint,
+        "is_active": gw.is_active,
+        "is_primary": gw.is_primary,
+        "priority": gw.priority,
+        "version": gw.version,
+        "last_heartbeat_at": gw.last_heartbeat_at,
+        "created_at": gw.created_at,
+    })))
 }
 
 pub async fn update_gateway(
