@@ -14,8 +14,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+#[allow(unused_imports)]
 use crate::db::DbUuid;
 use crate::error::{ApiError, OptionExt};
+use crate::repository::gateway_queries as gw_repo;
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -255,15 +257,7 @@ pub async fn update_gateway(
 
     // If site_id is provided, verify it belongs to the same org
     if let Some(site_id) = req.site_id {
-        let site_exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM sites WHERE id = $1 AND organization_id = $2)",
-        )
-        .bind(crate::db::bind_id(site_id))
-        .bind(crate::db::bind_id(user.organization_id))
-        .fetch_one(&state.db)
-        .await?;
-
-        if !site_exists {
+        if !gw_repo::site_exists_in_org(&state.db, site_id, *user.organization_id).await? {
             return Err(ApiError::Validation(
                 "site_id does not exist in this organization".to_string(),
             ));
@@ -272,13 +266,7 @@ pub async fn update_gateway(
 
     // If setting as primary, first unset any existing primary in the same site
     if req.is_primary == Some(true) {
-        let gw_info: Option<(Option<DbUuid>, String)> = sqlx::query_as(
-            "SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2",
-        )
-        .bind(crate::db::bind_id(id))
-        .bind(crate::db::bind_id(user.organization_id))
-        .fetch_optional(&state.db)
-        .await?;
+        let gw_info = gw_repo::get_gateway_site_and_zone(&state.db, id, *user.organization_id).await?;
 
         if let Some((site_id, zone)) = gw_info {
             if let Some(sid) = site_id {
@@ -360,17 +348,9 @@ pub async fn set_gateway_primary(
     }
 
     // Get the gateway's site_id
-    let gw: Option<(Option<Uuid>, String)> =
-        sqlx::query_as("SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2")
-            .bind(gateway_id)
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
-
-    let (site_id, zone) = match gw {
-        Some((s, z)) => (s, z),
-        None => return Err(ApiError::NotFound),
-    };
+    let (site_id, zone) = gw_repo::get_gateway_site_and_zone(&state.db, gateway_id, *user.organization_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     crate::middleware::audit::log_action(
         &state.db,
@@ -436,29 +416,11 @@ pub async fn list_gateway_agents(
     Path(gateway_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify gateway belongs to user's org
-    let gateway_exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM gateways WHERE id = $1 AND organization_id = $2)",
-    )
-    .bind(gateway_id)
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_one(&state.db)
-    .await?;
-
-    if !gateway_exists {
+    if !gw_repo::gateway_exists_in_org(&state.db, gateway_id, *user.organization_id).await? {
         return Err(ApiError::NotFound);
     }
 
-    let agents =
-        sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
-            r#"SELECT id, hostname, is_active, last_heartbeat_at
-           FROM agents
-           WHERE gateway_id = $1 AND organization_id = $2
-           ORDER BY hostname"#,
-        )
-        .bind(gateway_id)
-        .bind(crate::db::bind_id(user.organization_id))
-        .fetch_all(&state.db)
-        .await?;
+    let agents = gw_repo::list_gateway_agents(&state.db, gateway_id, *user.organization_id).await?;
 
     // Get live connection status from the WebSocket hub
     let connected_agents = state.ws_hub.connected_agent_ids();
@@ -466,13 +428,13 @@ pub async fn list_gateway_agents(
 
     let agents_json: Vec<Value> = agents
         .into_iter()
-        .map(|(id, hostname, is_active, last_heartbeat_at)| {
-            let connected = connected_set.contains(&id);
+        .map(|a| {
+            let connected = connected_set.contains(&a.id);
             json!({
-                "id": id,
-                "hostname": hostname,
-                "is_active": is_active,
-                "last_heartbeat_at": last_heartbeat_at,
+                "id": a.id,
+                "hostname": a.hostname,
+                "is_active": a.is_active,
+                "last_heartbeat_at": a.last_heartbeat_at,
                 "connected": connected,
             })
         })
@@ -502,39 +464,18 @@ pub async fn suspend_gateway(
     .await
     .ok();
 
-    #[cfg(feature = "postgres")]
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"UPDATE gateways SET is_active = false
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active,
-                     COALESCE(is_primary, false) as is_primary,
-                     COALESCE(priority, 0) as priority,
-                     version, last_heartbeat_at, created_at"#,
-    )
-    .bind(gateway_id)
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let gw = gw_repo::suspend_gateway(&state.db, gateway_id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"UPDATE gateways SET is_active = 0
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active,
-                     COALESCE(is_primary, 0) as is_primary,
-                     COALESCE(priority, 0) as priority,
-                     version, last_heartbeat_at, created_at"#,
-    )
-    .bind(DbUuid::from(gateway_id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
-
-    Ok(Json(json!(gw)))
+    Ok(Json(json!({
+        "id": gw.id, "organization_id": gw.organization_id, "name": gw.name,
+        "zone": gw.zone, "hostname": gw.hostname, "port": gw.port,
+        "site_id": gw.site_id, "certificate_fingerprint": gw.certificate_fingerprint,
+        "is_active": gw.is_active, "is_primary": gw.is_primary, "priority": gw.priority,
+        "version": gw.version, "last_heartbeat_at": gw.last_heartbeat_at,
+        "created_at": gw.created_at,
+    })))
 }
 
 /// POST /api/v1/gateways/:id/activate — Activate a suspended gateway
@@ -558,50 +499,29 @@ pub async fn activate_gateway(
     .await
     .ok();
 
-    #[cfg(feature = "postgres")]
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"UPDATE gateways SET is_active = true
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active,
-                     COALESCE(is_primary, false) as is_primary,
-                     COALESCE(priority, 0) as priority,
-                     version, last_heartbeat_at, created_at"#,
-    )
-    .bind(gateway_id)
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"UPDATE gateways SET is_active = 1
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active,
-                     COALESCE(is_primary, 0) as is_primary,
-                     COALESCE(priority, 0) as priority,
-                     version, last_heartbeat_at, created_at"#,
-    )
-    .bind(DbUuid::from(gateway_id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let gw = gw_repo::activate_gateway(&state.db, gateway_id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
     // Send ClearBlocklist to the gateway so all agents can reconnect
     // This fixes the bug where agents remain blocked after gateway activation
     let clear_msg = appcontrol_common::GatewayEnvelope::ClearBlocklist;
-    if let Ok(json) = serde_json::to_string(&clear_msg) {
-        state.ws_hub.send_to_gateway(gateway_id, &json);
+    if let Ok(json_str) = serde_json::to_string(&clear_msg) {
+        state.ws_hub.send_to_gateway(gateway_id, &json_str);
         tracing::info!(
             gateway_id = %gateway_id,
             "Sent ClearBlocklist to gateway after activation"
         );
     }
 
-    Ok(Json(json!(gw)))
+    Ok(Json(json!({
+        "id": gw.id, "organization_id": gw.organization_id, "name": gw.name,
+        "zone": gw.zone, "hostname": gw.hostname, "port": gw.port,
+        "site_id": gw.site_id, "certificate_fingerprint": gw.certificate_fingerprint,
+        "is_active": gw.is_active, "is_primary": gw.is_primary, "priority": gw.priority,
+        "version": gw.version, "last_heartbeat_at": gw.last_heartbeat_at,
+        "created_at": gw.created_at,
+    })))
 }
 
 /// DELETE /api/v1/gateways/:id — Delete a gateway
@@ -658,17 +578,9 @@ pub async fn block_gateway(
     }
 
     // Get the gateway to verify it exists and get agent count
-    let gw: Option<(String, String)> =
-        sqlx::query_as("SELECT name, zone FROM gateways WHERE id = $1 AND organization_id = $2")
-            .bind(gateway_id)
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
-
-    let (name, zone) = match gw {
-        Some(g) => g,
-        None => return Err(ApiError::NotFound),
-    };
+    let (name, zone) = gw_repo::get_gateway_name_and_zone(&state.db, gateway_id, *user.organization_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     // Log before execute
     crate::middleware::audit::log_action(
@@ -777,13 +689,7 @@ pub async fn revoke_agent_cert(
     }
 
     // Get agent's current fingerprint
-    let agent: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT certificate_fingerprint, certificate_cn FROM agents WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?;
+    let agent = gw_repo::get_agent_cert_info(&state.db, agent_id, *user.organization_id).await?;
 
     let (fingerprint, cn) = match agent {
         Some((Some(fp), cn)) => (fp, cn),
@@ -834,10 +740,10 @@ pub async fn revoke_agent_cert(
     .execute(&mut *tx)
     .await?;
 
-    // Deactivate the agent
+    // Deactivate the agent (inside transaction — use raw SQL for tx support)
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE agents SET is_active = false, identity_verified = false WHERE id = $1")
-        .bind(crate::db::bind_id(agent_id))
+        .bind(agent_id)
         .execute(&mut *tx)
         .await?;
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -866,13 +772,7 @@ pub async fn revoke_gateway_cert(
         return Err(ApiError::Forbidden);
     }
 
-    let gw: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT certificate_fingerprint, certificate_cn FROM gateways WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(gateway_id)
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?;
+    let gw = gw_repo::get_gateway_cert_info(&state.db, gateway_id, *user.organization_id).await?;
 
     let (fingerprint, cn) = match gw {
         Some((Some(fp), cn)) => (fp, cn),
@@ -949,39 +849,19 @@ pub async fn list_revoked_certificates(
         return Err(ApiError::Forbidden);
     }
 
-    let certs = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            Option<String>,
-            Option<Uuid>,
-            Option<Uuid>,
-            String,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
-        r#"SELECT id, fingerprint, cn, agent_id, gateway_id, reason, revoked_at
-           FROM revoked_certificates
-           WHERE organization_id = $1
-           ORDER BY revoked_at DESC
-           LIMIT 100"#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
+    let certs = gw_repo::list_revoked_certificates(&state.db, *user.organization_id).await?;
 
     let certs_json: Vec<Value> = certs
         .into_iter()
-        .map(|(id, fp, cn, agent_id, gateway_id, reason, revoked_at)| {
+        .map(|c| {
             json!({
-                "id": id,
-                "fingerprint": fp,
-                "cn": cn,
-                "agent_id": agent_id,
-                "gateway_id": gateway_id,
-                "reason": reason,
-                "revoked_at": revoked_at,
+                "id": c.id,
+                "fingerprint": c.fingerprint,
+                "cn": c.cn,
+                "agent_id": c.agent_id,
+                "gateway_id": c.gateway_id,
+                "reason": c.reason,
+                "revoked_at": c.revoked_at,
             })
         })
         .collect();
@@ -992,14 +872,7 @@ pub async fn list_revoked_certificates(
 /// Check if a certificate fingerprint is revoked.
 /// Used internally by the gateway mTLS verification.
 pub async fn is_cert_revoked(db: &crate::db::DbPool, org_id: DbUuid, fingerprint: &str) -> bool {
-    sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM revoked_certificates WHERE organization_id = $1 AND fingerprint = $2)",
-    )
-    .bind(org_id)
-    .bind(fingerprint)
-    .fetch_one(db)
-    .await
-    .unwrap_or(false)
+    gw_repo::is_cert_revoked_in_org(db, *org_id, fingerprint).await
 }
 
 /// Verify an agent's certificate fingerprint matches what we issued (pinning).
@@ -1009,29 +882,7 @@ pub async fn verify_agent_cert_pinning(
     agent_id: DbUuid,
     presented_fingerprint: &str,
 ) -> bool {
-    #[cfg(feature = "postgres")]
-    let stored: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT certificate_fingerprint FROM agents WHERE id = $1 AND is_active = true AND identity_verified = true",
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten();
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let stored: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT certificate_fingerprint FROM agents WHERE id = $1 AND is_active = 1 AND identity_verified = 1",
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten();
-
-    match stored {
-        Some(Some(fp)) => fp == presented_fingerprint,
-        _ => false,
-    }
+    gw_repo::verify_agent_cert_pinning(db, *agent_id, presented_fingerprint).await
 }
 
 /// Helper: Transition all components of an agent to UNREACHABLE when gateway is blocked.
@@ -1043,29 +894,15 @@ async fn transition_gateway_agent_components_to_unreachable(
 ) -> i32 {
     use appcontrol_common::ComponentState;
 
-    #[derive(sqlx::FromRow)]
-    struct ComponentInfo {
-        id: DbUuid,
-        name: String,
-        application_id: DbUuid,
-        app_name: String,
-    }
-
-    let components: Vec<ComponentInfo> = sqlx::query_as(
-        r#"SELECT c.id, c.name, c.application_id, a.name AS app_name
-           FROM components c
-           JOIN applications a ON c.application_id = a.id
-           WHERE c.agent_id = $1"#,
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let components = match gw_repo::get_agent_components_for_unreachable(&state.db, *agent_id).await {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
 
     let mut affected = 0;
 
     for comp in &components {
-        let current_state = match crate::core::fsm::get_current_state(&state.db, comp.id).await {
+        let current_state = match crate::core::fsm::get_current_state(&state.db, crate::db::bind_id(comp.id)).await {
             Ok(s) => s,
             Err(_) => continue,
         };
@@ -1083,31 +920,13 @@ async fn transition_gateway_agent_components_to_unreachable(
             "agent_id": agent_id.to_string(),
             "gateway_id": gateway_id.to_string(),
         });
-        #[cfg(feature = "postgres")]
-        let result = sqlx::query(
-            r#"
-            INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, 'UNREACHABLE', 'gateway_blocked', $3)
-            "#,
-        )
-        .bind(comp.id)
-        .bind(current_state.to_string())
-        .bind(&details_json)
-        .execute(&state.db)
-        .await;
 
-        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        let result = sqlx::query(
-            r#"
-            INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, $3, 'UNREACHABLE', 'gateway_blocked', $4)
-            "#,
+        let result = gw_repo::insert_gateway_blocked_transition(
+            &state.db,
+            comp.id,
+            &current_state.to_string(),
+            &details_json,
         )
-        .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
-        .bind(comp.id)
-        .bind(current_state.to_string())
-        .bind(serde_json::to_string(&details_json).unwrap_or_default())
-        .execute(&state.db)
         .await;
 
         if result.is_ok() {
@@ -1116,8 +935,8 @@ async fn transition_gateway_agent_components_to_unreachable(
             state.ws_hub.broadcast(
                 comp.application_id,
                 appcontrol_common::WsEvent::StateChange {
-                    component_id: *comp.id,
-                    app_id: *comp.application_id,
+                    component_id: comp.id,
+                    app_id: comp.application_id,
                     component_name: Some(comp.name.clone()),
                     app_name: Some(comp.app_name.clone()),
                     from: current_state,
