@@ -9,7 +9,14 @@
 //! - Handlers are testable with mock repositories
 //! - SQL is centralized, not scattered across 50+ handler files
 
+pub mod agents;
 pub mod apps;
+pub mod components;
+pub mod enrollment;
+pub mod gateways;
+pub mod permissions;
+pub mod sites;
+pub mod teams;
 
 use async_trait::async_trait;
 use uuid::Uuid;
