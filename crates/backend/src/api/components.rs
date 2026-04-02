@@ -1336,62 +1336,28 @@ pub async fn resolve_components_for_agent(
     ip_addresses: &[String],
 ) {
     let agent_id: Uuid = agent_id.into();
-    // Match components by hostname
-    let result =
-        sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
-            .bind(crate::db::bind_id(agent_id))
-            .bind(hostname)
-            .execute(pool)
-            .await;
-
-    if let Ok(r) = result {
-        if r.rows_affected() > 0 {
-            tracing::info!(
-                agent_id = %agent_id,
-                hostname = %hostname,
-                count = r.rows_affected(),
-                "Resolved components by hostname"
-            );
-        }
-    }
-
-    // Match components by any of the agent's IP addresses
-    for ip in ip_addresses {
-        let result =
-            sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
-                .bind(crate::db::bind_id(agent_id))
-                .bind(ip)
-                .execute(pool)
-                .await;
-
-        if let Ok(r) = result {
-            if r.rows_affected() > 0 {
-                tracing::info!(
-                    agent_id = %agent_id,
-                    ip = %ip,
-                    count = r.rows_affected(),
-                    "Resolved components by IP address"
-                );
+    let repo = crate::repository::components::create_component_repository(pool.clone());
+    match repo.auto_bind_agent(agent_id, hostname, ip_addresses).await {
+        Ok(count) => {
+            if count > 0 {
+                tracing::info!(agent_id = %agent_id, hostname = %hostname, count = count, "Auto-bound components to agent");
             }
+        }
+        Err(e) => {
+            tracing::warn!(agent_id = %agent_id, "Failed to auto-bind components: {}", e);
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Component Metrics (from check command stdout)
-// ---------------------------------------------------------------------------
-
-/// Get the latest metrics for a component.
-/// Metrics are extracted from check command stdout (any valid JSON).
+/// Get latest metrics for a component.
 pub async fn get_component_metrics(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(component_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        state.component_repo.get_component_app_id(component_id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state.component_repo.get_component_app_id(component_id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
@@ -1399,16 +1365,7 @@ pub async fn get_component_metrics(
     }
 
     // Get latest check event with metrics
-    let latest = sqlx::query_as::<_, (serde_json::Value, i16, chrono::DateTime<chrono::Utc>)>(
-        r#"SELECT metrics, exit_code, created_at
-           FROM check_events
-           WHERE component_id = $1 AND metrics IS NOT NULL
-           ORDER BY created_at DESC
-           LIMIT 1"#,
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_optional(&state.db)
-    .await?;
+    let latest = crate::repository::queries::get_latest_check_metrics(&state.db, component_id).await?;
 
     match latest {
         Some((metrics, exit_code, at)) => Ok(Json(json!({
@@ -1441,17 +1398,8 @@ pub async fn get_component_metrics_history(
         return Err(ApiError::Forbidden);
     }
 
-    // Get last 100 check events with metrics (last ~1 hour at 30s intervals)
-    let history = sqlx::query_as::<_, (serde_json::Value, i16, chrono::DateTime<chrono::Utc>)>(
-        r#"SELECT metrics, exit_code, created_at
-           FROM check_events
-           WHERE component_id = $1 AND metrics IS NOT NULL
-           ORDER BY created_at DESC
-           LIMIT 100"#,
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_all(&state.db)
-    .await?;
+    // Get last 100 check events with metrics
+    let history = crate::repository::queries::get_metrics_history(&state.db, component_id, 100).await?;
 
     let points: Vec<Value> = history
         .into_iter()
@@ -1512,25 +1460,7 @@ pub async fn list_site_overrides(
         agent_hostname: Option<String>,
     }
 
-    let overrides = sqlx::query_as::<_, SiteOverrideRow>(
-        r#"
-        SELECT
-            so.id, so.component_id, so.site_id,
-            so.agent_id_override, so.check_cmd_override, so.start_cmd_override,
-            so.stop_cmd_override, so.rebuild_cmd_override, so.env_vars_override,
-            so.created_at,
-            s.name as site_name, s.code as site_code, s.site_type,
-            a.hostname as agent_hostname
-        FROM site_overrides so
-        JOIN sites s ON so.site_id = s.id
-        LEFT JOIN agents a ON so.agent_id_override = a.id
-        WHERE so.component_id = $1
-        ORDER BY s.site_type, s.name
-        "#,
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_all(&state.db)
-    .await?;
+    let overrides = crate::repository::queries::list_site_overrides(&state.db, component_id).await?;
 
     let data: Vec<Value> = overrides
         .into_iter()
@@ -1588,11 +1518,9 @@ pub async fn upsert_site_override(
     }
 
     // Verify site exists
-    let _site_exists = sqlx::query_scalar::<_, DbUuid>("SELECT id FROM sites WHERE id = $1")
-        .bind(crate::db::bind_id(site_id))
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_not_found()?;
+    if !crate::repository::queries::site_exists(&state.db, site_id).await? {
+        return Err(ApiError::NotFound);
+    }
 
     // Log before execute
     log_action(
@@ -1609,33 +1537,13 @@ pub async fn upsert_site_override(
     .await
     .ok();
 
-    // Upsert
-    let id = sqlx::query_scalar::<_, DbUuid>(
-        r#"
-        INSERT INTO site_overrides (component_id, site_id, agent_id_override,
-            check_cmd_override, start_cmd_override, stop_cmd_override,
-            rebuild_cmd_override, env_vars_override)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT (component_id, site_id) DO UPDATE SET
-            agent_id_override = EXCLUDED.agent_id_override,
-            check_cmd_override = EXCLUDED.check_cmd_override,
-            start_cmd_override = EXCLUDED.start_cmd_override,
-            stop_cmd_override = EXCLUDED.stop_cmd_override,
-            rebuild_cmd_override = EXCLUDED.rebuild_cmd_override,
-            env_vars_override = EXCLUDED.env_vars_override
-        RETURNING id
-        "#,
-    )
-    .bind(crate::db::bind_id(component_id))
-    .bind(crate::db::bind_id(site_id))
-    .bind(req.agent_id_override)
-    .bind(&req.check_cmd_override)
-    .bind(&req.start_cmd_override)
-    .bind(&req.stop_cmd_override)
-    .bind(&req.rebuild_cmd_override)
-    .bind(&req.env_vars_override)
-    .fetch_one(&state.db)
-    .await?;
+    // Upsert via repository
+    let id = crate::repository::queries::upsert_site_override(
+        &state.db, component_id, site_id,
+        req.check_cmd_override.as_deref(), req.start_cmd_override.as_deref(),
+        req.stop_cmd_override.as_deref(), req.rebuild_cmd_override.as_deref(),
+        req.env_vars_override.as_ref(), req.agent_id_override,
+    ).await?;
 
     Ok(Json(json!({
         "id": id,
@@ -1675,11 +1583,7 @@ pub async fn delete_site_override(
     .await
     .ok();
 
-    sqlx::query("DELETE FROM site_overrides WHERE component_id = $1 AND site_id = $2")
-        .bind(crate::db::bind_id(component_id))
-        .bind(crate::db::bind_id(site_id))
-        .execute(&state.db)
-        .await?;
+    crate::repository::queries::delete_site_override(&state.db, component_id, site_id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

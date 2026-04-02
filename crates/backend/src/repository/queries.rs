@@ -444,3 +444,225 @@ pub async fn site_exists(pool: &DbPool, site_id: Uuid) -> Result<bool, sqlx::Err
         Ok(row.is_some())
     }
 }
+
+/// Get latest check event metrics for a component.
+pub async fn get_latest_check_metrics(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<Option<(Value, i16, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as(
+            r#"SELECT metrics, exit_code, created_at FROM check_events
+               WHERE component_id = $1 AND metrics IS NOT NULL
+               ORDER BY created_at DESC LIMIT 1"#,
+        )
+        .bind(component_id)
+        .fetch_optional(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        #[derive(sqlx::FromRow)]
+        struct Row { metrics: DbJson, exit_code: i16, created_at: chrono::DateTime<chrono::Utc> }
+        let row = sqlx::query_as::<_, Row>(
+            r#"SELECT metrics, exit_code, created_at FROM check_events
+               WHERE component_id = $1 AND metrics IS NOT NULL
+               ORDER BY created_at DESC LIMIT 1"#,
+        )
+        .bind(DbUuid::from(component_id))
+        .fetch_optional(pool)
+        .await?;
+        Ok(row.map(|r| (r.metrics.into(), r.exit_code, r.created_at)))
+    }
+}
+
+/// Get metrics history for a component (for charts).
+pub async fn get_metrics_history(
+    pool: &DbPool,
+    component_id: Uuid,
+    limit: i64,
+) -> Result<Vec<(Value, i16, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as(
+            r#"SELECT metrics, exit_code, created_at FROM check_events
+               WHERE component_id = $1 AND metrics IS NOT NULL
+               ORDER BY created_at DESC LIMIT $2"#,
+        )
+        .bind(component_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        #[derive(sqlx::FromRow)]
+        struct Row { metrics: DbJson, exit_code: i16, created_at: chrono::DateTime<chrono::Utc> }
+        let rows = sqlx::query_as::<_, Row>(
+            r#"SELECT metrics, exit_code, created_at FROM check_events
+               WHERE component_id = $1 AND metrics IS NOT NULL
+               ORDER BY created_at DESC LIMIT $2"#,
+        )
+        .bind(DbUuid::from(component_id))
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| (r.metrics.into(), r.exit_code, r.created_at)).collect())
+    }
+}
+
+/// List site overrides for a component.
+pub async fn list_site_overrides(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<Vec<SiteOverrideInfo>, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        #[cfg(feature = "postgres")]
+        id: Uuid,
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        id: DbUuid,
+        #[cfg(feature = "postgres")]
+        component_id: Uuid,
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        component_id: DbUuid,
+        #[cfg(feature = "postgres")]
+        site_id: Uuid,
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        site_id: DbUuid,
+        site_name: String,
+        site_code: String,
+        check_cmd_override: Option<String>,
+        start_cmd_override: Option<String>,
+        stop_cmd_override: Option<String>,
+        rebuild_cmd_override: Option<String>,
+        env_vars_override: Option<Value>,
+        site_type: String,
+        #[cfg(feature = "postgres")]
+        agent_id_override: Option<Uuid>,
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        agent_id_override: Option<DbUuid>,
+        agent_hostname: Option<String>,
+        #[cfg(feature = "postgres")]
+        created_at: chrono::DateTime<chrono::Utc>,
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        created_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    let sql = r#"SELECT so.id, so.component_id, so.site_id, s.name as site_name, s.code as site_code, s.site_type,
+        so.check_cmd_override, so.start_cmd_override, so.stop_cmd_override,
+        so.rebuild_cmd_override, so.env_vars_override,
+        so.agent_id_override, a.hostname as agent_hostname, so.created_at
+     FROM site_overrides so
+     JOIN sites s ON so.site_id = s.id
+     LEFT JOIN agents a ON so.agent_id_override = a.id
+     WHERE so.component_id = $1
+     ORDER BY s.name"#;
+
+    #[cfg(feature = "postgres")]
+    {
+        let rows = sqlx::query_as::<_, Row>(sql).bind(component_id).fetch_all(pool).await?;
+        Ok(rows.into_iter().map(|r| SiteOverrideInfo {
+            id: r.id, component_id: r.component_id, site_id: r.site_id,
+            site_name: r.site_name, site_code: r.site_code,
+            check_cmd_override: r.check_cmd_override, start_cmd_override: r.start_cmd_override,
+            stop_cmd_override: r.stop_cmd_override, rebuild_cmd_override: r.rebuild_cmd_override,
+            env_vars_override: r.env_vars_override,
+            site_type: r.site_type, agent_id_override: r.agent_id_override,
+            agent_hostname: r.agent_hostname, created_at: r.created_at,
+        }).collect())
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let rows = sqlx::query_as::<_, Row>(sql).bind(DbUuid::from(component_id)).fetch_all(pool).await?;
+        Ok(rows.into_iter().map(|r| SiteOverrideInfo {
+            id: r.id.into_inner(), component_id: r.component_id.into_inner(), site_id: r.site_id.into_inner(),
+            site_name: r.site_name, site_code: r.site_code, site_type: r.site_type,
+            check_cmd_override: r.check_cmd_override, start_cmd_override: r.start_cmd_override,
+            stop_cmd_override: r.stop_cmd_override, rebuild_cmd_override: r.rebuild_cmd_override,
+            env_vars_override: r.env_vars_override,
+            agent_id_override: r.agent_id_override.map(|a| a.into_inner()),
+            agent_hostname: r.agent_hostname, created_at: r.created_at,
+        }).collect())
+    }
+}
+
+/// Site override info.
+#[derive(Debug, serde::Serialize)]
+pub struct SiteOverrideInfo {
+    pub id: Uuid,
+    pub component_id: Uuid,
+    pub site_id: Uuid,
+    pub site_name: String,
+    pub site_code: String,
+    pub site_type: String,
+    pub check_cmd_override: Option<String>,
+    pub start_cmd_override: Option<String>,
+    pub stop_cmd_override: Option<String>,
+    pub rebuild_cmd_override: Option<String>,
+    pub env_vars_override: Option<Value>,
+    pub agent_id_override: Option<Uuid>,
+    pub agent_hostname: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Upsert a site override.
+pub async fn upsert_site_override(
+    pool: &DbPool,
+    component_id: Uuid,
+    site_id: Uuid,
+    check_cmd: Option<&str>,
+    start_cmd: Option<&str>,
+    stop_cmd: Option<&str>,
+    rebuild_cmd: Option<&str>,
+    env_vars: Option<&Value>,
+    agent_id: Option<Uuid>,
+) -> Result<Uuid, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO site_overrides (component_id, site_id, check_cmd_override, start_cmd_override, stop_cmd_override, rebuild_cmd_override, env_vars_override, agent_id_override) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+             ON CONFLICT (component_id, site_id) DO UPDATE SET check_cmd_override = $3, start_cmd_override = $4, stop_cmd_override = $5, rebuild_cmd_override = $6, env_vars_override = $7, agent_id_override = $8 \
+             RETURNING id"
+        )
+        .bind(component_id).bind(site_id).bind(check_cmd).bind(start_cmd).bind(stop_cmd).bind(rebuild_cmd).bind(env_vars).bind(agent_id)
+        .fetch_one(pool).await?;
+        Ok(id)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let id = DbUuid::new_v4();
+        let existing: Option<DbUuid> = sqlx::query_scalar(
+            "SELECT id FROM site_overrides WHERE component_id = $1 AND site_id = $2"
+        ).bind(DbUuid::from(component_id)).bind(DbUuid::from(site_id)).fetch_optional(pool).await?;
+        if let Some(existing_id) = existing {
+            sqlx::query("UPDATE site_overrides SET check_cmd_override = $3, start_cmd_override = $4, stop_cmd_override = $5, rebuild_cmd_override = $6, env_vars_override = $7, agent_id_override = $8 WHERE component_id = $1 AND site_id = $2")
+                .bind(DbUuid::from(component_id)).bind(DbUuid::from(site_id)).bind(check_cmd).bind(start_cmd).bind(stop_cmd).bind(rebuild_cmd).bind(env_vars.map(|v| serde_json::to_string(v).unwrap_or_default())).bind(agent_id.map(DbUuid::from))
+                .execute(pool).await?;
+            Ok(existing_id.into_inner())
+        } else {
+            sqlx::query("INSERT INTO site_overrides (id, component_id, site_id, check_cmd_override, start_cmd_override, stop_cmd_override, rebuild_cmd_override, env_vars_override, agent_id_override) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")
+                .bind(id).bind(DbUuid::from(component_id)).bind(DbUuid::from(site_id)).bind(check_cmd).bind(start_cmd).bind(stop_cmd).bind(rebuild_cmd).bind(env_vars.map(|v| serde_json::to_string(v).unwrap_or_default())).bind(agent_id.map(DbUuid::from))
+                .execute(pool).await?;
+            Ok(id.into_inner())
+        }
+    }
+}
+
+/// Delete a site override.
+pub async fn delete_site_override(pool: &DbPool, component_id: Uuid, site_id: Uuid) -> Result<bool, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        let result = sqlx::query("DELETE FROM site_overrides WHERE component_id = $1 AND site_id = $2")
+            .bind(component_id).bind(site_id).execute(pool).await?;
+        Ok(result.rows_affected() > 0)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let result = sqlx::query("DELETE FROM site_overrides WHERE component_id = $1 AND site_id = $2")
+            .bind(DbUuid::from(component_id)).bind(DbUuid::from(site_id)).execute(pool).await?;
+        Ok(result.rows_affected() > 0)
+    }
+}
