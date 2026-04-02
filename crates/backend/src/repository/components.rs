@@ -104,6 +104,95 @@ pub struct UpdateComponent {
     pub referenced_app_id: Option<Uuid>,
 }
 
+/// Component command columns (for execute_command).
+#[derive(Debug)]
+pub struct ComponentCommands {
+    pub application_id: Uuid,
+    pub agent_id: Option<Uuid>,
+    pub check_cmd: Option<String>,
+    pub start_cmd: Option<String>,
+    pub stop_cmd: Option<String>,
+    pub integrity_check_cmd: Option<String>,
+    pub infra_check_cmd: Option<String>,
+}
+
+/// Custom command definition.
+#[derive(Debug)]
+pub struct CustomCommand {
+    pub id: Uuid,
+    pub command: String,
+    pub requires_confirmation: bool,
+}
+
+/// Command input parameter.
+#[derive(Debug, serde::Serialize)]
+pub struct CommandParam {
+    pub id: Uuid,
+    pub command_id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub default_value: Option<String>,
+    pub validation_regex: Option<String>,
+    pub required: bool,
+    pub display_order: i32,
+    pub param_type: String,
+    pub enum_values: Option<serde_json::Value>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Raw custom command row (serializable).
+#[derive(Debug, serde::Serialize)]
+pub struct CustomCommandRaw {
+    pub id: Uuid,
+    pub component_id: Uuid,
+    pub name: String,
+    pub command: String,
+    pub description: Option<String>,
+    pub requires_confirmation: bool,
+    pub min_permission_level: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Raw command execution row (serializable).
+#[derive(Debug, serde::Serialize)]
+pub struct CommandExecutionRaw {
+    pub id: Uuid,
+    pub request_id: Uuid,
+    pub component_id: Uuid,
+    pub agent_id: Option<Uuid>,
+    pub command_type: String,
+    pub exit_code: Option<i16>,
+    pub stdout: Option<String>,
+    pub stderr: Option<String>,
+    pub duration_ms: Option<i32>,
+    pub status: String,
+    pub dispatched_at: chrono::DateTime<chrono::Utc>,
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Raw state transition row (serializable).
+#[derive(Debug, serde::Serialize)]
+pub struct StateTransitionRaw {
+    pub id: Uuid,
+    pub component_id: Uuid,
+    pub from_state: String,
+    pub to_state: String,
+    pub trigger: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Raw check event row (serializable).
+#[derive(Debug, serde::Serialize)]
+pub struct CheckEventRaw {
+    pub id: i64,
+    pub component_id: Uuid,
+    pub check_type: String,
+    pub exit_code: i16,
+    pub stdout: Option<String>,
+    pub duration_ms: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
 // ============================================================================
 // Repository trait
 // ============================================================================
@@ -154,6 +243,69 @@ pub trait ComponentRepository: Send + Sync {
 
     /// Delete a dependency.
     async fn delete_dependency(&self, id: Uuid) -> Result<bool, sqlx::Error>;
+
+    /// Get component app_id and referenced_app_id.
+    async fn get_component_refs(&self, id: Uuid) -> Result<Option<(Uuid, Option<Uuid>)>, sqlx::Error>;
+
+    /// Get component command columns (for execute_command).
+    async fn get_component_commands(&self, id: Uuid) -> Result<Option<ComponentCommands>, sqlx::Error>;
+
+    /// Look up a custom command definition by component_id and name.
+    async fn get_custom_command(&self, component_id: Uuid, name: &str) -> Result<Option<CustomCommand>, sqlx::Error>;
+
+    /// List input params for a command.
+    async fn list_command_params(&self, command_id: Uuid) -> Result<Vec<CommandParam>, sqlx::Error>;
+
+    /// Insert a command execution record.
+    async fn insert_command_execution(
+        &self,
+        request_id: Uuid,
+        component_id: Uuid,
+        agent_id: Uuid,
+        command_type: &str,
+        user_id: Uuid,
+        command_text: &str,
+    ) -> Result<(), sqlx::Error>;
+
+    /// Get dependency app_id.
+    async fn get_dependency_app_id(&self, id: Uuid) -> Result<Option<Uuid>, sqlx::Error>;
+
+    /// List custom commands for a component.
+    async fn list_custom_commands_raw(&self, component_id: Uuid) -> Result<Vec<CustomCommandRaw>, sqlx::Error>;
+
+    /// List command executions for a component.
+    async fn list_command_executions(
+        &self,
+        component_id: Uuid,
+        status: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<CommandExecutionRaw>, sqlx::Error>;
+
+    /// List state transitions for a component.
+    async fn list_state_transitions(&self, component_id: Uuid, limit: i64, offset: i64) -> Result<Vec<StateTransitionRaw>, sqlx::Error>;
+
+    /// List check events for a component.
+    async fn list_check_events(&self, component_id: Uuid, limit: i64, offset: i64) -> Result<Vec<CheckEventRaw>, sqlx::Error>;
+
+    /// Resolve host to agent_id.
+    async fn resolve_host_to_agent(&self, host: &str) -> Result<Option<Uuid>, sqlx::Error>;
+
+    /// Batch update positions in a transaction.
+    async fn batch_update_positions(&self, app_id: Uuid, positions: &[(Uuid, f32, f32)]) -> Result<(), sqlx::Error>;
+
+    /// Insert a config version snapshot.
+    async fn insert_config_version(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+        changed_by: Uuid,
+        before_snapshot: &str,
+        after_snapshot: &str,
+    ) -> Result<(), sqlx::Error>;
+
+    /// Auto-bind components that reference a host to the given agent.
+    async fn auto_bind_agent(&self, agent_id: Uuid, hostname: &str, ip_addresses: &[String]) -> Result<u64, sqlx::Error>;
 }
 
 // ============================================================================
@@ -475,6 +627,130 @@ impl ComponentRepository for PgComponentRepository {
             .await?;
         Ok(result.rows_affected() > 0)
     }
+
+    async fn get_component_refs(&self, id: Uuid) -> Result<Option<(Uuid, Option<Uuid>)>, sqlx::Error> {
+        let row: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
+            "SELECT application_id, referenced_app_id FROM components WHERE id = $1"
+        ).bind(id).fetch_optional(&self.pool).await?;
+        Ok(row)
+    }
+
+    async fn get_component_commands(&self, id: Uuid) -> Result<Option<ComponentCommands>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { application_id: Uuid, agent_id: Option<Uuid>, check_cmd: Option<String>, start_cmd: Option<String>, stop_cmd: Option<String>, integrity_check_cmd: Option<String>, infra_check_cmd: Option<String> }
+        let row = sqlx::query_as::<_, Row>(
+            "SELECT application_id, agent_id, check_cmd, start_cmd, stop_cmd, integrity_check_cmd, infra_check_cmd FROM components WHERE id = $1"
+        ).bind(id).fetch_optional(&self.pool).await?;
+        Ok(row.map(|r| ComponentCommands { application_id: r.application_id, agent_id: r.agent_id, check_cmd: r.check_cmd, start_cmd: r.start_cmd, stop_cmd: r.stop_cmd, integrity_check_cmd: r.integrity_check_cmd, infra_check_cmd: r.infra_check_cmd }))
+    }
+
+    async fn get_custom_command(&self, component_id: Uuid, name: &str) -> Result<Option<CustomCommand>, sqlx::Error> {
+        let row: Option<(Uuid, String, bool)> = sqlx::query_as(
+            "SELECT id, command, requires_confirmation FROM component_commands WHERE component_id = $1 AND name = $2"
+        ).bind(component_id).bind(name).fetch_optional(&self.pool).await?;
+        Ok(row.map(|(id, command, req)| CustomCommand { id, command, requires_confirmation: req }))
+    }
+
+    async fn list_command_params(&self, command_id: Uuid) -> Result<Vec<CommandParam>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: Uuid, command_id: Uuid, name: String, description: Option<String>, default_value: Option<String>, validation_regex: Option<String>, required: bool, display_order: i32, param_type: String, enum_values: Option<serde_json::Value>, created_at: chrono::DateTime<chrono::Utc> }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, command_id, name, description, default_value, validation_regex, required, display_order, param_type, enum_values, created_at FROM command_input_params WHERE command_id = $1 ORDER BY display_order, name"
+        ).bind(command_id).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|r| CommandParam { id: r.id, command_id: r.command_id, name: r.name, description: r.description, default_value: r.default_value, validation_regex: r.validation_regex, required: r.required, display_order: r.display_order, param_type: r.param_type, enum_values: r.enum_values, created_at: r.created_at }).collect())
+    }
+
+    async fn insert_command_execution(&self, request_id: Uuid, component_id: Uuid, agent_id: Uuid, command_type: &str, user_id: Uuid, command_text: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO command_executions (request_id, component_id, agent_id, command_type, status, user_id, command_text) VALUES ($1, $2, $3, $4, 'dispatched', $5, $6) ON CONFLICT (request_id) DO NOTHING")
+            .bind(request_id).bind(component_id).bind(agent_id).bind(command_type).bind(user_id).bind(command_text)
+            .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    async fn get_dependency_app_id(&self, id: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
+        sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM dependencies WHERE id = $1")
+            .bind(id).fetch_optional(&self.pool).await
+    }
+
+    async fn list_custom_commands_raw(&self, component_id: Uuid) -> Result<Vec<CustomCommandRaw>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: Uuid, component_id: Uuid, name: String, command: String, description: Option<String>, requires_confirmation: bool, min_permission_level: String, created_at: chrono::DateTime<chrono::Utc> }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, component_id, name, command, description, requires_confirmation, min_permission_level, created_at FROM component_commands WHERE component_id = $1 ORDER BY name"
+        ).bind(component_id).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|r| CustomCommandRaw { id: r.id, component_id: r.component_id, name: r.name, command: r.command, description: r.description, requires_confirmation: r.requires_confirmation, min_permission_level: r.min_permission_level, created_at: r.created_at }).collect())
+    }
+
+    async fn list_command_executions(&self, component_id: Uuid, status: Option<&str>, limit: i64, offset: i64) -> Result<Vec<CommandExecutionRaw>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: Uuid, request_id: Uuid, component_id: Uuid, agent_id: Option<Uuid>, command_type: String, exit_code: Option<i16>, stdout: Option<String>, stderr: Option<String>, duration_ms: Option<i32>, status: String, dispatched_at: chrono::DateTime<chrono::Utc>, completed_at: Option<chrono::DateTime<chrono::Utc>> }
+        let rows = if let Some(st) = status {
+            sqlx::query_as::<_, Row>("SELECT id, request_id, component_id, agent_id, command_type, exit_code, stdout, stderr, duration_ms, status, dispatched_at, completed_at FROM command_executions WHERE component_id = $1 AND status = $2 ORDER BY dispatched_at DESC LIMIT $3 OFFSET $4")
+                .bind(component_id).bind(st).bind(limit).bind(offset).fetch_all(&self.pool).await?
+        } else {
+            sqlx::query_as::<_, Row>("SELECT id, request_id, component_id, agent_id, command_type, exit_code, stdout, stderr, duration_ms, status, dispatched_at, completed_at FROM command_executions WHERE component_id = $1 ORDER BY dispatched_at DESC LIMIT $2 OFFSET $3")
+                .bind(component_id).bind(limit).bind(offset).fetch_all(&self.pool).await?
+        };
+        Ok(rows.into_iter().map(|r| CommandExecutionRaw { id: r.id, request_id: r.request_id, component_id: r.component_id, agent_id: r.agent_id, command_type: r.command_type, exit_code: r.exit_code, stdout: r.stdout, stderr: r.stderr, duration_ms: r.duration_ms, status: r.status, dispatched_at: r.dispatched_at, completed_at: r.completed_at }).collect())
+    }
+
+    async fn list_state_transitions(&self, component_id: Uuid, limit: i64, offset: i64) -> Result<Vec<StateTransitionRaw>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: Uuid, component_id: Uuid, from_state: String, to_state: String, trigger: String, created_at: chrono::DateTime<chrono::Utc> }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, component_id, from_state, to_state, trigger, created_at FROM state_transitions WHERE component_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+        ).bind(component_id).bind(limit).bind(offset).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|r| StateTransitionRaw { id: r.id, component_id: r.component_id, from_state: r.from_state, to_state: r.to_state, trigger: r.trigger, created_at: r.created_at }).collect())
+    }
+
+    async fn list_check_events(&self, component_id: Uuid, limit: i64, offset: i64) -> Result<Vec<CheckEventRaw>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: i64, component_id: Uuid, check_type: String, exit_code: i16, stdout: Option<String>, duration_ms: i32, created_at: chrono::DateTime<chrono::Utc> }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, component_id, check_type, exit_code, stdout, duration_ms, created_at FROM check_events WHERE component_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+        ).bind(component_id).bind(limit).bind(offset).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|r| CheckEventRaw { id: r.id, component_id: r.component_id, check_type: r.check_type, exit_code: r.exit_code, stdout: r.stdout, duration_ms: r.duration_ms, created_at: r.created_at }).collect())
+    }
+
+    async fn resolve_host_to_agent(&self, host: &str) -> Result<Option<Uuid>, sqlx::Error> {
+        let by_hostname: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM agents WHERE hostname = $1 AND is_active = true ORDER BY created_at LIMIT 1"
+        ).bind(host).fetch_optional(&self.pool).await?;
+        if by_hostname.is_some() { return Ok(by_hostname); }
+        sqlx::query_scalar(
+            "SELECT id FROM agents WHERE ip_addresses ? $1 AND is_active = true ORDER BY created_at LIMIT 1"
+        ).bind(host).fetch_optional(&self.pool).await
+    }
+
+    async fn batch_update_positions(&self, app_id: Uuid, positions: &[(Uuid, f32, f32)]) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let sql = format!("UPDATE components SET position_x = $2, position_y = $3, updated_at = {} WHERE id = $1 AND application_id = $4", crate::db::sql::now());
+        for &(id, x, y) in positions {
+            sqlx::query(&sql).bind(id).bind(x).bind(y).bind(app_id).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn insert_config_version(&self, resource_type: &str, resource_id: Uuid, changed_by: Uuid, before_snapshot: &str, after_snapshot: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO config_versions (resource_type, resource_id, changed_by, before_snapshot, after_snapshot) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)")
+            .bind(resource_type).bind(resource_id).bind(changed_by).bind(before_snapshot).bind(after_snapshot)
+            .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    async fn auto_bind_agent(&self, agent_id: Uuid, hostname: &str, ip_addresses: &[String]) -> Result<u64, sqlx::Error> {
+        let mut total = 0u64;
+        let result = sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
+            .bind(agent_id).bind(hostname).execute(&self.pool).await?;
+        total += result.rows_affected();
+        for ip in ip_addresses {
+            let result = sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
+                .bind(agent_id).bind(ip).execute(&self.pool).await?;
+            total += result.rows_affected();
+        }
+        Ok(total)
+    }
 }
 
 // ============================================================================
@@ -791,6 +1067,132 @@ impl ComponentRepository for SqliteComponentRepository {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    async fn get_component_refs(&self, id: Uuid) -> Result<Option<(Uuid, Option<Uuid>)>, sqlx::Error> {
+        let row: Option<(DbUuid, Option<DbUuid>)> = sqlx::query_as(
+            "SELECT application_id, referenced_app_id FROM components WHERE id = $1"
+        ).bind(DbUuid::from(id)).fetch_optional(&self.pool).await?;
+        Ok(row.map(|(app, r)| (app.into_inner(), r.map(|x| x.into_inner()))))
+    }
+
+    async fn get_component_commands(&self, id: Uuid) -> Result<Option<ComponentCommands>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { application_id: DbUuid, agent_id: Option<DbUuid>, check_cmd: Option<String>, start_cmd: Option<String>, stop_cmd: Option<String>, integrity_check_cmd: Option<String>, infra_check_cmd: Option<String> }
+        let row = sqlx::query_as::<_, Row>(
+            "SELECT application_id, agent_id, check_cmd, start_cmd, stop_cmd, integrity_check_cmd, infra_check_cmd FROM components WHERE id = $1"
+        ).bind(DbUuid::from(id)).fetch_optional(&self.pool).await?;
+        Ok(row.map(|r| ComponentCommands { application_id: r.application_id.into_inner(), agent_id: r.agent_id.map(|a| a.into_inner()), check_cmd: r.check_cmd, start_cmd: r.start_cmd, stop_cmd: r.stop_cmd, integrity_check_cmd: r.integrity_check_cmd, infra_check_cmd: r.infra_check_cmd }))
+    }
+
+    async fn get_custom_command(&self, component_id: Uuid, name: &str) -> Result<Option<CustomCommand>, sqlx::Error> {
+        let row: Option<(DbUuid, String, bool)> = sqlx::query_as(
+            "SELECT id, command, requires_confirmation FROM component_commands WHERE component_id = $1 AND name = $2"
+        ).bind(DbUuid::from(component_id)).bind(name).fetch_optional(&self.pool).await?;
+        Ok(row.map(|(id, command, req)| CustomCommand { id: id.into_inner(), command, requires_confirmation: req }))
+    }
+
+    async fn list_command_params(&self, command_id: Uuid) -> Result<Vec<CommandParam>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: DbUuid, command_id: DbUuid, name: String, description: Option<String>, default_value: Option<String>, validation_regex: Option<String>, required: bool, display_order: i32, param_type: String, enum_values: Option<serde_json::Value>, created_at: chrono::DateTime<chrono::Utc> }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, command_id, name, description, default_value, validation_regex, required, display_order, param_type, enum_values, created_at FROM command_input_params WHERE command_id = $1 ORDER BY display_order, name"
+        ).bind(DbUuid::from(command_id)).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|r| CommandParam { id: r.id.into_inner(), command_id: r.command_id.into_inner(), name: r.name, description: r.description, default_value: r.default_value, validation_regex: r.validation_regex, required: r.required, display_order: r.display_order, param_type: r.param_type, enum_values: r.enum_values, created_at: r.created_at }).collect())
+    }
+
+    async fn insert_command_execution(&self, request_id: Uuid, component_id: Uuid, agent_id: Uuid, command_type: &str, user_id: Uuid, command_text: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO command_executions (request_id, component_id, agent_id, command_type, status, user_id, command_text) VALUES ($1, $2, $3, $4, 'dispatched', $5, $6) ON CONFLICT (request_id) DO NOTHING")
+            .bind(DbUuid::from(request_id)).bind(DbUuid::from(component_id)).bind(DbUuid::from(agent_id)).bind(command_type).bind(DbUuid::from(user_id)).bind(command_text)
+            .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    async fn get_dependency_app_id(&self, id: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
+        let row = sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM dependencies WHERE id = $1")
+            .bind(DbUuid::from(id)).fetch_optional(&self.pool).await?;
+        Ok(row.map(|u| u.into_inner()))
+    }
+
+    async fn list_custom_commands_raw(&self, component_id: Uuid) -> Result<Vec<CustomCommandRaw>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: DbUuid, component_id: DbUuid, name: String, command: String, description: Option<String>, requires_confirmation: bool, min_permission_level: String, created_at: chrono::DateTime<chrono::Utc> }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, component_id, name, command, description, requires_confirmation, min_permission_level, created_at FROM component_commands WHERE component_id = $1 ORDER BY name"
+        ).bind(DbUuid::from(component_id)).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|r| CustomCommandRaw { id: r.id.into_inner(), component_id: r.component_id.into_inner(), name: r.name, command: r.command, description: r.description, requires_confirmation: r.requires_confirmation, min_permission_level: r.min_permission_level, created_at: r.created_at }).collect())
+    }
+
+    async fn list_command_executions(&self, component_id: Uuid, status: Option<&str>, limit: i64, offset: i64) -> Result<Vec<CommandExecutionRaw>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: DbUuid, request_id: DbUuid, component_id: DbUuid, agent_id: Option<DbUuid>, command_type: String, exit_code: Option<i16>, stdout: Option<String>, stderr: Option<String>, duration_ms: Option<i32>, status: String, dispatched_at: chrono::DateTime<chrono::Utc>, completed_at: Option<chrono::DateTime<chrono::Utc>> }
+        let rows = if let Some(st) = status {
+            sqlx::query_as::<_, Row>("SELECT id, request_id, component_id, agent_id, command_type, exit_code, stdout, stderr, duration_ms, status, dispatched_at, completed_at FROM command_executions WHERE component_id = $1 AND status = $2 ORDER BY dispatched_at DESC LIMIT $3 OFFSET $4")
+                .bind(DbUuid::from(component_id)).bind(st).bind(limit).bind(offset).fetch_all(&self.pool).await?
+        } else {
+            sqlx::query_as::<_, Row>("SELECT id, request_id, component_id, agent_id, command_type, exit_code, stdout, stderr, duration_ms, status, dispatched_at, completed_at FROM command_executions WHERE component_id = $1 ORDER BY dispatched_at DESC LIMIT $2 OFFSET $3")
+                .bind(DbUuid::from(component_id)).bind(limit).bind(offset).fetch_all(&self.pool).await?
+        };
+        Ok(rows.into_iter().map(|r| CommandExecutionRaw { id: r.id.into_inner(), request_id: r.request_id.into_inner(), component_id: r.component_id.into_inner(), agent_id: r.agent_id.map(|a| a.into_inner()), command_type: r.command_type, exit_code: r.exit_code, stdout: r.stdout, stderr: r.stderr, duration_ms: r.duration_ms, status: r.status, dispatched_at: r.dispatched_at, completed_at: r.completed_at }).collect())
+    }
+
+    async fn list_state_transitions(&self, component_id: Uuid, limit: i64, offset: i64) -> Result<Vec<StateTransitionRaw>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: DbUuid, component_id: DbUuid, from_state: String, to_state: String, trigger: String, created_at: chrono::DateTime<chrono::Utc> }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, component_id, from_state, to_state, trigger, created_at FROM state_transitions WHERE component_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+        ).bind(DbUuid::from(component_id)).bind(limit).bind(offset).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|r| StateTransitionRaw { id: r.id.into_inner(), component_id: r.component_id.into_inner(), from_state: r.from_state, to_state: r.to_state, trigger: r.trigger, created_at: r.created_at }).collect())
+    }
+
+    async fn list_check_events(&self, component_id: Uuid, limit: i64, offset: i64) -> Result<Vec<CheckEventRaw>, sqlx::Error> {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: i64, component_id: DbUuid, check_type: String, exit_code: i16, stdout: Option<String>, duration_ms: i32, created_at: chrono::DateTime<chrono::Utc> }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, component_id, check_type, exit_code, stdout, duration_ms, created_at FROM check_events WHERE component_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+        ).bind(DbUuid::from(component_id)).bind(limit).bind(offset).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|r| CheckEventRaw { id: r.id, component_id: r.component_id.into_inner(), check_type: r.check_type, exit_code: r.exit_code, stdout: r.stdout, duration_ms: r.duration_ms, created_at: r.created_at }).collect())
+    }
+
+    async fn resolve_host_to_agent(&self, host: &str) -> Result<Option<Uuid>, sqlx::Error> {
+        let by_hostname = sqlx::query_scalar::<_, DbUuid>(
+            "SELECT id FROM agents WHERE hostname = $1 AND is_active = 1 ORDER BY created_at LIMIT 1"
+        ).bind(host).fetch_optional(&self.pool).await?;
+        if let Some(id) = by_hostname { return Ok(Some(id.into_inner())); }
+        let by_ip = sqlx::query_scalar::<_, DbUuid>(
+            "SELECT id FROM agents WHERE EXISTS(SELECT 1 FROM json_each(ip_addresses) WHERE value = $1) AND is_active = 1 ORDER BY created_at LIMIT 1"
+        ).bind(host).fetch_optional(&self.pool).await?;
+        Ok(by_ip.map(|x| x.into_inner()))
+    }
+
+    async fn batch_update_positions(&self, app_id: Uuid, positions: &[(Uuid, f32, f32)]) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let sql = format!("UPDATE components SET position_x = $2, position_y = $3, updated_at = {} WHERE id = $1 AND application_id = $4", crate::db::sql::now());
+        for &(id, x, y) in positions {
+            sqlx::query(&sql).bind(DbUuid::from(id)).bind(x).bind(y).bind(DbUuid::from(app_id)).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn insert_config_version(&self, resource_type: &str, resource_id: Uuid, changed_by: Uuid, before_snapshot: &str, after_snapshot: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO config_versions (id, resource_type, resource_id, changed_by, before_snapshot, after_snapshot) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(DbUuid::new_v4()).bind(resource_type).bind(DbUuid::from(resource_id)).bind(DbUuid::from(changed_by)).bind(before_snapshot).bind(after_snapshot)
+            .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    async fn auto_bind_agent(&self, agent_id: Uuid, hostname: &str, ip_addresses: &[String]) -> Result<u64, sqlx::Error> {
+        let mut total = 0u64;
+        let result = sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
+            .bind(DbUuid::from(agent_id)).bind(hostname).execute(&self.pool).await?;
+        total += result.rows_affected();
+        for ip in ip_addresses {
+            let result = sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
+                .bind(DbUuid::from(agent_id)).bind(ip).execute(&self.pool).await?;
+            total += result.rows_affected();
+        }
+        Ok(total)
     }
 }
 
