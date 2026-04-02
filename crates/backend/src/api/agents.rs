@@ -53,22 +53,10 @@ pub async fn list_agents(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let agents = sqlx::query_as::<_, AgentListRow>(
-        r#"
-        SELECT a.id, a.hostname, a.organization_id, a.gateway_id, a.labels, a.ip_addresses,
-               a.version, a.os_name, a.os_version, a.cpu_arch, a.cpu_cores,
-               a.total_memory_mb, a.disk_total_gb,
-               a.last_heartbeat_at, a.is_active, a.created_at,
-               g.name as gateway_name, g.zone as gateway_zone
-        FROM agents a
-        LEFT JOIN gateways g ON a.gateway_id = g.id
-        WHERE a.organization_id = $1
-        ORDER BY a.hostname
-        "#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
+    let agents = state
+        .agent_repo
+        .list_agents(*user.organization_id)
+        .await?;
 
     // Get live connection status from the WebSocket hub
     let connected_agents = state.ws_hub.connected_agent_ids();
@@ -82,10 +70,10 @@ pub async fn list_agents(
     let agents_with_status: Vec<Value> = agents
         .into_iter()
         .map(|a| {
-            let connected = connected_agent_set.contains(&*a.id);
+            let connected = connected_agent_set.contains(&a.id);
             let gateway_connected = a
                 .gateway_id
-                .map(|gid| connected_gateway_set.contains(&*gid))
+                .map(|gid| connected_gateway_set.contains(&gid))
                 .unwrap_or(false);
             json!({
                 "id": a.id,
@@ -120,20 +108,24 @@ pub async fn get_agent(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let agent = sqlx::query_as::<_, AgentRow>(
-        r#"
-        SELECT id, hostname, organization_id, gateway_id, labels, ip_addresses, version, last_heartbeat_at, is_active, created_at
-        FROM agents
-        WHERE id = $1 AND organization_id = $2
-        "#,
-    )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let agent = state
+        .agent_repo
+        .get_agent(id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
-    Ok(Json(json!(agent)))
+    Ok(Json(json!({
+        "id": agent.id,
+        "hostname": agent.hostname,
+        "organization_id": agent.organization_id,
+        "gateway_id": agent.gateway_id,
+        "labels": agent.labels,
+        "ip_addresses": agent.ip_addresses,
+        "version": agent.version,
+        "last_heartbeat_at": agent.last_heartbeat_at,
+        "is_active": agent.is_active,
+        "created_at": agent.created_at,
+    })))
 }
 
 /// POST /api/v1/agents/:id/block — Block an agent (security action)
@@ -150,18 +142,11 @@ pub async fn block_agent(
     }
 
     // Get the agent to verify it exists and get info for logging
-    let agent: Option<(String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT hostname, gateway_id FROM agents WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?;
-
-    let (hostname, gateway_id) = match agent {
-        Some(a) => a,
-        None => return Err(ApiError::NotFound),
-    };
+    let (hostname, gateway_id) = state
+        .agent_repo
+        .get_agent_info(agent_id, *user.organization_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     // Log before execute
     crate::middleware::audit::log_action(
@@ -175,19 +160,8 @@ pub async fn block_agent(
     .await
     .ok();
 
-    let mut tx = state.db.begin().await?;
-
     // 1. Suspend the agent and clear gateway association
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE agents SET is_active = false, gateway_id = NULL WHERE id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&mut *tx)
-        .await?;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE agents SET is_active = 0, gateway_id = NULL WHERE id = $1")
-        .bind(DbUuid::from(agent_id))
-        .execute(&mut *tx)
-        .await?;
+    state.agent_repo.block_agent(agent_id).await?;
 
     // 2. Log the block event in certificate_events if table exists
     sqlx::query(
@@ -196,14 +170,12 @@ pub async fn block_agent(
            FROM agents WHERE id = $1"#,
     )
     .bind(crate::db::bind_id(agent_id))
-    .execute(&mut *tx)
+    .execute(&state.db)
     .await
     .ok(); // Don't fail if table doesn't exist yet
 
     // 3. Transition all components of this agent to UNREACHABLE
     let components_affected = transition_agent_components_to_unreachable(&state, agent_id).await;
-
-    tx.commit().await?;
 
     // 4. Send block command to all gateways — adds agent to blocklist
     // so it's rejected even on reconnection attempts
@@ -233,17 +205,11 @@ pub async fn unblock_agent(
     }
 
     // Get the agent to verify it exists
-    let agent: Option<(String,)> =
-        sqlx::query_as("SELECT hostname FROM agents WHERE id = $1 AND organization_id = $2")
-            .bind(crate::db::bind_id(agent_id))
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
-
-    let hostname = match agent {
-        Some((h,)) => h,
-        None => return Err(ApiError::NotFound),
-    };
+    let (hostname, _) = state
+        .agent_repo
+        .get_agent_info(agent_id, *user.organization_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     // Log before execute
     crate::middleware::audit::log_action(
@@ -258,16 +224,7 @@ pub async fn unblock_agent(
     .ok();
 
     // Reactivate the agent
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE agents SET is_active = true WHERE id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE agents SET is_active = 1 WHERE id = $1")
-        .bind(DbUuid::from(agent_id))
-        .execute(&state.db)
-        .await?;
+    state.agent_repo.unblock_agent(agent_id).await?;
 
     // Send unblock command to all gateways — removes agent from blocklist
     state.ws_hub.unblock_agent(agent_id);
