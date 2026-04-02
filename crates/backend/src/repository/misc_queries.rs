@@ -1,6 +1,211 @@
-//! Query functions for misc domain. All sqlx queries live here.
+//! Query functions for misc domain (links, variables, groups, etc).
 
 #![allow(unused_imports, dead_code)]
 use crate::db::{DbPool, DbUuid, DbJson};
 use serde_json::Value;
 use uuid::Uuid;
+
+// ============================================================================
+// Component Links
+// ============================================================================
+
+/// Link row returned from queries.
+#[derive(Debug, serde::Serialize)]
+pub struct LinkInfo {
+    pub id: Uuid,
+    pub component_id: Uuid,
+    pub label: String,
+    pub url: String,
+    pub link_type: String,
+    pub display_order: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+// Internal row type for sqlx
+#[derive(Debug, sqlx::FromRow)]
+struct LinkRow {
+    #[cfg(feature = "postgres")]
+    id: Uuid,
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    id: DbUuid,
+    #[cfg(feature = "postgres")]
+    component_id: Uuid,
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    component_id: DbUuid,
+    label: String,
+    url: String,
+    link_type: String,
+    display_order: i32,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl LinkRow {
+    fn into_info(self) -> LinkInfo {
+        LinkInfo {
+            #[cfg(feature = "postgres")]
+            id: self.id,
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            id: self.id.into_inner(),
+            #[cfg(feature = "postgres")]
+            component_id: self.component_id,
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            component_id: self.component_id.into_inner(),
+            label: self.label,
+            url: self.url,
+            link_type: self.link_type,
+            display_order: self.display_order,
+            created_at: self.created_at,
+        }
+    }
+}
+
+/// Get component's application_id (needed for permission checks).
+pub async fn get_component_app_id_checked(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    crate::repository::queries::get_component_app_id(pool, component_id).await
+}
+
+/// List all links for a component.
+pub async fn list_component_links(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<Vec<LinkInfo>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    let rows = sqlx::query_as::<_, LinkRow>(
+        "SELECT id, component_id, label, url, link_type, display_order, created_at \
+         FROM component_links WHERE component_id = $1 ORDER BY display_order, label",
+    )
+    .bind(component_id)
+    .fetch_all(pool)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let rows = sqlx::query_as::<_, LinkRow>(
+        "SELECT id, component_id, label, url, link_type, display_order, created_at \
+         FROM component_links WHERE component_id = $1 ORDER BY display_order, label",
+    )
+    .bind(DbUuid::from(component_id))
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(|r| r.into_info()).collect())
+}
+
+/// Create a new component link.
+pub async fn create_component_link(
+    pool: &DbPool,
+    link_id: Uuid,
+    component_id: Uuid,
+    label: &str,
+    url: &str,
+    link_type: &str,
+    display_order: i32,
+) -> Result<LinkInfo, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    let row = sqlx::query_as::<_, LinkRow>(
+        r#"INSERT INTO component_links (id, component_id, label, url, link_type, display_order)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, component_id, label, url, link_type, display_order, created_at"#,
+    )
+    .bind(link_id)
+    .bind(component_id)
+    .bind(label)
+    .bind(url)
+    .bind(link_type)
+    .bind(display_order)
+    .fetch_one(pool)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let row = sqlx::query_as::<_, LinkRow>(
+        r#"INSERT INTO component_links (id, component_id, label, url, link_type, display_order)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, component_id, label, url, link_type, display_order, created_at"#,
+    )
+    .bind(DbUuid::from(link_id))
+    .bind(DbUuid::from(component_id))
+    .bind(label)
+    .bind(url)
+    .bind(link_type)
+    .bind(display_order)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row.into_info())
+}
+
+/// Update a component link.
+pub async fn update_component_link(
+    pool: &DbPool,
+    component_id: Uuid,
+    link_id: Uuid,
+    label: Option<&str>,
+    url: Option<&str>,
+    link_type: Option<&str>,
+    display_order: Option<i32>,
+) -> Result<Option<LinkInfo>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    let row = sqlx::query_as::<_, LinkRow>(
+        r#"UPDATE component_links SET
+               label = COALESCE($3, label),
+               url = COALESCE($4, url),
+               link_type = COALESCE($5, link_type),
+               display_order = COALESCE($6, display_order)
+           WHERE id = $2 AND component_id = $1
+           RETURNING id, component_id, label, url, link_type, display_order, created_at"#,
+    )
+    .bind(component_id)
+    .bind(link_id)
+    .bind(label)
+    .bind(url)
+    .bind(link_type)
+    .bind(display_order)
+    .fetch_optional(pool)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let row = sqlx::query_as::<_, LinkRow>(
+        r#"UPDATE component_links SET
+               label = COALESCE($3, label),
+               url = COALESCE($4, url),
+               link_type = COALESCE($5, link_type),
+               display_order = COALESCE($6, display_order)
+           WHERE id = $2 AND component_id = $1
+           RETURNING id, component_id, label, url, link_type, display_order, created_at"#,
+    )
+    .bind(DbUuid::from(component_id))
+    .bind(DbUuid::from(link_id))
+    .bind(label)
+    .bind(url)
+    .bind(link_type)
+    .bind(display_order)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|r| r.into_info()))
+}
+
+/// Delete a component link. Returns true if a row was deleted.
+pub async fn delete_component_link(
+    pool: &DbPool,
+    link_id: Uuid,
+    component_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    let result = sqlx::query("DELETE FROM component_links WHERE id = $1 AND component_id = $2")
+        .bind(link_id)
+        .bind(component_id)
+        .execute(pool)
+        .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query("DELETE FROM component_links WHERE id = $1 AND component_id = $2")
+        .bind(DbUuid::from(link_id))
+        .bind(DbUuid::from(component_id))
+        .execute(pool)
+        .await?;
+
+    Ok(result.rows_affected() > 0)
+}
