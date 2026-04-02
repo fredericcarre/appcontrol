@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
+#[allow(unused_imports)]
 use crate::db::{DbPool, DbUuid};
 
 // ============================================================================

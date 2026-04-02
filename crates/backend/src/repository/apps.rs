@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
 
+#[allow(unused_imports)]
 use crate::db::{DbJson, DbPool, DbUuid};
 
 // ============================================================================

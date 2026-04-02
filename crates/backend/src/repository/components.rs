@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
 
+#[allow(unused_imports)]
 use crate::db::{DbPool, DbUuid};
 
 // ============================================================================
@@ -268,12 +269,12 @@ impl ComponentRepository for PgComponentRepository {
 
     async fn get_component(&self, id: Uuid, org_id: Uuid) -> Result<Option<Component>, sqlx::Error> {
         let row = sqlx::query_as::<_, PgComponentRow>(
-            &format!("SELECT c.id, c.application_id, c.name, c.component_type, c.display_name, c.description, c.icon, c.group_id, \
+            "SELECT c.id, c.application_id, c.name, c.component_type, c.display_name, c.description, c.icon, c.group_id, \
                 c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd, \
                 c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds, c.is_optional, \
                 c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at \
                 FROM components c JOIN applications a ON c.application_id = a.id \
-                WHERE c.id = $1 AND a.organization_id = $2")
+                WHERE c.id = $1 AND a.organization_id = $2"
         )
         .bind(id)
         .bind(org_id)

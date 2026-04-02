@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
+#[allow(unused_imports)]
 use crate::db::{DbPool, DbUuid};
 
 // ============================================================================
@@ -48,6 +49,7 @@ pub struct GatewayListRow {
 // Repository trait
 // ============================================================================
 
+#[allow(clippy::too_many_arguments)]
 #[async_trait]
 pub trait GatewayRepository: Send + Sync {
     /// List gateways with site info for an organization.

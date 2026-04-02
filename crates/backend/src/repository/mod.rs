@@ -18,8 +18,5 @@ pub mod permissions;
 pub mod sites;
 pub mod teams;
 
-use async_trait::async_trait;
-use uuid::Uuid;
-
 /// Database-agnostic pool type.
 pub use crate::db::DbPool;

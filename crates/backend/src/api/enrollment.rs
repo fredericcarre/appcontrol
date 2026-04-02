@@ -666,7 +666,7 @@ pub async fn enroll(
     .ok();
 
     // Log certificate event — link to the correct entity type
-    let expires_at_str =
+    let _expires_at_str =
         (chrono::Utc::now() + chrono::Duration::days(validity_days as i64)).to_rfc3339();
     let now = crate::db::sql::now();
 
