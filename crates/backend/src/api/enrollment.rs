@@ -135,6 +135,7 @@ pub async fn list_enrollment_tokens(
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
     // Hide revoked tokens after 24 hours - they serve no purpose and clutter the UI
+    #[cfg(feature = "postgres")]
     let tokens = sqlx::query_as::<_, EnrollmentTokenRow>(
         &format!(
             "SELECT id, token_prefix, name, max_uses, current_uses, expires_at, scope, created_at, revoked_at
@@ -146,6 +147,21 @@ pub async fn list_enrollment_tokens(
         ),
     )
     .bind(user.organization_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let tokens = sqlx::query_as::<_, EnrollmentTokenRow>(
+        &format!(
+            "SELECT id, token_prefix, name, max_uses, current_uses, expires_at, scope, created_at, revoked_at
+             FROM enrollment_tokens
+             WHERE organization_id = $1
+               AND (revoked_at IS NULL OR revoked_at > datetime({}, '-24 hours'))
+             ORDER BY created_at DESC",
+            crate::db::sql::now()
+        ),
+    )
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -669,26 +685,55 @@ pub async fn enroll(
     .ok();
 
     // Log certificate event — link to the correct entity type
+    let expires_at_str =
+        (chrono::Utc::now() + chrono::Duration::days(validity_days as i64)).to_rfc3339();
     let now = crate::db::sql::now();
-    let cert_event_sql = if scope == "gateway" {
-        format!(
-            "INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
-             VALUES ($1, 'issued', $2, $3, {now}, {now} + $4 * interval '1 day')"
-        )
-    } else {
-        format!(
-            "INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn, issued_at, expires_at)
-             VALUES ($1, 'issued', $2, $3, {now}, {now} + $4 * interval '1 day')"
-        )
-    };
-    sqlx::query(&cert_event_sql)
-        .bind(entity_id)
-        .bind(&fingerprint)
-        .bind(&req.hostname)
-        .bind(validity_days as i32)
-        .execute(&state.db)
-        .await
-        .ok();
+
+    #[cfg(feature = "postgres")]
+    {
+        let cert_event_sql = if scope == "gateway" {
+            format!(
+                "INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
+                 VALUES ($1, 'issued', $2, $3, {now}, {now} + $4 * interval '1 day')"
+            )
+        } else {
+            format!(
+                "INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn, issued_at, expires_at)
+                 VALUES ($1, 'issued', $2, $3, {now}, {now} + $4 * interval '1 day')"
+            )
+        };
+        sqlx::query(&cert_event_sql)
+            .bind(entity_id)
+            .bind(&fingerprint)
+            .bind(&req.hostname)
+            .bind(validity_days as i32)
+            .execute(&state.db)
+            .await
+            .ok();
+    }
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let cert_event_sql = if scope == "gateway" {
+            format!(
+                "INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
+                 VALUES ($1, 'issued', $2, $3, {now}, $4)"
+            )
+        } else {
+            format!(
+                "INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn, issued_at, expires_at)
+                 VALUES ($1, 'issued', $2, $3, {now}, $4)"
+            )
+        };
+        sqlx::query(&cert_event_sql)
+            .bind(crate::db::bind_id(entity_id))
+            .bind(&fingerprint)
+            .bind(&req.hostname)
+            .bind(&expires_at_str)
+            .execute(&state.db)
+            .await
+            .ok();
+    }
 
     // Response field is "agent_id" for backward compat even for gateways
     Ok(Json(json!({

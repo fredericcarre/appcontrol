@@ -99,7 +99,7 @@ pub async fn issue_server_cert(
     // Load organization CA
     let ca_row: Option<(Option<String>, Option<String>)> =
         sqlx::query_as("SELECT ca_cert_pem, ca_key_pem FROM organizations WHERE id = $1")
-            .bind(*user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -218,7 +218,7 @@ pub async fn export_to_volume(
     // Load organization CA
     let ca_row: Option<(Option<String>, Option<String>)> =
         sqlx::query_as("SELECT ca_cert_pem, ca_key_pem FROM organizations WHERE id = $1")
-            .bind(*user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -337,7 +337,7 @@ pub async fn get_pki_status(
         r#"SELECT ca_cert_pem, pending_ca_cert_pem, rotation_started_at
            FROM organizations WHERE id = $1"#,
     )
-    .bind(*user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -355,14 +355,14 @@ pub async fn get_pki_status(
     let agent_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM agents WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
     )
-    .bind(*user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_one(&state.db)
     .await?;
 
     let gateway_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM gateways WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
     )
-    .bind(*user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_one(&state.db)
     .await?;
 
