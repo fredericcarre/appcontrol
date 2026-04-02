@@ -14,7 +14,9 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::auth::jwt;
+#[allow(unused_imports)]
 use crate::db::DbUuid;
+use crate::repository::{queries as repo, websocket_queries as ws_repo};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -596,23 +598,8 @@ async fn process_gateway_message(
             } else {
                 // No token provided — check if dev mode (single org) or reject
                 // In dev mode with a single org, we allow unauthenticated gateway registration
-                #[cfg(feature = "postgres")]
                 let single_org: Option<uuid::Uuid> =
-                    sqlx::query_scalar("SELECT id FROM organizations LIMIT 1")
-                        .fetch_optional(&state.db)
-                        .await
-                        .ok()
-                        .flatten();
-                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                let single_org: Option<uuid::Uuid> = {
-                    let row: Option<DbUuid> =
-                        sqlx::query_scalar("SELECT id FROM organizations LIMIT 1")
-                            .fetch_optional(&state.db)
-                            .await
-                            .ok()
-                            .flatten();
-                    row.map(|u| u.into_inner())
-                };
+                    repo::get_first_org_id(&state.db).await.ok().flatten();
 
                 if single_org.is_some() {
                     tracing::warn!(
@@ -642,26 +629,9 @@ async fn process_gateway_message(
 
             // ── Gateway active check ──
             // If the gateway is blocked (is_active = false), reject the connection.
-            #[cfg(feature = "postgres")]
-            let is_active: bool =
-                sqlx::query_scalar("SELECT COALESCE(is_active, true) FROM gateways WHERE id = $1")
-                    .bind(gateway_id)
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or(true); // Default to active if gateway doesn't exist (first-time registration)
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            let is_active: bool = {
-                let val: Option<i32> =
-                    sqlx::query_scalar("SELECT COALESCE(is_active, 1) FROM gateways WHERE id = $1")
-                        .bind(DbUuid::from(gateway_id))
-                        .fetch_optional(&state.db)
-                        .await
-                        .ok()
-                        .flatten();
-                val.unwrap_or(1) != 0
-            };
+            let is_active: bool = repo::is_gateway_active(&state.db, gateway_id)
+                .await
+                .unwrap_or(true); // Default to active if gateway doesn't exist (first-time registration)
 
             if !is_active {
                 tracing::warn!(
@@ -706,30 +676,10 @@ async fn process_gateway_message(
                 site_id
             } else if let Some(ref z) = zone {
                 // Backward compat: look up site by code matching zone
-                #[cfg(feature = "postgres")]
-                let result: Option<uuid::Uuid> = sqlx::query_scalar(
-                    "SELECT id FROM sites WHERE organization_id = $1 AND code = $2",
-                )
-                .bind(org_id)
-                .bind(z)
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten();
-                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                let result: Option<uuid::Uuid> = {
-                    let row: Option<DbUuid> = sqlx::query_scalar(
-                        "SELECT id FROM sites WHERE organization_id = $1 AND code = $2",
-                    )
-                    .bind(DbUuid::from(org_id))
-                    .bind(z)
-                    .fetch_optional(&state.db)
+                ws_repo::lookup_site_by_code(&state.db, org_id, z)
                     .await
                     .ok()
-                    .flatten();
-                    row.map(|u| u.into_inner())
-                };
-                result
+                    .flatten()
             } else {
                 None
             };
@@ -742,58 +692,14 @@ async fn process_gateway_message(
             // - First gateway in a site becomes primary (is_primary=true, priority=0)
             // - Subsequent gateways are standby (is_primary=false, priority=N)
             // - Gateways without site_id are assigned priority 0 and not primary
-            #[cfg(feature = "postgres")]
-            if let Err(e) = sqlx::query(
-                r#"
-                WITH site_info AS (
-                    SELECT
-                        COALESCE(MAX(priority), -1) + 1 AS next_priority,
-                        COUNT(*) = 0 AS is_first_in_site
-                    FROM gateways
-                    WHERE organization_id = $2
-                      AND (($5::uuid IS NOT NULL AND site_id = $5) OR ($5::uuid IS NULL AND site_id IS NULL))
-                      AND id != $1
-                )
-                INSERT INTO gateways (id, organization_id, name, zone, site_id, is_active, is_primary, priority, last_heartbeat_at)
-                SELECT $1, $2, $3, $4, $5, true,
-                       CASE WHEN $5::uuid IS NOT NULL THEN si.is_first_in_site ELSE false END,
-                       si.next_priority,
-                       now()
-                FROM site_info si
-                ON CONFLICT (id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    zone = COALESCE(EXCLUDED.zone, gateways.zone),
-                    site_id = COALESCE(EXCLUDED.site_id, gateways.site_id),
-                    last_heartbeat_at = now()
-                "#,
+            if let Err(e) = ws_repo::upsert_gateway(
+                &state.db,
+                gateway_id,
+                org_id,
+                &display_name,
+                zone.as_deref(),
+                resolved_site_id,
             )
-            .bind(gateway_id)
-            .bind(org_id)
-            .bind(&display_name)
-            .bind(&zone)
-            .bind(resolved_site_id)
-            .execute(&state.db)
-            .await
-            {
-                tracing::warn!(gateway_id = %gateway_id, "Failed to upsert gateway record: {}", e);
-            }
-
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            if let Err(e) = sqlx::query(
-                "INSERT INTO gateways (id, organization_id, name, zone, site_id, is_active, last_heartbeat_at) \
-                 VALUES ($1, $2, $3, $4, $5, 1, datetime('now')) \
-                 ON CONFLICT (id) DO UPDATE SET \
-                     name = EXCLUDED.name, \
-                     zone = COALESCE(EXCLUDED.zone, gateways.zone), \
-                     site_id = COALESCE(EXCLUDED.site_id, gateways.site_id), \
-                     last_heartbeat_at = datetime('now')",
-            )
-            .bind(DbUuid::from(gateway_id))
-            .bind(DbUuid::from(org_id))
-            .bind(&display_name)
-            .bind(zone.as_deref().unwrap_or("default"))
-            .bind(resolved_site_id.map(DbUuid::from))
-            .execute(&state.db)
             .await
             {
                 tracing::warn!(gateway_id = %gateway_id, "Failed to upsert gateway record: {}", e);
@@ -816,28 +722,9 @@ async fn process_gateway_message(
             if let Some(gw_id) = gw_id {
                 // ── Agent active check ──
                 // If the agent is blocked (is_active = false), reject the connection.
-                #[cfg(feature = "postgres")]
-                let is_active: bool = sqlx::query_scalar(
-                    "SELECT COALESCE(is_active, true) FROM agents WHERE id = $1",
-                )
-                .bind(agent_id)
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or(true); // Default to active if agent doesn't exist (first-time registration)
-                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                let is_active: bool = {
-                    let val: Option<i32> = sqlx::query_scalar(
-                        "SELECT COALESCE(is_active, 1) FROM agents WHERE id = $1",
-                    )
-                    .bind(DbUuid::from(agent_id))
-                    .fetch_optional(&state.db)
+                let is_active: bool = repo::is_agent_active(&state.db, agent_id)
                     .await
-                    .ok()
-                    .flatten();
-                    val.unwrap_or(1) != 0
-                };
+                    .unwrap_or(true); // Default to active if agent doesn't exist (first-time registration)
 
                 if !is_active {
                     tracing::warn!(
@@ -858,25 +745,10 @@ async fn process_gateway_message(
                 // ── Certificate revocation check ──
                 // If the agent presents a cert fingerprint, check if it's been revoked.
                 if let Some(ref fp) = cert_fingerprint {
-                    #[cfg(feature = "postgres")]
-                    let is_revoked: bool = sqlx::query_scalar(
-                        "SELECT EXISTS(SELECT 1 FROM revoked_certificates WHERE fingerprint = $1)",
-                    )
-                    .bind(fp)
-                    .fetch_one(&state.db)
-                    .await
-                    .unwrap_or(false);
-                    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                    let is_revoked: bool = {
-                        let count: i32 = sqlx::query_scalar(
-                            "SELECT COUNT(*) FROM revoked_certificates WHERE fingerprint = $1",
-                        )
-                        .bind(fp)
-                        .fetch_one(&state.db)
-                        .await
-                        .unwrap_or(0);
-                        count > 0
-                    };
+                    let is_revoked: bool =
+                        ws_repo::is_certificate_revoked(&state.db, fp)
+                            .await
+                            .unwrap_or(false);
 
                     if is_revoked {
                         tracing::warn!(
@@ -899,24 +771,11 @@ async fn process_gateway_message(
                 // ── Certificate pinning check ──
                 // If the agent already has a stored fingerprint, verify it matches.
                 if let Some(ref fp) = cert_fingerprint {
-                    #[cfg(feature = "postgres")]
-                    let stored_fp: Option<Option<String>> = sqlx::query_scalar(
-                        "SELECT certificate_fingerprint FROM agents WHERE id = $1",
-                    )
-                    .bind(agent_id)
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten();
-                    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                    let stored_fp: Option<Option<String>> = sqlx::query_scalar(
-                        "SELECT certificate_fingerprint FROM agents WHERE id = $1",
-                    )
-                    .bind(DbUuid::from(agent_id))
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten();
+                    let stored_fp: Option<Option<String>> =
+                        ws_repo::get_agent_cert_fingerprint(&state.db, agent_id)
+                            .await
+                            .ok()
+                            .flatten();
 
                     if let Some(Some(ref stored)) = stored_fp {
                         if !stored.is_empty() && stored != fp {
@@ -958,43 +817,14 @@ async fn process_gateway_message(
                 send_run_checks_now(state, agent_id);
 
                 // Update agent record: gateway_id, certificate fingerprint, version
-                #[cfg(feature = "postgres")]
-                if let Err(e) = sqlx::query(
-                    "UPDATE agents SET gateway_id = $2, \
-                     certificate_fingerprint = COALESCE($3, certificate_fingerprint), \
-                     certificate_cn = COALESCE($4, certificate_cn), \
-                     version = COALESCE($5, version), \
-                     identity_verified = ($3 IS NOT NULL) \
-                     WHERE id = $1",
+                if let Err(e) = ws_repo::update_agent_connection_info(
+                    &state.db,
+                    agent_id,
+                    gw_id,
+                    cert_fingerprint.as_deref(),
+                    cert_cn.as_deref(),
+                    version.as_deref(),
                 )
-                .bind(agent_id)
-                .bind(gw_id)
-                .bind(&cert_fingerprint)
-                .bind(&cert_cn)
-                .bind(&version)
-                .execute(&state.db)
-                .await
-                {
-                    tracing::warn!(
-                        agent_id = %agent_id,
-                        "Failed to update agent record: {}", e
-                    );
-                }
-                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                if let Err(e) = sqlx::query(
-                    "UPDATE agents SET gateway_id = $2, \
-                     certificate_fingerprint = COALESCE($3, certificate_fingerprint), \
-                     certificate_cn = COALESCE($4, certificate_cn), \
-                     version = COALESCE($5, version), \
-                     identity_verified = ($3 IS NOT NULL) \
-                     WHERE id = $1",
-                )
-                .bind(DbUuid::from(agent_id))
-                .bind(DbUuid::from(gw_id))
-                .bind(&cert_fingerprint)
-                .bind(&cert_cn)
-                .bind(&version)
-                .execute(&state.db)
                 .await
                 {
                     tracing::warn!(
@@ -1039,24 +869,11 @@ async fn process_gateway_message(
             }
 
             // Look up gateway name for display
-            #[cfg(feature = "postgres")]
-            let gateway_name: String =
-                sqlx::query_scalar("SELECT name FROM gateways WHERE id = $1")
-                    .bind(gateway_id)
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| gateway_id.to_string());
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            let gateway_name: String =
-                sqlx::query_scalar("SELECT name FROM gateways WHERE id = $1")
-                    .bind(DbUuid::from(gateway_id))
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| gateway_id.to_string());
+            let gateway_name: String = repo::get_gateway_name(&state.db, gateway_id)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| gateway_id.to_string());
 
             for entry in entries {
                 // Create WsEvent for each log entry
@@ -1098,23 +915,7 @@ async fn process_gateway_message(
             );
 
             // Update gateway's last heartbeat timestamp
-            #[cfg(feature = "postgres")]
-            let gw_hb_result = sqlx::query(&format!(
-                "UPDATE gateways SET last_heartbeat_at = {} WHERE id = $1",
-                crate::db::sql::now()
-            ))
-            .bind(gateway_id)
-            .execute(&state.db)
-            .await;
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            let gw_hb_result = sqlx::query(&format!(
-                "UPDATE gateways SET last_heartbeat_at = {} WHERE id = $1",
-                crate::db::sql::now()
-            ))
-            .bind(DbUuid::from(gateway_id))
-            .execute(&state.db)
-            .await;
-            if let Err(e) = gw_hb_result {
+            if let Err(e) = ws_repo::update_gateway_heartbeat_ts(&state.db, gateway_id).await {
                 tracing::warn!(
                     gateway_id = %gateway_id,
                     "Failed to update gateway heartbeat: {}", e
@@ -1195,23 +996,15 @@ async fn process_agent_message(
             .await;
 
             // Broadcast CommandResultEvent to subscribed frontend clients
-            if let Ok(Some((comp_id, comp_name, app_id))) =
-                sqlx::query_as::<_, (DbUuid, String, DbUuid)>(
-                    r#"SELECT c.id, c.name, c.application_id
-                   FROM command_executions ce
-                   JOIN components c ON ce.component_id = c.id
-                   WHERE ce.request_id = $1"#,
-                )
-                .bind(DbUuid::from(request_id))
-                .fetch_optional(&state.db)
-                .await
+            if let Ok(Some(info)) =
+                ws_repo::get_command_component_info(&state.db, request_id).await
             {
                 state.ws_hub.broadcast(
-                    app_id,
+                    info.application_id,
                     appcontrol_common::WsEvent::CommandResultEvent {
                         request_id,
-                        component_id: *comp_id,
-                        component_name: Some(comp_name),
+                        component_id: info.component_id,
+                        component_name: Some(info.component_name),
                         exit_code,
                         stdout: stdout.clone(),
                         stderr: stderr.clone(),
@@ -1263,27 +1056,18 @@ async fn process_agent_message(
             );
 
             // Resolve component_id from command_executions to broadcast to subscribed clients
-            let component_id = sqlx::query_scalar::<_, DbUuid>(
-                "SELECT component_id FROM command_executions WHERE request_id = $1",
-            )
-            .bind(DbUuid::from(request_id))
-            .fetch_optional(&state.db)
-            .await;
-
-            if let Ok(Some(comp_id)) = component_id {
+            if let Ok(Some(comp_id)) =
+                ws_repo::get_command_execution_component_id(&state.db, request_id).await
+            {
                 // Resolve app_id for broadcast routing
-                if let Ok(Some(app_id)) = sqlx::query_scalar::<_, DbUuid>(
-                    "SELECT application_id FROM components WHERE id = $1",
-                )
-                .bind(comp_id)
-                .fetch_optional(&state.db)
-                .await
+                if let Ok(Some(app_id)) =
+                    repo::get_component_app_id(&state.db, comp_id).await
                 {
                     state.ws_hub.broadcast(
                         app_id,
                         appcontrol_common::WsEvent::CommandOutputChunkEvent {
                             request_id,
-                            component_id: *comp_id,
+                            component_id: comp_id,
                             stdout,
                             stderr,
                         },
@@ -1327,31 +1111,14 @@ async fn process_agent_message(
                 // This fixes the case where an agent's gateway_id is NULL but it's actively sending heartbeats.
                 let db = state.db.clone();
                 tokio::spawn(async move {
-                    #[cfg(feature = "postgres")]
-                    let result = sqlx::query(
-                        "UPDATE agents SET gateway_id = $2 WHERE id = $1 AND gateway_id IS NULL",
-                    )
-                    .bind(agent_id)
-                    .bind(gw_id)
-                    .execute(&db)
-                    .await;
-                    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                    let result = sqlx::query(
-                        "UPDATE agents SET gateway_id = $2 WHERE id = $1 AND gateway_id IS NULL",
-                    )
-                    .bind(DbUuid::from(agent_id))
-                    .bind(DbUuid::from(gw_id))
-                    .execute(&db)
-                    .await;
-
-                    if let Ok(res) = result {
-                        if res.rows_affected() > 0 {
-                            tracing::info!(
-                                agent_id = %agent_id,
-                                gateway_id = %gw_id,
-                                "Restored agent gateway_id from heartbeat (was NULL)"
-                            );
-                        }
+                    if let Ok(true) =
+                        ws_repo::restore_agent_gateway_if_null(&db, agent_id, gw_id).await
+                    {
+                        tracing::info!(
+                            agent_id = %agent_id,
+                            gateway_id = %gw_id,
+                            "Restored agent gateway_id from heartbeat (was NULL)"
+                        );
                     }
                 });
             }
@@ -1361,27 +1128,7 @@ async fn process_agent_message(
             state.heartbeat_batcher.record(agent_id).await;
 
             // Store metrics for time-series graphing (sample every heartbeat)
-            #[cfg(feature = "postgres")]
-            let metrics_result = sqlx::query(
-                "INSERT INTO agent_metrics (agent_id, cpu_pct, memory_pct, disk_used_pct) VALUES ($1, $2, $3, $4)"
-            )
-            .bind(agent_id)
-            .bind(cpu)
-            .bind(memory)
-            .bind(disk)
-            .execute(&state.db)
-            .await;
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            let metrics_result = sqlx::query(
-                "INSERT INTO agent_metrics (agent_id, cpu_pct, memory_pct, disk_used_pct) VALUES ($1, $2, $3, $4)"
-            )
-            .bind(DbUuid::from(agent_id))
-            .bind(cpu)
-            .bind(memory)
-            .bind(disk)
-            .execute(&state.db)
-            .await;
-            if let Err(e) = metrics_result {
+            if let Err(e) = ws_repo::insert_agent_metrics(&state.db, agent_id, cpu, memory, disk).await {
                 // Don't fail on metrics insert - just log warning
                 tracing::warn!(agent_id = %agent_id, "Failed to insert agent metrics: {}", e);
             }
@@ -1409,28 +1156,9 @@ async fn process_agent_message(
                 "Agent registered via gateway"
             );
             // Check if agent is blocked before processing registration
-            #[cfg(feature = "postgres")]
-            let is_blocked: bool = sqlx::query_scalar(
-                "SELECT NOT COALESCE(is_active, true) FROM agents WHERE id = $1",
-            )
-            .bind(agent_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(false);
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            let is_blocked: bool = {
-                let val: Option<i32> = sqlx::query_scalar(
-                    "SELECT CASE WHEN COALESCE(is_active, 1) = 0 THEN 1 ELSE 0 END FROM agents WHERE id = $1",
-                )
-                .bind(DbUuid::from(agent_id))
-                .fetch_optional(&state.db)
+            let is_blocked: bool = ws_repo::is_agent_blocked(&state.db, agent_id)
                 .await
-                .ok()
-                .flatten();
-                val.unwrap_or(0) != 0
-            };
+                .unwrap_or(false);
 
             if is_blocked {
                 tracing::warn!(
@@ -1444,64 +1172,20 @@ async fn process_agent_message(
 
             // Update agent record with hostname, IPs, version, system info, and heartbeat
             // NOTE: We do NOT set is_active = true here to respect blocked status
-            #[cfg(feature = "postgres")]
-            if let Err(e) = sqlx::query(&format!(
-                "UPDATE agents SET hostname = $2, ip_addresses = $3, last_heartbeat_at = {}, \
-                 version = COALESCE($4, version), \
-                 os_name = COALESCE($5, os_name), \
-                 os_version = COALESCE($6, os_version), \
-                 cpu_arch = COALESCE($7, cpu_arch), \
-                 cpu_cores = COALESCE($8, cpu_cores), \
-                 total_memory_mb = COALESCE($9, total_memory_mb), \
-                 disk_total_gb = COALESCE($10, disk_total_gb), \
-                 certificate_fingerprint = COALESCE($11, certificate_fingerprint), \
-                 identity_verified = ($11 IS NOT NULL) \
-                 WHERE id = $1 AND is_active = true",
-                crate::db::sql::now()
-            ))
-            .bind(agent_id)
-            .bind(&hostname)
-            .bind(serde_json::json!(&ip_addresses))
-            .bind(&version)
-            .bind(&os_name)
-            .bind(&os_version)
-            .bind(&cpu_arch)
-            .bind(cpu_cores.map(|c| c as i32))
-            .bind(total_memory_mb.map(|m| m as i64))
-            .bind(disk_total_gb.map(|d| d as i64))
-            .bind(&cert_fingerprint)
-            .execute(&state.db)
-            .await
-            {
-                tracing::warn!(agent_id = %agent_id, "Failed to update agent registration: {}", e);
-            }
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            if let Err(e) = sqlx::query(&format!(
-                "UPDATE agents SET hostname = $2, ip_addresses = $3, last_heartbeat_at = {}, \
-                 version = COALESCE($4, version), \
-                 os_name = COALESCE($5, os_name), \
-                 os_version = COALESCE($6, os_version), \
-                 cpu_arch = COALESCE($7, cpu_arch), \
-                 cpu_cores = COALESCE($8, cpu_cores), \
-                 total_memory_mb = COALESCE($9, total_memory_mb), \
-                 disk_total_gb = COALESCE($10, disk_total_gb), \
-                 certificate_fingerprint = COALESCE($11, certificate_fingerprint), \
-                 identity_verified = ($11 IS NOT NULL) \
-                 WHERE id = $1 AND is_active = 1",
-                crate::db::sql::now()
-            ))
-            .bind(DbUuid::from(agent_id))
-            .bind(&hostname)
-            .bind(serde_json::to_string(&ip_addresses).unwrap_or_default())
-            .bind(&version)
-            .bind(&os_name)
-            .bind(&os_version)
-            .bind(&cpu_arch)
-            .bind(cpu_cores.map(|c| c as i32))
-            .bind(total_memory_mb.map(|m| m as i64))
-            .bind(disk_total_gb.map(|d| d as i64))
-            .bind(&cert_fingerprint)
-            .execute(&state.db)
+            if let Err(e) = ws_repo::update_agent_registration(
+                &state.db,
+                agent_id,
+                &hostname,
+                &ip_addresses,
+                Some(version.as_str()),
+                os_name.as_deref(),
+                os_version.as_deref(),
+                cpu_arch.as_deref(),
+                cpu_cores.map(|c| c as i32),
+                total_memory_mb.map(|m| m as i64),
+                disk_total_gb.map(|d| d as i64),
+                cert_fingerprint.as_deref(),
+            )
             .await
             {
                 tracing::warn!(agent_id = %agent_id, "Failed to update agent registration: {}", e);
@@ -1561,29 +1245,15 @@ async fn process_agent_message(
             }))
             .unwrap_or_default();
 
-            #[cfg(feature = "postgres")]
-            let disc_result = sqlx::query(
-                "INSERT INTO discovery_reports (agent_id, hostname, report, scanned_at)
-                 VALUES ($1, $2, $3, $4)",
+            if let Err(e) = ws_repo::insert_discovery_report(
+                &state.db,
+                agent_id,
+                &hostname,
+                &report_json,
+                scanned_at,
             )
-            .bind(agent_id)
-            .bind(&hostname)
-            .bind(&report_json)
-            .bind(scanned_at)
-            .execute(&state.db)
-            .await;
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            let disc_result = sqlx::query(
-                "INSERT INTO discovery_reports (agent_id, hostname, report, scanned_at)
-                 VALUES ($1, $2, $3, $4)",
-            )
-            .bind(DbUuid::from(agent_id))
-            .bind(&hostname)
-            .bind(serde_json::to_string(&report_json).unwrap_or_default())
-            .bind(scanned_at.to_rfc3339())
-            .execute(&state.db)
-            .await;
-            if let Err(e) = disc_result {
+            .await
+            {
                 tracing::warn!(
                     agent_id = %agent_id,
                     "Failed to store discovery report: {}", e
@@ -1611,31 +1281,12 @@ async fn process_agent_message(
                 status = status_str,
                 "Agent update progress"
             );
-            #[cfg(feature = "postgres")]
-            let _ = sqlx::query(&format!(
-                "UPDATE agent_update_tasks \
-                 SET status = $2, error = $3, \
-                     completed_at = CASE WHEN $2 IN ('complete', 'failed') THEN {} ELSE completed_at END \
-                 WHERE id = $1",
-                crate::db::sql::now()
-            ))
-            .bind(update_id)
-            .bind(status_str)
-            .bind(error.as_deref())
-            .execute(&state.db)
-            .await;
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            let _ = sqlx::query(&format!(
-                "UPDATE agent_update_tasks \
-                 SET status = $2, error = $3, \
-                     completed_at = CASE WHEN $2 IN ('complete', 'failed') THEN {} ELSE completed_at END \
-                 WHERE id = $1",
-                crate::db::sql::now()
-            ))
-            .bind(DbUuid::from(update_id))
-            .bind(status_str)
-            .bind(error.as_deref())
-            .execute(&state.db)
+            let _ = ws_repo::update_agent_update_task(
+                &state.db,
+                update_id,
+                status_str,
+                error.as_deref(),
+            )
             .await;
         }
         appcontrol_common::AgentMessage::TerminalOutput { request_id, data } => {
@@ -1727,24 +1378,11 @@ async fn process_agent_message(
             }
 
             // Look up agent hostname for display
-            #[cfg(feature = "postgres")]
-            let agent_name: String =
-                sqlx::query_scalar("SELECT hostname FROM agents WHERE id = $1")
-                    .bind(agent_id)
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| agent_id.to_string());
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            let agent_name: String =
-                sqlx::query_scalar("SELECT hostname FROM agents WHERE id = $1")
-                    .bind(DbUuid::from(agent_id))
-                    .fetch_optional(&state.db)
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| agent_id.to_string());
+            let agent_name: String = repo::get_agent_hostname(&state.db, agent_id)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| agent_id.to_string());
 
             for entry in entries {
                 // Create WsEvent for each log entry
@@ -1900,74 +1538,7 @@ async fn process_agent_message(
 ///
 /// Components belonging to suspended applications are excluded from the config.
 pub async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
-    #[cfg(feature = "postgres")]
-    let rows = sqlx::query_as::<
-        _,
-        (
-            uuid::Uuid, // id
-            String,     // name
-            Option<String>,
-            Option<String>,
-            Option<String>, // check, start, stop
-            Option<String>,
-            Option<String>,
-            Option<String>, // integrity, post_start, infra
-            Option<String>,
-            Option<String>, // rebuild, rebuild_infra
-            i32,
-            i32,
-            i32,               // intervals
-            serde_json::Value, // env_vars
-        ),
-    >(
-        "SELECT c.id, c.name, c.check_cmd, c.start_cmd, c.stop_cmd,
-                c.integrity_check_cmd, c.post_start_check_cmd, c.infra_check_cmd,
-                c.rebuild_cmd, c.rebuild_infra_cmd,
-                c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
-                COALESCE(c.env_vars, '{}'::jsonb)
-         FROM components c
-         JOIN applications a ON c.application_id = a.id
-         WHERE c.agent_id = $1
-           AND a.is_suspended = false",
-    )
-    .bind(agent_id)
-    .fetch_all(&state.db)
-    .await;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let rows = sqlx::query_as::<
-        _,
-        (
-            DbUuid, // id
-            String, // name
-            Option<String>,
-            Option<String>,
-            Option<String>, // check, start, stop
-            Option<String>,
-            Option<String>,
-            Option<String>, // integrity, post_start, infra
-            Option<String>,
-            Option<String>, // rebuild, rebuild_infra
-            i32,
-            i32,
-            i32,    // intervals
-            String, // env_vars as TEXT
-        ),
-    >(
-        "SELECT c.id, c.name, c.check_cmd, c.start_cmd, c.stop_cmd,
-                c.integrity_check_cmd, c.post_start_check_cmd, c.infra_check_cmd,
-                c.rebuild_cmd, c.rebuild_infra_cmd,
-                c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
-                COALESCE(c.env_vars, '{}')
-         FROM components c
-         JOIN applications a ON c.application_id = a.id
-         WHERE c.agent_id = $1
-           AND a.is_suspended = 0",
-    )
-    .bind(DbUuid::from(agent_id))
-    .fetch_all(&state.db)
-    .await;
-
-    let rows = match rows {
+    let rows = match ws_repo::get_agent_component_configs(&state.db, agent_id).await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(agent_id = %agent_id, "Failed to query components for agent: {}", e);
@@ -1978,49 +1549,22 @@ pub async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
     // Always send UpdateConfig, even if empty - this ensures agent's scheduler stays in sync
     let components: Vec<appcontrol_common::ComponentConfig> = rows
         .into_iter()
-        .map(
-            |(
-                id,
-                name,
-                check,
-                start,
-                stop,
-                integrity,
-                post_start,
-                infra,
-                rebuild,
-                rebuild_infra,
-                interval,
-                start_to,
-                stop_to,
-                env,
-            )| {
-                #[cfg(feature = "postgres")]
-                let (comp_id, env_vars) = (id, env);
-                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                let (comp_id, env_vars) = (
-                    id.into_inner(),
-                    serde_json::from_str::<serde_json::Value>(&env)
-                        .unwrap_or(serde_json::json!({})),
-                );
-                appcontrol_common::ComponentConfig {
-                    component_id: comp_id,
-                    name,
-                    check_cmd: check,
-                    start_cmd: start,
-                    stop_cmd: stop,
-                    integrity_check_cmd: integrity,
-                    post_start_check_cmd: post_start,
-                    infra_check_cmd: infra,
-                    rebuild_cmd: rebuild,
-                    rebuild_infra_cmd: rebuild_infra,
-                    check_interval_seconds: interval as u32,
-                    start_timeout_seconds: start_to as u32,
-                    stop_timeout_seconds: stop_to as u32,
-                    env_vars,
-                }
-            },
-        )
+        .map(|c| appcontrol_common::ComponentConfig {
+            component_id: c.component_id,
+            name: c.name,
+            check_cmd: c.check_cmd,
+            start_cmd: c.start_cmd,
+            stop_cmd: c.stop_cmd,
+            integrity_check_cmd: c.integrity_check_cmd,
+            post_start_check_cmd: c.post_start_check_cmd,
+            infra_check_cmd: c.infra_check_cmd,
+            rebuild_cmd: c.rebuild_cmd,
+            rebuild_infra_cmd: c.rebuild_infra_cmd,
+            check_interval_seconds: c.check_interval_seconds as u32,
+            start_timeout_seconds: c.start_timeout_seconds as u32,
+            stop_timeout_seconds: c.stop_timeout_seconds as u32,
+            env_vars: c.env_vars,
+        })
         .collect();
 
     let count = components.len();
@@ -2074,44 +1618,7 @@ async fn mark_agent_components_unreachable(
     agent_id: uuid::Uuid,
     trigger: &str,
 ) {
-    // Row type for query
-    #[derive(sqlx::FromRow)]
-    struct ComponentInfo {
-        id: DbUuid,
-        name: String,
-        current_state: String,
-        application_id: DbUuid,
-        app_name: String,
-    }
-
-    // Find components that should be transitioned to UNREACHABLE
-    #[cfg(feature = "postgres")]
-    let components_result = sqlx::query_as::<_, ComponentInfo>(
-        r#"
-        SELECT c.id, c.name, c.current_state, c.application_id, a.name AS app_name
-        FROM components c
-        JOIN applications a ON a.id = c.application_id
-        WHERE c.agent_id = $1
-          AND c.current_state NOT IN ('UNREACHABLE', 'STOPPED', 'STOPPING', 'UNKNOWN')
-        "#,
-    )
-    .bind(agent_id)
-    .fetch_all(&state.db)
-    .await;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let components_result = sqlx::query_as::<_, ComponentInfo>(
-        r#"
-        SELECT c.id, c.name, c.current_state, c.application_id, a.name AS app_name
-        FROM components c
-        JOIN applications a ON a.id = c.application_id
-        WHERE c.agent_id = $1
-          AND c.current_state NOT IN ('UNREACHABLE', 'STOPPED', 'STOPPING', 'UNKNOWN')
-        "#,
-    )
-    .bind(DbUuid::from(agent_id))
-    .fetch_all(&state.db)
-    .await;
-    let components = match components_result {
+    let components = match ws_repo::get_agent_active_components(&state.db, agent_id).await {
         Ok(comps) => comps,
         Err(e) => {
             tracing::error!(
@@ -2138,41 +1645,15 @@ async fn mark_agent_components_unreachable(
 
     for comp in components {
         // Insert state transition (append-only)
-        #[cfg(feature = "postgres")]
-        let trans_result = sqlx::query(
-            r#"
-            INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, 'UNREACHABLE', $3,
-                    jsonb_build_object('previous_state', $2, 'agent_id', $4::text))
-            "#,
+        if let Err(e) = ws_repo::insert_unreachable_transition(
+            &state.db,
+            comp.id,
+            &comp.current_state,
+            trigger,
+            agent_id,
         )
-        .bind(comp.id)
-        .bind(&comp.current_state)
-        .bind(trigger)
-        .bind(agent_id.to_string())
-        .execute(&state.db)
-        .await;
-        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        let trans_result = {
-            let details = serde_json::json!({
-                "previous_state": &comp.current_state,
-                "agent_id": agent_id.to_string(),
-            });
-            sqlx::query(
-                r#"
-                INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details)
-                VALUES ($1, $2, $3, 'UNREACHABLE', $4, $5)
-                "#,
-            )
-            .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
-            .bind(comp.id)
-            .bind(&comp.current_state)
-            .bind(trigger)
-            .bind(serde_json::to_string(&details).unwrap_or_default())
-            .execute(&state.db)
-            .await
-        };
-        if let Err(e) = trans_result {
+        .await
+        {
             tracing::warn!(
                 component_id = %comp.id,
                 "Failed to insert state_transition to UNREACHABLE: {}", e
@@ -2181,12 +1662,7 @@ async fn mark_agent_components_unreachable(
         }
 
         // Update cached current_state on the component
-        if let Err(e) =
-            sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
-                .bind(comp.id)
-                .execute(&state.db)
-                .await
-        {
+        if let Err(e) = ws_repo::set_component_unreachable(&state.db, comp.id).await {
             tracing::warn!(
                 component_id = %comp.id,
                 "Failed to update component current_state: {}", e
@@ -2210,8 +1686,8 @@ async fn mark_agent_components_unreachable(
         state.ws_hub.broadcast(
             comp.application_id,
             appcontrol_common::WsEvent::StateChange {
-                component_id: *comp.id,
-                app_id: *comp.application_id,
+                component_id: comp.id,
+                app_id: comp.application_id,
                 component_name: Some(comp.name.clone()),
                 app_name: Some(comp.app_name.clone()),
                 from: from_state,
@@ -2247,34 +1723,16 @@ pub async fn push_config_to_affected_agents(
 
     // Find agents affected by application
     if let Some(app_id) = application_id {
-        #[cfg(feature = "postgres")]
-        let app_agents: Vec<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT DISTINCT agent_id FROM components
-             WHERE application_id = $1 AND agent_id IS NOT NULL",
-        )
-        .bind(app_id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
-        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        let app_agents: Vec<uuid::Uuid> = {
-            let rows: Vec<DbUuid> = sqlx::query_scalar(
-                "SELECT DISTINCT agent_id FROM components
-                 WHERE application_id = $1 AND agent_id IS NOT NULL",
-            )
-            .bind(DbUuid::from(app_id))
-            .fetch_all(&state.db)
+        let app_agents = ws_repo::get_agents_for_application(&state.db, app_id)
             .await
             .unwrap_or_default();
-            rows.into_iter().map(|u| u.into_inner()).collect()
-        };
         agent_ids.extend(app_agents);
     }
 
     // Find agents affected by specific components
     if let Some(comp_ids) = component_ids {
         if !comp_ids.is_empty() {
-            let comp_agents = fetch_agents_for_components(&state.db, comp_ids)
+            let comp_agents = ws_repo::get_agents_for_components(&state.db, comp_ids)
                 .await
                 .unwrap_or_default();
             agent_ids.extend(comp_agents);
@@ -2337,140 +1795,46 @@ async fn validate_gateway_enrollment_token(
     // Hash the token and look it up
     let token_hash = hex::encode(sha2::Sha256::digest(token.as_bytes()));
 
-    #[cfg(feature = "postgres")]
-    let token_row = sqlx::query_as::<
-        _,
-        (
-            uuid::Uuid,                    // id
-            uuid::Uuid,                    // organization_id
-            String,                        // scope
-            Option<i32>,                   // max_uses
-            i32,                           // current_uses
-            chrono::DateTime<chrono::Utc>, // expires_at
-        ),
-    >(
-        r#"SELECT id, organization_id, scope, max_uses, current_uses, expires_at
-           FROM enrollment_tokens
-           WHERE token_hash = $1
-           AND revoked_at IS NULL"#,
-    )
-    .bind(&token_hash)
-    .fetch_optional(db)
-    .await
-    .map_err(|_| "Database error")?;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let token_row = sqlx::query_as::<
-        _,
-        (
-            DbUuid,      // id
-            DbUuid,      // organization_id
-            String,      // scope
-            Option<i32>, // max_uses
-            i32,         // current_uses
-            String,      // expires_at as TEXT
-        ),
-    >(
-        r#"SELECT id, organization_id, scope, max_uses, current_uses, expires_at
-           FROM enrollment_tokens
-           WHERE token_hash = $1
-           AND revoked_at IS NULL"#,
-    )
-    .bind(&token_hash)
-    .fetch_optional(db)
-    .await
-    .map_err(|_| "Database error")?;
+    let token_info = ws_repo::get_enrollment_token_by_hash(db, &token_hash)
+        .await
+        .map_err(|_| "Database error")?;
 
-    #[cfg(feature = "postgres")]
-    let parsed_row = token_row;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let parsed_row = token_row.map(|(id, org, scope, max, cur, exp_str)| {
-        let exp = chrono::DateTime::parse_from_rfc3339(&exp_str)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .or_else(|_| {
-                chrono::NaiveDateTime::parse_from_str(&exp_str, "%Y-%m-%d %H:%M:%S")
-                    .map(|ndt| ndt.and_utc())
-            })
-            .unwrap_or_else(|_| chrono::Utc::now());
-        (id.into_inner(), org.into_inner(), scope, max, cur, exp)
-    });
-
-    let (token_id, org_id, scope, max_uses, current_uses, expires_at) = match parsed_row {
-        Some(row) => row,
+    let info = match token_info {
+        Some(info) => info,
         None => return Err("Invalid or revoked token"),
     };
 
     // Check scope
-    if scope != "gateway" {
+    if info.scope != "gateway" {
         tracing::warn!(
-            token_id = %token_id,
-            scope = %scope,
+            token_id = %info.id,
+            scope = %info.scope,
             "Gateway attempted to use non-gateway enrollment token"
         );
         return Err("Token scope must be 'gateway'");
     }
 
     // Check expiry
-    if chrono::Utc::now() > expires_at {
+    if chrono::Utc::now() > info.expires_at {
         return Err("Token has expired");
     }
 
     // Check usage limit
-    if let Some(max) = max_uses {
-        if current_uses >= max {
+    if let Some(max) = info.max_uses {
+        if info.current_uses >= max {
             return Err("Token has reached max uses");
         }
     }
 
     // Increment usage count
-    let _ =
-        sqlx::query("UPDATE enrollment_tokens SET current_uses = current_uses + 1 WHERE id = $1")
-            .bind(DbUuid::from(token_id))
-            .execute(db)
-            .await;
+    let _ = ws_repo::increment_enrollment_token_uses(db, info.id).await;
 
     tracing::info!(
-        token_id = %token_id,
-        org_id = %org_id,
+        token_id = %info.id,
+        org_id = %info.organization_id,
         "Gateway enrollment token validated"
     );
 
-    Ok(org_id)
+    Ok(info.organization_id)
 }
 
-// Helper for cross-database component agent lookup
-#[cfg(feature = "postgres")]
-async fn fetch_agents_for_components(
-    db: &crate::db::DbPool,
-    comp_ids: &[uuid::Uuid],
-) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT DISTINCT agent_id FROM components WHERE id = ANY($1) AND agent_id IS NOT NULL",
-    )
-    .bind(comp_ids)
-    .fetch_all(db)
-    .await
-}
-
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn fetch_agents_for_components(
-    db: &crate::db::DbPool,
-    comp_ids: &[uuid::Uuid],
-) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
-    if comp_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let placeholders: Vec<String> = (1..=comp_ids.len()).map(|i| format!("${}", i)).collect();
-    let query = format!(
-        "SELECT DISTINCT agent_id FROM components WHERE id IN ({}) AND agent_id IS NOT NULL",
-        placeholders.join(", ")
-    );
-    let mut q = sqlx::query_scalar::<_, String>(&query);
-    for id in comp_ids {
-        q = q.bind(id.to_string());
-    }
-    let rows: Vec<String> = q.fetch_all(db).await?;
-    Ok(rows
-        .into_iter()
-        .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
-        .collect())
-}
