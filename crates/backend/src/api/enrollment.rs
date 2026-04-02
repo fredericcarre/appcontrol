@@ -90,45 +90,19 @@ pub async fn create_enrollment_token(
     .await
     .ok();
 
-    #[cfg(feature = "postgres")]
-    let id = sqlx::query_scalar::<_, DbUuid>(
-        r#"INSERT INTO enrollment_tokens
-           (organization_id, token_hash, token_prefix, name, max_uses, expires_at, scope, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-           RETURNING id"#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&token_hash)
-    .bind(token_prefix)
-    .bind(&req.name)
-    .bind(req.max_uses)
-    .bind(expires_at)
-    .bind(scope)
-    .bind(crate::db::bind_id(user.user_id))
-    .fetch_one(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let id = {
-        let new_id = DbUuid::new_v4();
-        sqlx::query(
-            "INSERT INTO enrollment_tokens \
-             (id, organization_id, token_hash, token_prefix, name, max_uses, expires_at, scope, created_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    let id = state
+        .enrollment_repo
+        .create_token(
+            *user.organization_id,
+            &token_hash,
+            token_prefix,
+            &req.name,
+            req.max_uses,
+            expires_at,
+            scope,
+            *user.user_id,
         )
-        .bind(new_id)
-        .bind(crate::db::bind_id(user.organization_id))
-        .bind(&token_hash)
-        .bind(token_prefix)
-        .bind(&req.name)
-        .bind(req.max_uses)
-        .bind(expires_at.to_rfc3339())
-        .bind(scope)
-        .bind(crate::db::bind_id(user.user_id))
-        .execute(&state.db)
         .await?;
-        new_id
-    };
 
     Ok(Json(json!({
         "id": id,
@@ -157,38 +131,29 @@ pub async fn list_enrollment_tokens(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    // Hide revoked tokens after 24 hours - they serve no purpose and clutter the UI
-    #[cfg(feature = "postgres")]
-    let tokens = sqlx::query_as::<_, EnrollmentTokenRow>(
-        &format!(
-            "SELECT id, token_prefix, name, max_uses, current_uses, expires_at, scope, created_at, revoked_at
-             FROM enrollment_tokens
-             WHERE organization_id = $1
-               AND (revoked_at IS NULL OR revoked_at > {} - interval '24 hours')
-             ORDER BY created_at DESC",
-            crate::db::sql::now()
-        ),
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
+    let tokens = state
+        .enrollment_repo
+        .list_tokens(*user.organization_id)
+        .await?;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let tokens = sqlx::query_as::<_, EnrollmentTokenRow>(
-        &format!(
-            "SELECT id, token_prefix, name, max_uses, current_uses, expires_at, scope, created_at, revoked_at
-             FROM enrollment_tokens
-             WHERE organization_id = $1
-               AND (revoked_at IS NULL OR revoked_at > datetime({}, '-24 hours'))
-             ORDER BY created_at DESC",
-            crate::db::sql::now()
-        ),
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
+    let result: Vec<serde_json::Value> = tokens
+        .into_iter()
+        .map(|t| {
+            json!({
+                "id": t.id,
+                "token_prefix": t.token_prefix,
+                "name": t.name,
+                "max_uses": t.max_uses,
+                "current_uses": t.current_uses,
+                "expires_at": t.expires_at,
+                "scope": t.scope,
+                "created_at": t.created_at,
+                "revoked_at": t.revoked_at,
+            })
+        })
+        .collect();
 
-    Ok(Json(json!({ "tokens": tokens })))
+    Ok(Json(json!({ "tokens": result })))
 }
 
 pub async fn revoke_enrollment_token(
@@ -208,19 +173,12 @@ pub async fn revoke_enrollment_token(
     .await
     .ok();
 
-    let result = sqlx::query(&format!(
-        "UPDATE enrollment_tokens
-             SET revoked_at = {}, revoked_by = $3
-             WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL",
-        crate::db::sql::now()
-    ))
-    .bind(token_id)
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(crate::db::bind_id(user.user_id))
-    .execute(&state.db)
-    .await?;
+    let revoked = state
+        .enrollment_repo
+        .revoke_token(token_id, *user.organization_id, *user.user_id)
+        .await?;
 
-    if result.rows_affected() == 0 {
+    if !revoked {
         return Err(ApiError::NotFound);
     }
 
