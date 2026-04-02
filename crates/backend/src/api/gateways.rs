@@ -86,44 +86,10 @@ pub async fn list_gateways(
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
     // Allow all authenticated users to view gateways (read-only)
-    let gateways = sqlx::query_as::<
-        _,
-        (
-            DbUuid,
-            String,
-            Option<String>,
-            bool,
-            bool,
-            i32,
-            Option<String>,
-            Option<chrono::DateTime<chrono::Utc>>,
-            i64,
-            Option<DbUuid>,
-            Option<String>,
-            Option<String>,
-        ),
-    >(
-        r#"SELECT
-               g.id,
-               g.name,
-               g.zone,
-               g.is_active,
-               COALESCE(g.is_primary, false) as is_primary,
-               COALESCE(g.priority, 0) as priority,
-               g.version,
-               g.last_heartbeat_at,
-               COALESCE((SELECT COUNT(*) FROM agents a WHERE a.gateway_id = g.id), 0) as agent_count,
-               g.site_id,
-               s.name as site_name,
-               s.code as site_code
-           FROM gateways g
-           LEFT JOIN sites s ON s.id = g.site_id
-           WHERE g.organization_id = $1
-           ORDER BY COALESCE(s.name, 'zzz'), g.priority, g.name"#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
+    let gateways = state
+        .gateway_repo
+        .list_gateways(*user.organization_id)
+        .await?;
 
     // Get the set of gateways actually connected via WebSocket
     let connected_ids: std::collections::HashSet<Uuid> =
@@ -132,25 +98,24 @@ pub async fn list_gateways(
     // Group by site_id and compute failover status
     // Key is (site_id, site_name, site_code)
     let mut sites_map: std::collections::HashMap<
-        (Option<DbUuid>, String, String),
+        (Option<Uuid>, String, String),
         Vec<GatewayListItem>,
     > = std::collections::HashMap::new();
 
-    for (
-        id,
-        name,
-        zone,
-        is_active,
-        is_primary,
-        priority,
-        version,
-        last_heartbeat,
-        agent_count,
-        site_id,
-        site_name,
-        site_code,
-    ) in gateways
-    {
+    for gw in gateways {
+        let id = gw.id;
+        let name = gw.name;
+        let zone = gw.zone;
+        let is_active = gw.is_active;
+        let is_primary = gw.is_primary;
+        let priority = gw.priority;
+        let version = gw.version;
+        let last_heartbeat = gw.last_heartbeat_at;
+        let agent_count = gw.agent_count;
+        let site_id = gw.site_id;
+        let site_name = gw.site_name;
+        let site_code = gw.site_code;
+
         // Connection status is determined by actual WebSocket connection in the hub
         let connected = is_active && connected_ids.contains(&id);
 
