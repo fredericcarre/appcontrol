@@ -15,6 +15,7 @@ pub mod components;
 pub mod enrollment;
 pub mod gateways;
 pub mod permissions;
+pub mod queries;
 pub mod sites;
 pub mod teams;
 
