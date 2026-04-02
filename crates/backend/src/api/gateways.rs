@@ -121,7 +121,7 @@ pub async fn list_gateways(
            WHERE g.organization_id = $1
            ORDER BY COALESCE(s.name, 'zzz'), g.priority, g.name"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -264,7 +264,7 @@ pub async fn get_gateway(
            WHERE id = $1 AND organization_id = $2"#,
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -288,7 +288,7 @@ pub async fn update_gateway(
             "SELECT EXISTS(SELECT 1 FROM sites WHERE id = $1 AND organization_id = $2)",
         )
         .bind(crate::db::bind_id(site_id))
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .fetch_one(&state.db)
         .await?;
 
@@ -305,7 +305,7 @@ pub async fn update_gateway(
             "SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2",
         )
         .bind(crate::db::bind_id(id))
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .fetch_optional(&state.db)
         .await?;
 
@@ -315,7 +315,7 @@ pub async fn update_gateway(
                 sqlx::query(
                     "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND site_id = $2 AND id != $3",
                 )
-                .bind(user.organization_id)
+                .bind(crate::db::bind_id(user.organization_id))
                 .bind(sid)
                 .bind(crate::db::bind_id(id))
                 .execute(&state.db)
@@ -325,7 +325,7 @@ pub async fn update_gateway(
                 sqlx::query(
                     "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND site_id IS NULL AND id != $3",
                 )
-                .bind(user.organization_id)
+                .bind(crate::db::bind_id(user.organization_id))
                 .bind(&zone)
                 .bind(crate::db::bind_id(id))
                 .execute(&state.db)
@@ -365,7 +365,7 @@ pub async fn update_gateway(
                      version, last_heartbeat_at, created_at"#,
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&req.name)
     .bind(req.site_id)
     .bind(req.is_active)
@@ -392,7 +392,7 @@ pub async fn set_gateway_primary(
     let gw: Option<(Option<Uuid>, String)> =
         sqlx::query_as("SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2")
             .bind(gateway_id)
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -417,7 +417,7 @@ pub async fn set_gateway_primary(
     // Unset existing primary in the same site (or same zone if no site assigned)
     if let Some(sid) = site_id {
         sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND site_id = $2 AND id != $3")
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .bind(sid)
             .bind(gateway_id)
             .execute(&mut *tx)
@@ -425,7 +425,7 @@ pub async fn set_gateway_primary(
     } else {
         // Fallback: use zone for gateways without site assignment
         sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND site_id IS NULL AND id != $3")
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .bind(&zone)
             .bind(gateway_id)
             .execute(&mut *tx)
@@ -443,7 +443,7 @@ pub async fn set_gateway_primary(
         r#"INSERT INTO gateway_status_events (organization_id, gateway_id, event_type, triggered_by)
            VALUES ($1, $2, 'promoted_to_primary', 'manual')"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(gateway_id)
     .execute(&mut *tx)
     .await
@@ -469,7 +469,7 @@ pub async fn list_gateway_agents(
         "SELECT EXISTS(SELECT 1 FROM gateways WHERE id = $1 AND organization_id = $2)",
     )
     .bind(gateway_id)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_one(&state.db)
     .await?;
 
@@ -485,7 +485,7 @@ pub async fn list_gateway_agents(
            ORDER BY hostname"#,
         )
         .bind(gateway_id)
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .fetch_all(&state.db)
         .await?;
 
@@ -542,7 +542,7 @@ pub async fn suspend_gateway(
                      version, last_heartbeat_at, created_at"#,
     )
     .bind(gateway_id)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -558,7 +558,7 @@ pub async fn suspend_gateway(
                      version, last_heartbeat_at, created_at"#,
     )
     .bind(DbUuid::from(gateway_id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -598,7 +598,7 @@ pub async fn activate_gateway(
                      version, last_heartbeat_at, created_at"#,
     )
     .bind(gateway_id)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -614,7 +614,7 @@ pub async fn activate_gateway(
                      version, last_heartbeat_at, created_at"#,
     )
     .bind(DbUuid::from(gateway_id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -662,7 +662,7 @@ pub async fn delete_gateway(
 
     let result = sqlx::query("DELETE FROM gateways WHERE id = $1 AND organization_id = $2")
         .bind(gateway_id)
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .execute(&state.db)
         .await?;
 
@@ -690,7 +690,7 @@ pub async fn block_gateway(
     let gw: Option<(String, String)> =
         sqlx::query_as("SELECT name, zone FROM gateways WHERE id = $1 AND organization_id = $2")
             .bind(gateway_id)
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -729,7 +729,7 @@ pub async fn block_gateway(
     let agent_ids: Vec<Uuid> =
         sqlx::query_scalar("SELECT id FROM agents WHERE gateway_id = $1 AND organization_id = $2")
             .bind(gateway_id)
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_all(&mut *tx)
             .await?;
 
@@ -746,7 +746,7 @@ pub async fn block_gateway(
         r#"INSERT INTO gateway_status_events (organization_id, gateway_id, event_type, triggered_by)
            VALUES ($1, $2, 'blocked', 'manual')"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(gateway_id)
     .execute(&mut *tx)
     .await
@@ -810,7 +810,7 @@ pub async fn revoke_agent_cert(
         "SELECT certificate_fingerprint, certificate_cn FROM agents WHERE id = $1 AND organization_id = $2",
     )
     .bind(crate::db::bind_id(agent_id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -843,12 +843,12 @@ pub async fn revoke_agent_cert(
         r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, agent_id, reason, revoked_by)
            VALUES ($1, $2, $3, $4, $5, $6)"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&fingerprint)
     .bind(&cn)
     .bind(crate::db::bind_id(agent_id))
     .bind(&req.reason)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&mut *tx)
     .await?;
 
@@ -899,7 +899,7 @@ pub async fn revoke_gateway_cert(
         "SELECT certificate_fingerprint, certificate_cn FROM gateways WHERE id = $1 AND organization_id = $2",
     )
     .bind(gateway_id)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -930,12 +930,12 @@ pub async fn revoke_gateway_cert(
         r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, gateway_id, reason, revoked_by)
            VALUES ($1, $2, $3, $4, $5, $6)"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&fingerprint)
     .bind(&cn)
     .bind(gateway_id)
     .bind(&req.reason)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&mut *tx)
     .await?;
 
@@ -996,7 +996,7 @@ pub async fn list_revoked_certificates(
            ORDER BY revoked_at DESC
            LIMIT 100"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 

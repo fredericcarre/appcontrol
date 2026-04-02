@@ -174,7 +174,7 @@ pub async fn trigger_all(
     let agent_ids = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM agents WHERE organization_id = $1 AND is_active = true",
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -182,7 +182,7 @@ pub async fn trigger_all(
     let agent_ids = sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM agents WHERE organization_id = $1 AND is_active = 1",
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1055,7 +1055,7 @@ pub async fn list_drafts(
          ORDER BY created_at DESC
          LIMIT 50",
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1290,7 +1290,7 @@ pub async fn create_draft(
     }
 
     let org_id = sqlx::query_scalar::<_, DbUuid>("SELECT organization_id FROM users WHERE id = $1")
-        .bind(user.user_id)
+        .bind(crate::db::bind_id(user.user_id))
         .fetch_one(&state.db)
         .await?;
 
@@ -1796,7 +1796,7 @@ pub async fn list_schedules(
          WHERE organization_id = $1
          ORDER BY created_at DESC",
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -1876,13 +1876,13 @@ pub async fn create_schedule(
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(schedule_id)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&body.name)
     .bind(UuidArray::from(body.agent_ids.clone()))
     .bind(&body.frequency)
     .bind(body.retention_days)
     .bind(next_run)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await?;
 
@@ -1922,7 +1922,7 @@ pub async fn update_schedule(
         "SELECT EXISTS(SELECT 1 FROM snapshot_schedules WHERE id = $1 AND organization_id = $2)",
     )
     .bind(schedule_id)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_one(&state.db)
     .await?;
 
@@ -2087,7 +2087,7 @@ pub async fn delete_schedule(
     let result =
         sqlx::query("DELETE FROM snapshot_schedules WHERE id = $1 AND organization_id = $2")
             .bind(schedule_id)
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .execute(&state.db)
             .await?;
 
@@ -2137,7 +2137,7 @@ pub async fn list_snapshots(
              ORDER BY ss.captured_at DESC
              LIMIT 100",
         )
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .bind(schedule_id)
         .fetch_all(&state.db)
         .await?
@@ -2150,7 +2150,7 @@ pub async fn list_snapshots(
              ORDER BY ss.captured_at DESC
              LIMIT 100",
         )
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .fetch_all(&state.db)
         .await?
     };
@@ -2196,7 +2196,7 @@ pub async fn compare_snapshots(
          WHERE id = $1 AND organization_id = $2",
     )
     .bind(body.snapshot_id_1)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -2207,7 +2207,7 @@ pub async fn compare_snapshots(
          WHERE id = $1 AND organization_id = $2",
     )
     .bind(body.snapshot_id_2)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -2218,7 +2218,7 @@ pub async fn compare_snapshots(
          WHERE id = $1 AND organization_id = $2",
     )
     .bind(body.snapshot_id_1)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -2229,7 +2229,7 @@ pub async fn compare_snapshots(
          WHERE id = $1 AND organization_id = $2",
     )
     .bind(body.snapshot_id_2)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -2362,7 +2362,7 @@ pub async fn read_file_content(
         "SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1 AND organization_id = $2)",
     )
     .bind(body.agent_id)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_one(&state.db)
     .await?;
 

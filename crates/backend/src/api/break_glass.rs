@@ -95,7 +95,7 @@ pub async fn create_break_glass_account(
          VALUES ($1, $2, $3, $4)",
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&body.username)
     .bind(&password_hash)
     .execute(&state.db)
@@ -124,7 +124,7 @@ pub async fn list_break_glass_accounts(
         "SELECT id, username, is_active, last_rotated_at FROM break_glass_accounts \
          WHERE organization_id = $1 ORDER BY username",
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -253,7 +253,7 @@ pub async fn list_break_glass_sessions(
          FROM break_glass_sessions WHERE organization_id = $1 \
          ORDER BY started_at DESC LIMIT 50",
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -276,7 +276,7 @@ pub async fn end_break_glass_session(
         crate::db::sql::now()
     ))
     .bind(session_id)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .execute(&state.db)
     .await?;
 

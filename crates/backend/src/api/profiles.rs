@@ -298,7 +298,7 @@ pub async fn create_profile(
     .bind(&body.profile_type)
     .bind(UuidArray::from(body.gateway_ids.clone()))
     .bind(body.auto_failover.unwrap_or(false))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .fetch_one(&state.db)
     .await?;
 
@@ -565,7 +565,7 @@ pub async fn list_dr_pattern_rules(
         ORDER BY priority DESC, name
         "#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -617,7 +617,7 @@ pub async fn create_dr_pattern_rule(
         "#,
     )
     .bind(rule_id)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&body.name)
     .bind(&body.search_pattern)
     .bind(&body.replace_pattern)
@@ -679,7 +679,7 @@ pub async fn update_dr_pattern_rule(
     .bind(&body.replace_pattern)
     .bind(body.priority.unwrap_or(0))
     .bind(body.is_active.unwrap_or(true))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_one(&state.db)
     .await
     .map_err(|_| ApiError::NotFound)?;
@@ -712,7 +712,7 @@ pub async fn delete_dr_pattern_rule(
 
     let result = sqlx::query("DELETE FROM dr_pattern_rules WHERE id = $1 AND organization_id = $2")
         .bind(rule_id)
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .execute(&state.db)
         .await?;
 

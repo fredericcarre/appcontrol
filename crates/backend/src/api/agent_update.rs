@@ -86,7 +86,7 @@ pub async fn upload_binary(
     .bind(&body.checksum_sha256)
     .bind(binary.len() as i64)
     .bind(&binary)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await?;
 

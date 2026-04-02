@@ -146,6 +146,9 @@ pub async fn issue_server_cert(
     .ok();
 
     // Log certificate event
+    let cert_expires_at =
+        (chrono::Utc::now() + chrono::Duration::days(validity_days as i64)).to_rfc3339();
+    #[cfg(feature = "postgres")]
     sqlx::query(&format!(
         "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
              VALUES ('issued', $1, $2, {now}, {now} + $3 * interval '1 day')",
@@ -154,6 +157,19 @@ pub async fn issue_server_cert(
     .bind(&fingerprint)
     .bind(&req.common_name)
     .bind(validity_days as i32)
+    .execute(&state.db)
+    .await
+    .ok();
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(&format!(
+        "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
+             VALUES ('issued', $1, $2, {now}, $3)",
+        now = crate::db::sql::now()
+    ))
+    .bind(&fingerprint)
+    .bind(&req.common_name)
+    .bind(&cert_expires_at)
     .execute(&state.db)
     .await
     .ok();
@@ -476,6 +492,8 @@ pub async fn export_certs_to_volume_if_configured(
         );
 
         // Log certificate event
+        let gw_expires = (chrono::Utc::now() + chrono::Duration::days(365)).to_rfc3339();
+        #[cfg(feature = "postgres")]
         sqlx::query(&format!(
             "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
                  VALUES ('issued', $1, $2, {now}, {now} + interval '365 days')",
@@ -483,6 +501,19 @@ pub async fn export_certs_to_volume_if_configured(
         ))
         .bind(&fingerprint)
         .bind(&gateway_cn)
+        .execute(pool)
+        .await
+        .ok();
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        sqlx::query(&format!(
+            "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
+                 VALUES ('issued', $1, $2, {now}, $3)",
+            now = crate::db::sql::now()
+        ))
+        .bind(&fingerprint)
+        .bind(&gateway_cn)
+        .bind(&gw_expires)
         .execute(pool)
         .await
         .ok();

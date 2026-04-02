@@ -215,7 +215,7 @@ pub async fn get_component(
         "#,
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -233,7 +233,7 @@ pub async fn get_component(
         "#,
     )
     .bind(DbUuid::from(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -578,7 +578,7 @@ pub async fn update_component(
              VALUES ('component', $1, $2, $3::jsonb, $4::jsonb)",
         )
         .bind(crate::db::bind_id(id))
-        .bind(user.user_id)
+        .bind(crate::db::bind_id(user.user_id))
         .bind(&before_json)
         .bind(&after_json)
         .execute(&state.db)
@@ -591,7 +591,7 @@ pub async fn update_component(
         )
         .bind(DbUuid::new_v4())
         .bind(DbUuid::from(id))
-        .bind(user.user_id)
+        .bind(crate::db::bind_id(user.user_id))
         .bind(&before_json)
         .bind(&after_json)
         .execute(&state.db)
@@ -1294,7 +1294,7 @@ pub async fn execute_command(
     .bind(crate::db::bind_id(id))
     .bind(crate::db::bind_id(agent_id))
     .bind(command_type_label)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(&final_command)
     .execute(&state.db)
     .await

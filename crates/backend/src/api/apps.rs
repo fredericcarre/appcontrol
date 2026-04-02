@@ -219,7 +219,7 @@ pub async fn list_apps(
         LIMIT $4 OFFSET $5
         "#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&params.search)
     .bind(params.site_id)
     .bind(limit)
@@ -250,7 +250,7 @@ pub async fn list_apps(
         LIMIT $4 OFFSET $5
         "#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&params.search)
     .bind(params.site_id.map(DbUuid::from))
     .bind(limit)
@@ -321,7 +321,7 @@ pub async fn get_app(
          FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -332,7 +332,7 @@ pub async fn get_app(
          FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(DbUuid::from(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -575,7 +575,7 @@ pub async fn create_app(
                 "SELECT id FROM sites WHERE organization_id = $1 AND is_active = true \
                  ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
             )
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -584,7 +584,7 @@ pub async fn create_app(
                 "SELECT id FROM sites WHERE organization_id = $1 AND is_active = 1 \
                  ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
             )
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -602,7 +602,7 @@ pub async fn create_app(
                          VALUES ($1, $2, $3, $4, $5)",
                     )
                     .bind(new_site_id)
-                    .bind(user.organization_id)
+                    .bind(crate::db::bind_id(user.organization_id))
                     .bind("Default Site")
                     .bind("DEFAULT")
                     .bind("primary")
@@ -615,7 +615,7 @@ pub async fn create_app(
                          VALUES ($1, $2, $3, $4, $5)",
                     )
                     .bind(DbUuid::from(new_site_id))
-                    .bind(user.organization_id)
+                    .bind(crate::db::bind_id(user.organization_id))
                     .bind("Default Site")
                     .bind("DEFAULT")
                     .bind("primary")
@@ -651,7 +651,7 @@ pub async fn create_app(
     .bind(crate::db::bind_id(app_id))
     .bind(&body.name)
     .bind(&body.description)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(crate::db::bind_id(site_id))
     .bind(body.tags.as_ref().unwrap_or(&json!([])))
     .fetch_one(&state.db)
@@ -667,7 +667,7 @@ pub async fn create_app(
         .bind(DbUuid::from(app_id))
         .bind(&body.name)
         .bind(&body.description)
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .bind(DbUuid::from(site_id))
         .bind(serde_json::to_string(&tags_val).unwrap_or_else(|_| "[]".to_string()))
         .execute(&state.db)
@@ -689,7 +689,7 @@ pub async fn create_app(
          VALUES ($1, $2, 'owner', $2)",
     )
     .bind(crate::db::bind_id(app_id))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await;
 
@@ -699,7 +699,7 @@ pub async fn create_app(
          VALUES ($1, $2, 'owner', $2)",
     )
     .bind(DbUuid::from(app_id))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await;
 
@@ -741,7 +741,7 @@ pub async fn update_app(
              FROM applications WHERE id = $1 AND organization_id = $2",
         )
         .bind(crate::db::bind_id(id))
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .fetch_optional(&state.db)
         .await?;
         row.map(|r| json!(r))
@@ -754,7 +754,7 @@ pub async fn update_app(
              FROM applications WHERE id = $1 AND organization_id = $2",
         )
         .bind(DbUuid::from(id))
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .fetch_optional(&state.db)
         .await?;
         row.map(|r| json!(r))
@@ -779,7 +779,7 @@ pub async fn update_app(
     .bind(&body.description)
     .bind(body.site_id)
     .bind(&body.tags)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -801,7 +801,7 @@ pub async fn update_app(
         .bind(&body.description)
         .bind(body.site_id.map(DbUuid::from))
         .bind(&body.tags)
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .execute(&state.db)
         .await?;
 
@@ -810,7 +810,7 @@ pub async fn update_app(
              FROM applications WHERE id = $1 AND organization_id = $2",
         )
         .bind(DbUuid::from(id))
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .fetch_optional(&state.db)
         .await?
         .ok_or_not_found()?
@@ -830,7 +830,7 @@ pub async fn update_app(
          VALUES ('application', $1, $2, $3::jsonb, $4::jsonb)",
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(&before_json)
     .bind(&after_json)
     .execute(&state.db)
@@ -843,7 +843,7 @@ pub async fn update_app(
     )
     .bind(DbUuid::new_v4())
     .bind(DbUuid::from(id))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(&before_json)
     .bind(&after_json)
     .execute(&state.db)
@@ -875,14 +875,14 @@ pub async fn delete_app(
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
         .bind(crate::db::bind_id(id))
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .execute(&state.db)
         .await?;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
         .bind(DbUuid::from(id))
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .execute(&state.db)
         .await?;
 
@@ -905,7 +905,7 @@ pub async fn start_app(
         "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -915,7 +915,7 @@ pub async fn start_app(
         "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(DbUuid::from(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -1403,7 +1403,7 @@ pub async fn suspend_application(
         now = crate::db::sql::now()
     ))
     .bind(crate::db::bind_id(id))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1416,7 +1416,7 @@ pub async fn suspend_application(
         now = crate::db::sql::now()
     ))
     .bind(DbUuid::from(id))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1600,7 +1600,7 @@ pub async fn get_site_overrides(
         "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(crate::db::bind_id(app_id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -1610,7 +1610,7 @@ pub async fn get_site_overrides(
         "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
     )
     .bind(DbUuid::from(app_id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;

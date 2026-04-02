@@ -171,7 +171,7 @@ pub async fn preview_import(
     let existing_row: Option<(Uuid, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
         "SELECT id, name, created_at FROM applications WHERE organization_id = $1 AND name = $2",
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&app_name)
     .fetch_optional(&state.db)
     .await?;
@@ -471,7 +471,7 @@ pub async fn execute_import(
             let site: Option<(Uuid,)> = sqlx::query_as(
                 "SELECT id FROM sites WHERE organization_id = $1 AND is_active = true ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
             )
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -479,7 +479,7 @@ pub async fn execute_import(
             let site: Option<(Uuid,)> = sqlx::query_as(
                 "SELECT id FROM sites WHERE organization_id = $1 AND is_active = 1 ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
             )
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -492,7 +492,7 @@ pub async fn execute_import(
                         "INSERT INTO sites (id, organization_id, name, code, site_type) VALUES ($1, $2, $3, $4, $5)",
                     )
                     .bind(new_site_id)
-                    .bind(user.organization_id)
+                    .bind(crate::db::bind_id(user.organization_id))
                     .bind("Default Site")
                     .bind("DEFAULT")
                     .bind("primary")
@@ -513,7 +513,7 @@ pub async fn execute_import(
     // Check for existing application and handle conflicts
     let existing_app: Option<(Uuid,)> =
         sqlx::query_as("SELECT id FROM applications WHERE organization_id = $1 AND name = $2")
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .bind(&original_name)
             .fetch_optional(&state.db)
             .await?;
@@ -539,7 +539,7 @@ pub async fn execute_import(
             let new_exists: Option<(Uuid,)> = sqlx::query_as(
                 "SELECT id FROM applications WHERE organization_id = $1 AND name = $2",
             )
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .bind(&new_name)
             .fetch_optional(&state.db)
             .await?;
@@ -648,7 +648,7 @@ pub async fn execute_import(
         .bind(crate::db::bind_id(app_id))
         .bind(&app_name)
         .bind(&import_data.application.description)
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .bind(crate::db::bind_id(site_id))
         .bind(&tags_json)
         .execute(&state.db)
@@ -660,7 +660,7 @@ pub async fn execute_import(
         "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) VALUES ($1, $2, 'owner', $2)",
     )
     .bind(crate::db::bind_id(app_id))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await;
 
@@ -878,7 +878,7 @@ pub async fn execute_import(
             // Look up site_id by site_code
             let site_row: Option<(Uuid,)> =
                 sqlx::query_as("SELECT id FROM sites WHERE organization_id = $1 AND code = $2")
-                    .bind(user.organization_id)
+                    .bind(crate::db::bind_id(user.organization_id))
                     .bind(&override_data.site_code)
                     .fetch_optional(&state.db)
                     .await?;
@@ -911,7 +911,7 @@ pub async fn execute_import(
                          ))
                        LIMIT 1"#,
                 )
-                .bind(user.organization_id)
+                .bind(crate::db::bind_id(user.organization_id))
                 .bind(override_site_id)
                 .bind(host)
                 .fetch_optional(&state.db)
@@ -929,7 +929,7 @@ pub async fn execute_import(
                          ))
                        LIMIT 1"#,
                 )
-                .bind(user.organization_id)
+                .bind(crate::db::bind_id(user.organization_id))
                 .bind(override_site_id)
                 .bind(host)
                 .fetch_optional(&state.db)
@@ -1031,7 +1031,7 @@ pub async fn execute_import(
     .bind(true) // Primary is active by default
     .bind(UuidArray::from(body.profile.gateway_ids.clone()))
     .bind(body.profile.auto_failover.unwrap_or(false))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await?;
 
@@ -1078,7 +1078,7 @@ pub async fn execute_import(
         .bind(false) // DR is inactive by default
         .bind(UuidArray::from(dr_profile.gateway_ids.clone()))
         .bind(dr_profile.auto_failover.unwrap_or(false))
-        .bind(user.user_id)
+        .bind(crate::db::bind_id(user.user_id))
         .execute(&state.db)
         .await?;
 

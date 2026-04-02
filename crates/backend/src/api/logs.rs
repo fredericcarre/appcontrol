@@ -267,7 +267,7 @@ pub async fn create_log_source(
     .bind(req.max_age_hours.unwrap_or(24))
     .bind(req.is_sensitive.unwrap_or(false))
     .bind(req.display_order.unwrap_or(0))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(now)
     .execute(&state.db)
     .await
@@ -739,7 +739,7 @@ async fn log_access_audit(
     )
     .bind(Uuid::new_v4())
     .bind(org_id)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(crate::db::bind_id(component_id))
     .bind(log_source_id)
     .bind(source_type)

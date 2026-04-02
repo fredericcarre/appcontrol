@@ -183,7 +183,7 @@ pub async fn import_yaml_map(
     .bind(crate::db::bind_id(app_id))
     .bind(app_name)
     .bind(app_desc)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(crate::db::bind_id(body.site_id))
     .execute(&state.db)
     .await?;
@@ -194,7 +194,7 @@ pub async fn import_yaml_map(
     )
     .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(app_id))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await;
 
@@ -752,7 +752,7 @@ pub async fn import_json_map(
     .bind(crate::db::bind_id(app_id))
     .bind(&app_data.name)
     .bind(&app_data.description)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(crate::db::bind_id(body.site_id))
     .bind(&tags_json)
     .execute(&state.db)
@@ -764,7 +764,7 @@ pub async fn import_json_map(
     )
     .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(app_id))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await;
 

@@ -79,7 +79,7 @@ pub async fn list_users(
              AND ($4::text IS NULL OR email ILIKE '%' || $4 || '%' OR display_name ILIKE '%' || $4 || '%')
            ORDER BY display_name"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&query.role)
     .bind(query.is_active)
     .bind(&query.search)
@@ -97,7 +97,7 @@ pub async fn list_users(
              AND ($4 IS NULL OR email LIKE '%' || $4 || '%' OR display_name LIKE '%' || $4 || '%')
            ORDER BY display_name"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&query.role)
     .bind(query.is_active)
     .bind(&query.search)
@@ -123,7 +123,7 @@ pub async fn get_user(
            WHERE id = $1 AND organization_id = $2"#,
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -185,7 +185,7 @@ pub async fn create_user(
            RETURNING id, organization_id, email, display_name, role, auth_provider,
                      is_active, last_login_at, created_at"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&external_id)
     .bind(&req.email)
     .bind(&req.display_name)
@@ -255,7 +255,7 @@ pub async fn update_user(
                      is_active, last_login_at, created_at"#,
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&req.display_name)
     .bind(&req.role)
     .bind(req.is_active)
@@ -277,7 +277,7 @@ pub async fn get_me(
                   is_active, last_login_at, created_at
            FROM users WHERE id = $1"#,
     )
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -285,7 +285,7 @@ pub async fn get_me(
     // Also fetch platform_role
     let platform_role: Option<String> =
         sqlx::query_scalar("SELECT platform_role FROM users WHERE id = $1")
-            .bind(user.user_id)
+            .bind(crate::db::bind_id(user.user_id))
             .fetch_optional(&state.db)
             .await?
             .flatten();
@@ -311,7 +311,7 @@ pub async fn change_my_password(
     // Fetch current user's auth info
     let user_info: Option<(String, Option<String>)> =
         sqlx::query_as("SELECT auth_provider, password_hash FROM users WHERE id = $1")
-            .bind(user.user_id)
+            .bind(crate::db::bind_id(user.user_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -363,7 +363,7 @@ pub async fn change_my_password(
     // Update password
     sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
         .bind(&new_hash)
-        .bind(user.user_id)
+        .bind(crate::db::bind_id(user.user_id))
         .execute(&state.db)
         .await?;
 

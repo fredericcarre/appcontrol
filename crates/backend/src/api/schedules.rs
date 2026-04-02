@@ -423,7 +423,7 @@ pub async fn create_app_schedule(
     .bind(&cron_expression)
     .bind(&req.timezone)
     .bind(next_run_at)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -633,7 +633,7 @@ pub async fn create_component_schedule(
     .bind(&cron_expression)
     .bind(&req.timezone)
     .bind(next_run_at)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;

@@ -96,14 +96,14 @@ pub async fn create_enrollment_token(
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING id"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&token_hash)
     .bind(token_prefix)
     .bind(&req.name)
     .bind(req.max_uses)
     .bind(expires_at)
     .bind(scope)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .fetch_one(&state.db)
     .await?;
 
@@ -146,7 +146,7 @@ pub async fn list_enrollment_tokens(
             crate::db::sql::now()
         ),
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -192,8 +192,8 @@ pub async fn revoke_enrollment_token(
         crate::db::sql::now()
     ))
     .bind(token_id)
-    .bind(user.organization_id)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.organization_id))
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await?;
 
@@ -226,7 +226,7 @@ pub async fn init_pki(
     // Check if CA already exists
     let existing: Option<(Option<String>,)> =
         sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -253,7 +253,7 @@ pub async fn init_pki(
     .ok();
 
     sqlx::query("UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1")
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .bind(&ca.cert_pem)
         .bind(&ca.key_pem)
         .execute(&state.db)
@@ -275,7 +275,7 @@ pub async fn get_ca_cert(
 ) -> Result<Json<Value>, ApiError> {
     let row: Option<(Option<String>,)> =
         sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -334,7 +334,7 @@ pub async fn import_pki(
     // Check if CA already exists
     let existing: Option<(Option<String>,)> =
         sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -361,7 +361,7 @@ pub async fn import_pki(
     .ok();
 
     sqlx::query("UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1")
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .bind(&req.ca_cert_pem)
         .bind(&req.ca_key_pem)
         .execute(&state.db)
@@ -785,7 +785,7 @@ pub async fn list_enrollment_events(
            ORDER BY created_at DESC
            LIMIT 100"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 

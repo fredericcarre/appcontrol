@@ -165,12 +165,12 @@ pub async fn create_approval_request(
         crate::db::sql::now()
     ))
     .bind(request_id)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&body.operation_type)
     .bind(&body.resource_type)
     .bind(body.resource_id)
     .bind(risk_level)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(body.payload.as_ref().unwrap_or(&json!({})))
     .bind(required)
     .bind(timeout)
@@ -212,7 +212,7 @@ pub async fn list_approval_requests(
         LIMIT 100
         "#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -237,7 +237,7 @@ pub async fn decide_approval(
         "#,
     )
     .bind(request_id)
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -287,7 +287,7 @@ pub async fn decide_approval(
     )
     .bind(decision_id)
     .bind(request_id)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(&body.decision)
     .bind(&body.reason)
     .execute(&state.db)
@@ -357,7 +357,7 @@ pub async fn list_approval_policies(
         "SELECT id, operation_type, risk_level, required_approvals, timeout_minutes, enabled \
          FROM approval_policies WHERE organization_id = $1 ORDER BY operation_type",
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -413,7 +413,7 @@ pub async fn upsert_approval_policy(
         DO UPDATE SET risk_level = $3, required_approvals = $4, timeout_minutes = $5, enabled = $6
         "#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&body.operation_type)
     .bind(risk_level)
     .bind(required)

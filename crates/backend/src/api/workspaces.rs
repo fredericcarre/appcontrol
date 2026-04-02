@@ -70,7 +70,7 @@ pub async fn list_workspaces(
         "SELECT id, organization_id, name, description, created_at
          FROM workspaces WHERE organization_id = $1 ORDER BY name",
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -96,7 +96,7 @@ pub async fn create_workspace(
         "INSERT INTO workspaces (id, organization_id, name, description) VALUES ($1, $2, $3, $4)",
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&body.name)
     .bind(&body.description)
     .execute(&state.db)
@@ -108,7 +108,7 @@ pub async fn create_workspace(
         "INSERT INTO action_log (user_id, action, resource_type, resource_id, details)
          VALUES ($1, 'create_workspace', 'workspace', $2, $3)",
     )
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(crate::db::bind_id(id))
     .bind(json!({"name": body.name}))
     .execute(&state.db)
@@ -120,7 +120,7 @@ pub async fn create_workspace(
          VALUES ($1, $2, 'create_workspace', 'workspace', $3, $4)",
     )
     .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(crate::db::bind_id(id))
     .bind(json!({"name": body.name}).to_string())
     .execute(&state.db)
@@ -148,7 +148,7 @@ pub async fn delete_workspace(
 
     let result = sqlx::query("DELETE FROM workspaces WHERE id = $1 AND organization_id = $2")
         .bind(crate::db::bind_id(id))
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .execute(&state.db)
         .await?;
 
@@ -174,7 +174,7 @@ pub async fn list_workspace_sites(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND organization_id = $2)",
     )
     .bind(crate::db::bind_id(workspace_id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_one(&state.db)
     .await?;
 
@@ -259,7 +259,7 @@ pub async fn list_workspace_members(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND organization_id = $2)",
     )
     .bind(crate::db::bind_id(workspace_id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_one(&state.db)
     .await?;
 
@@ -355,7 +355,7 @@ pub async fn my_accessible_sites(
         let sites = sqlx::query_as::<_, (DbUuid, String, String)>(
             "SELECT id, name, code FROM sites WHERE organization_id = $1 ORDER BY name",
         )
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .fetch_all(&state.db)
         .await?;
 
@@ -371,7 +371,7 @@ pub async fn my_accessible_sites(
     let has_any = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM workspace_sites ws JOIN workspaces w ON w.id = ws.workspace_id WHERE w.organization_id = $1)",
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_one(&state.db)
     .await?;
 
@@ -380,7 +380,7 @@ pub async fn my_accessible_sites(
         let sites = sqlx::query_as::<_, (DbUuid, String, String)>(
             "SELECT id, name, code FROM sites WHERE organization_id = $1 ORDER BY name",
         )
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .fetch_all(&state.db)
         .await?;
 
@@ -407,8 +407,8 @@ pub async fn my_accessible_sites(
         ORDER BY s.name
         "#,
     )
-    .bind(user.organization_id)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.organization_id))
+    .bind(crate::db::bind_id(user.user_id))
     .fetch_all(&state.db)
     .await?;
 

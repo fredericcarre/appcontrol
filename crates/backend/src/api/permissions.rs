@@ -158,7 +158,7 @@ pub async fn grant_user_permission(
     .bind(crate::db::bind_id(app_id))
     .bind(body.user_id)
     .bind(&body.permission_level)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(body.expires_at)
     .fetch_one(&state.db)
     .await?;
@@ -176,7 +176,7 @@ pub async fn grant_user_permission(
     .bind(DbUuid::from(app_id))
     .bind(DbUuid::from(body.user_id))
     .bind(&body.permission_level)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(body.expires_at)
     .fetch_one(&state.db)
     .await?;
@@ -296,7 +296,7 @@ pub async fn grant_team_permission(
     .bind(crate::db::bind_id(app_id))
     .bind(crate::db::bind_id(body.team_id))
     .bind(&body.permission_level)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(body.expires_at)
     .fetch_one(&state.db)
     .await?;
@@ -407,7 +407,7 @@ pub async fn create_share_link(
     .bind(crate::db::bind_id(app_id))
     .bind(&token)
     .bind(&body.permission_level)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(body.expires_at)
     .bind(body.max_uses)
     .fetch_one(&state.db)
@@ -423,7 +423,7 @@ pub async fn create_share_link(
         .bind(crate::db::bind_id(app_id))
         .bind(&token)
         .bind(&body.permission_level)
-        .bind(user.user_id)
+        .bind(crate::db::bind_id(user.user_id))
         .bind(body.expires_at)
         .bind(body.max_uses)
         .execute(&state.db)
@@ -513,7 +513,7 @@ pub async fn search_users(
             LIMIT $2
             "#,
         )
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .bind(limit)
         .fetch_all(&state.db)
         .await?;
@@ -527,7 +527,7 @@ pub async fn search_users(
             LIMIT $2
             "#,
         )
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .bind(limit)
         .fetch_all(&state.db)
         .await?;
@@ -651,9 +651,9 @@ pub async fn consume_share_link(
         ),
     )
     .bind(crate::db::bind_id(app_id))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(&permission_level)
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .execute(&state.db)
     .await?;
 

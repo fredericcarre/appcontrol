@@ -66,7 +66,7 @@ pub async fn list_agents(
         ORDER BY a.hostname
         "#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_all(&state.db)
     .await?;
 
@@ -128,7 +128,7 @@ pub async fn get_agent(
         "#,
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -154,7 +154,7 @@ pub async fn block_agent(
         "SELECT hostname, gateway_id FROM agents WHERE id = $1 AND organization_id = $2",
     )
     .bind(crate::db::bind_id(agent_id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?;
 
@@ -236,7 +236,7 @@ pub async fn unblock_agent(
     let agent: Option<(String,)> =
         sqlx::query_as("SELECT hostname FROM agents WHERE id = $1 AND organization_id = $2")
             .bind(crate::db::bind_id(agent_id))
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -315,7 +315,7 @@ pub async fn get_agent_metrics(
     let agent_exists: Option<(DbUuid,)> =
         sqlx::query_as("SELECT id FROM agents WHERE id = $1 AND organization_id = $2")
             .bind(crate::db::bind_id(agent_id))
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 
@@ -463,7 +463,7 @@ pub async fn delete_agent(
     let agent: Option<(DbUuid, String)> =
         sqlx::query_as("SELECT id, hostname FROM agents WHERE id = $1 AND organization_id = $2")
             .bind(crate::db::bind_id(agent_id))
-            .bind(user.organization_id)
+            .bind(crate::db::bind_id(user.organization_id))
             .fetch_optional(&state.db)
             .await?;
 

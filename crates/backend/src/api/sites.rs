@@ -65,7 +65,7 @@ pub async fn list_sites(
              AND ($3::bool IS NULL OR is_active = $3)
            ORDER BY code"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&query.site_type)
     .bind(query.is_active)
     .fetch_all(&state.db)
@@ -80,7 +80,7 @@ pub async fn list_sites(
              AND ($3 IS NULL OR is_active = $3)
            ORDER BY code"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&query.site_type)
     .bind(query.is_active)
     .fetch_all(&state.db)
@@ -101,7 +101,7 @@ pub async fn get_site(
            WHERE id = $1 AND organization_id = $2"#,
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -113,7 +113,7 @@ pub async fn get_site(
            WHERE id = $1 AND organization_id = $2"#,
     )
     .bind(DbUuid::from(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
@@ -159,7 +159,7 @@ pub async fn create_site(
            VALUES ($1, $2, $3, $4, $5)
            RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
     )
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&req.name)
     .bind(&req.code)
     .bind(site_type)
@@ -176,7 +176,7 @@ pub async fn create_site(
                RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
         )
         .bind(new_id)
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .bind(&req.name)
         .bind(&req.code)
         .bind(site_type)
@@ -223,7 +223,7 @@ pub async fn update_site(
            RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
     )
     .bind(crate::db::bind_id(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&req.name)
     .bind(&req.location)
     .bind(req.is_active)
@@ -241,7 +241,7 @@ pub async fn update_site(
            RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
     )
     .bind(DbUuid::from(id))
-    .bind(user.organization_id)
+    .bind(crate::db::bind_id(user.organization_id))
     .bind(&req.name)
     .bind(&req.location)
     .bind(req.is_active)
@@ -299,14 +299,14 @@ pub async fn delete_site(
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM sites WHERE id = $1 AND organization_id = $2")
         .bind(crate::db::bind_id(id))
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .execute(&state.db)
         .await?;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let result = sqlx::query("DELETE FROM sites WHERE id = $1 AND organization_id = $2")
         .bind(DbUuid::from(id))
-        .bind(user.organization_id)
+        .bind(crate::db::bind_id(user.organization_id))
         .execute(&state.db)
         .await?;
 

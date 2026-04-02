@@ -58,7 +58,7 @@ pub async fn create_api_key(
         "#,
     )
     .bind(crate::db::bind_id(key_id))
-    .bind(user.user_id)
+    .bind(crate::db::bind_id(user.user_id))
     .bind(&body.name)
     .bind(raw_key.as_bytes())
     .bind(key_prefix)
@@ -80,7 +80,7 @@ pub async fn create_api_key(
             "#,
         )
         .bind(DbUuid::from(key_id))
-        .bind(user.user_id)
+        .bind(crate::db::bind_id(user.user_id))
         .bind(&body.name)
         .bind(&key_hash)
         .bind(key_prefix)
@@ -157,14 +157,14 @@ pub async fn delete_api_key(
     let result =
         sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1 AND user_id = $2")
             .bind(crate::db::bind_id(id))
-            .bind(user.user_id)
+            .bind(crate::db::bind_id(user.user_id))
             .execute(&state.db)
             .await?;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let result = sqlx::query("UPDATE api_keys SET is_active = 0 WHERE id = $1 AND user_id = $2")
         .bind(DbUuid::from(id))
-        .bind(user.user_id)
+        .bind(crate::db::bind_id(user.user_id))
         .execute(&state.db)
         .await?;
 
