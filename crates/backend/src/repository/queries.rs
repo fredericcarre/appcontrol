@@ -666,3 +666,31 @@ pub async fn delete_site_override(pool: &DbPool, component_id: Uuid, site_id: Uu
         Ok(result.rows_affected() > 0)
     }
 }
+
+/// Batch update agent heartbeats.
+pub async fn batch_update_agent_heartbeats(pool: &DbPool, agent_ids: &[Uuid]) -> Result<(), sqlx::Error> {
+    if agent_ids.is_empty() {
+        return Ok(());
+    }
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query("UPDATE agents SET last_heartbeat_at = now() WHERE id = ANY($1)")
+            .bind(agent_ids)
+            .execute(pool)
+            .await?;
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let placeholders: Vec<String> = (1..=agent_ids.len()).map(|i| format!("${}", i)).collect();
+        let query = format!(
+            "UPDATE agents SET last_heartbeat_at = datetime('now') WHERE id IN ({})",
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query(&query);
+        for id in agent_ids {
+            q = q.bind(id.to_string());
+        }
+        q.execute(pool).await?;
+    }
+    Ok(())
+}
