@@ -166,35 +166,43 @@ pub async fn list_components(
         return Err(ApiError::Forbidden);
     }
 
-    #[cfg(feature = "postgres")]
-    let components = sqlx::query_as::<_, ComponentRow>(
-        r#"
-        SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
-               host, agent_id, check_cmd, start_cmd, stop_cmd,
-               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
-        FROM components WHERE application_id = $1 ORDER BY name
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let components = state.component_repo.list_components(app_id).await?;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let components = sqlx::query_as::<_, ComponentRow>(
-        r#"
-        SELECT id, application_id, name, component_type, display_name, description, icon, group_id,
-               host, agent_id, check_cmd, start_cmd, stop_cmd,
-               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
-        FROM components WHERE application_id = $1 ORDER BY name
-        "#,
-    )
-    .bind(DbUuid::from(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let result: Vec<Value> = components
+        .into_iter()
+        .map(|c| component_to_json(&c))
+        .collect();
 
-    Ok(Json(json!({ "components": components })))
+    Ok(Json(json!({ "components": result })))
+}
+
+fn component_to_json(c: &crate::repository::components::Component) -> Value {
+    json!({
+        "id": c.id,
+        "application_id": c.application_id,
+        "name": c.name,
+        "component_type": c.component_type,
+        "display_name": c.display_name,
+        "description": c.description,
+        "icon": c.icon,
+        "group_id": c.group_id,
+        "host": c.host,
+        "agent_id": c.agent_id,
+        "check_cmd": c.check_cmd,
+        "start_cmd": c.start_cmd,
+        "stop_cmd": c.stop_cmd,
+        "check_interval_seconds": c.check_interval_seconds,
+        "start_timeout_seconds": c.start_timeout_seconds,
+        "stop_timeout_seconds": c.stop_timeout_seconds,
+        "is_optional": c.is_optional,
+        "position_x": c.position_x,
+        "position_y": c.position_y,
+        "cluster_size": c.cluster_size,
+        "cluster_nodes": c.cluster_nodes,
+        "referenced_app_id": c.referenced_app_id,
+        "created_at": c.created_at,
+        "updated_at": c.updated_at,
+    })
 }
 
 pub async fn get_component(
@@ -202,41 +210,11 @@ pub async fn get_component(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    #[cfg(feature = "postgres")]
-    let component = sqlx::query_as::<_, ComponentRow>(
-        r#"
-        SELECT c.id, c.application_id, c.name, c.component_type, c.display_name, c.description, c.icon, c.group_id,
-               c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd,
-               c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds, c.is_optional,
-               c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at
-        FROM components c
-        JOIN applications a ON c.application_id = a.id
-        WHERE c.id = $1 AND a.organization_id = $2
-        "#,
-    )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let component = sqlx::query_as::<_, ComponentRow>(
-        r#"
-        SELECT c.id, c.application_id, c.name, c.component_type, c.display_name, c.description, c.icon, c.group_id,
-               c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd,
-               c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds, c.is_optional,
-               c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at
-        FROM components c
-        JOIN applications a ON c.application_id = a.id
-        WHERE c.id = $1 AND a.organization_id = $2
-        "#,
-    )
-    .bind(DbUuid::from(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let component = state
+        .component_repo
+        .get_component(id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(
         &state.db,
@@ -249,7 +227,7 @@ pub async fn get_component(
         return Err(ApiError::Forbidden);
     }
 
-    Ok(Json(json!(component)))
+    Ok(Json(component_to_json(&component)))
 }
 
 pub async fn create_component(
@@ -293,87 +271,37 @@ pub async fn create_component(
         .as_ref()
         .map(|nodes| serde_json::to_value(nodes).unwrap_or(json!([])));
 
-    #[cfg(feature = "postgres")]
-    let component = sqlx::query_as::<_, ComponentRow>(
-        r#"
-        INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id,
-                                host, agent_id, check_cmd, start_cmd, stop_cmd,
-                                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-                                position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, current_state)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, 'STOPPED')
-        RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
-               host, agent_id, check_cmd, start_cmd, stop_cmd,
-               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
-        "#,
-    )
-    .bind(crate::db::bind_id(comp_id))
-    .bind(crate::db::bind_id(app_id))
-    .bind(&body.name)
-    .bind(&body.component_type)
-    .bind(&body.display_name)
-    .bind(&body.description)
-    .bind(body.icon.as_deref().unwrap_or("box"))
-    .bind(body.group_id)
-    .bind(&effective_host)
-    .bind(resolved_agent_id)
-    .bind(&body.check_cmd)
-    .bind(&body.start_cmd)
-    .bind(&body.stop_cmd)
-    .bind(body.check_interval_seconds.unwrap_or(30))
-    .bind(body.start_timeout_seconds.unwrap_or(120))
-    .bind(body.stop_timeout_seconds.unwrap_or(60))
-    .bind(body.is_optional.unwrap_or(false))
-    .bind(body.position_x.unwrap_or(0.0))
-    .bind(body.position_y.unwrap_or(0.0))
-    .bind(body.env_vars.as_ref().unwrap_or(&json!({})))
-    .bind(body.tags.as_ref().unwrap_or(&json!([])))
-    .bind(body.cluster_size)
-    .bind(&cluster_nodes_json)
-    .bind(body.referenced_app_id)
-    .fetch_one(&state.db)
-    .await?;
+    use crate::repository::components::CreateComponent;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let component = sqlx::query_as::<_, ComponentRow>(
-        r#"
-        INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id,
-                                host, agent_id, check_cmd, start_cmd, stop_cmd,
-                                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-                                position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, current_state)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, 'STOPPED')
-        RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
-               host, agent_id, check_cmd, start_cmd, stop_cmd,
-               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at
-        "#,
-    )
-    .bind(DbUuid::from(comp_id))
-    .bind(DbUuid::from(app_id))
-    .bind(&body.name)
-    .bind(&body.component_type)
-    .bind(&body.display_name)
-    .bind(&body.description)
-    .bind(body.icon.as_deref().unwrap_or("box"))
-    .bind(body.group_id.map(DbUuid::from))
-    .bind(&effective_host)
-    .bind(resolved_agent_id.map(DbUuid::from))
-    .bind(&body.check_cmd)
-    .bind(&body.start_cmd)
-    .bind(&body.stop_cmd)
-    .bind(body.check_interval_seconds.unwrap_or(30))
-    .bind(body.start_timeout_seconds.unwrap_or(120))
-    .bind(body.stop_timeout_seconds.unwrap_or(60))
-    .bind(body.is_optional.unwrap_or(false))
-    .bind(body.position_x.unwrap_or(0.0))
-    .bind(body.position_y.unwrap_or(0.0))
-    .bind(body.env_vars.as_ref().unwrap_or(&json!({})))
-    .bind(body.tags.as_ref().unwrap_or(&json!([])))
-    .bind(body.cluster_size)
-    .bind(&cluster_nodes_json)
-    .bind(body.referenced_app_id.map(DbUuid::from))
-    .fetch_one(&state.db)
-    .await?;
+    let component = state
+        .component_repo
+        .create_component(CreateComponent {
+            id: comp_id,
+            application_id: app_id,
+            name: body.name.clone(),
+            component_type: body.component_type.clone(),
+            display_name: body.display_name.clone(),
+            description: body.description.clone(),
+            icon: body.icon.clone().unwrap_or_else(|| "box".to_string()),
+            group_id: body.group_id,
+            host: effective_host.clone(),
+            agent_id: resolved_agent_id,
+            check_cmd: body.check_cmd.clone(),
+            start_cmd: body.start_cmd.clone(),
+            stop_cmd: body.stop_cmd.clone(),
+            check_interval_seconds: body.check_interval_seconds.unwrap_or(30),
+            start_timeout_seconds: body.start_timeout_seconds.unwrap_or(120),
+            stop_timeout_seconds: body.stop_timeout_seconds.unwrap_or(60),
+            is_optional: body.is_optional.unwrap_or(false),
+            position_x: body.position_x.unwrap_or(0.0),
+            position_y: body.position_y.unwrap_or(0.0),
+            env_vars: body.env_vars.clone().unwrap_or(json!({})),
+            tags: body.tags.clone().unwrap_or(json!([])),
+            cluster_size: body.cluster_size,
+            cluster_nodes: cluster_nodes_json.clone(),
+            referenced_app_id: body.referenced_app_id,
+        })
+        .await?;
 
     // Push config to affected agent so it starts health checks immediately
     let agent_ids = resolved_agent_id.map(|id| vec![id]);
@@ -385,7 +313,7 @@ pub async fn create_component(
     )
     .await;
 
-    Ok((StatusCode::CREATED, Json(json!(component))))
+    Ok((StatusCode::CREATED, Json(component_to_json(&component))))
 }
 
 pub async fn update_component(
@@ -395,23 +323,13 @@ pub async fn update_component(
     Json(body): Json<UpdateComponentRequest>,
 ) -> Result<Json<Value>, ApiError> {
     // Get current component to check app permission
-    #[cfg(feature = "postgres")]
-    let current =
-        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(crate::db::bind_id(id))
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_not_found()?;
+    let current_app_id = state
+        .component_repo
+        .get_component_app_id(id)
+        .await?
+        .ok_or_not_found()?;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let current =
-        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(DbUuid::from(id))
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_not_found()?;
-
-    let perm = effective_permission(&state.db, user.user_id, current, user.is_admin()).await;
+    let perm = effective_permission(&state.db, user.user_id, current_app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
         return Err(ApiError::Forbidden);
     }
@@ -427,35 +345,11 @@ pub async fn update_component(
     .await?;
 
     // Snapshot before state for config_versions
-    #[cfg(feature = "postgres")]
-    let before_snapshot = {
-        let row = sqlx::query_as::<_, ComponentRow>(
-            "SELECT id, application_id, name, component_type, display_name, description, icon, group_id, \
-             host, agent_id, check_cmd, start_cmd, stop_cmd, \
-             check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional, \
-             position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at \
-             FROM components WHERE id = $1",
-        )
-        .bind(crate::db::bind_id(id))
-        .fetch_optional(&state.db)
-        .await?;
-        row.map(|r| json!(r))
-    };
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let before_snapshot = {
-        let row = sqlx::query_as::<_, ComponentRow>(
-            "SELECT id, application_id, name, component_type, display_name, description, icon, group_id, \
-             host, agent_id, check_cmd, start_cmd, stop_cmd, \
-             check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional, \
-             position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at \
-             FROM components WHERE id = $1",
-        )
-        .bind(DbUuid::from(id))
-        .fetch_optional(&state.db)
-        .await?;
-        row.map(|r| json!(r))
-    };
+    let before_snapshot = state
+        .component_repo
+        .get_component(id, *user.organization_id)
+        .await?
+        .map(|c| component_to_json(&c));
 
     // Use effective_host() to support both "host" and "hostname" JSON fields
     let effective_host = body.effective_host().map(|s| s.to_string());
@@ -475,97 +369,41 @@ pub async fn update_component(
         .as_ref()
         .map(|nodes| serde_json::to_value(nodes).unwrap_or(json!([])));
 
-    let update_sql = format!(
-        "UPDATE components SET
-            name = COALESCE($2, name),
-            component_type = COALESCE($3, component_type),
-            display_name = $4,
-            description = $5,
-            icon = COALESCE($6, icon),
-            group_id = $7,
-            host = COALESCE($8, host),
-            agent_id = COALESCE($9, agent_id),
-            check_cmd = $10,
-            start_cmd = $11,
-            stop_cmd = $12,
-            check_interval_seconds = COALESCE($13, check_interval_seconds),
-            start_timeout_seconds = COALESCE($14, start_timeout_seconds),
-            stop_timeout_seconds = COALESCE($15, stop_timeout_seconds),
-            is_optional = COALESCE($16, is_optional),
-            position_x = COALESCE($17, position_x),
-            position_y = COALESCE($18, position_y),
-            cluster_size = $19,
-            cluster_nodes = $20,
-            referenced_app_id = $21,
-            updated_at = {}
-        WHERE id = $1
-        RETURNING id, application_id, name, component_type, display_name, description, icon, group_id,
-               host, agent_id, check_cmd, start_cmd, stop_cmd,
-               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional,
-               position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at",
-        crate::db::sql::now()
-    );
+    use crate::repository::components::UpdateComponent;
 
-    // Note: Fields that can be explicitly cleared (set to NULL) use direct assignment.
-    // Fields that should always have a value use COALESCE to keep existing if not provided.
-    // Special case: host and agent_id use COALESCE to preserve existing if not explicitly provided.
-    #[cfg(feature = "postgres")]
-    let component = sqlx::query_as::<_, ComponentRow>(&update_sql)
-        .bind(crate::db::bind_id(id))
-        .bind(&body.name)
-        .bind(&body.component_type)
-        .bind(&body.display_name)
-        .bind(&body.description)
-        .bind(&body.icon)
-        .bind(body.group_id)
-        .bind(&effective_host)
-        .bind(resolved_agent_id)
-        .bind(&body.check_cmd)
-        .bind(&body.start_cmd)
-        .bind(&body.stop_cmd)
-        .bind(body.check_interval_seconds)
-        .bind(body.start_timeout_seconds)
-        .bind(body.stop_timeout_seconds)
-        .bind(body.is_optional)
-        .bind(body.position_x)
-        .bind(body.position_y)
-        .bind(body.cluster_size)
-        .bind(&cluster_nodes_json)
-        .bind(body.referenced_app_id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_not_found()?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let component = sqlx::query_as::<_, ComponentRow>(&update_sql)
-        .bind(DbUuid::from(id))
-        .bind(&body.name)
-        .bind(&body.component_type)
-        .bind(&body.display_name)
-        .bind(&body.description)
-        .bind(&body.icon)
-        .bind(body.group_id.map(DbUuid::from))
-        .bind(&effective_host)
-        .bind(resolved_agent_id.map(DbUuid::from))
-        .bind(&body.check_cmd)
-        .bind(&body.start_cmd)
-        .bind(&body.stop_cmd)
-        .bind(body.check_interval_seconds)
-        .bind(body.start_timeout_seconds)
-        .bind(body.stop_timeout_seconds)
-        .bind(body.is_optional)
-        .bind(body.position_x)
-        .bind(body.position_y)
-        .bind(body.cluster_size)
-        .bind(&cluster_nodes_json)
-        .bind(body.referenced_app_id.map(DbUuid::from))
-        .fetch_optional(&state.db)
+    let component = state
+        .component_repo
+        .update_component(
+            id,
+            &UpdateComponent {
+                name: body.name.clone(),
+                component_type: body.component_type.clone(),
+                display_name: body.display_name.clone(),
+                description: body.description.clone(),
+                icon: body.icon.clone(),
+                group_id: body.group_id,
+                host: effective_host.clone(),
+                agent_id: resolved_agent_id,
+                check_cmd: body.check_cmd.clone(),
+                start_cmd: body.start_cmd.clone(),
+                stop_cmd: body.stop_cmd.clone(),
+                check_interval_seconds: body.check_interval_seconds,
+                start_timeout_seconds: body.start_timeout_seconds,
+                stop_timeout_seconds: body.stop_timeout_seconds,
+                is_optional: body.is_optional,
+                position_x: body.position_x,
+                position_y: body.position_y,
+                cluster_size: body.cluster_size,
+                cluster_nodes: cluster_nodes_json.clone(),
+                referenced_app_id: body.referenced_app_id,
+            },
+        )
         .await?
         .ok_or_not_found()?;
 
     // Record config_versions snapshot
     {
-        let after_snapshot = json!(component);
+        let after_snapshot = component_to_json(&component);
         let before_json = before_snapshot
             .as_ref()
             .map(|v| v.to_string())
@@ -599,17 +437,16 @@ pub async fn update_component(
     }
 
     // Push config to affected agent so it picks up the changes
-    // Use the actual agent_id from the updated component (after COALESCE), not the resolved one
-    let agent_ids: Option<Vec<uuid::Uuid>> = component.agent_id.map(|id| vec![id.into_inner()]);
+    let agent_ids: Option<Vec<uuid::Uuid>> = component.agent_id.map(|id| vec![id]);
     crate::websocket::push_config_to_affected_agents(
         &state,
-        Some(current.into()),
+        Some(current_app_id),
         None,
         agent_ids.as_deref(),
     )
     .await;
 
-    Ok(Json(json!(component)))
+    Ok(Json(component_to_json(&component)))
 }
 
 pub async fn delete_component(
@@ -618,24 +455,11 @@ pub async fn delete_component(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     // Get app_id and agent_id before deleting
-    #[cfg(feature = "postgres")]
-    let (app_id, agent_id): (Uuid, Option<Uuid>) =
-        sqlx::query_as("SELECT application_id, agent_id FROM components WHERE id = $1")
-            .bind(crate::db::bind_id(id))
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_not_found()?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let (app_id, agent_id): (Uuid, Option<Uuid>) = {
-        let row: (DbUuid, Option<DbUuid>) =
-            sqlx::query_as("SELECT application_id, agent_id FROM components WHERE id = $1")
-                .bind(DbUuid::from(id))
-                .fetch_optional(&state.db)
-                .await?
-                .ok_or_not_found()?;
-        (row.0.into_inner(), row.1.map(|u| u.into_inner()))
-    };
+    let (app_id, agent_id) = state
+        .component_repo
+        .get_component_app_and_agent(id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
@@ -652,17 +476,7 @@ pub async fn delete_component(
     )
     .await?;
 
-    #[cfg(feature = "postgres")]
-    sqlx::query("DELETE FROM components WHERE id = $1")
-        .bind(crate::db::bind_id(id))
-        .execute(&state.db)
-        .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("DELETE FROM components WHERE id = $1")
-        .bind(DbUuid::from(id))
-        .execute(&state.db)
-        .await?;
+    state.component_repo.delete_component(id).await?;
 
     // Push config to affected agent so it stops checking this component
     let agent_ids = agent_id.map(|id| vec![id]);
@@ -695,21 +509,11 @@ pub async fn update_position(
     Json(body): Json<UpdatePositionRequest>,
 ) -> Result<StatusCode, ApiError> {
     // Get app_id for permission check
-    #[cfg(feature = "postgres")]
-    let app_id =
-        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(crate::db::bind_id(id))
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_not_found()?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let app_id =
-        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(DbUuid::from(id))
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
@@ -719,25 +523,9 @@ pub async fn update_position(
     // Note: We don't log position updates to avoid spamming action_log during drag operations.
     // Position is not a critical operational parameter.
 
-    let pos_sql = format!(
-        "UPDATE components SET position_x = $2, position_y = $3, updated_at = {} WHERE id = $1",
-        crate::db::sql::now()
-    );
-
-    #[cfg(feature = "postgres")]
-    sqlx::query(&pos_sql)
-        .bind(crate::db::bind_id(id))
-        .bind(body.x)
-        .bind(body.y)
-        .execute(&state.db)
-        .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query(&pos_sql)
-        .bind(DbUuid::from(id))
-        .bind(body.x)
-        .bind(body.y)
-        .execute(&state.db)
+    state
+        .component_repo
+        .update_position(id, body.x, body.y)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
