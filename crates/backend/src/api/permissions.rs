@@ -48,68 +48,34 @@ pub async fn list_user_permissions(
         return Err(ApiError::Forbidden);
     }
 
-    let perms = sqlx::query_as::<
-        _,
-        (
-            DbUuid,
-            DbUuid,
-            String,
-            Option<chrono::DateTime<chrono::Utc>>,
-        ),
-    >(
-        r#"
-        SELECT apu.id, apu.user_id, apu.permission_level, apu.expires_at
-        FROM app_permissions_users apu
-        WHERE apu.application_id = $1
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let perms = state.permission_repo.list_user_permissions(app_id).await?;
 
     let permissions: Vec<Value> = perms
         .iter()
-        .map(|(id, uid, level, exp)| json!({"id": id, "user_id": uid, "permission_level": level, "expires_at": exp}))
+        .map(|p| json!({"id": p.id, "user_id": p.user_id, "permission_level": p.permission_level, "expires_at": p.expires_at}))
         .collect();
 
     Ok(Json(json!({ "permissions": permissions })))
 }
 
 /// Resolve the site_id and organization_id for an application.
-async fn app_site_info(pool: &crate::db::DbPool, app_id: Uuid) -> Option<(Uuid, Uuid)> {
-    #[cfg(feature = "postgres")]
-    let result = sqlx::query_as::<_, (DbUuid, DbUuid)>(
-        "SELECT site_id, organization_id FROM applications WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .map(|(s, o)| (s.into_inner(), o.into_inner()));
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let result = sqlx::query_as::<_, (DbUuid, DbUuid)>(
-        "SELECT site_id, organization_id FROM applications WHERE id = $1",
-    )
-    .bind(DbUuid::from(app_id))
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .map(|(s, o)| (s.into_inner(), o.into_inner()));
-
-    result
+/// Uses the permission_repo for database abstraction.
+async fn app_site_info(
+    permission_repo: &dyn crate::repository::permissions::PermissionRepository,
+    app_id: Uuid,
+) -> Option<(Uuid, Uuid)> {
+    permission_repo.app_site_info(app_id).await.ok().flatten()
 }
 
 /// Validate that a target user has workspace access to the app's site.
 /// Skipped when workspace feature is not configured (no workspace_sites rows).
 async fn validate_workspace_access(
     pool: &crate::db::DbPool,
+    permission_repo: &dyn crate::repository::permissions::PermissionRepository,
     target_user_id: Uuid,
     app_id: Uuid,
 ) -> Result<(), ApiError> {
-    if let Some((site_id, org_id)) = app_site_info(pool, app_id).await {
+    if let Some((site_id, org_id)) = app_site_info(permission_repo, app_id).await {
         // Check if target user can access the site — pass is_admin=false
         // because we want to verify actual workspace membership.
         if !can_access_site(pool, target_user_id, site_id, org_id, false).await {
@@ -133,7 +99,7 @@ pub async fn grant_user_permission(
     }
 
     // Validate target user has workspace access to the app's site
-    validate_workspace_access(&state.db, body.user_id, app_id).await?;
+    validate_workspace_access(&state.db, state.permission_repo.as_ref(), body.user_id, app_id).await?;
 
     log_action(
         &state.db,
@@ -145,41 +111,16 @@ pub async fn grant_user_permission(
     )
     .await?;
 
-    #[cfg(feature = "postgres")]
-    let id = sqlx::query_scalar::<_, DbUuid>(
-        &format!(
-            "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (application_id, user_id) DO UPDATE SET permission_level = $3, expires_at = $5, updated_at = {}
-             RETURNING id",
-            crate::db::sql::now()
-        ),
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(body.user_id)
-    .bind(&body.permission_level)
-    .bind(crate::db::bind_id(user.user_id))
-    .bind(body.expires_at)
-    .fetch_one(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let id = sqlx::query_scalar::<_, DbUuid>(
-        &format!(
-            "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (application_id, user_id) DO UPDATE SET permission_level = $3, expires_at = $5, updated_at = {}
-             RETURNING id",
-            crate::db::sql::now()
-        ),
-    )
-    .bind(DbUuid::from(app_id))
-    .bind(DbUuid::from(body.user_id))
-    .bind(&body.permission_level)
-    .bind(crate::db::bind_id(user.user_id))
-    .bind(body.expires_at)
-    .fetch_one(&state.db)
-    .await?;
+    let id = state
+        .permission_repo
+        .grant_user_permission(
+            app_id,
+            body.user_id,
+            &body.permission_level,
+            *user.user_id,
+            body.expires_at,
+        )
+        .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -197,28 +138,14 @@ pub async fn list_team_permissions(
         return Err(ApiError::Forbidden);
     }
 
-    let perms = sqlx::query_as::<
-        _,
-        (
-            DbUuid,
-            DbUuid,
-            String,
-            Option<chrono::DateTime<chrono::Utc>>,
-        ),
-    >(
-        r#"
-        SELECT apt.id, apt.team_id, apt.permission_level, apt.expires_at
-        FROM app_permissions_teams apt
-        WHERE apt.application_id = $1
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let perms = state
+        .permission_repo
+        .list_team_permissions(app_id)
+        .await?;
 
     let permissions: Vec<Value> = perms
         .iter()
-        .map(|(id, tid, level, exp)| json!({"id": id, "team_id": tid, "permission_level": level, "expires_at": exp}))
+        .map(|p| json!({"id": p.id, "team_id": p.team_id, "permission_level": p.permission_level, "expires_at": p.expires_at}))
         .collect();
 
     Ok(Json(json!({ "permissions": permissions })))
@@ -239,7 +166,7 @@ pub async fn grant_team_permission(
     // We check if at least the workspace feature is active and the team
     // has at least one member with access. If workspace is not configured,
     // can_access_site returns true (open access), so this is a no-op.
-    if let Some((site_id, org_id)) = app_site_info(&state.db, app_id).await {
+    if let Some((site_id, org_id)) = app_site_info(state.permission_repo.as_ref(), app_id).await {
         // Check if workspace feature is configured — if any workspace_sites exist
         let has_ws = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM workspace_sites ws JOIN workspaces w ON w.id = ws.workspace_id WHERE w.organization_id = $1)",
@@ -284,22 +211,16 @@ pub async fn grant_team_permission(
     )
     .await?;
 
-    let id = sqlx::query_scalar::<_, DbUuid>(
-        &format!(
-            "INSERT INTO app_permissions_teams (application_id, team_id, permission_level, granted_by, expires_at)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (application_id, team_id) DO UPDATE SET permission_level = $3, expires_at = $5, updated_at = {}
-             RETURNING id",
-            crate::db::sql::now()
-        ),
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(crate::db::bind_id(body.team_id))
-    .bind(&body.permission_level)
-    .bind(crate::db::bind_id(user.user_id))
-    .bind(body.expires_at)
-    .fetch_one(&state.db)
-    .await?;
+    let id = state
+        .permission_repo
+        .grant_team_permission(
+            app_id,
+            body.team_id,
+            &body.permission_level,
+            *user.user_id,
+            body.expires_at,
+        )
+        .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -633,7 +554,7 @@ pub async fn consume_share_link(
     }
 
     // Validate workspace access for the consuming user
-    validate_workspace_access(&state.db, *user.user_id, app_id).await?;
+    validate_workspace_access(&state.db, state.permission_repo.as_ref(), *user.user_id, app_id).await?;
 
     // Grant permission to the user
     sqlx::query(
