@@ -11,7 +11,9 @@ use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use appcontrol_backend::{config, create_router, db, middleware, terminal, websocket, AppState};
+use appcontrol_backend::{
+    config, create_router, db, middleware, repository, terminal, websocket, AppState,
+};
 
 #[derive(Parser)]
 #[command(
@@ -139,6 +141,14 @@ async fn main() -> anyhow::Result<()> {
     let log_subscriptions = websocket::LogSubscriptionManager::new();
 
     let state = Arc::new(AppState {
+        app_repo: repository::apps::create_app_repository(pool.clone()),
+        component_repo: repository::components::create_component_repository(pool.clone()),
+        team_repo: repository::teams::create_team_repository(pool.clone()),
+        permission_repo: repository::permissions::create_permission_repository(pool.clone()),
+        site_repo: repository::sites::create_site_repository(pool.clone()),
+        enrollment_repo: repository::enrollment::create_enrollment_repository(pool.clone()),
+        agent_repo: repository::agents::create_agent_repository(pool.clone()),
+        gateway_repo: repository::gateways::create_gateway_repository(pool.clone()),
         db: pool,
         ws_hub,
         config,
