@@ -252,126 +252,36 @@ pub async fn get_app(
         .await?
         .ok_or_not_found()?;
 
-    // Fetch components with agent info
-    #[derive(Debug, sqlx::FromRow)]
-    struct ComponentWithAgent {
-        id: DbUuid,
-        application_id: DbUuid,
-        name: String,
-        display_name: Option<String>,
-        description: Option<String>,
-        icon: Option<String>,
-        group_id: Option<DbUuid>,
-        component_type: String,
-        host: Option<String>,
-        agent_id: Option<DbUuid>,
-        check_cmd: Option<String>,
-        start_cmd: Option<String>,
-        stop_cmd: Option<String>,
-        check_interval_seconds: i32,
-        start_timeout_seconds: i32,
-        stop_timeout_seconds: i32,
-        is_optional: bool,
-        current_state: String,
-        position_x: Option<f32>,
-        position_y: Option<f32>,
-        cluster_size: Option<i32>,
-        cluster_nodes: Option<Value>,
-        referenced_app_id: Option<DbUuid>,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
-        // Agent info
-        agent_hostname: Option<String>,
-        gateway_id: Option<DbUuid>,
-        gateway_name: Option<String>,
-        // Latest metrics from check
-        last_check_metrics: Option<Value>,
-    }
-
-    #[cfg(feature = "postgres")]
-    let components = sqlx::query_as::<_, ComponentWithAgent>(
-        r#"SELECT c.id, c.application_id, c.name, c.display_name, c.description, c.icon, c.group_id,
-                  c.component_type, c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd,
-                  c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
-                  c.is_optional, c.current_state, c.position_x, c.position_y,
-                  c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at,
-                  a.hostname as agent_hostname, a.gateway_id, g.name as gateway_name,
-                  (SELECT ce.metrics FROM check_events ce
-                   WHERE ce.component_id = c.id AND ce.metrics IS NOT NULL
-                   ORDER BY ce.created_at DESC LIMIT 1) as last_check_metrics
-           FROM components c
-           LEFT JOIN agents a ON c.agent_id = a.id
-           LEFT JOIN gateways g ON a.gateway_id = g.id
-           WHERE c.application_id = $1 ORDER BY c.name"#,
-    )
-    .bind(crate::db::bind_id(id))
-    .fetch_all(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let components = sqlx::query_as::<_, ComponentWithAgent>(
-        r#"SELECT c.id, c.application_id, c.name, c.display_name, c.description, c.icon, c.group_id,
-                  c.component_type, c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd,
-                  c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
-                  c.is_optional, c.current_state, c.position_x, c.position_y,
-                  c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at,
-                  a.hostname as agent_hostname, a.gateway_id, g.name as gateway_name,
-                  (SELECT ce.metrics FROM check_events ce
-                   WHERE ce.component_id = c.id AND ce.metrics IS NOT NULL
-                   ORDER BY ce.created_at DESC LIMIT 1) as last_check_metrics
-           FROM components c
-           LEFT JOIN agents a ON c.agent_id = a.id
-           LEFT JOIN gateways g ON a.gateway_id = g.id
-           WHERE c.application_id = $1 ORDER BY c.name"#,
-    )
-    .bind(DbUuid::from(id))
-    .fetch_all(&state.db)
-    .await?;
+    // Fetch components with agent info via repository
+    let components = state.app_repo.get_components_with_agents(id).await?;
 
     // Collect referenced app IDs to compute their statuses (for application-type components)
-    let referenced_app_ids: Vec<DbUuid> = components
+    let referenced_app_ids: Vec<Uuid> = components
         .iter()
         .filter_map(|c| c.referenced_app_id)
         .collect();
 
     // Fetch status counts and names for referenced apps
-    let mut referenced_app_statuses: std::collections::HashMap<DbUuid, String> =
+    let mut referenced_app_statuses: std::collections::HashMap<Uuid, String> =
         std::collections::HashMap::new();
-    let mut referenced_app_names: std::collections::HashMap<DbUuid, String> =
+    let mut referenced_app_names: std::collections::HashMap<Uuid, String> =
         std::collections::HashMap::new();
 
     if !referenced_app_ids.is_empty() {
-        let ref_ids: Vec<Uuid> = referenced_app_ids
-            .iter()
-            .map(|id| id.into_inner())
-            .collect();
-        let status_rows = fetch_referenced_app_statuses(&state.db, &ref_ids).await?;
-        for (app_id, app_name, counts) in status_rows {
-            referenced_app_names.insert(app_id, app_name);
-            let (state, _) =
-                compute_app_status(counts.0, counts.1, counts.2, counts.3, counts.4, counts.5);
-            referenced_app_statuses.insert(app_id, state);
+        let status_rows = state.app_repo.get_referenced_app_statuses(&referenced_app_ids).await?;
+        for ref_status in status_rows {
+            let (computed_state, _) = compute_app_status(
+                ref_status.running_count, ref_status.stopped_count,
+                ref_status.failed_count, ref_status.starting_count,
+                ref_status.stopping_count, ref_status.component_count,
+            );
+            referenced_app_names.insert(ref_status.app_id, ref_status.app_name);
+            referenced_app_statuses.insert(ref_status.app_id, computed_state);
         }
     }
 
-    // Fetch dependencies
-    #[cfg(feature = "postgres")]
-    let dependencies = sqlx::query_as::<_, DependencyRow>(
-        "SELECT id, from_component_id, to_component_id FROM dependencies \
-         WHERE from_component_id IN (SELECT id FROM components WHERE application_id = $1)",
-    )
-    .bind(crate::db::bind_id(id))
-    .fetch_all(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let dependencies = sqlx::query_as::<_, DependencyRow>(
-        "SELECT id, from_component_id, to_component_id FROM dependencies \
-         WHERE from_component_id IN (SELECT id FROM components WHERE application_id = $1)",
-    )
-    .bind(DbUuid::from(id))
-    .fetch_all(&state.db)
-    .await?;
+    // Fetch dependencies via repository
+    let dependencies = state.app_repo.get_app_dependencies(id).await?;
 
     // Get live connection status from WebSocket hub
     let connected_agents: std::collections::HashSet<Uuid> =
@@ -615,30 +525,9 @@ pub async fn update_app(
         .unwrap_or_else(|| "null".to_string());
     let after_json = after_snapshot.to_string();
 
-    #[cfg(feature = "postgres")]
-    sqlx::query(
-        "INSERT INTO config_versions (resource_type, resource_id, changed_by, before_snapshot, after_snapshot) \
-         VALUES ('application', $1, $2, $3::jsonb, $4::jsonb)",
-    )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.user_id))
-    .bind(&before_json)
-    .bind(&after_json)
-    .execute(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query(
-        "INSERT INTO config_versions (id, resource_type, resource_id, changed_by, before_snapshot, after_snapshot) \
-         VALUES ($1, 'application', $2, $3, $4, $5)",
-    )
-    .bind(DbUuid::new_v4())
-    .bind(DbUuid::from(id))
-    .bind(crate::db::bind_id(user.user_id))
-    .bind(&before_json)
-    .bind(&after_json)
-    .execute(&state.db)
-    .await?;
+    state.app_repo.insert_config_version(
+        "application", id, *user.user_id, &before_json, &after_json,
+    ).await?;
 
     Ok(Json(after_snapshot))
 }
@@ -682,25 +571,9 @@ pub async fn start_app(
     Json(body): Json<Option<StartAppRequest>>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify app belongs to user's org
-    #[cfg(feature = "postgres")]
-    let _org_check = sqlx::query_scalar::<_, DbUuid>(
-        "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let _org_check = sqlx::query_scalar::<_, DbUuid>(
-        "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(DbUuid::from(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    state.app_repo.verify_app_org(id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
@@ -932,28 +805,11 @@ pub async fn start_branch(
     }
 
     // If no component_id provided, find all FAILED components in this application.
-    let target_component_ids: Vec<DbUuid> = if let Some(cid) = body.component_id {
-        vec![cid]
+    let target_component_ids: Vec<Uuid> = if let Some(cid) = body.component_id {
+        vec![*cid]
     } else {
-        #[cfg(feature = "postgres")]
-        let ids = sqlx::query_scalar::<_, DbUuid>(
-            "SELECT id FROM components WHERE application_id = $1 AND current_state = 'FAILED'",
-        )
-        .bind(crate::db::bind_id(id))
-        .fetch_all(&state.db)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        let ids = sqlx::query_scalar::<_, DbUuid>(
-            "SELECT id FROM components WHERE application_id = $1 AND current_state = 'FAILED'",
-        )
-        .bind(DbUuid::from(id))
-        .fetch_all(&state.db)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-        ids
+        state.app_repo.get_failed_component_ids(id).await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
     };
 
     if target_component_ids.is_empty() {
@@ -972,7 +828,7 @@ pub async fn start_branch(
     )
     .await?;
 
-    let branch = crate::core::branch::detect_error_branch(&state.db, id, *target_component_ids[0])
+    let branch = crate::core::branch::detect_error_branch(&state.db, id, target_component_ids[0])
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -1028,15 +884,12 @@ pub async fn start_to(
     }
 
     // Verify the target component belongs to this application
-    let target_app_id =
-        sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(body.target_component_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or(ApiError::NotFound)?;
+    let target_app_id = state.component_repo.get_component_app_id(*body.target_component_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or(ApiError::NotFound)?;
 
-    if target_app_id != DbUuid::from(id) {
+    if target_app_id != id {
         return Err(ApiError::Conflict(
             "Target component does not belong to this application".to_string(),
         ));
@@ -1075,23 +928,10 @@ pub async fn start_to(
         for level in &levels {
             let mut level_info = Vec::new();
             for &comp_id in level {
-                #[cfg(feature = "postgres")]
-                let name =
-                    sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
-                        .bind(crate::db::bind_id(comp_id))
-                        .fetch_optional(&state.db)
-                        .await
-                        .map_err(|e| ApiError::Internal(e.to_string()))?
-                        .unwrap_or_else(|| comp_id.to_string());
-
-                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                let name =
-                    sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
-                        .bind(DbUuid::from(comp_id))
-                        .fetch_optional(&state.db)
-                        .await
-                        .map_err(|e| ApiError::Internal(e.to_string()))?
-                        .unwrap_or_else(|| comp_id.to_string());
+                let name = state.app_repo.get_component_name(comp_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .unwrap_or_else(|| comp_id.to_string());
                 level_info.push(json!({"component_id": comp_id, "name": name}));
             }
             plan_levels.push(level_info);
@@ -1152,23 +992,9 @@ pub async fn suspend_application(
     }
 
     // Check if already suspended
-    #[cfg(feature = "postgres")]
-    let is_suspended: bool =
-        sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
-            .bind(crate::db::bind_id(id))
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .unwrap_or(false);
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let is_suspended: bool =
-        sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
-            .bind(DbUuid::from(id))
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .unwrap_or(false);
+    let is_suspended = state.app_repo.is_app_suspended(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if is_suspended {
         return Err(ApiError::Conflict(
@@ -1177,31 +1003,9 @@ pub async fn suspend_application(
     }
 
     // Suspend the application
-    #[cfg(feature = "postgres")]
-    sqlx::query(&format!(
-        "UPDATE applications
-             SET is_suspended = true, suspended_at = {now}, suspended_by = $2, updated_at = {now}
-             WHERE id = $1",
-        now = crate::db::sql::now()
-    ))
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.user_id))
-    .execute(&state.db)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query(&format!(
-        "UPDATE applications
-             SET is_suspended = 1, suspended_at = {now}, suspended_by = $2, updated_at = {now}
-             WHERE id = $1",
-        now = crate::db::sql::now()
-    ))
-    .bind(DbUuid::from(id))
-    .bind(crate::db::bind_id(user.user_id))
-    .execute(&state.db)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.app_repo.suspend_app(id, *user.user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     // Log action
     let _ = log_action(
@@ -1218,19 +1022,10 @@ pub async fn suspend_application(
     crate::websocket::push_config_to_affected_agents(&state, Some(id), None, None).await;
 
     // Get app name for response
-    #[cfg(feature = "postgres")]
-    let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-        .bind(crate::db::bind_id(id))
-        .fetch_one(&state.db)
+    let name: String = state.app_repo.get_app_name(id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-        .bind(DbUuid::from(id))
-        .fetch_one(&state.db)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .unwrap_or_default();
 
     tracing::info!(
         application_id = %id,
@@ -1263,23 +1058,9 @@ pub async fn resume_application(
     }
 
     // Check if suspended
-    #[cfg(feature = "postgres")]
-    let is_suspended: bool =
-        sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
-            .bind(crate::db::bind_id(id))
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .unwrap_or(false);
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let is_suspended: bool =
-        sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
-            .bind(DbUuid::from(id))
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .unwrap_or(false);
+    let is_suspended = state.app_repo.is_app_suspended(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     if !is_suspended {
         return Err(ApiError::Conflict(
@@ -1288,29 +1069,9 @@ pub async fn resume_application(
     }
 
     // Resume the application
-    #[cfg(feature = "postgres")]
-    sqlx::query(&format!(
-        "UPDATE applications
-             SET is_suspended = false, suspended_at = NULL, suspended_by = NULL, updated_at = {}
-             WHERE id = $1",
-        crate::db::sql::now()
-    ))
-    .bind(crate::db::bind_id(id))
-    .execute(&state.db)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query(&format!(
-        "UPDATE applications
-             SET is_suspended = 0, suspended_at = NULL, suspended_by = NULL, updated_at = {}
-             WHERE id = $1",
-        crate::db::sql::now()
-    ))
-    .bind(DbUuid::from(id))
-    .execute(&state.db)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.app_repo.resume_app(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     // Log action
     let _ = log_action(
@@ -1327,19 +1088,10 @@ pub async fn resume_application(
     crate::websocket::push_config_to_affected_agents(&state, Some(id), None, None).await;
 
     // Get app name for response
-    #[cfg(feature = "postgres")]
-    let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-        .bind(crate::db::bind_id(id))
-        .fetch_one(&state.db)
+    let name: String = state.app_repo.get_app_name(id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let name: String = sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-        .bind(DbUuid::from(id))
-        .fetch_one(&state.db)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .unwrap_or_default();
 
     tracing::info!(
         application_id = %id,
@@ -1377,194 +1129,30 @@ pub async fn get_site_overrides(
     }
 
     // Verify app belongs to org
-    #[cfg(feature = "postgres")]
-    let _app = sqlx::query_scalar::<_, DbUuid>(
-        "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let _app = sqlx::query_scalar::<_, DbUuid>(
-        "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(DbUuid::from(app_id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    state.app_repo.verify_app_org(app_id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
     // Fetch the application's primary site info
-    #[derive(Debug, sqlx::FromRow)]
-    struct AppSiteInfo {
-        site_id: DbUuid,
-        site_name: String,
-        site_code: String,
-        site_type: String,
-    }
-
-    #[cfg(feature = "postgres")]
-    let primary_site = sqlx::query_as::<_, AppSiteInfo>(
-        r#"
-        SELECT a.site_id, s.name as site_name, s.code as site_code, s.site_type
-        FROM applications a
-        JOIN sites s ON a.site_id = s.id
-        WHERE a.id = $1
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_optional(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let primary_site = sqlx::query_as::<_, AppSiteInfo>(
-        r#"
-        SELECT a.site_id, s.name as site_name, s.code as site_code, s.site_type
-        FROM applications a
-        JOIN sites s ON a.site_id = s.id
-        WHERE a.id = $1
-        "#,
-    )
-    .bind(DbUuid::from(app_id))
-    .fetch_optional(&state.db)
-    .await?;
+    let primary_site = state.app_repo.get_app_site_info(app_id).await?;
 
     // Fetch all binding profile mappings with site info
-    // Each profile is associated with gateways, and gateways belong to sites
-    #[derive(Debug, sqlx::FromRow)]
-    struct BindingRow {
-        component_id: DbUuid,
-        component_name: String,
-        #[allow(dead_code)]
-        component_host: Option<String>,
-        profile_id: DbUuid,
-        profile_name: String,
-        profile_type: String,
-        is_active: bool,
-        agent_id: DbUuid,
-        agent_hostname: String,
-        site_id: DbUuid,
-        site_name: String,
-        site_code: String,
-        site_type: String,
-    }
+    use crate::repository::apps::{SiteBinding, CmdOverride};
 
-    #[cfg(feature = "postgres")]
-    let bindings = sqlx::query_as::<_, BindingRow>(
-        r#"
-        SELECT DISTINCT ON (c.id, s.id)
-            c.id as component_id,
-            c.name as component_name,
-            c.host as component_host,
-            bp.id as profile_id,
-            bp.name as profile_name,
-            bp.profile_type,
-            -- is_active is true if the component's current agent_id matches this binding's agent
-            -- This correctly handles SELECTIVE switchover where profile isn't changed but agent_id is
-            (c.agent_id = bpm.agent_id) as is_active,
-            bpm.agent_id,
-            a.hostname as agent_hostname,
-            s.id as site_id,
-            s.name as site_name,
-            s.code as site_code,
-            s.site_type
-        FROM components c
-        JOIN binding_profile_mappings bpm ON bpm.component_name = c.name
-        JOIN binding_profiles bp ON bpm.profile_id = bp.id AND bp.application_id = c.application_id
-        JOIN agents a ON bpm.agent_id = a.id
-        JOIN gateways g ON a.gateway_id = g.id
-        JOIN sites s ON g.site_id = s.id
-        WHERE c.application_id = $1
-        ORDER BY c.id, s.id, (c.agent_id = bpm.agent_id) DESC
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let bindings = sqlx::query_as::<_, BindingRow>(
-        r#"
-        SELECT
-            c.id as component_id,
-            c.name as component_name,
-            c.host as component_host,
-            bp.id as profile_id,
-            bp.name as profile_name,
-            bp.profile_type,
-            (c.agent_id = bpm.agent_id) as is_active,
-            bpm.agent_id,
-            a.hostname as agent_hostname,
-            s.id as site_id,
-            s.name as site_name,
-            s.code as site_code,
-            s.site_type
-        FROM components c
-        JOIN binding_profile_mappings bpm ON bpm.component_name = c.name
-        JOIN binding_profiles bp ON bpm.profile_id = bp.id AND bp.application_id = c.application_id
-        JOIN agents a ON bpm.agent_id = a.id
-        JOIN gateways g ON a.gateway_id = g.id
-        JOIN sites s ON g.site_id = s.id
-        WHERE c.application_id = $1
-        GROUP BY c.id, s.id
-        HAVING (c.agent_id = bpm.agent_id) = MAX(c.agent_id = bpm.agent_id)
-        ORDER BY c.id, s.id
-        "#,
-    )
-    .bind(DbUuid::from(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let bindings = state.app_repo.get_site_bindings(app_id).await?;
 
     // Fetch command overrides from site_overrides table
-    #[derive(Debug, sqlx::FromRow)]
-    struct CmdOverrideRow {
-        component_id: DbUuid,
-        site_id: DbUuid,
-        check_cmd_override: Option<String>,
-        start_cmd_override: Option<String>,
-        stop_cmd_override: Option<String>,
-        rebuild_cmd_override: Option<String>,
-        env_vars_override: Option<Value>,
-    }
-
-    #[cfg(feature = "postgres")]
-    let cmd_overrides = sqlx::query_as::<_, CmdOverrideRow>(
-        r#"
-        SELECT component_id, site_id, check_cmd_override, start_cmd_override,
-               stop_cmd_override, rebuild_cmd_override, env_vars_override
-        FROM site_overrides
-        WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let cmd_overrides = sqlx::query_as::<_, CmdOverrideRow>(
-        r#"
-        SELECT component_id, site_id, check_cmd_override, start_cmd_override,
-               stop_cmd_override, rebuild_cmd_override, env_vars_override
-        FROM site_overrides
-        WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)
-        "#,
-    )
-    .bind(DbUuid::from(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let cmd_overrides = state.app_repo.get_cmd_overrides(app_id).await?;
 
     // Create a lookup map for command overrides
-    let cmd_override_map: std::collections::HashMap<(DbUuid, DbUuid), &CmdOverrideRow> =
+    let cmd_override_map: std::collections::HashMap<(Uuid, Uuid), &CmdOverride> =
         cmd_overrides
             .iter()
             .map(|o| ((o.component_id, o.site_id), o))
             .collect();
 
     // Build the response - group bindings by component
-    let mut component_map: std::collections::HashMap<DbUuid, Vec<Value>> =
+    let mut component_map: std::collections::HashMap<Uuid, Vec<Value>> =
         std::collections::HashMap::new();
 
     for binding in &bindings {
@@ -1635,134 +1223,4 @@ pub async fn get_site_overrides(
     })))
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Helper functions for cross-database compatibility
-// ══════════════════════════════════════════════════════════════════════════════
-
-/// Fetch status counts for referenced applications
-/// Returns Vec of (app_id, app_name, (running, stopped, failed, starting, stopping, total))
-#[cfg(feature = "postgres")]
-async fn fetch_referenced_app_statuses(
-    pool: &DbPool,
-    app_ids: &[Uuid],
-) -> Result<Vec<(DbUuid, String, (i64, i64, i64, i64, i64, i64))>, sqlx::Error> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        app_id: DbUuid,
-        app_name: String,
-        running_count: Option<i64>,
-        starting_count: Option<i64>,
-        stopping_count: Option<i64>,
-        stopped_count: Option<i64>,
-        failed_count: Option<i64>,
-        component_count: Option<i64>,
-    }
-
-    let rows: Vec<Row> = sqlx::query_as(
-        r#"
-        SELECT
-            a.id as app_id,
-            a.name as app_name,
-            COUNT(c.id) as component_count,
-            COUNT(c.id) FILTER (WHERE c.current_state = 'RUNNING') as running_count,
-            COUNT(c.id) FILTER (WHERE c.current_state = 'STARTING') as starting_count,
-            COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPING') as stopping_count,
-            COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPED') as stopped_count,
-            COUNT(c.id) FILTER (WHERE c.current_state = 'FAILED') as failed_count
-        FROM applications a
-        LEFT JOIN components c ON c.application_id = a.id
-        WHERE a.id = ANY($1)
-        GROUP BY a.id, a.name
-        "#,
-    )
-    .bind(app_ids)
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| {
-            (
-                r.app_id,
-                r.app_name,
-                (
-                    r.running_count.unwrap_or(0),
-                    r.stopped_count.unwrap_or(0),
-                    r.failed_count.unwrap_or(0),
-                    r.starting_count.unwrap_or(0),
-                    r.stopping_count.unwrap_or(0),
-                    r.component_count.unwrap_or(0),
-                ),
-            )
-        })
-        .collect::<Vec<_>>())
-}
-
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn fetch_referenced_app_statuses(
-    pool: &DbPool,
-    app_ids: &[Uuid],
-) -> Result<Vec<(DbUuid, String, (i64, i64, i64, i64, i64, i64))>, sqlx::Error> {
-    if app_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        app_id: String,
-        app_name: String,
-        running_count: i64,
-        starting_count: i64,
-        stopping_count: i64,
-        stopped_count: i64,
-        failed_count: i64,
-        component_count: i64,
-    }
-
-    let placeholders: Vec<String> = (1..=app_ids.len()).map(|i| format!("${}", i)).collect();
-    let query = format!(
-        r#"
-        SELECT
-            a.id as app_id,
-            a.name as app_name,
-            COUNT(c.id) as component_count,
-            SUM(CASE WHEN c.current_state = 'RUNNING' THEN 1 ELSE 0 END) as running_count,
-            SUM(CASE WHEN c.current_state = 'STARTING' THEN 1 ELSE 0 END) as starting_count,
-            SUM(CASE WHEN c.current_state = 'STOPPING' THEN 1 ELSE 0 END) as stopping_count,
-            SUM(CASE WHEN c.current_state = 'STOPPED' THEN 1 ELSE 0 END) as stopped_count,
-            SUM(CASE WHEN c.current_state = 'FAILED' THEN 1 ELSE 0 END) as failed_count
-        FROM applications a
-        LEFT JOIN components c ON c.application_id = a.id
-        WHERE a.id IN ({})
-        GROUP BY a.id, a.name
-        "#,
-        placeholders.join(", ")
-    );
-
-    let mut q = sqlx::query_as::<_, Row>(&query);
-    for id in app_ids {
-        q = q.bind(id.to_string());
-    }
-
-    let rows: Vec<Row> = q.fetch_all(pool).await?;
-
-    Ok(rows
-        .into_iter()
-        .filter_map(|r| {
-            Uuid::parse_str(&r.app_id).ok().map(|id| {
-                (
-                    DbUuid::from(id),
-                    r.app_name,
-                    (
-                        r.running_count,
-                        r.stopped_count,
-                        r.failed_count,
-                        r.starting_count,
-                        r.stopping_count,
-                        r.component_count,
-                    ),
-                )
-            })
-        })
-        .collect())
-}
+// Helper functions removed — all SQL queries moved to repository::apps
