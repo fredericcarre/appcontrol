@@ -20,6 +20,7 @@ pub mod gateway_queries;
 pub mod gateways;
 pub mod import_queries;
 pub mod misc_queries;
+pub mod org_queries;
 pub mod permissions;
 pub mod queries;
 pub mod report_queries;
