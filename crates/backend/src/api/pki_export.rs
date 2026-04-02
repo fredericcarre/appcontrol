@@ -146,7 +146,7 @@ pub async fn issue_server_cert(
     .ok();
 
     // Log certificate event
-    let _cert_expires_at =
+    let cert_expires_at =
         (chrono::Utc::now() + chrono::Duration::days(validity_days as i64)).to_rfc3339();
     #[cfg(feature = "postgres")]
     sqlx::query(&format!(
@@ -492,7 +492,7 @@ pub async fn export_certs_to_volume_if_configured(
         );
 
         // Log certificate event
-        let _gw_expires = (chrono::Utc::now() + chrono::Duration::days(365)).to_rfc3339();
+        let gw_expires = (chrono::Utc::now() + chrono::Duration::days(365)).to_rfc3339();
         #[cfg(feature = "postgres")]
         sqlx::query(&format!(
             "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
