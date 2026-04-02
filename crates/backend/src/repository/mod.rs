@@ -11,13 +11,23 @@
 
 pub mod agents;
 pub mod apps;
+pub mod auth_queries;
 pub mod components;
+pub mod core_queries;
+pub mod discovery_queries;
 pub mod enrollment;
+pub mod gateway_queries;
 pub mod gateways;
+pub mod import_queries;
+pub mod misc_queries;
 pub mod permissions;
 pub mod queries;
+pub mod report_queries;
+pub mod schedule_queries;
 pub mod sites;
+pub mod switchover_queries;
 pub mod teams;
+pub mod websocket_queries;
 
 /// Database-agnostic pool type.
 pub use crate::db::DbPool;
