@@ -176,99 +176,30 @@ pub async fn list_apps(
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
 
-    // Fetch apps with component state counts in a single query
-    #[derive(Debug, sqlx::FromRow)]
-    struct AppWithCounts {
-        id: DbUuid,
-        name: String,
-        description: Option<String>,
-        organization_id: DbUuid,
-        site_id: DbUuid,
-        tags: DbJson,
-        created_at: chrono::DateTime<chrono::Utc>,
-        updated_at: chrono::DateTime<chrono::Utc>,
-        component_count: Option<i64>,
-        running_count: Option<i64>,
-        starting_count: Option<i64>,
-        stopping_count: Option<i64>,
-        stopped_count: Option<i64>,
-        failed_count: Option<i64>,
-        unreachable_count: Option<i64>,
-    }
+    use crate::repository::apps::ListAppsParams;
 
-    #[cfg(feature = "postgres")]
-    let apps = sqlx::query_as::<_, AppWithCounts>(
-        r#"
-        SELECT
-            a.id, a.name, a.description, a.organization_id, a.site_id, a.tags,
-            a.created_at, a.updated_at,
-            COUNT(c.id) as component_count,
-            COUNT(c.id) FILTER (WHERE c.current_state = 'RUNNING') as running_count,
-            COUNT(c.id) FILTER (WHERE c.current_state = 'STARTING') as starting_count,
-            COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPING') as stopping_count,
-            COUNT(c.id) FILTER (WHERE c.current_state = 'STOPPED') as stopped_count,
-            COUNT(c.id) FILTER (WHERE c.current_state = 'FAILED') as failed_count,
-            COUNT(c.id) FILTER (WHERE c.current_state = 'UNREACHABLE') as unreachable_count
-        FROM applications a
-        LEFT JOIN components c ON c.application_id = a.id
-        WHERE a.organization_id = $1
-          AND ($2::text IS NULL OR a.name ILIKE '%' || $2 || '%')
-          AND ($3::uuid IS NULL OR a.site_id = $3)
-        GROUP BY a.id, a.name, a.description, a.organization_id, a.site_id, a.tags, a.created_at, a.updated_at
-        ORDER BY a.name
-        LIMIT $4 OFFSET $5
-        "#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&params.search)
-    .bind(params.site_id)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let apps = sqlx::query_as::<_, AppWithCounts>(
-        r#"
-        SELECT
-            a.id, a.name, a.description, a.organization_id, a.site_id, a.tags,
-            a.created_at, a.updated_at,
-            COUNT(c.id) as component_count,
-            SUM(CASE WHEN c.current_state = 'RUNNING' THEN 1 ELSE 0 END) as running_count,
-            SUM(CASE WHEN c.current_state = 'STARTING' THEN 1 ELSE 0 END) as starting_count,
-            SUM(CASE WHEN c.current_state = 'STOPPING' THEN 1 ELSE 0 END) as stopping_count,
-            SUM(CASE WHEN c.current_state = 'STOPPED' THEN 1 ELSE 0 END) as stopped_count,
-            SUM(CASE WHEN c.current_state = 'FAILED' THEN 1 ELSE 0 END) as failed_count,
-            SUM(CASE WHEN c.current_state = 'UNREACHABLE' THEN 1 ELSE 0 END) as unreachable_count
-        FROM applications a
-        LEFT JOIN components c ON c.application_id = a.id
-        WHERE a.organization_id = $1
-          AND ($2 IS NULL OR a.name LIKE '%' || $2 || '%')
-          AND ($3 IS NULL OR a.site_id = $3)
-        GROUP BY a.id, a.name, a.description, a.organization_id, a.site_id, a.tags, a.created_at, a.updated_at
-        ORDER BY a.name
-        LIMIT $4 OFFSET $5
-        "#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&params.search)
-    .bind(params.site_id.map(DbUuid::from))
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.db)
-    .await?;
+    let apps = state
+        .app_repo
+        .list_apps(ListAppsParams {
+            organization_id: *user.organization_id,
+            search: params.search.clone(),
+            site_id: params.site_id,
+            limit,
+            offset,
+        })
+        .await?;
 
     // Transform to response with computed status
     let apps_with_status: Vec<_> = apps
         .into_iter()
         .map(|a| {
-            let component_count = a.component_count.unwrap_or(0);
-            let running_count = a.running_count.unwrap_or(0);
-            let starting_count = a.starting_count.unwrap_or(0);
-            let stopping_count = a.stopping_count.unwrap_or(0);
-            let stopped_count = a.stopped_count.unwrap_or(0);
-            let failed_count = a.failed_count.unwrap_or(0);
-            let unreachable_count = a.unreachable_count.unwrap_or(0);
+            let component_count = a.component_count;
+            let running_count = a.running_count;
+            let starting_count = a.starting_count;
+            let stopping_count = a.stopping_count;
+            let stopped_count = a.stopped_count;
+            let failed_count = a.failed_count;
+            let unreachable_count = a.unreachable_count;
 
             let (global_state, weather) = compute_app_status(
                 running_count,
@@ -315,27 +246,11 @@ pub async fn get_app(
         return Err(ApiError::Forbidden);
     }
 
-    #[cfg(feature = "postgres")]
-    let app = sqlx::query_as::<_, AppRow>(
-        "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
-         FROM applications WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let app = sqlx::query_as::<_, AppRow>(
-        "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
-         FROM applications WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(DbUuid::from(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let app = state
+        .app_repo
+        .get_app(id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
     // Fetch components with agent info
     #[derive(Debug, sqlx::FromRow)]
@@ -569,59 +484,19 @@ pub async fn create_app(
     let site_id = match body.site_id {
         Some(id) => id,
         None => {
-            // Find default site for organization (prefer 'primary' type)
-            #[cfg(feature = "postgres")]
-            let site: Option<(Uuid,)> = sqlx::query_as(
-                "SELECT id FROM sites WHERE organization_id = $1 AND is_active = true \
-                 ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
-            )
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
-
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            let site: Option<(DbUuid,)> = sqlx::query_as(
-                "SELECT id FROM sites WHERE organization_id = $1 AND is_active = 1 \
-                 ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
-            )
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
-
-            match site {
-                #[cfg(feature = "postgres")]
-                Some((id,)) => id,
-                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                Some((id,)) => id.into_inner(),
+            match state
+                .app_repo
+                .find_default_site(*user.organization_id)
+                .await?
+            {
+                Some(id) => id,
                 None => {
                     // Create a default site if none exists
                     let new_site_id = Uuid::new_v4();
-                    #[cfg(feature = "postgres")]
-                    sqlx::query(
-                        "INSERT INTO sites (id, organization_id, name, code, site_type) \
-                         VALUES ($1, $2, $3, $4, $5)",
-                    )
-                    .bind(new_site_id)
-                    .bind(crate::db::bind_id(user.organization_id))
-                    .bind("Default Site")
-                    .bind("DEFAULT")
-                    .bind("primary")
-                    .execute(&state.db)
-                    .await?;
-
-                    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                    sqlx::query(
-                        "INSERT INTO sites (id, organization_id, name, code, site_type) \
-                         VALUES ($1, $2, $3, $4, $5)",
-                    )
-                    .bind(DbUuid::from(new_site_id))
-                    .bind(crate::db::bind_id(user.organization_id))
-                    .bind("Default Site")
-                    .bind("DEFAULT")
-                    .bind("primary")
-                    .execute(&state.db)
-                    .await?;
-
+                    state
+                        .app_repo
+                        .create_default_site(new_site_id, *user.organization_id)
+                        .await?;
                     new_site_id
                 }
             }
@@ -640,70 +515,39 @@ pub async fn create_app(
     )
     .await?;
 
-    #[cfg(feature = "postgres")]
-    let app = sqlx::query_as::<_, AppRow>(
-        r#"
-        INSERT INTO applications (id, name, description, organization_id, site_id, tags)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, name, description, organization_id, site_id, tags, created_at, updated_at
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(&body.name)
-    .bind(&body.description)
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(crate::db::bind_id(site_id))
-    .bind(body.tags.as_ref().unwrap_or(&json!([])))
-    .fetch_one(&state.db)
-    .await?;
+    use crate::repository::apps::CreateApp;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let app = {
-        let tags_val = body.tags.as_ref().unwrap_or(&json!([])).clone();
-        sqlx::query(
-            "INSERT INTO applications (id, name, description, organization_id, site_id, tags) \
-             VALUES ($1, $2, $3, $4, $5, $6)",
-        )
-        .bind(DbUuid::from(app_id))
-        .bind(&body.name)
-        .bind(&body.description)
-        .bind(crate::db::bind_id(user.organization_id))
-        .bind(DbUuid::from(site_id))
-        .bind(serde_json::to_string(&tags_val).unwrap_or_else(|_| "[]".to_string()))
-        .execute(&state.db)
+    let app = state
+        .app_repo
+        .create_app(CreateApp {
+            id: app_id,
+            name: body.name.clone(),
+            description: body.description.clone(),
+            organization_id: *user.organization_id,
+            site_id,
+            tags: body.tags.clone().unwrap_or(json!([])),
+        })
         .await?;
 
-        sqlx::query_as::<_, AppRow>(
-            "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
-             FROM applications WHERE id = $1",
-        )
-        .bind(DbUuid::from(app_id))
-        .fetch_one(&state.db)
-        .await?
-    };
-
     // Grant owner permission to creator
-    #[cfg(feature = "postgres")]
-    let _ = sqlx::query(
-        "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) \
-         VALUES ($1, $2, 'owner', $2)",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(crate::db::bind_id(user.user_id))
-    .execute(&state.db)
-    .await;
+    let _ = state
+        .app_repo
+        .grant_owner_permission(app_id, *user.user_id)
+        .await;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let _ = sqlx::query(
-        "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) \
-         VALUES ($1, $2, 'owner', $2)",
-    )
-    .bind(DbUuid::from(app_id))
-    .bind(crate::db::bind_id(user.user_id))
-    .execute(&state.db)
-    .await;
-
-    Ok((StatusCode::CREATED, Json(json!(app))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": app.id,
+            "name": app.name,
+            "description": app.description,
+            "organization_id": app.organization_id,
+            "site_id": app.site_id,
+            "tags": app.tags,
+            "created_at": app.created_at,
+            "updated_at": app.updated_at,
+        })),
+    ))
 }
 
 pub async fn update_app(
@@ -734,90 +578,37 @@ pub async fn update_app(
     .await?;
 
     // Snapshot before state for config_versions
-    #[cfg(feature = "postgres")]
-    let before_snapshot = {
-        let row = sqlx::query_as::<_, AppRow>(
-            "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
-             FROM applications WHERE id = $1 AND organization_id = $2",
-        )
-        .bind(crate::db::bind_id(id))
-        .bind(crate::db::bind_id(user.organization_id))
-        .fetch_optional(&state.db)
-        .await?;
-        row.map(|r| json!(r))
-    };
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let before_snapshot = {
-        let row = sqlx::query_as::<_, AppRow>(
-            "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
-             FROM applications WHERE id = $1 AND organization_id = $2",
-        )
-        .bind(DbUuid::from(id))
-        .bind(crate::db::bind_id(user.organization_id))
-        .fetch_optional(&state.db)
-        .await?;
-        row.map(|r| json!(r))
-    };
-
-    #[cfg(feature = "postgres")]
-    let app = sqlx::query_as::<_, AppRow>(
-        &format!(
-            "UPDATE applications SET
-                name = COALESCE($2, name),
-                description = COALESCE($3, description),
-                site_id = COALESCE($4, site_id),
-                tags = COALESCE($5, tags),
-                updated_at = {}
-            WHERE id = $1 AND organization_id = $6
-            RETURNING id, name, description, organization_id, site_id, tags, created_at, updated_at",
-            crate::db::sql::now()
-        ),
-    )
-    .bind(crate::db::bind_id(id))
-    .bind(&body.name)
-    .bind(&body.description)
-    .bind(body.site_id)
-    .bind(&body.tags)
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let app = {
-        sqlx::query(&format!(
-            "UPDATE applications SET
-                    name = COALESCE($2, name),
-                    description = COALESCE($3, description),
-                    site_id = COALESCE($4, site_id),
-                    tags = COALESCE($5, tags),
-                    updated_at = {}
-                WHERE id = $1 AND organization_id = $6",
-            crate::db::sql::now()
-        ))
-        .bind(DbUuid::from(id))
-        .bind(&body.name)
-        .bind(&body.description)
-        .bind(body.site_id.map(DbUuid::from))
-        .bind(&body.tags)
-        .bind(crate::db::bind_id(user.organization_id))
-        .execute(&state.db)
-        .await?;
-
-        sqlx::query_as::<_, AppRow>(
-            "SELECT id, name, description, organization_id, site_id, tags, created_at, updated_at \
-             FROM applications WHERE id = $1 AND organization_id = $2",
-        )
-        .bind(DbUuid::from(id))
-        .bind(crate::db::bind_id(user.organization_id))
-        .fetch_optional(&state.db)
+    let before_snapshot = state
+        .app_repo
+        .get_app(id, *user.organization_id)
         .await?
-        .ok_or_not_found()?
-    };
+        .map(|a| {
+            json!({
+                "id": a.id, "name": a.name, "description": a.description,
+                "organization_id": a.organization_id, "site_id": a.site_id,
+                "tags": a.tags, "created_at": a.created_at, "updated_at": a.updated_at,
+            })
+        });
+
+    let app = state
+        .app_repo
+        .update_app(
+            id,
+            *user.organization_id,
+            body.name.as_deref(),
+            body.description.as_deref(),
+            body.tags.as_ref(),
+            body.site_id,
+        )
+        .await?
+        .ok_or_not_found()?;
 
     // Record config_versions snapshot
-    let after_snapshot = json!(app);
+    let after_snapshot = json!({
+        "id": app.id, "name": app.name, "description": app.description,
+        "organization_id": app.organization_id, "site_id": app.site_id,
+        "tags": app.tags, "created_at": app.created_at, "updated_at": app.updated_at,
+    });
     let before_json = before_snapshot
         .as_ref()
         .map(|v| v.to_string())
@@ -849,7 +640,7 @@ pub async fn update_app(
     .execute(&state.db)
     .await?;
 
-    Ok(Json(json!(app)))
+    Ok(Json(after_snapshot))
 }
 
 pub async fn delete_app(
@@ -872,21 +663,12 @@ pub async fn delete_app(
     )
     .await?;
 
-    #[cfg(feature = "postgres")]
-    let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
-        .bind(crate::db::bind_id(id))
-        .bind(crate::db::bind_id(user.organization_id))
-        .execute(&state.db)
+    let deleted = state
+        .app_repo
+        .delete_app(id, *user.organization_id)
         .await?;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
-        .bind(DbUuid::from(id))
-        .bind(crate::db::bind_id(user.organization_id))
-        .execute(&state.db)
-        .await?;
-
-    if result.rows_affected() == 0 {
+    if !deleted {
         return Err(ApiError::NotFound);
     }
 
