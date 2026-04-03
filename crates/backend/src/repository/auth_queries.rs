@@ -338,3 +338,173 @@ pub async fn create_oidc_user(
     .await?;
     Ok(())
 }
+
+// ============================================================================
+// SAML queries (auth/saml.rs)
+// ============================================================================
+
+/// Row type for SAML group mappings.
+#[derive(Debug, sqlx::FromRow)]
+pub struct SamlGroupMapping {
+    pub id: DbUuid,
+    pub saml_group: String,
+    pub team_id: DbUuid,
+    pub default_role: String,
+}
+
+/// Get all SAML group mappings.
+pub async fn get_all_saml_group_mappings(
+    pool: &DbPool,
+) -> Result<Vec<SamlGroupMapping>, sqlx::Error> {
+    sqlx::query_as::<_, SamlGroupMapping>(
+        "SELECT id, saml_group, team_id, default_role FROM saml_group_mappings",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Check if a user is a member of a team.
+pub async fn is_team_member(
+    pool: &DbPool,
+    team_id: DbUuid,
+    user_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    let count: i32 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
+    )
+    .bind(team_id)
+    .bind(crate::db::bind_id(user_id))
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}
+
+/// Add a user to a team (idempotent).
+pub async fn add_team_member(
+    pool: &DbPool,
+    team_id: DbUuid,
+    user_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO team_members (team_id, user_id) VALUES ($1, $2)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(team_id)
+    .bind(crate::db::bind_id(user_id))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get a team name by ID.
+pub async fn get_team_name(pool: &DbPool, team_id: DbUuid) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>("SELECT name FROM teams WHERE id = $1")
+        .bind(team_id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Remove a user from a team.
+pub async fn remove_team_member(
+    pool: &DbPool,
+    team_id: DbUuid,
+    user_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
+        .bind(team_id)
+        .bind(crate::db::bind_id(user_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Find or update a SAML user.
+pub async fn update_saml_user(
+    pool: &DbPool,
+    user_id: DbUuid,
+    name_id: &str,
+    role: &str,
+    display_name: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE users SET saml_name_id = $1, role = $2, display_name = $3 WHERE id = $4",
+    )
+    .bind(name_id)
+    .bind(role)
+    .bind(display_name)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Create a SAML user.
+pub async fn create_saml_user(
+    pool: &DbPool,
+    user_id: Uuid,
+    org_id: DbUuid,
+    external_id: &str,
+    email: &str,
+    display_name: &str,
+    role: &str,
+    name_id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO users (id, organization_id, external_id, email, display_name, role, saml_name_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(crate::db::bind_id(user_id))
+    .bind(crate::db::bind_id(org_id))
+    .bind(external_id)
+    .bind(email)
+    .bind(display_name)
+    .bind(role)
+    .bind(name_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// List SAML group mappings with team names.
+pub async fn list_saml_group_mappings_with_names(
+    pool: &DbPool,
+) -> Result<Vec<(DbUuid, String, DbUuid, String, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, DbUuid, String, String)>(
+        r#"SELECT sgm.id, sgm.saml_group, sgm.team_id, t.name, sgm.default_role
+           FROM saml_group_mappings sgm
+           JOIN teams t ON t.id = sgm.team_id
+           ORDER BY sgm.saml_group"#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Create a SAML group mapping.
+pub async fn create_saml_group_mapping(
+    pool: &DbPool,
+    id: Uuid,
+    saml_group: &str,
+    team_id: DbUuid,
+    default_role: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO saml_group_mappings (id, saml_group, team_id, default_role)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(crate::db::bind_id(id))
+    .bind(saml_group)
+    .bind(team_id)
+    .bind(default_role)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Delete a SAML group mapping.
+pub async fn delete_saml_group_mapping(pool: &DbPool, id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM saml_group_mappings WHERE id = $1")
+        .bind(crate::db::bind_id(id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}

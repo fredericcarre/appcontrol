@@ -317,14 +317,12 @@ async fn sync_saml_groups(
     user_id: Uuid,
     saml_groups: &[String],
 ) -> Result<Vec<String>, sqlx::Error> {
+    use crate::repository::auth_queries;
+
     let mut synced_teams = Vec::new();
 
     // Get all SAML group mappings
-    let mappings = sqlx::query_as::<_, SamlGroupMapping>(
-        "SELECT id, saml_group, team_id, default_role FROM saml_group_mappings",
-    )
-    .fetch_all(pool)
-    .await?;
+    let mappings = auth_queries::get_all_saml_group_mappings(pool).await?;
 
     // Determine which teams the user should belong to based on current SAML groups
     let target_team_ids: Vec<DbUuid> = mappings
@@ -336,35 +334,12 @@ async fn sync_saml_groups(
     // Add user to teams they should belong to
     for mapping in &mappings {
         if saml_groups.contains(&mapping.saml_group) {
-            // Check if already a member
-            let exists = {
-                let count: i32 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
-                )
-                .bind(mapping.team_id)
-                .bind(crate::db::bind_id(user_id))
-                .fetch_one(pool)
-                .await?;
-                count > 0
-            };
+            let exists = auth_queries::is_team_member(pool, mapping.team_id, user_id).await?;
 
             if !exists {
-                sqlx::query(
-                    "INSERT INTO team_members (team_id, user_id) VALUES ($1, $2)
-                     ON CONFLICT DO NOTHING",
-                )
-                .bind(mapping.team_id)
-                .bind(crate::db::bind_id(user_id))
-                .execute(pool)
-                .await?;
+                auth_queries::add_team_member(pool, mapping.team_id, user_id).await?;
 
-                // Get team name for response
-                if let Some(name) =
-                    sqlx::query_scalar::<_, String>("SELECT name FROM teams WHERE id = $1")
-                        .bind(mapping.team_id)
-                        .fetch_optional(pool)
-                        .await?
-                {
+                if let Some(name) = auth_queries::get_team_name(pool, mapping.team_id).await? {
                     synced_teams.push(name);
                 }
             }
@@ -375,25 +350,11 @@ async fn sync_saml_groups(
     let saml_managed_team_ids: Vec<DbUuid> = mappings.iter().map(|m| m.team_id).collect();
     for team_id in &saml_managed_team_ids {
         if !target_team_ids.contains(team_id) {
-            sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
-                .bind(team_id)
-                .bind(crate::db::bind_id(user_id))
-                .execute(pool)
-                .await?;
+            auth_queries::remove_team_member(pool, *team_id, user_id).await?;
         }
     }
 
     Ok(synced_teams)
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct SamlGroupMapping {
-    #[allow(dead_code)]
-    id: DbUuid,
-    saml_group: String,
-    team_id: DbUuid,
-    #[allow(dead_code)]
-    default_role: String,
 }
 
 // ── User management ──
@@ -405,30 +366,18 @@ async fn find_or_create_saml_user(
     name_id: &str,
     role: &str,
 ) -> Result<AuthUser, sqlx::Error> {
+    use crate::repository::auth_queries;
+
     // Try to find by email
-    let existing = sqlx::query_as::<_, (DbUuid, DbUuid, String, String)>(
-        "SELECT id, organization_id, email, role FROM users WHERE email = $1",
-    )
-    .bind(email)
-    .fetch_optional(pool)
-    .await?;
+    let existing = auth_queries::find_user_by_email_for_oidc(pool, email).await?;
 
     if let Some((user_id, org_id, email, existing_role)) = existing {
-        // Update SAML name_id and role if admin
         let effective_role = if role == "admin" {
             "admin"
         } else {
             &existing_role
         };
-        let _ = sqlx::query(
-            "UPDATE users SET saml_name_id = $1, role = $2, display_name = $3 WHERE id = $4",
-        )
-        .bind(name_id)
-        .bind(effective_role)
-        .bind(display_name)
-        .bind(user_id)
-        .execute(pool)
-        .await;
+        let _ = auth_queries::update_saml_user(pool, user_id, name_id, effective_role, display_name).await;
 
         return Ok(AuthUser {
             user_id,
@@ -439,23 +388,19 @@ async fn find_or_create_saml_user(
     }
 
     // Auto-create user in default organization
-    let org_id = sqlx::query_scalar::<_, DbUuid>("SELECT id FROM organizations LIMIT 1")
-        .fetch_one(pool)
-        .await?;
+    let org_id = auth_queries::get_default_org_id(pool).await?;
 
     let user_id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO users (id, organization_id, external_id, email, display_name, role, saml_name_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    auth_queries::create_saml_user(
+        pool,
+        user_id,
+        org_id,
+        &format!("saml:{name_id}"),
+        email,
+        display_name,
+        role,
+        name_id,
     )
-    .bind(crate::db::bind_id(user_id))
-    .bind(crate::db::bind_id(org_id))
-    .bind(format!("saml:{name_id}"))
-    .bind(email)
-    .bind(display_name)
-    .bind(role)
-    .bind(name_id)
-    .execute(pool)
     .await?;
 
     Ok(AuthUser {
@@ -631,15 +576,11 @@ pub fn saml_routes() -> axum::Router<Arc<AppState>> {
 pub async fn list_group_mappings(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let mappings = sqlx::query_as::<_, (DbUuid, String, DbUuid, String, String)>(
-        r#"SELECT sgm.id, sgm.saml_group, sgm.team_id, t.name, sgm.default_role
-           FROM saml_group_mappings sgm
-           JOIN teams t ON t.id = sgm.team_id
-           ORDER BY sgm.saml_group"#,
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    use crate::repository::auth_queries;
+
+    let mappings = auth_queries::list_saml_group_mappings_with_names(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let data: Vec<serde_json::Value> = mappings
         .iter()
@@ -669,20 +610,14 @@ pub async fn create_group_mapping(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateGroupMapping>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::repository::auth_queries;
+
     let id = Uuid::new_v4();
     let role = body.default_role.unwrap_or_else(|| "viewer".to_string());
 
-    sqlx::query(
-        "INSERT INTO saml_group_mappings (id, saml_group, team_id, default_role)
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(crate::db::bind_id(id))
-    .bind(&body.saml_group)
-    .bind(body.team_id)
-    .bind(&role)
-    .execute(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    auth_queries::create_saml_group_mapping(&state.db, id, &body.saml_group, body.team_id, &role)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(serde_json::json!({
         "id": id,
@@ -697,9 +632,9 @@ pub async fn delete_group_mapping(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
 ) -> Result<StatusCode, StatusCode> {
-    sqlx::query("DELETE FROM saml_group_mappings WHERE id = $1")
-        .bind(crate::db::bind_id(id))
-        .execute(&state.db)
+    use crate::repository::auth_queries;
+
+    auth_queries::delete_saml_group_mapping(&state.db, id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
