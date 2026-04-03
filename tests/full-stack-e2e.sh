@@ -154,7 +154,7 @@ ok "Logged in"
 log "Creating enrollment tokens..."
 
 GW_TOKEN=$(api POST "/enrollment/tokens" \
-  -d '{"name":"e2e-gw","scope":"gateway","max_uses":1,"valid_hours":1}' \
+  -d '{"name":"e2e-gw","scope":"gateway","max_uses":5,"valid_hours":1}' \
   | jq -r '.token // empty')
 if [ -z "$GW_TOKEN" ] || [ "$GW_TOKEN" = "null" ]; then
   fail "Gateway enrollment token creation failed"
@@ -163,7 +163,7 @@ fi
 ok "Gateway enrollment token created"
 
 AGENT_TOKEN=$(api POST "/enrollment/tokens" \
-  -d '{"name":"e2e-agent","scope":"agent","max_uses":1,"valid_hours":1}' \
+  -d '{"name":"e2e-agent","scope":"agent","max_uses":5,"valid_hours":1}' \
   | jq -r '.token // empty')
 if [ -z "$AGENT_TOKEN" ] || [ "$AGENT_TOKEN" = "null" ]; then
   fail "Agent enrollment token creation failed"
@@ -213,13 +213,13 @@ fi
 # ---------------------------------------------------------------------------
 log "Starting agent..."
 
-mkdir -p "$WORKDIR/agent-data/tls" "$WORKDIR/agent-config"
+mkdir -p "$WORKDIR/agent-data/tls"
 
 GATEWAY_URL="ws://localhost:$GATEWAY_PORT" \
 AGENT_ENROLLMENT_TOKEN="$AGENT_TOKEN" \
 DATA_DIR="$WORKDIR/agent-data" \
 RUST_LOG=info \
-"$AGENT_BIN" --config-dir "$WORKDIR/agent-config" > "$LOGS/agent.log" 2>&1 &
+"$AGENT_BIN" > "$LOGS/agent.log" 2>&1 &
 AGENT_PID=$!
 
 sleep 5
