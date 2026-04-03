@@ -575,3 +575,139 @@ pub async fn fetch_due_operation_schedules(pool: &DbPool) -> Result<Vec<DueOpera
     .fetch_all(pool)
     .await
 }
+
+// ============================================================================
+// Additional schedule queries (migrated from api/schedules.rs)
+// ============================================================================
+
+use crate::api::schedules::{ScheduleRow, ExecutionRow};
+
+/// Fetch component schedules (all).
+pub async fn list_component_schedules_all(pool: &DbPool, comp_id: Uuid) -> Result<Vec<ScheduleRow>, sqlx::Error> {
+    sqlx::query_as::<_, ScheduleRow>(
+        r#"SELECT id, organization_id, application_id, component_id, name, description,
+               operation, cron_expression, timezone, is_enabled,
+               last_run_at, next_run_at, last_run_status, last_run_message,
+               created_by, created_at, updated_at
+        FROM operation_schedules WHERE component_id = $1 ORDER BY created_at DESC"#,
+    ).bind(crate::db::bind_id(comp_id)).fetch_all(pool).await
+}
+
+/// Fetch component schedules (enabled only).
+pub async fn list_component_schedules_enabled(pool: &DbPool, comp_id: Uuid) -> Result<Vec<ScheduleRow>, sqlx::Error> {
+    sqlx::query_as::<_, ScheduleRow>(
+        r#"SELECT id, organization_id, application_id, component_id, name, description,
+               operation, cron_expression, timezone, is_enabled,
+               last_run_at, next_run_at, last_run_status, last_run_message,
+               created_by, created_at, updated_at
+        FROM operation_schedules WHERE component_id = $1 AND is_enabled = true ORDER BY created_at DESC"#,
+    ).bind(crate::db::bind_id(comp_id)).fetch_all(pool).await
+}
+
+/// Get component display name.
+pub async fn get_comp_display_name_for_sched(pool: &DbPool, comp_id: Uuid) -> Option<String> {
+    sqlx::query_scalar("SELECT COALESCE(display_name, name) FROM components WHERE id = $1")
+        .bind(crate::db::bind_id(comp_id)).fetch_optional(pool).await.ok().flatten()
+}
+
+/// Get org_id from component's application.
+pub async fn get_org_id_for_component_app(pool: &DbPool, app_id: DbUuid) -> Result<Option<Uuid>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM applications WHERE id = $1")
+            .bind(*app_id).fetch_optional(pool).await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let row = sqlx::query_scalar::<_, DbUuid>("SELECT organization_id FROM applications WHERE id = $1")
+            .bind(app_id).fetch_optional(pool).await?;
+        Ok(row.map(|v| v.into_inner()))
+    }
+}
+
+/// Create a component schedule.
+pub async fn create_component_schedule(
+    pool: &DbPool, schedule_id: Uuid, org_id: Uuid, comp_id: Uuid,
+    name: &str, description: Option<&str>, operation: &str,
+    cron_expression: &str, timezone: &str, next_run_at: Option<chrono::DateTime<chrono::Utc>>,
+    created_by: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO operation_schedules
+            (id, organization_id, component_id, name, description, operation,
+             cron_expression, timezone, is_enabled, next_run_at, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $10)"#,
+    )
+    .bind(schedule_id).bind(org_id).bind(crate::db::bind_id(comp_id))
+    .bind(name).bind(description).bind(operation)
+    .bind(cron_expression).bind(timezone).bind(next_run_at)
+    .bind(crate::db::bind_id(created_by))
+    .execute(pool).await?;
+    Ok(())
+}
+
+/// Fetch a schedule by ID (generic).
+pub async fn fetch_schedule_row(pool: &DbPool, schedule_id: Uuid) -> Result<Option<ScheduleRow>, sqlx::Error> {
+    sqlx::query_as::<_, ScheduleRow>(
+        r#"SELECT id, organization_id, application_id, component_id, name, description,
+               operation, cron_expression, timezone, is_enabled,
+               last_run_at, next_run_at, last_run_status, last_run_message,
+               created_by, created_at, updated_at
+        FROM operation_schedules WHERE id = $1"#,
+    ).bind(schedule_id).fetch_optional(pool).await
+}
+
+/// Update schedule fields.
+pub async fn update_schedule_fields(
+    pool: &DbPool, schedule_id: Uuid, name: &str, description: &Option<String>,
+    operation: &str, cron_expression: &str, timezone: &str,
+    is_enabled: bool, next_run_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
+        "UPDATE operation_schedules SET name = $2, description = $3, operation = $4, cron_expression = $5,
+             timezone = $6, is_enabled = $7, next_run_at = $8, updated_at = {} WHERE id = $1",
+        crate::db::sql::now()
+    ))
+    .bind(schedule_id).bind(name).bind(description).bind(operation)
+    .bind(cron_expression).bind(timezone).bind(is_enabled).bind(next_run_at)
+    .execute(pool).await?;
+    Ok(())
+}
+
+/// Delete a schedule (operation_schedules).
+pub async fn delete_operation_schedule(pool: &DbPool, schedule_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM operation_schedules WHERE id = $1")
+        .bind(schedule_id).execute(pool).await?;
+    Ok(())
+}
+
+/// Toggle schedule enabled + next_run_at.
+pub async fn toggle_schedule_enabled(
+    pool: &DbPool, schedule_id: Uuid, enabled: bool, next_run_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
+        "UPDATE operation_schedules SET is_enabled = $2, next_run_at = $3, updated_at = {} WHERE id = $1",
+        crate::db::sql::now()
+    ))
+    .bind(schedule_id).bind(enabled).bind(next_run_at).execute(pool).await?;
+    Ok(())
+}
+
+/// Set next_run_at to now (for run-now).
+pub async fn set_schedule_run_now(pool: &DbPool, schedule_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
+        "UPDATE operation_schedules SET next_run_at = {now}, updated_at = {now} WHERE id = $1",
+        now = crate::db::sql::now()
+    ))
+    .bind(schedule_id).execute(pool).await?;
+    Ok(())
+}
+
+/// List schedule executions.
+pub async fn list_executions(pool: &DbPool, schedule_id: Uuid) -> Result<Vec<ExecutionRow>, sqlx::Error> {
+    sqlx::query_as::<_, ExecutionRow>(
+        r#"SELECT id, schedule_id, action_log_id, executed_at, status, message, duration_ms
+        FROM operation_schedule_executions WHERE schedule_id = $1
+        ORDER BY executed_at DESC LIMIT 100"#,
+    ).bind(schedule_id).fetch_all(pool).await
+}
