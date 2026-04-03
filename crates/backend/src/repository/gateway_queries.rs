@@ -922,7 +922,7 @@ pub async fn insert_gateway_cert_revoked_event(
 
 /// Unset primary flag for all gateways in a site except the specified one.
 pub async fn unset_primary_in_site_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     org_id: Uuid,
     site_id: Uuid,
     except_id: Uuid,
@@ -938,7 +938,7 @@ pub async fn unset_primary_in_site_tx<'a>(
 
 /// Unset primary flag for all gateways in a zone (no site) except the specified one.
 pub async fn unset_primary_in_zone_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     org_id: Uuid,
     zone: &str,
     except_id: Uuid,
@@ -954,7 +954,7 @@ pub async fn unset_primary_in_zone_tx<'a>(
 
 /// Set a gateway as primary.
 pub async fn set_primary_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     gateway_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE gateways SET is_primary = true WHERE id = $1")
@@ -966,7 +966,7 @@ pub async fn set_primary_tx<'a>(
 
 /// Insert a gateway status event.
 pub async fn insert_gateway_status_event_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     org_id: Uuid,
     gateway_id: Uuid,
     event_type: &str,
@@ -991,7 +991,7 @@ pub async fn insert_gateway_status_event_tx<'a>(
 /// Deactivate gateway in transaction (PostgreSQL).
 #[cfg(feature = "postgres")]
 pub async fn deactivate_gateway_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     gateway_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
@@ -1003,7 +1003,7 @@ pub async fn deactivate_gateway_tx<'a>(
 
 /// Get agent IDs for a gateway in a transaction.
 pub async fn get_gateway_agent_ids_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     gateway_id: Uuid,
     org_id: Uuid,
 ) -> Result<Vec<Uuid>, sqlx::Error> {
@@ -1016,7 +1016,7 @@ pub async fn get_gateway_agent_ids_tx<'a>(
 
 /// Disconnect all agents from a gateway in a transaction.
 pub async fn disconnect_agents_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     gateway_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE agents SET gateway_id = NULL WHERE gateway_id = $1")
@@ -1033,7 +1033,7 @@ pub async fn disconnect_agents_tx<'a>(
 /// Deactivate agent and clear identity (PostgreSQL).
 #[cfg(feature = "postgres")]
 pub async fn deactivate_agent_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     agent_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE agents SET is_active = false, identity_verified = false WHERE id = $1")
@@ -1045,7 +1045,7 @@ pub async fn deactivate_agent_tx<'a>(
 
 /// Insert an agent blocked event in transaction.
 pub async fn insert_agent_blocked_event_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     agent_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
@@ -1061,7 +1061,7 @@ pub async fn insert_agent_blocked_event_tx<'a>(
 
 /// Insert an agent status event in transaction.
 pub async fn insert_agent_status_event_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     org_id: Uuid,
     gateway_id: Uuid,
     agent_id: Uuid,
@@ -1086,7 +1086,7 @@ pub async fn insert_agent_status_event_tx<'a>(
 
 /// Insert revoked certificate record in transaction.
 pub async fn insert_revoked_cert_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     org_id: Uuid,
     fingerprint: &str,
     cn: &str,
@@ -1108,7 +1108,7 @@ pub async fn insert_revoked_cert_tx<'a>(
 /// Deactivate a gateway in transaction (for revocation).
 #[cfg(feature = "postgres")]
 pub async fn deactivate_gateway_for_revocation_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     gateway_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
@@ -1120,7 +1120,7 @@ pub async fn deactivate_gateway_for_revocation_tx<'a>(
 
 /// Insert revoked certificate for an agent (with agent_id) in transaction.
 pub async fn insert_revoked_agent_cert_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     org_id: Uuid,
     fingerprint: &str,
     cn: &str,
@@ -1145,7 +1145,7 @@ pub async fn insert_revoked_agent_cert_tx<'a>(
 
 /// Insert certificate event for an agent in transaction.
 pub async fn insert_agent_cert_event_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     agent_id: Uuid,
     event_type: &str,
     fingerprint: &str,
@@ -1167,7 +1167,7 @@ pub async fn insert_agent_cert_event_tx<'a>(
 /// Deactivate agent and clear identity in transaction (PostgreSQL).
 #[cfg(feature = "postgres")]
 pub async fn deactivate_agent_clear_identity_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     agent_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE agents SET is_active = false, identity_verified = false WHERE id = $1")
@@ -1179,7 +1179,7 @@ pub async fn deactivate_agent_clear_identity_tx<'a>(
 
 /// Insert revoked certificate for a gateway (with gateway_id) in transaction.
 pub async fn insert_revoked_gateway_cert_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     org_id: Uuid,
     fingerprint: &str,
     cn: &str,
@@ -1204,7 +1204,7 @@ pub async fn insert_revoked_gateway_cert_tx<'a>(
 
 /// Insert certificate event for a gateway in transaction.
 pub async fn insert_gateway_cert_event_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     gateway_id: Uuid,
     event_type: &str,
     fingerprint: &str,
