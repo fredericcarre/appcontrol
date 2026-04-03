@@ -2241,3 +2241,6 @@ pub async fn insert_log_access_audit(
     .await?;
     Ok(())
 }
+
+// NOTE: History queries are defined above in the "History (timeline) queries" section.
+// The duplicate functions below have been removed.
