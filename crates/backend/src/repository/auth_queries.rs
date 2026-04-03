@@ -275,3 +275,66 @@ pub async fn cleanup_expired_revocations(pool: &DbPool) -> Result<u64, sqlx::Err
         .await?;
     Ok(result.rows_affected())
 }
+
+// ============================================================================
+// OIDC queries (auth/oidc.rs)
+// ============================================================================
+
+/// Find a user by email for OIDC login.
+pub async fn find_user_by_email_for_oidc(
+    pool: &DbPool,
+    email: &str,
+) -> Result<Option<(DbUuid, DbUuid, String, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, DbUuid, String, String)>(
+        "SELECT id, organization_id, email, role FROM users WHERE email = $1",
+    )
+    .bind(email)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Update OIDC subject on a user if not already set.
+pub async fn update_oidc_sub_if_null(
+    pool: &DbPool,
+    user_id: DbUuid,
+    oidc_sub: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE users SET oidc_sub = $1 WHERE id = $2 AND oidc_sub IS NULL")
+        .bind(oidc_sub)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Get the first (default) organization ID.
+pub async fn get_default_org_id(pool: &DbPool) -> Result<DbUuid, sqlx::Error> {
+    sqlx::query_scalar::<_, DbUuid>("SELECT id FROM organizations LIMIT 1")
+        .fetch_one(pool)
+        .await
+}
+
+/// Create a new OIDC user in the database.
+pub async fn create_oidc_user(
+    pool: &DbPool,
+    user_id: Uuid,
+    org_id: DbUuid,
+    external_id: &str,
+    email: &str,
+    display_name: &str,
+    oidc_sub: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO users (id, organization_id, external_id, email, display_name, role, oidc_sub)
+         VALUES ($1, $2, $3, $4, $5, 'viewer', $6)",
+    )
+    .bind(user_id)
+    .bind(org_id)
+    .bind(external_id)
+    .bind(email)
+    .bind(display_name)
+    .bind(oidc_sub)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
