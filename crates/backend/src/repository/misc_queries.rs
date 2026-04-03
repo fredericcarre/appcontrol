@@ -1774,3 +1774,180 @@ pub async fn upsert_approval_policy(
     .await?;
     Ok(())
 }
+
+// ============================================================================
+// PKI queries (api/pki_export.rs)
+// ============================================================================
+
+/// Get the first CA cert PEM for unauthenticated retrieval.
+pub async fn get_first_ca_public(
+    pool: &DbPool,
+) -> Result<Option<(Option<String>, String)>, sqlx::Error> {
+    sqlx::query_as(
+        r#"SELECT ca_cert_pem, slug FROM organizations
+           WHERE ca_cert_pem IS NOT NULL
+           ORDER BY created_at ASC
+           LIMIT 1"#,
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get CA cert/key for an organization.
+pub async fn get_org_ca_cert_key(
+    pool: &DbPool,
+    org_id: DbUuid,
+) -> Result<Option<(Option<String>, Option<String>)>, sqlx::Error> {
+    sqlx::query_as("SELECT ca_cert_pem, ca_key_pem FROM organizations WHERE id = $1")
+        .bind(crate::db::bind_id(org_id))
+        .fetch_optional(pool)
+        .await
+}
+
+/// Log a certificate event (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn log_certificate_event_with_days(
+    pool: &DbPool,
+    event_type: &str,
+    fingerprint: &str,
+    cn: &str,
+    validity_days: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
+        "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
+             VALUES ($1, $2, $3, {now}, {now} + $4 * interval '1 day')",
+        now = db::sql::now()
+    ))
+    .bind(event_type)
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(validity_days)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Log a certificate event (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn log_certificate_event_with_days(
+    pool: &DbPool,
+    event_type: &str,
+    fingerprint: &str,
+    cn: &str,
+    _validity_days: i32,
+) -> Result<(), sqlx::Error> {
+    let expires_at =
+        (chrono::Utc::now() + chrono::Duration::days(_validity_days as i64)).to_rfc3339();
+    sqlx::query(&format!(
+        "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
+             VALUES ($1, $2, $3, {now}, $4)",
+        now = db::sql::now()
+    ))
+    .bind(event_type)
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(&expires_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Log a certificate event with fixed interval (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn log_certificate_event_fixed_interval(
+    pool: &DbPool,
+    fingerprint: &str,
+    cn: &str,
+    interval_expr: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
+        "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
+             VALUES ('issued', $1, $2, {now}, {now} + {interval})",
+        now = db::sql::now(),
+        interval = interval_expr
+    ))
+    .bind(fingerprint)
+    .bind(cn)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Log a certificate event with fixed interval (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn log_certificate_event_fixed_interval(
+    pool: &DbPool,
+    fingerprint: &str,
+    cn: &str,
+    expires_at_str: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
+        "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
+             VALUES ('issued', $1, $2, {now}, $3)",
+        now = db::sql::now()
+    ))
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(expires_at_str)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get CA status with rotation info.
+pub async fn get_org_ca_status(
+    pool: &DbPool,
+    org_id: DbUuid,
+) -> Result<
+    Option<(
+        Option<String>,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as(
+        r#"SELECT ca_cert_pem, pending_ca_cert_pem, rotation_started_at
+           FROM organizations WHERE id = $1"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Count enrolled agents with certificates.
+pub async fn count_enrolled_agents(
+    pool: &DbPool,
+    org_id: DbUuid,
+) -> Result<(i64,), sqlx::Error> {
+    sqlx::query_as(
+        "SELECT COUNT(*) FROM agents WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_one(pool)
+    .await
+}
+
+/// Count enrolled gateways with certificates.
+pub async fn count_enrolled_gateways(
+    pool: &DbPool,
+    org_id: DbUuid,
+) -> Result<(i64,), sqlx::Error> {
+    sqlx::query_as(
+        "SELECT COUNT(*) FROM gateways WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_one(pool)
+    .await
+}
+
+/// Get first org with CA for auto-export.
+pub async fn get_first_org_with_ca(
+    pool: &DbPool,
+) -> Result<Option<(Uuid, Option<String>, Option<String>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, ca_cert_pem, ca_key_pem FROM organizations WHERE ca_cert_pem IS NOT NULL LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+}
