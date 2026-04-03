@@ -28,15 +28,7 @@ pub enum SequencerError {
 
 /// Helper to get a component's display name (display_name or name fallback)
 async fn get_component_name(pool: &crate::db::DbPool, component_id: Uuid) -> String {
-    sqlx::query_scalar::<_, String>(
-        "SELECT COALESCE(display_name, name) FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or_else(|| component_id.to_string())
+    crate::repository::core_queries::get_component_display_name(pool, component_id).await
 }
 
 /// Build a start plan without executing it (for dry_run and display).
@@ -51,18 +43,7 @@ pub async fn build_start_plan(
     for level in &levels {
         let mut level_info = Vec::new();
         for &comp_id in level {
-            #[cfg(feature = "postgres")]
-            let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
-                .bind(crate::db::bind_id(comp_id))
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| SequencerError::Database(e.to_string()))?
-                .unwrap_or_else(|| comp_id.to_string());
-
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
-                .bind(crate::db::DbUuid::from(comp_id))
-                .fetch_optional(pool)
+            let name = crate::repository::core_queries::get_component_name_by_id(pool, comp_id)
                 .await
                 .map_err(|e| SequencerError::Database(e.to_string()))?
                 .unwrap_or_else(|| comp_id.to_string());
@@ -167,13 +148,9 @@ async fn execute_start_internal(
         let mut regular_components = Vec::new();
 
         for comp_id in to_start {
-            let ref_app_id: Option<Uuid> =
-                sqlx::query_scalar("SELECT referenced_app_id FROM components WHERE id = $1")
-                    .bind(crate::db::bind_id(comp_id))
-                    .fetch_optional(&state.db)
-                    .await
-                    .map_err(|e| SequencerError::Database(e.to_string()))?
-                    .flatten();
+            let ref_app_id = crate::repository::core_queries::get_component_referenced_app_id(&state.db, comp_id)
+                .await
+                .map_err(|e| SequencerError::Database(e.to_string()))?;
 
             if let Some(id) = ref_app_id {
                 app_type_components.push((comp_id, id));
@@ -194,16 +171,7 @@ async fn execute_start_internal(
             Box::pin(execute_start_internal(state, ref_app_id, visited)).await?;
 
             // Wait for the referenced app to be fully started
-            // Use the SUM of all start_timeout_seconds from the referenced app's components
-            // (since they start in DAG order, worst case is sequential starting)
-            let timeout_secs: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(SUM(start_timeout_seconds), 120) FROM components
-                 WHERE application_id = $1 AND start_cmd IS NOT NULL",
-            )
-            .bind(ref_app_id)
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or(120);
+            let timeout_secs = crate::repository::core_queries::get_app_start_timeout_sum(&state.db, ref_app_id).await;
 
             tracing::debug!(
                 component_id = %comp_id,
@@ -216,37 +184,7 @@ async fn execute_start_internal(
                 std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
             loop {
                 // Check aggregate state of referenced app's components
-                #[derive(sqlx::FromRow)]
-                struct StateCount {
-                    total: i64,
-                    running: i64,
-                    degraded: i64,
-                    failed: i64,
-                }
-                #[cfg(feature = "postgres")]
-                let count_sql = "SELECT \
-                        COUNT(*) as total, \
-                        COUNT(*) FILTER (WHERE current_state = 'RUNNING') as running, \
-                        COUNT(*) FILTER (WHERE current_state = 'DEGRADED') as degraded, \
-                        COUNT(*) FILTER (WHERE current_state = 'FAILED') as failed \
-                     FROM components WHERE application_id = $1";
-                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                let count_sql = "SELECT \
-                        COUNT(*) as total, \
-                        SUM(CASE WHEN current_state = 'RUNNING' THEN 1 ELSE 0 END) as running, \
-                        SUM(CASE WHEN current_state = 'DEGRADED' THEN 1 ELSE 0 END) as degraded, \
-                        SUM(CASE WHEN current_state = 'FAILED' THEN 1 ELSE 0 END) as failed \
-                     FROM components WHERE application_id = $1";
-                let counts: StateCount = sqlx::query_as(count_sql)
-                    .bind(ref_app_id)
-                    .fetch_one(&state.db)
-                    .await
-                    .unwrap_or(StateCount {
-                        total: 0,
-                        running: 0,
-                        degraded: 0,
-                        failed: 0,
-                    });
+                let counts = crate::repository::core_queries::get_app_state_counts(&state.db, ref_app_id).await;
 
                 // Aggregate state logic:
                 // - FAILED if any component is FAILED
@@ -394,28 +332,13 @@ async fn execute_stop_internal(
 
         for &comp_id in level {
             // Check if this is an application-type component
-            let ref_app_id: Option<Uuid> =
-                sqlx::query_scalar("SELECT referenced_app_id FROM components WHERE id = $1")
-                    .bind(crate::db::bind_id(comp_id))
-                    .fetch_optional(&state.db)
-                    .await
-                    .map_err(|e| SequencerError::Database(e.to_string()))?
-                    .flatten();
+            let ref_app_id = crate::repository::core_queries::get_component_referenced_app_id(&state.db, comp_id)
+                .await
+                .map_err(|e| SequencerError::Database(e.to_string()))?;
 
             if let Some(ref_id) = ref_app_id {
                 // For app-type components, check if the REFERENCED APP has running components
-                // (the component's own state may be stale)
-                // Exclude components without stop_cmd since they can't be stopped
-                let running_count: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM components
-                     WHERE application_id = $1
-                     AND current_state IN ('RUNNING', 'DEGRADED', 'STARTING', 'STOPPING')
-                     AND stop_cmd IS NOT NULL",
-                )
-                .bind(ref_id)
-                .fetch_one(&state.db)
-                .await
-                .unwrap_or(0);
+                let running_count = crate::repository::core_queries::count_running_components_in_app(&state.db, ref_id).await;
 
                 tracing::warn!(
                     component_id = %comp_id,
@@ -492,14 +415,7 @@ async fn execute_stop_internal(
             // Wait for the referenced app to be fully stopped
             // Use the SUM of all stop_timeout_seconds from the referenced app's components
             // (since they stop in DAG order, worst case is sequential stopping)
-            let timeout_secs: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(SUM(stop_timeout_seconds), 60) FROM components
-                 WHERE application_id = $1 AND stop_cmd IS NOT NULL",
-            )
-            .bind(ref_app_id)
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or(60);
+            let timeout_secs = crate::repository::core_queries::get_app_stop_timeout_sum(&state.db, ref_app_id).await;
 
             tracing::debug!(
                 component_id = %comp_id,
@@ -513,16 +429,7 @@ async fn execute_stop_internal(
             loop {
                 // Check aggregate state of referenced app's components
                 // Exclude components without stop_cmd since they can't be stopped
-                let running_count: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM components
-                     WHERE application_id = $1
-                     AND current_state IN ('RUNNING', 'DEGRADED', 'STARTING', 'STOPPING')
-                     AND stop_cmd IS NOT NULL",
-                )
-                .bind(ref_app_id)
-                .fetch_one(&state.db)
-                .await
-                .unwrap_or(0);
+                let running_count = crate::repository::core_queries::count_running_components_in_app(&state.db, ref_app_id).await;
 
                 if running_count == 0 {
                     tracing::info!(
@@ -561,21 +468,9 @@ pub async fn start_single_component(
     component_id: Uuid,
 ) -> Result<(), SequencerError> {
     // Get component info: start_cmd, timeout, agent_id, and referenced_app_id
-    #[derive(sqlx::FromRow)]
-    struct ComponentInfo {
-        start_cmd: Option<String>,
-        start_timeout_seconds: i32,
-        agent_id: Option<crate::db::DbUuid>,
-        referenced_app_id: Option<crate::db::DbUuid>,
-    }
-
-    let info = sqlx::query_as::<_, ComponentInfo>(
-        "SELECT start_cmd, start_timeout_seconds, agent_id, referenced_app_id FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SequencerError::Database(e.to_string()))?;
+    let info = crate::repository::core_queries::get_start_component_info(&state.db, component_id)
+        .await
+        .map_err(|e| SequencerError::Database(e.to_string()))?;
 
     // Application-type components are handled in execute_start_internal directly
     // (they recursively start their referenced app). Here we just skip them.
@@ -600,8 +495,8 @@ pub async fn start_single_component(
     };
 
     // Check agent BEFORE transitioning to avoid stuck states
-    let agent_id: DbUuid = match info.agent_id {
-        Some(id) => DbUuid::from(id.into_inner()),
+    let agent_id: Uuid = match info.agent_id {
+        Some(id) => id,
         None => {
             tracing::debug!(
                 component_id = %component_id,
@@ -626,7 +521,7 @@ pub async fn start_single_component(
     };
 
     // Record dispatch in command_executions for audit trail
-    record_command_dispatch(&state.db, request_id, component_id, *agent_id, "start").await;
+    crate::repository::core_queries::record_command_dispatch(&state.db, request_id, component_id, agent_id, "start").await;
 
     // Send command to agent - fail explicitly if gateway unavailable
     if !state.ws_hub.send_to_agent(agent_id, message) {
@@ -634,7 +529,7 @@ pub async fn start_single_component(
         let _ = super::fsm::transition_component(state, component_id, ComponentState::Failed).await;
         let name = get_component_name(&state.db, component_id).await;
         return Err(SequencerError::GatewayUnavailable {
-            agent_id: *agent_id,
+            agent_id,
             name,
         });
     }
@@ -661,13 +556,9 @@ pub async fn start_single_component(
     );
 
     // Get the app_id for checking cancellation
-    let app_id: Option<DbUuid> =
-        sqlx::query_scalar("SELECT application_id FROM components WHERE id = $1")
-            .bind(crate::db::bind_id(component_id))
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
+    let app_id: Option<Uuid> = crate::repository::core_queries::get_component_app_id_uuid(&state.db, component_id)
+        .await
+        .ok();
 
     // Wait for component to reach Running state (agent's health check will confirm)
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
@@ -734,22 +625,9 @@ pub async fn stop_single_component(
     component_id: Uuid,
 ) -> Result<(), SequencerError> {
     // Get component info: stop_cmd, timeout, agent_id, referenced_app_id, and application_id
-    #[derive(sqlx::FromRow)]
-    struct ComponentInfo {
-        stop_cmd: Option<String>,
-        stop_timeout_seconds: i32,
-        agent_id: Option<crate::db::DbUuid>,
-        referenced_app_id: Option<crate::db::DbUuid>,
-        application_id: DbUuid,
-    }
-
-    let info = sqlx::query_as::<_, ComponentInfo>(
-        "SELECT stop_cmd, stop_timeout_seconds, agent_id, referenced_app_id, application_id FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SequencerError::Database(e.to_string()))?;
+    let info = crate::repository::core_queries::get_stop_component_info(&state.db, component_id)
+        .await
+        .map_err(|e| SequencerError::Database(e.to_string()))?;
 
     // Application-type components are handled in execute_stop_internal directly
     // (they recursively stop their referenced app). Here we just skip them.
@@ -774,8 +652,8 @@ pub async fn stop_single_component(
     };
 
     // Check agent BEFORE transitioning to avoid stuck states
-    let agent_id: DbUuid = match info.agent_id {
-        Some(id) => DbUuid::from(id.into_inner()),
+    let agent_id: Uuid = match info.agent_id {
+        Some(id) => id,
         None => {
             tracing::debug!(
                 component_id = %component_id,
@@ -806,7 +684,7 @@ pub async fn stop_single_component(
     };
 
     // Record dispatch in command_executions for audit trail
-    record_command_dispatch(&state.db, request_id, component_id, *agent_id, "stop").await;
+    crate::repository::core_queries::record_command_dispatch(&state.db, request_id, component_id, agent_id, "stop").await;
 
     // Send command to agent - fail explicitly if gateway unavailable
     if !state.ws_hub.send_to_agent(agent_id, message) {
@@ -814,7 +692,7 @@ pub async fn stop_single_component(
         let _ = super::fsm::transition_component(state, component_id, ComponentState::Failed).await;
         let name = get_component_name(&state.db, component_id).await;
         return Err(SequencerError::GatewayUnavailable {
-            agent_id: *agent_id,
+            agent_id,
             name,
         });
     }
@@ -894,34 +772,7 @@ pub async fn record_command_dispatch_public(
     agent_id: Uuid,
     command_type: &str,
 ) {
-    record_command_dispatch(pool, request_id, component_id, agent_id, command_type).await;
-}
-
-/// Record a dispatched command in the command_executions table.
-async fn record_command_dispatch(
-    pool: &crate::db::DbPool,
-    request_id: Uuid,
-    component_id: Uuid,
-    agent_id: Uuid,
-    command_type: &str,
-) {
-    if let Err(e) = sqlx::query(
-        "INSERT INTO command_executions (request_id, component_id, agent_id, command_type, status)
-         VALUES ($1, $2, $3, $4, 'dispatched')
-         ON CONFLICT (request_id) DO NOTHING",
-    )
-    .bind(request_id)
-    .bind(crate::db::bind_id(component_id))
-    .bind(crate::db::bind_id(agent_id))
-    .bind(command_type)
-    .execute(pool)
-    .await
-    {
-        tracing::warn!(
-            request_id = %request_id,
-            "Failed to record command dispatch: {}", e
-        );
-    }
+    crate::repository::core_queries::record_command_dispatch(pool, request_id, component_id, agent_id, command_type).await;
 }
 
 /// Record a command result in the command_executions table.
@@ -933,31 +784,7 @@ pub async fn record_command_result(
     stderr: &str,
 ) {
     let request_id: Uuid = request_id.into();
-
-    let status = if exit_code == 0 {
-        "completed"
-    } else {
-        "failed"
-    };
-    if let Err(e) = sqlx::query(&format!(
-        "UPDATE command_executions \
-             SET exit_code = $2, stdout = $3, stderr = $4, status = $5, completed_at = {} \
-             WHERE request_id = $1",
-        crate::db::sql::now()
-    ))
-    .bind(request_id)
-    .bind(exit_code as i16)
-    .bind(stdout)
-    .bind(stderr)
-    .bind(status)
-    .execute(pool)
-    .await
-    {
-        tracing::warn!(
-            request_id = %request_id,
-            "Failed to record command result: {}", e
-        );
-    }
+    crate::repository::core_queries::record_command_result(pool, request_id, exit_code, stdout, stderr).await;
 }
 
 /// Execute a stop sequence on a subset of components within an application's DAG.
@@ -1128,17 +955,12 @@ async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), 
 
     super::fsm::transition_component(state, component_id, ComponentState::Stopping).await?;
 
-    let row = sqlx::query_as::<_, (Option<String>, i32, Option<crate::db::DbUuid>)>(
-        "SELECT stop_cmd, stop_timeout_seconds, agent_id FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SequencerError::Database(e.to_string()))?;
+    let dinfo = crate::repository::core_queries::get_dispatch_stop_info(&state.db, component_id)
+        .await
+        .map_err(|e| SequencerError::Database(e.to_string()))?;
 
-    let (stop_cmd, timeout_secs, raw_agent_id) = row;
-    let agent_id: Uuid = match raw_agent_id {
-        Some(id) => id.into_inner(),
+    let agent_id: Uuid = match dinfo.agent_id {
+        Some(id) => id,
         None => {
             let name = get_component_name(&state.db, component_id).await;
             return Err(SequencerError::NoAgent {
@@ -1148,17 +970,17 @@ async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), 
         }
     };
 
-    if let Some(cmd) = stop_cmd {
+    if let Some(cmd) = dinfo.stop_cmd {
         let request_id = Uuid::new_v4();
         let message = BackendMessage::ExecuteCommand {
             request_id,
             component_id,
             command: cmd,
-            timeout_seconds: timeout_secs as u32,
+            timeout_seconds: dinfo.stop_timeout_seconds as u32,
             exec_mode: "detached".to_string(),
         };
 
-        record_command_dispatch(&state.db, request_id, component_id, agent_id, "stop").await;
+        crate::repository::core_queries::record_command_dispatch(&state.db, request_id, component_id, agent_id, "stop").await;
 
         if !state.ws_hub.send_to_agent(agent_id, message) {
             let name = get_component_name(&state.db, component_id).await;
@@ -1225,14 +1047,9 @@ pub async fn stop_with_dependents(
     component_id: Uuid,
 ) -> Result<(), SequencerError> {
     // Get the application ID for this component
-    let app_id: Uuid = sqlx::query_scalar::<_, crate::db::DbUuid>(
-        "SELECT application_id FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SequencerError::Database(e.to_string()))?
-    .into_inner();
+    let app_id: Uuid = crate::repository::core_queries::get_component_app_id_uuid(&state.db, component_id)
+        .await
+        .map_err(|e| SequencerError::Database(e.to_string()))?;
 
     // Build the DAG for the application
     let dag = super::dag::build_dag(&state.db, app_id)
@@ -1348,17 +1165,12 @@ pub async fn force_stop_single_component(
     // Force transition to Stopping regardless of current state
     super::fsm::force_transition_component(state, component_id, ComponentState::Stopping).await?;
 
-    let row = sqlx::query_as::<_, (Option<String>, i32, Option<crate::db::DbUuid>)>(
-        "SELECT stop_cmd, stop_timeout_seconds, agent_id FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| SequencerError::Database(e.to_string()))?;
+    let dinfo = crate::repository::core_queries::get_dispatch_stop_info(&state.db, component_id)
+        .await
+        .map_err(|e| SequencerError::Database(e.to_string()))?;
 
-    let (stop_cmd, timeout_secs, raw_agent_id) = row;
-    let agent_id: Uuid = match raw_agent_id {
-        Some(id) => id.into_inner(),
+    let agent_id: Uuid = match dinfo.agent_id {
+        Some(id) => id,
         None => {
             let name = get_component_name(&state.db, component_id).await;
             return Err(SequencerError::NoAgent {
@@ -1368,7 +1180,9 @@ pub async fn force_stop_single_component(
         }
     };
 
-    if let Some(cmd) = stop_cmd {
+    let timeout_secs = dinfo.stop_timeout_seconds;
+
+    if let Some(cmd) = dinfo.stop_cmd {
         let request_id = Uuid::new_v4();
         let message = BackendMessage::ExecuteCommand {
             request_id,
@@ -1378,7 +1192,7 @@ pub async fn force_stop_single_component(
             exec_mode: "detached".to_string(),
         };
 
-        record_command_dispatch(&state.db, request_id, component_id, agent_id, "force_stop").await;
+        crate::repository::core_queries::record_command_dispatch(&state.db, request_id, component_id, agent_id, "force_stop").await;
 
         if !state.ws_hub.send_to_agent(agent_id, message) {
             let name = get_component_name(&state.db, component_id).await;

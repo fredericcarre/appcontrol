@@ -975,6 +975,337 @@ pub async fn apply_profile_mappings(
     Ok(())
 }
 
+// ============================================================================
+// Sequencer queries (core/sequencer.rs)
+// ============================================================================
+
+/// Get a component's display name (display_name or name fallback).
+pub async fn get_component_display_name(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> String {
+    sqlx::query_scalar::<_, String>(
+        "SELECT COALESCE(display_name, name) FROM components WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(component_id))
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| component_id.to_string())
+}
+
+/// Get a component's name.
+pub async fn get_component_name_by_id(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT name FROM components WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(component_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get referenced_app_id for a component (None if not an application-type component).
+pub async fn get_component_referenced_app_id(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT referenced_app_id FROM components WHERE id = $1",
+        )
+        .bind(component_id)
+        .fetch_optional(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let row = sqlx::query_scalar::<_, DbUuid>(
+            "SELECT referenced_app_id FROM components WHERE id = $1",
+        )
+        .bind(DbUuid::from(component_id))
+        .fetch_optional(pool)
+        .await?;
+        Ok(row.map(|v| v.into_inner()))
+    }
+}
+
+/// Get the sum of start_timeout_seconds for components with start_cmd in an app.
+pub async fn get_app_start_timeout_sum(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(start_timeout_seconds), 120) FROM components
+         WHERE application_id = $1 AND start_cmd IS NOT NULL",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(120)
+}
+
+/// Get the sum of stop_timeout_seconds for components with stop_cmd in an app.
+pub async fn get_app_stop_timeout_sum(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(stop_timeout_seconds), 60) FROM components
+         WHERE application_id = $1 AND stop_cmd IS NOT NULL",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(60)
+}
+
+/// Count components by aggregate state for a referenced app.
+pub struct AppStateCount {
+    pub total: i64,
+    pub running: i64,
+    pub degraded: i64,
+    pub failed: i64,
+}
+
+pub async fn get_app_state_counts(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> AppStateCount {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        total: i64,
+        running: i64,
+        degraded: i64,
+        failed: i64,
+    }
+
+    #[cfg(feature = "postgres")]
+    let sql = "SELECT \
+            COUNT(*) as total, \
+            COUNT(*) FILTER (WHERE current_state = 'RUNNING') as running, \
+            COUNT(*) FILTER (WHERE current_state = 'DEGRADED') as degraded, \
+            COUNT(*) FILTER (WHERE current_state = 'FAILED') as failed \
+         FROM components WHERE application_id = $1";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let sql = "SELECT \
+            COUNT(*) as total, \
+            SUM(CASE WHEN current_state = 'RUNNING' THEN 1 ELSE 0 END) as running, \
+            SUM(CASE WHEN current_state = 'DEGRADED' THEN 1 ELSE 0 END) as degraded, \
+            SUM(CASE WHEN current_state = 'FAILED' THEN 1 ELSE 0 END) as failed \
+         FROM components WHERE application_id = $1";
+
+    let row = sqlx::query_as::<_, Row>(sql)
+        .bind(crate::db::bind_id(app_id))
+        .fetch_one(pool)
+        .await
+        .unwrap_or(Row { total: 0, running: 0, degraded: 0, failed: 0 });
+
+    AppStateCount {
+        total: row.total,
+        running: row.running,
+        degraded: row.degraded,
+        failed: row.failed,
+    }
+}
+
+/// Count running/active components in a referenced app (for stop decisions).
+pub async fn count_running_components_in_app(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM components
+         WHERE application_id = $1
+         AND current_state IN ('RUNNING', 'DEGRADED', 'STARTING', 'STOPPING')
+         AND stop_cmd IS NOT NULL",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
+}
+
+/// Get start component info: start_cmd, timeout, agent_id, referenced_app_id.
+pub struct StartComponentInfo {
+    pub start_cmd: Option<String>,
+    pub start_timeout_seconds: i32,
+    pub agent_id: Option<Uuid>,
+    pub referenced_app_id: Option<Uuid>,
+}
+
+pub async fn get_start_component_info(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<StartComponentInfo, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        start_cmd: Option<String>,
+        start_timeout_seconds: i32,
+        agent_id: Option<DbUuid>,
+        referenced_app_id: Option<DbUuid>,
+    }
+
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT start_cmd, start_timeout_seconds, agent_id, referenced_app_id FROM components WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(component_id))
+    .fetch_one(pool)
+    .await?;
+
+    Ok(StartComponentInfo {
+        start_cmd: row.start_cmd,
+        start_timeout_seconds: row.start_timeout_seconds,
+        agent_id: row.agent_id.map(|v| v.into_inner()),
+        referenced_app_id: row.referenced_app_id.map(|v| v.into_inner()),
+    })
+}
+
+/// Get stop component info: stop_cmd, timeout, agent_id, referenced_app_id, application_id.
+pub struct StopComponentInfo {
+    pub stop_cmd: Option<String>,
+    pub stop_timeout_seconds: i32,
+    pub agent_id: Option<Uuid>,
+    pub referenced_app_id: Option<Uuid>,
+    pub application_id: Uuid,
+}
+
+pub async fn get_stop_component_info(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<StopComponentInfo, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        stop_cmd: Option<String>,
+        stop_timeout_seconds: i32,
+        agent_id: Option<DbUuid>,
+        referenced_app_id: Option<DbUuid>,
+        application_id: DbUuid,
+    }
+
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT stop_cmd, stop_timeout_seconds, agent_id, referenced_app_id, application_id FROM components WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(component_id))
+    .fetch_one(pool)
+    .await?;
+
+    Ok(StopComponentInfo {
+        stop_cmd: row.stop_cmd,
+        stop_timeout_seconds: row.stop_timeout_seconds,
+        agent_id: row.agent_id.map(|v| v.into_inner()),
+        referenced_app_id: row.referenced_app_id.map(|v| v.into_inner()),
+        application_id: row.application_id.into_inner(),
+    })
+}
+
+/// Get stop_cmd, stop_timeout_seconds, agent_id for a component (dispatch_stop helper).
+pub struct DispatchStopInfo {
+    pub stop_cmd: Option<String>,
+    pub stop_timeout_seconds: i32,
+    pub agent_id: Option<Uuid>,
+}
+
+pub async fn get_dispatch_stop_info(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<DispatchStopInfo, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        stop_cmd: Option<String>,
+        stop_timeout_seconds: i32,
+        agent_id: Option<DbUuid>,
+    }
+
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT stop_cmd, stop_timeout_seconds, agent_id FROM components WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(component_id))
+    .fetch_one(pool)
+    .await?;
+
+    Ok(DispatchStopInfo {
+        stop_cmd: row.stop_cmd,
+        stop_timeout_seconds: row.stop_timeout_seconds,
+        agent_id: row.agent_id.map(|v| v.into_inner()),
+    })
+}
+
+/// Get the application_id for a component.
+pub async fn get_component_app_id_uuid(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<Uuid, sqlx::Error> {
+    let id = sqlx::query_scalar::<_, DbUuid>(
+        "SELECT application_id FROM components WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(component_id))
+    .fetch_one(pool)
+    .await?;
+    Ok(id.into_inner())
+}
+
+/// Record a dispatched command in the command_executions table.
+pub async fn record_command_dispatch(
+    pool: &DbPool,
+    request_id: Uuid,
+    component_id: Uuid,
+    agent_id: Uuid,
+    command_type: &str,
+) {
+    if let Err(e) = sqlx::query(
+        "INSERT INTO command_executions (request_id, component_id, agent_id, command_type, status)
+         VALUES ($1, $2, $3, $4, 'dispatched')
+         ON CONFLICT (request_id) DO NOTHING",
+    )
+    .bind(request_id)
+    .bind(crate::db::bind_id(component_id))
+    .bind(crate::db::bind_id(agent_id))
+    .bind(command_type)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(
+            request_id = %request_id,
+            "Failed to record command dispatch: {}", e
+        );
+    }
+}
+
+/// Record a command result in the command_executions table.
+pub async fn record_command_result(
+    pool: &DbPool,
+    request_id: Uuid,
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+) {
+    let status = if exit_code == 0 { "completed" } else { "failed" };
+    if let Err(e) = sqlx::query(&format!(
+        "UPDATE command_executions \
+             SET exit_code = $2, stdout = $3, stderr = $4, status = $5, completed_at = {} \
+             WHERE request_id = $1",
+        crate::db::sql::now()
+    ))
+    .bind(request_id)
+    .bind(exit_code as i16)
+    .bind(stdout)
+    .bind(stderr)
+    .bind(status)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(
+            request_id = %request_id,
+            "Failed to record command result: {}", e
+        );
+    }
+}
+
 /// Log a switchover event.
 pub async fn log_switchover_event(
     pool: &DbPool,
