@@ -1698,6 +1698,150 @@ pub async fn set_component_unreachable(
     Ok(())
 }
 
+/// Mark stale gateways as suspended (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn mark_stale_gateways_suspended(
+    pool: &DbPool,
+    timeout_secs: i64,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE gateways
+        SET status = 'suspended'
+        WHERE status = 'active'
+          AND last_heartbeat_at IS NOT NULL
+          AND last_heartbeat_at < datetime('now', '-' || $1 || ' seconds')
+        "#,
+    )
+    .bind(timeout_secs)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Reactivate gateways that have reconnected (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn reactivate_reconnected_gateways(
+    pool: &DbPool,
+    timeout_secs: i64,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE gateways
+        SET status = 'active'
+        WHERE status = 'suspended'
+          AND last_heartbeat_at IS NOT NULL
+          AND last_heartbeat_at >= datetime('now', '-' || $1 || ' seconds')
+        "#,
+    )
+    .bind(timeout_secs)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Insert state transition to UNREACHABLE (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn insert_unreachable_transition(
+    pool: &DbPool,
+    component_id: DbUuid,
+    current_state: &str,
+    agent_id_str: &str,
+    trigger: &str,
+) -> Result<(), sqlx::Error> {
+    let details = serde_json::json!({
+        "previous_state": current_state,
+        "agent_id": agent_id_str,
+    });
+    sqlx::query(
+        r#"
+        INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details)
+        VALUES ($1, $2, $3, 'UNREACHABLE', $4, $5)
+        "#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(component_id)
+    .bind(current_state)
+    .bind(trigger)
+    .bind(details.to_string())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Update component current_state to UNREACHABLE (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn set_component_unreachable(
+    pool: &DbPool,
+    component_id: DbUuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
+        .bind(component_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Fetch stale components (whose agents have exceeded heartbeat timeout) — SQLite.
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn fetch_stale_components<
+    T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
+>(
+    pool: &DbPool,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        SELECT c.id AS component_id, c.name AS component_name, c.agent_id, c.application_id,
+               app.name AS app_name, NOT a.is_active AS agent_blocked
+        FROM components c
+        JOIN agents a ON a.id = c.agent_id
+        JOIN applications app ON app.id = c.application_id
+        JOIN organizations o ON o.id = a.organization_id
+        LEFT JOIN gateways g ON g.id = a.gateway_id
+        WHERE c.agent_id IS NOT NULL
+          AND (
+            (a.is_active = 1
+             AND a.last_heartbeat_at IS NOT NULL
+             AND a.last_heartbeat_at < datetime('now', '-' || o.heartbeat_timeout_seconds || ' seconds'))
+            OR
+            (a.is_active = 0)
+            OR
+            (g.id IS NOT NULL AND g.is_active = 0)
+          )
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch agents with UNREACHABLE components that have reconnected — SQLite.
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn fetch_agents_to_resync<
+    T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
+>(
+    pool: &DbPool,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        SELECT a.id AS agent_id, COUNT(c.id) AS unreachable_count
+        FROM agents a
+        JOIN organizations o ON o.id = a.organization_id
+        JOIN components c ON c.agent_id = a.id
+        LEFT JOIN gateways g ON g.id = a.gateway_id
+        WHERE a.is_active = 1
+          AND a.last_heartbeat_at IS NOT NULL
+          AND a.last_heartbeat_at >= datetime('now', '-' || o.heartbeat_timeout_seconds || ' seconds')
+          AND c.current_state = 'UNREACHABLE'
+          AND (g.id IS NULL OR g.is_active = 1)
+          AND (g.id IS NULL OR g.status = 'active')
+        GROUP BY a.id
+        HAVING COUNT(c.id) > 0
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 // ============================================================================
 // Operation scheduler queries (core/operation_scheduler.rs)
 // ============================================================================

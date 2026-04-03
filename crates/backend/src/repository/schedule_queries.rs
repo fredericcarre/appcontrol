@@ -345,6 +345,74 @@ pub async fn cleanup_expired_snapshots(pool: &DbPool) -> Result<u64, sqlx::Error
     Ok(result.rows_affected())
 }
 
+/// Fetch due snapshot schedules (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn fetch_due_snapshot_schedules<
+    T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
+>(
+    pool: &DbPool,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        SELECT id, organization_id, name, agent_ids, frequency, retention_days
+        FROM snapshot_schedules
+        WHERE enabled = 1
+          AND next_run_at IS NOT NULL
+          AND next_run_at <= datetime('now')
+        ORDER BY next_run_at ASC
+        LIMIT 10
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Insert a scheduled snapshot record (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn insert_scheduled_snapshot(
+    pool: &DbPool,
+    snapshot_id: uuid::Uuid,
+    schedule_id: DbUuid,
+    organization_id: DbUuid,
+    agent_ids: &crate::db::UuidArray,
+    report_ids: &crate::db::UuidArray,
+    correlation_result: &serde_json::Value,
+    expires_at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO scheduled_snapshots
+            (id, schedule_id, organization_id, agent_ids, report_ids, correlation_result, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "#,
+    )
+    .bind(DbUuid::from(snapshot_id))
+    .bind(schedule_id)
+    .bind(organization_id)
+    .bind(agent_ids)
+    .bind(report_ids)
+    .bind(correlation_result.to_string())
+    .bind(expires_at.to_rfc3339())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Delete expired snapshots (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn cleanup_expired_snapshots(pool: &DbPool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM scheduled_snapshots
+        WHERE expires_at IS NOT NULL
+          AND expires_at < datetime('now')
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 /// Get application name (common helper).
 pub async fn get_app_name_by_id(pool: &DbPool, app_id: Uuid) -> Option<String> {
     sqlx::query_scalar::<_, String>("SELECT name FROM applications WHERE id = $1")

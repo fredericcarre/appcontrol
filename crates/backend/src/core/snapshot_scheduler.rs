@@ -5,17 +5,13 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(feature = "postgres")]
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
 use crate::db::DbUuid;
-#[cfg(feature = "postgres")]
 use crate::db::UuidArray;
 use crate::AppState;
 
 /// Row returned when querying for due schedules.
-#[cfg(feature = "postgres")]
 #[derive(Debug, sqlx::FromRow)]
 struct DueSchedule {
     id: DbUuid,
@@ -27,7 +23,6 @@ struct DueSchedule {
 }
 
 /// Calculate next run time based on frequency.
-#[cfg(feature = "postgres")]
 fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
     use chrono::{Datelike, Duration, Timelike, Utc};
 
@@ -78,9 +73,6 @@ fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
 /// Start the snapshot scheduler background task.
 /// Runs every `check_interval`, queries for schedules whose next_run_at has passed,
 /// and executes them.
-///
-/// NOTE: Currently only fully implemented for PostgreSQL. SQLite support is partial.
-#[cfg(feature = "postgres")]
 pub async fn run_snapshot_scheduler(state: Arc<AppState>, check_interval: Duration) {
     let mut interval = tokio::time::interval(check_interval);
 
@@ -97,24 +89,7 @@ pub async fn run_snapshot_scheduler(state: Arc<AppState>, check_interval: Durati
     }
 }
 
-/// SQLite stub: snapshot scheduling not yet fully implemented for SQLite.
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn run_snapshot_scheduler(_state: Arc<AppState>, check_interval: Duration) {
-    tracing::warn!(
-        "Snapshot scheduler disabled: not yet implemented for SQLite backend. \
-         Scheduled discovery snapshots will not run automatically."
-    );
-
-    // Sleep forever to keep the task alive but do nothing
-    let mut interval = tokio::time::interval(check_interval);
-    loop {
-        interval.tick().await;
-        // No-op for SQLite
-    }
-}
-
 /// Find and execute all schedules that are due.
-#[cfg(feature = "postgres")]
 async fn execute_due_schedules(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // Find schedules where next_run_at <= now() and enabled = true
     let due_schedules =
@@ -142,7 +117,6 @@ async fn execute_due_schedules(state: &Arc<AppState>) -> Result<(), sqlx::Error>
 }
 
 /// Execute a single schedule: trigger discovery, store snapshot.
-#[cfg(feature = "postgres")]
 async fn execute_single_schedule(
     state: &Arc<AppState>,
     schedule: &DueSchedule,
@@ -225,7 +199,6 @@ async fn execute_single_schedule(
 // Database helper functions moved to repository::schedule_queries
 
 /// Clean up expired snapshots based on retention_days.
-#[cfg(feature = "postgres")]
 async fn cleanup_expired_snapshots(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     let deleted = crate::repository::schedule_queries::cleanup_expired_snapshots(&state.db).await?;
     if deleted > 0 {
