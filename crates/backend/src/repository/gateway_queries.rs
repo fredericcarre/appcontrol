@@ -795,3 +795,310 @@ pub async fn insert_gateway_cert_revoked_event(
     .await?;
     Ok(())
 }
+
+// ============================================================================
+// Promote to primary (transaction queries)
+// ============================================================================
+
+/// Unset primary flag for all gateways in a site except the specified one.
+pub async fn unset_primary_in_site_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    org_id: Uuid,
+    site_id: Uuid,
+    except_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND site_id = $2 AND id != $3")
+        .bind(crate::db::bind_id(org_id))
+        .bind(site_id)
+        .bind(except_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Unset primary flag for all gateways in a zone (no site) except the specified one.
+pub async fn unset_primary_in_zone_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    org_id: Uuid,
+    zone: &str,
+    except_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND site_id IS NULL AND id != $3")
+        .bind(crate::db::bind_id(org_id))
+        .bind(zone)
+        .bind(except_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Set a gateway as primary.
+pub async fn set_primary_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    gateway_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE gateways SET is_primary = true WHERE id = $1")
+        .bind(gateway_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Insert a gateway status event.
+pub async fn insert_gateway_status_event_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    org_id: Uuid,
+    gateway_id: Uuid,
+    event_type: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO gateway_status_events (organization_id, gateway_id, event_type, triggered_by)
+           VALUES ($1, $2, $3, 'manual')"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(gateway_id)
+    .bind(event_type)
+    .execute(&mut **tx)
+    .await
+    .ok();
+    Ok(())
+}
+
+// ============================================================================
+// Block gateway (transaction queries)
+// ============================================================================
+
+/// Deactivate gateway in transaction (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn deactivate_gateway_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    gateway_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
+        .bind(gateway_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Get agent IDs for a gateway in a transaction.
+pub async fn get_gateway_agent_ids_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    gateway_id: Uuid,
+    org_id: Uuid,
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    sqlx::query_scalar("SELECT id FROM agents WHERE gateway_id = $1 AND organization_id = $2")
+        .bind(gateway_id)
+        .bind(crate::db::bind_id(org_id))
+        .fetch_all(&mut **tx)
+        .await
+}
+
+/// Disconnect all agents from a gateway in a transaction.
+pub async fn disconnect_agents_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    gateway_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE agents SET gateway_id = NULL WHERE gateway_id = $1")
+        .bind(gateway_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+// ============================================================================
+// Block agent via gateway (transaction queries)
+// ============================================================================
+
+/// Deactivate agent and clear identity (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn deactivate_agent_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    agent_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE agents SET is_active = false, identity_verified = false WHERE id = $1")
+        .bind(agent_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Insert an agent blocked event in transaction.
+pub async fn insert_agent_blocked_event_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    agent_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
+           SELECT $1, 'blocked', certificate_fingerprint, certificate_cn
+           FROM agents WHERE id = $1"#,
+    )
+    .bind(agent_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Insert an agent status event in transaction.
+pub async fn insert_agent_status_event_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    org_id: Uuid,
+    gateway_id: Uuid,
+    agent_id: Uuid,
+    event_type: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO gateway_status_events (organization_id, gateway_id, agent_id, event_type, triggered_by)
+           VALUES ($1, $2, $3, $4, 'manual')"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(gateway_id)
+    .bind(agent_id)
+    .bind(event_type)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+// ============================================================================
+// Revoke gateway cert (transaction queries)
+// ============================================================================
+
+/// Insert revoked certificate record in transaction.
+pub async fn insert_revoked_cert_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    org_id: Uuid,
+    fingerprint: &str,
+    cn: &str,
+    reason: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, reason)
+           VALUES ($1, $2, $3, $4) ON CONFLICT (fingerprint) DO NOTHING"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(reason)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Deactivate a gateway in transaction (for revocation).
+#[cfg(feature = "postgres")]
+pub async fn deactivate_gateway_for_revocation_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    gateway_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
+        .bind(gateway_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Insert revoked certificate for an agent (with agent_id) in transaction.
+pub async fn insert_revoked_agent_cert_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    org_id: Uuid,
+    fingerprint: &str,
+    cn: &str,
+    agent_id: Uuid,
+    reason: &str,
+    revoked_by: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, agent_id, reason, revoked_by)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(crate::db::bind_id(agent_id))
+    .bind(reason)
+    .bind(crate::db::bind_id(revoked_by))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Insert certificate event for an agent in transaction.
+pub async fn insert_agent_cert_event_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    agent_id: Uuid,
+    event_type: &str,
+    fingerprint: &str,
+    cn: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
+           VALUES ($1, $2, $3, $4)"#,
+    )
+    .bind(crate::db::bind_id(agent_id))
+    .bind(event_type)
+    .bind(fingerprint)
+    .bind(cn)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Deactivate agent and clear identity in transaction (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn deactivate_agent_clear_identity_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    agent_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE agents SET is_active = false, identity_verified = false WHERE id = $1")
+        .bind(agent_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Insert revoked certificate for a gateway (with gateway_id) in transaction.
+pub async fn insert_revoked_gateway_cert_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    org_id: Uuid,
+    fingerprint: &str,
+    cn: &str,
+    gateway_id: Uuid,
+    reason: &str,
+    revoked_by: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, gateway_id, reason, revoked_by)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(gateway_id)
+    .bind(reason)
+    .bind(crate::db::bind_id(revoked_by))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Insert certificate event for a gateway in transaction.
+pub async fn insert_gateway_cert_event_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    gateway_id: Uuid,
+    event_type: &str,
+    fingerprint: &str,
+    cn: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn)
+           VALUES ($1, $2, $3, $4)"#,
+    )
+    .bind(gateway_id)
+    .bind(event_type)
+    .bind(fingerprint)
+    .bind(cn)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}

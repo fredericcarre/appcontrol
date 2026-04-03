@@ -332,38 +332,16 @@ pub async fn set_gateway_primary(
 
     // Unset existing primary in the same site (or same zone if no site assigned)
     if let Some(sid) = site_id {
-        sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND site_id = $2 AND id != $3")
-            .bind(crate::db::bind_id(user.organization_id))
-            .bind(sid)
-            .bind(gateway_id)
-            .execute(&mut *tx)
-            .await?;
+        gw_repo::unset_primary_in_site_tx(&mut tx, *user.organization_id, sid, gateway_id).await?;
     } else {
-        // Fallback: use zone for gateways without site assignment
-        sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND site_id IS NULL AND id != $3")
-            .bind(crate::db::bind_id(user.organization_id))
-            .bind(&zone)
-            .bind(gateway_id)
-            .execute(&mut *tx)
-            .await?;
+        gw_repo::unset_primary_in_zone_tx(&mut tx, *user.organization_id, &zone, gateway_id).await?;
     }
 
     // Set this gateway as primary
-    sqlx::query("UPDATE gateways SET is_primary = true WHERE id = $1")
-        .bind(gateway_id)
-        .execute(&mut *tx)
-        .await?;
+    gw_repo::set_primary_tx(&mut tx, gateway_id).await?;
 
     // Log status event
-    sqlx::query(
-        r#"INSERT INTO gateway_status_events (organization_id, gateway_id, event_type, triggered_by)
-           VALUES ($1, $2, 'promoted_to_primary', 'manual')"#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(gateway_id)
-    .execute(&mut *tx)
-    .await
-    .ok(); // Don't fail if table doesn't exist yet
+    gw_repo::insert_gateway_status_event_tx(&mut tx, *user.organization_id, gateway_id, "promoted_to_primary").await?;
 
     tx.commit().await?;
 
@@ -555,43 +533,17 @@ pub async fn block_gateway(
     let mut tx = state.db.begin().await?;
 
     // 1. Suspend the gateway
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
-        .bind(gateway_id)
-        .execute(&mut *tx)
-        .await?;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE gateways SET is_active = 0 WHERE id = $1")
-        .bind(DbUuid::from(gateway_id))
-        .execute(&mut *tx)
-        .await?;
+    gw_repo::deactivate_gateway_tx(&mut tx, gateway_id).await?;
 
     // 2. Get all agents connected to this gateway
-    let agent_ids: Vec<Uuid> =
-        sqlx::query_scalar("SELECT id FROM agents WHERE gateway_id = $1 AND organization_id = $2")
-            .bind(gateway_id)
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_all(&mut *tx)
-            .await?;
-
+    let agent_ids: Vec<Uuid> = gw_repo::get_gateway_agent_ids_tx(&mut tx, gateway_id, *user.organization_id).await?;
     let agent_count = agent_ids.len();
 
     // 3. Disconnect all agents (set gateway_id = NULL)
-    sqlx::query("UPDATE agents SET gateway_id = NULL WHERE gateway_id = $1")
-        .bind(gateway_id)
-        .execute(&mut *tx)
-        .await?;
+    gw_repo::disconnect_agents_tx(&mut tx, gateway_id).await?;
 
     // 4. Log gateway status event
-    sqlx::query(
-        r#"INSERT INTO gateway_status_events (organization_id, gateway_id, event_type, triggered_by)
-           VALUES ($1, $2, 'blocked', 'manual')"#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(gateway_id)
-    .execute(&mut *tx)
-    .await
-    .ok(); // Don't fail if table doesn't exist yet
+    gw_repo::insert_gateway_status_event_tx(&mut tx, *user.organization_id, gateway_id, "blocked").await?;
 
     // 5. Transition all components of affected agents to UNREACHABLE
     let mut components_affected = 0;
@@ -674,41 +626,14 @@ pub async fn revoke_agent_cert(
     let mut tx = state.db.begin().await?;
 
     // Insert into revoked_certificates (APPEND-ONLY)
-    sqlx::query(
-        r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, agent_id, reason, revoked_by)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&fingerprint)
-    .bind(&cn)
-    .bind(crate::db::bind_id(agent_id))
-    .bind(&req.reason)
-    .bind(crate::db::bind_id(user.user_id))
-    .execute(&mut *tx)
-    .await?;
+    let cn_str = cn.as_deref().unwrap_or("");
+    gw_repo::insert_revoked_agent_cert_tx(&mut tx, *user.organization_id, &fingerprint, cn_str, agent_id, &req.reason, *user.user_id).await?;
 
     // Log certificate event
-    sqlx::query(
-        r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
-           VALUES ($1, 'revoked', $2, $3)"#,
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .bind(&fingerprint)
-    .bind(&cn)
-    .execute(&mut *tx)
-    .await?;
+    gw_repo::insert_agent_cert_event_tx(&mut tx, agent_id, "revoked", &fingerprint, cn_str).await?;
 
-    // Deactivate the agent (inside transaction — use raw SQL for tx support)
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE agents SET is_active = false, identity_verified = false WHERE id = $1")
-        .bind(agent_id)
-        .execute(&mut *tx)
-        .await?;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE agents SET is_active = 0, identity_verified = 0 WHERE id = $1")
-        .bind(DbUuid::from(agent_id))
-        .execute(&mut *tx)
-        .await?;
+    // Deactivate the agent
+    gw_repo::deactivate_agent_clear_identity_tx(&mut tx, agent_id).await?;
 
     tx.commit().await?;
 
@@ -755,39 +680,12 @@ pub async fn revoke_gateway_cert(
 
     let mut tx = state.db.begin().await?;
 
-    sqlx::query(
-        r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, gateway_id, reason, revoked_by)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&fingerprint)
-    .bind(&cn)
-    .bind(gateway_id)
-    .bind(&req.reason)
-    .bind(crate::db::bind_id(user.user_id))
-    .execute(&mut *tx)
-    .await?;
+    let gw_cn_str = cn.as_deref().unwrap_or("");
+    gw_repo::insert_revoked_gateway_cert_tx(&mut tx, *user.organization_id, &fingerprint, gw_cn_str, gateway_id, &req.reason, *user.user_id).await?;
 
-    sqlx::query(
-        r#"INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn)
-           VALUES ($1, 'revoked', $2, $3)"#,
-    )
-    .bind(gateway_id)
-    .bind(&fingerprint)
-    .bind(&cn)
-    .execute(&mut *tx)
-    .await?;
+    gw_repo::insert_gateway_cert_event_tx(&mut tx, gateway_id, "revoked", &fingerprint, gw_cn_str).await?;
 
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
-        .bind(gateway_id)
-        .execute(&mut *tx)
-        .await?;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE gateways SET is_active = 0 WHERE id = $1")
-        .bind(DbUuid::from(gateway_id))
-        .execute(&mut *tx)
-        .await?;
+    gw_repo::deactivate_gateway_for_revocation_tx(&mut tx, gateway_id).await?;
 
     tx.commit().await?;
 
