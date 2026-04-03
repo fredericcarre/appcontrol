@@ -215,6 +215,7 @@ jobs:
           context: .
           file: docker/Dockerfile.backend.release
           push: true
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/appcontrol-backend:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-backend:latest
@@ -229,6 +230,7 @@ jobs:
           context: .
           file: docker/Dockerfile.gateway.release
           push: true
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/appcontrol-gateway:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-gateway:latest
@@ -243,6 +245,7 @@ jobs:
           context: .
           file: docker/Dockerfile.agent.release
           push: true
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/appcontrol-agent:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-agent:latest
@@ -258,6 +261,7 @@ jobs:
           context: .
           file: docker/Dockerfile.frontend
           push: true
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/appcontrol-frontend:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-frontend:latest
@@ -273,6 +277,7 @@ jobs:
           context: .
           file: docker/Dockerfile.azure-gateway.release
           push: true
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/appcontrol-azure-gateway:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-azure-gateway:latest
@@ -291,6 +296,7 @@ jobs:
           context: docker/init-certs
           file: docker/init-certs/Dockerfile
           push: true
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/appcontrol-init-certs:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-init-certs:latest
