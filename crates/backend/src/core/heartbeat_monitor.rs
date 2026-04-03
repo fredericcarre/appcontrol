@@ -4,18 +4,15 @@
 //! This distinguishes "check failed" (FAILED — agent ran the check, it returned error)
 //! from "agent unavailable" (UNREACHABLE — no heartbeat, we don't know the real state).
 
-#[cfg(feature = "postgres")]
 use crate::db::DbUuid;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::AppState;
 
-#[cfg(feature = "postgres")]
 use appcontrol_common::ComponentState;
 
 /// Row returned when querying for stale agents and their components.
-#[cfg(feature = "postgres")]
 #[derive(Debug, sqlx::FromRow)]
 struct StaleComponent {
     component_id: DbUuid,
@@ -32,9 +29,6 @@ struct StaleComponent {
 /// exceeds the organization's configured timeout, and transitions their components
 /// to UNREACHABLE. Also monitors gateway heartbeats and marks them disconnected.
 /// When agents reconnect with UNREACHABLE components, triggers resync.
-///
-/// NOTE: Currently only implemented for PostgreSQL. SQLite support is pending.
-#[cfg(feature = "postgres")]
 pub async fn run_heartbeat_monitor(state: Arc<AppState>, check_interval: Duration) {
     let mut interval = tokio::time::interval(check_interval);
 
@@ -57,31 +51,11 @@ pub async fn run_heartbeat_monitor(state: Arc<AppState>, check_interval: Duratio
     }
 }
 
-/// SQLite stub: heartbeat monitoring not yet implemented for SQLite.
-/// Components won't transition to UNREACHABLE automatically.
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn run_heartbeat_monitor(_state: Arc<AppState>, check_interval: Duration) {
-    // Log once at startup that this feature is not available
-    tracing::warn!(
-        "Heartbeat monitor disabled: not yet implemented for SQLite backend. \
-         Components will not automatically transition to UNREACHABLE on agent timeout."
-    );
-
-    // Sleep forever to keep the task alive but do nothing
-    let mut interval = tokio::time::interval(check_interval);
-    loop {
-        interval.tick().await;
-        // No-op for SQLite
-    }
-}
-
 /// Gateway heartbeat timeout in seconds (2 minutes).
 /// Gateways should send heartbeats every 60 seconds, so 2 minutes means we missed 2+.
-#[cfg(feature = "postgres")]
 const GATEWAY_HEARTBEAT_TIMEOUT_SECS: i64 = 120;
 
 /// Check for gateways that have missed heartbeats and mark them as suspended.
-#[cfg(feature = "postgres")]
 async fn check_stale_gateways(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // Find gateways with stale heartbeats that are still marked as 'active'
     // Mark them as 'suspended' (the valid status for unavailable gateways)
@@ -118,7 +92,6 @@ async fn check_stale_gateways(state: &Arc<AppState>) -> Result<(), sqlx::Error> 
 
 /// Check for agents that have missed their heartbeat timeout and transition
 /// their components to UNREACHABLE.
-#[cfg(feature = "postgres")]
 async fn check_stale_agents(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // Find components whose agent has exceeded the org-level heartbeat timeout
     // and that are NOT already in UNREACHABLE, STOPPED, or STOPPING state.
@@ -178,7 +151,6 @@ async fn check_stale_agents(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-#[cfg(feature = "postgres")]
 /// Transition a single component to UNREACHABLE, recording the previous state
 /// in the details for recovery when the agent reconnects.
 async fn transition_to_unreachable(
@@ -236,14 +208,12 @@ async fn transition_to_unreachable(
 }
 
 /// Agent with UNREACHABLE components that has a recent heartbeat.
-#[cfg(feature = "postgres")]
 #[derive(Debug, sqlx::FromRow)]
 struct AgentToResync {
     agent_id: DbUuid,
     unreachable_count: i64,
 }
 
-#[cfg(feature = "postgres")]
 /// Detect agents that are active (recent heartbeat) but have UNREACHABLE components.
 /// This happens when an agent reconnects after a timeout period.
 /// We send RunChecksNow to trigger immediate health checks and resync state.
@@ -279,7 +249,6 @@ async fn resync_unreachable_components(state: &Arc<AppState>) -> Result<(), sqlx
 }
 
 #[cfg(test)]
-#[cfg(feature = "postgres")]
 mod tests {
     use super::*;
 
