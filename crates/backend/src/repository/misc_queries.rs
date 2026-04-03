@@ -3679,6 +3679,251 @@ pub async fn get_dependency_history(
     .await
 }
 
+// ============================================================================
+// Profile queries (api/profiles.rs)
+// ============================================================================
+
+/// List profiles with mapping count.
+pub async fn list_profiles_with_count<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        SELECT
+            p.id, p.name, p.description, p.profile_type, p.is_active,
+            p.gateway_ids, p.auto_failover, p.created_at,
+            COUNT(m.id) as mapping_count
+        FROM binding_profiles p
+        LEFT JOIN binding_profile_mappings m ON p.id = m.profile_id
+        WHERE p.application_id = $1
+        GROUP BY p.id
+        ORDER BY p.profile_type, p.name
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Get a profile by app_id and name.
+pub async fn get_profile_by_name<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+    app_id: Uuid,
+    name: &str,
+) -> Result<Option<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        SELECT id, application_id, name, description, profile_type, is_active,
+               gateway_ids, auto_failover, created_at, created_by
+        FROM binding_profiles
+        WHERE application_id = $1 AND name = $2
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get profile mappings for a profile.
+pub async fn get_profile_mappings<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+    profile_id: DbUuid,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        SELECT id, profile_id, component_name, host, agent_id, resolved_via
+        FROM binding_profile_mappings
+        WHERE profile_id = $1
+        ORDER BY component_name
+        "#,
+    )
+    .bind(profile_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Check if a profile name exists for an application.
+pub async fn profile_name_exists(pool: &DbPool, app_id: Uuid, name: &str) -> Result<bool, sqlx::Error> {
+    let exists: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM binding_profiles WHERE application_id = $1 AND name = $2")
+            .bind(crate::db::bind_id(app_id))
+            .bind(name)
+            .fetch_optional(pool)
+            .await?;
+    Ok(exists.is_some())
+}
+
+/// Create a binding profile (RETURNING).
+pub async fn create_binding_profile<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+    profile_id: Uuid,
+    app_id: Uuid,
+    name: &str,
+    description: Option<&str>,
+    profile_type: &str,
+    gateway_ids: &crate::db::UuidArray,
+    auto_failover: bool,
+    created_by: Uuid,
+) -> Result<T, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        INSERT INTO binding_profiles (id, application_id, name, description, profile_type, is_active, gateway_ids, auto_failover, created_by)
+        VALUES ($1, $2, $3, $4, $5, false, $6, $7, $8)
+        RETURNING id, application_id, name, description, profile_type, is_active, gateway_ids, auto_failover, created_at, created_by
+        "#,
+    )
+    .bind(profile_id)
+    .bind(crate::db::bind_id(app_id))
+    .bind(name)
+    .bind(description)
+    .bind(profile_type)
+    .bind(gateway_ids)
+    .bind(auto_failover)
+    .bind(crate::db::bind_id(created_by))
+    .fetch_one(pool)
+    .await
+}
+
+/// Copy profile mappings from one profile to another.
+pub async fn copy_profile_mappings(pool: &DbPool, to_profile_id: Uuid, from_profile_id: DbUuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO binding_profile_mappings (profile_id, component_name, host, agent_id, resolved_via)
+        SELECT $1, component_name, host, agent_id, resolved_via
+        FROM binding_profile_mappings
+        WHERE profile_id = $2
+        "#,
+    )
+    .bind(to_profile_id)
+    .bind(from_profile_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert a single profile mapping.
+pub async fn insert_profile_mapping(
+    pool: &DbPool,
+    profile_id: Uuid,
+    component_name: &str,
+    host: &str,
+    agent_id: DbUuid,
+    resolved_via: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO binding_profile_mappings (profile_id, component_name, host, agent_id, resolved_via)
+        VALUES ($1, $2, $3, $4, $5)
+        "#,
+    )
+    .bind(profile_id)
+    .bind(component_name)
+    .bind(host)
+    .bind(agent_id)
+    .bind(resolved_via)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Delete a binding profile.
+pub async fn delete_binding_profile(pool: &DbPool, profile_id: DbUuid) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM binding_profiles WHERE id = $1")
+        .bind(profile_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// List DR pattern rules for an organization.
+pub async fn list_dr_pattern_rules<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        SELECT id, organization_id, name, search_pattern, replace_pattern, priority, is_active, created_at
+        FROM dr_pattern_rules
+        WHERE organization_id = $1
+        ORDER BY priority DESC, name
+        "#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Create a DR pattern rule (RETURNING).
+pub async fn create_dr_pattern_rule<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+    rule_id: Uuid,
+    org_id: Uuid,
+    name: &str,
+    search_pattern: &str,
+    replace_pattern: &str,
+    priority: i32,
+    is_active: bool,
+) -> Result<T, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        INSERT INTO dr_pattern_rules (id, organization_id, name, search_pattern, replace_pattern, priority, is_active)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id, organization_id, name, search_pattern, replace_pattern, priority, is_active, created_at
+        "#,
+    )
+    .bind(rule_id)
+    .bind(crate::db::bind_id(org_id))
+    .bind(name)
+    .bind(search_pattern)
+    .bind(replace_pattern)
+    .bind(priority)
+    .bind(is_active)
+    .fetch_one(pool)
+    .await
+}
+
+/// Update a DR pattern rule (RETURNING).
+pub async fn update_dr_pattern_rule<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+    rule_id: Uuid,
+    org_id: Uuid,
+    name: &str,
+    search_pattern: &str,
+    replace_pattern: &str,
+    priority: i32,
+    is_active: bool,
+) -> Result<T, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        UPDATE dr_pattern_rules
+        SET name = $2, search_pattern = $3, replace_pattern = $4, priority = $5, is_active = $6
+        WHERE id = $1 AND organization_id = $7
+        RETURNING id, organization_id, name, search_pattern, replace_pattern, priority, is_active, created_at
+        "#,
+    )
+    .bind(rule_id)
+    .bind(name)
+    .bind(search_pattern)
+    .bind(replace_pattern)
+    .bind(priority)
+    .bind(is_active)
+    .bind(crate::db::bind_id(org_id))
+    .fetch_one(pool)
+    .await
+}
+
+/// Delete a DR pattern rule.
+pub async fn delete_dr_pattern_rule(pool: &DbPool, rule_id: Uuid, org_id: Uuid) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM dr_pattern_rules WHERE id = $1 AND organization_id = $2")
+        .bind(rule_id)
+        .bind(crate::db::bind_id(org_id))
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 /// Count dependency history entries.
 pub async fn count_dependency_history(pool: &DbPool, app_id: Uuid) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar::<_, i64>(
