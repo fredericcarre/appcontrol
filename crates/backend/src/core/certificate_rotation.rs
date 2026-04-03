@@ -300,8 +300,7 @@ pub async fn cancel_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiError
         None => { return Err(ApiError::NotFound); }
     };
 
-    use crate::repository::core_queries as repo_core;
-    repo_core::cancel_rotation_tx(pool, org_id, rotation_id).await?;
+    repo::cancel_rotation_tx(pool, org_id, rotation_id).await?;
 
     tracing::info!(
         org_id = %org_id,
