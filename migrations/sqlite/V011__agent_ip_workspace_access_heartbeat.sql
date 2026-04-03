@@ -29,5 +29,5 @@ CREATE INDEX idx_workspace_members_workspace ON workspace_members (workspace_id)
 CREATE INDEX idx_workspace_members_user ON workspace_members (user_id);
 CREATE INDEX idx_workspace_members_team ON workspace_members (team_id);
 
--- 3. Heartbeat timeout configuration (already in base organizations table for SQLite)
--- ALTER TABLE organizations ADD COLUMN heartbeat_timeout_seconds INTEGER NOT NULL DEFAULT 180;
+-- 3. Heartbeat timeout configuration
+ALTER TABLE organizations ADD COLUMN heartbeat_timeout_seconds INTEGER NOT NULL DEFAULT 180;
