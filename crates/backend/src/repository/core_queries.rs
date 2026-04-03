@@ -420,9 +420,9 @@ pub async fn store_check_event(
     component_id: Uuid,
     check_type: &str,
     exit_code: i16,
-    stdout: &str,
+    stdout: &Option<String>,
     duration_ms: i32,
-    metrics: &Option<String>,
+    metrics: &Option<serde_json::Value>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"INSERT INTO check_events (component_id, check_type, exit_code, stdout, duration_ms, metrics)
