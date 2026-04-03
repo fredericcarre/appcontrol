@@ -477,3 +477,184 @@ pub async fn delete_agent_cascade(
         .await?;
     Ok(())
 }
+
+/// Check if an agent exists in a given organization.
+pub async fn agent_exists_in_org(pool: &DbPool, agent_id: Uuid, org_id: Uuid) -> Result<bool, sqlx::Error> {
+    let row: Option<(DbUuid,)> =
+        sqlx::query_as("SELECT id FROM agents WHERE id = $1 AND organization_id = $2")
+            .bind(crate::db::bind_id(agent_id))
+            .bind(crate::db::bind_id(org_id))
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.is_some())
+}
+
+/// Get agent with hostname, checking org membership.
+pub async fn get_agent_in_org(pool: &DbPool, agent_id: Uuid, org_id: Uuid) -> Result<Option<(DbUuid, String)>, sqlx::Error> {
+    sqlx::query_as("SELECT id, hostname FROM agents WHERE id = $1 AND organization_id = $2")
+        .bind(crate::db::bind_id(agent_id))
+        .bind(crate::db::bind_id(org_id))
+        .fetch_optional(pool)
+        .await
+}
+
+/// Get components for an agent (for transitioning to UNREACHABLE).
+pub async fn get_agent_components<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+    agent_id: Uuid,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        SELECT c.id, c.name, c.application_id, a.name AS app_name
+        FROM components c
+        JOIN applications a ON c.application_id = a.id
+        WHERE c.agent_id = $1
+        "#,
+    )
+    .bind(crate::db::bind_id(agent_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch agent metrics (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn fetch_agent_metrics<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+    agent_id: Uuid,
+    minutes: i32,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(&format!(
+        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
+             FROM agent_metrics
+             WHERE agent_id = $1 AND created_at > {} - ($2 || ' minutes')::interval
+             ORDER BY created_at ASC",
+        crate::db::sql::now()
+    ))
+    .bind(crate::db::bind_id(agent_id))
+    .bind(minutes)
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch agent metrics (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn fetch_agent_metrics<T: for<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> + Send + Unpin>(
+    pool: &DbPool,
+    agent_id: Uuid,
+    minutes: i32,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
+             FROM agent_metrics
+             WHERE agent_id = $1 AND created_at > datetime('now', '-' || $2 || ' minutes')
+             ORDER BY created_at ASC",
+    )
+    .bind(crate::db::bind_id(agent_id))
+    .bind(minutes)
+    .fetch_all(pool)
+    .await
+}
+
+/// Verify agents belong to organization (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn verify_agents_in_org(
+    pool: &DbPool,
+    agent_ids: &[Uuid],
+    org_id: Uuid,
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    sqlx::query_as("SELECT id, hostname FROM agents WHERE id = ANY($1) AND organization_id = $2")
+        .bind(agent_ids)
+        .bind(org_id)
+        .fetch_all(pool)
+        .await
+}
+
+/// Verify agents belong to organization (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn verify_agents_in_org(
+    pool: &DbPool,
+    agent_ids: &[Uuid],
+    org_id: Uuid,
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    if agent_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (1..=agent_ids.len()).map(|i| format!("${}", i)).collect();
+    let org_placeholder = format!("${}", agent_ids.len() + 1);
+    let query = format!(
+        "SELECT id, hostname FROM agents WHERE id IN ({}) AND organization_id = {}",
+        placeholders.join(", "),
+        org_placeholder
+    );
+    let mut q = sqlx::query_as::<_, (String, String)>(&query);
+    for id in agent_ids {
+        q = q.bind(id.to_string());
+    }
+    q = q.bind(org_id.to_string());
+    let rows: Vec<(String, String)> = q.fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id_str, hostname)| Uuid::parse_str(&id_str).ok().map(|id| (id, hostname)))
+        .collect())
+}
+
+/// Delete all agent-related records in a transaction (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn bulk_delete_agent_records<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    agent_ids: &[Uuid],
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = ANY($1)")
+        .bind(agent_ids)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM discovery_reports WHERE agent_id = ANY($1)")
+        .bind(agent_ids)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM certificate_events WHERE agent_id = ANY($1)")
+        .bind(agent_ids)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = ANY($1)")
+        .bind(agent_ids)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM agents WHERE id = ANY($1)")
+        .bind(agent_ids)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Delete all agent-related records in a transaction (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn bulk_delete_agent_records<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Sqlite>,
+    agent_ids: &[Uuid],
+) -> Result<(), sqlx::Error> {
+    for agent_id in agent_ids {
+        let id_str = agent_id.to_string();
+        sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = $1")
+            .bind(&id_str)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("DELETE FROM discovery_reports WHERE agent_id = $1")
+            .bind(&id_str)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("DELETE FROM certificate_events WHERE agent_id = $1")
+            .bind(&id_str)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = $1")
+            .bind(&id_str)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("DELETE FROM agents WHERE id = $1")
+            .bind(&id_str)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}

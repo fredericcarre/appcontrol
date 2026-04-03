@@ -261,21 +261,14 @@ pub async fn get_agent_metrics(
     Query(params): Query<MetricsQuery>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify agent belongs to user's organization
-    let agent_exists: Option<(DbUuid,)> =
-        sqlx::query_as("SELECT id FROM agents WHERE id = $1 AND organization_id = $2")
-            .bind(crate::db::bind_id(agent_id))
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
-
-    if agent_exists.is_none() {
+    if !crate::repository::agents::agent_exists_in_org(&state.db, agent_id, *user.organization_id).await? {
         return Err(ApiError::NotFound);
     }
 
     // Clamp minutes to valid range
     let minutes = params.minutes.clamp(1, 1440);
 
-    let metrics = fetch_agent_metrics(&state.db, agent_id, minutes).await?;
+    let metrics = crate::repository::agents::fetch_agent_metrics::<MetricPoint>(&state.db, agent_id, minutes).await?;
 
     Ok(Json(json!({
         "agent_id": agent_id,
@@ -298,18 +291,9 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
         app_name: String,
     }
 
-    let components: Vec<ComponentInfo> = sqlx::query_as(
-        r#"
-        SELECT c.id, c.name, c.application_id, a.name AS app_name
-        FROM components c
-        JOIN applications a ON c.application_id = a.id
-        WHERE c.agent_id = $1
-        "#,
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let components: Vec<ComponentInfo> = crate::repository::agents::get_agent_components(&state.db, agent_id)
+        .await
+        .unwrap_or_default();
 
     let mut affected = 0;
 
@@ -386,12 +370,7 @@ pub async fn delete_agent(
     }
 
     // Verify agent exists and belongs to user's organization
-    let agent: Option<(DbUuid, String)> =
-        sqlx::query_as("SELECT id, hostname FROM agents WHERE id = $1 AND organization_id = $2")
-            .bind(crate::db::bind_id(agent_id))
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
+    let agent: Option<(DbUuid, String)> = crate::repository::agents::get_agent_in_org(&state.db, agent_id, *user.organization_id).await?;
 
     let (_, hostname) = agent.ok_or(ApiError::NotFound)?;
 
@@ -462,7 +441,7 @@ pub async fn bulk_delete_agents(
 
     // Verify all agents belong to the user's organization
     let valid_agents =
-        verify_agents_in_org(&state.db, &body.agent_ids, *user.organization_id).await?;
+        crate::repository::agents::verify_agents_in_org(&state.db, &body.agent_ids, *user.organization_id).await?;
 
     if valid_agents.is_empty() {
         return Err(ApiError::NotFound);
@@ -495,7 +474,7 @@ pub async fn bulk_delete_agents(
 
     // 2. Clear agent_id from components (don't delete components)
     // 3-6. Delete related records and agents
-    bulk_delete_agent_records(&mut tx, &valid_ids).await?;
+    crate::repository::agents::bulk_delete_agent_records(&mut tx, &valid_ids).await?;
 
     let delete_result = valid_ids.len();
 
@@ -515,152 +494,4 @@ pub async fn bulk_delete_agents(
     })))
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Helper functions for cross-database compatibility
-// ══════════════════════════════════════════════════════════════════════════════
-
-#[cfg(feature = "postgres")]
-async fn fetch_agent_metrics(
-    db: &DbPool,
-    agent_id: Uuid,
-    minutes: i32,
-) -> Result<Vec<MetricPoint>, sqlx::Error> {
-    sqlx::query_as::<_, MetricPoint>(&format!(
-        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
-             FROM agent_metrics
-             WHERE agent_id = $1 AND created_at > {} - ($2 || ' minutes')::interval
-             ORDER BY created_at ASC",
-        crate::db::sql::now()
-    ))
-    .bind(crate::db::bind_id(agent_id))
-    .bind(minutes)
-    .fetch_all(db)
-    .await
-}
-
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn fetch_agent_metrics(
-    db: &DbPool,
-    agent_id: Uuid,
-    minutes: i32,
-) -> Result<Vec<MetricPoint>, sqlx::Error> {
-    sqlx::query_as::<_, MetricPoint>(
-        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
-             FROM agent_metrics
-             WHERE agent_id = $1 AND created_at > datetime('now', '-' || $2 || ' minutes')
-             ORDER BY created_at ASC",
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .bind(minutes)
-    .fetch_all(db)
-    .await
-}
-
-/// Verify agents belong to organization - returns (id, hostname) pairs
-#[cfg(feature = "postgres")]
-async fn verify_agents_in_org(
-    pool: &DbPool,
-    agent_ids: &[Uuid],
-    org_id: Uuid,
-) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
-    sqlx::query_as("SELECT id, hostname FROM agents WHERE id = ANY($1) AND organization_id = $2")
-        .bind(agent_ids)
-        .bind(org_id)
-        .fetch_all(pool)
-        .await
-}
-
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn verify_agents_in_org(
-    pool: &DbPool,
-    agent_ids: &[Uuid],
-    org_id: Uuid,
-) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
-    if agent_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let placeholders: Vec<String> = (1..=agent_ids.len()).map(|i| format!("${}", i)).collect();
-    let org_placeholder = format!("${}", agent_ids.len() + 1);
-    let query = format!(
-        "SELECT id, hostname FROM agents WHERE id IN ({}) AND organization_id = {}",
-        placeholders.join(", "),
-        org_placeholder
-    );
-    let mut q = sqlx::query_as::<_, (String, String)>(&query);
-    for id in agent_ids {
-        q = q.bind(id.to_string());
-    }
-    q = q.bind(org_id.to_string());
-    let rows: Vec<(String, String)> = q.fetch_all(pool).await?;
-    // Parse UUID strings back
-    Ok(rows
-        .into_iter()
-        .filter_map(|(id_str, hostname)| Uuid::parse_str(&id_str).ok().map(|id| (id, hostname)))
-        .collect())
-}
-
-/// Delete all agent-related records in a transaction
-#[cfg(feature = "postgres")]
-async fn bulk_delete_agent_records<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
-    agent_ids: &[Uuid],
-) -> Result<(), sqlx::Error> {
-    // Clear agent_id from components
-    sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = ANY($1)")
-        .bind(agent_ids)
-        .execute(&mut **tx)
-        .await?;
-    // Delete discovery reports
-    sqlx::query("DELETE FROM discovery_reports WHERE agent_id = ANY($1)")
-        .bind(agent_ids)
-        .execute(&mut **tx)
-        .await?;
-    // Delete certificate events
-    sqlx::query("DELETE FROM certificate_events WHERE agent_id = ANY($1)")
-        .bind(agent_ids)
-        .execute(&mut **tx)
-        .await?;
-    // Delete binding profile mappings
-    sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = ANY($1)")
-        .bind(agent_ids)
-        .execute(&mut **tx)
-        .await?;
-    // Delete agents
-    sqlx::query("DELETE FROM agents WHERE id = ANY($1)")
-        .bind(agent_ids)
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
-}
-
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn bulk_delete_agent_records<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Sqlite>,
-    agent_ids: &[Uuid],
-) -> Result<(), sqlx::Error> {
-    // For SQLite, we loop through individual deletes
-    for agent_id in agent_ids {
-        let id_str = agent_id.to_string();
-        sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = $1")
-            .bind(&id_str)
-            .execute(&mut **tx)
-            .await?;
-        sqlx::query("DELETE FROM discovery_reports WHERE agent_id = $1")
-            .bind(&id_str)
-            .execute(&mut **tx)
-            .await?;
-        sqlx::query("DELETE FROM certificate_events WHERE agent_id = $1")
-            .bind(&id_str)
-            .execute(&mut **tx)
-            .await?;
-        sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = $1")
-            .bind(&id_str)
-            .execute(&mut **tx)
-            .await?;
-        sqlx::query("DELETE FROM agents WHERE id = $1")
-            .bind(&id_str)
-            .execute(&mut **tx)
-            .await?;
-    }
-    Ok(())
-}
+// Helper functions moved to repository::agents
