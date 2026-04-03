@@ -3,30 +3,18 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
-use crate::db::DbUuid;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::middleware::audit::log_action;
+use crate::repository::misc_queries as var_repo;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct VariableRow {
-    pub id: DbUuid,
-    pub application_id: DbUuid,
-    pub name: String,
-    pub value: String,
-    pub description: Option<String>,
-    pub is_secret: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct CreateVariableRequest {
@@ -55,23 +43,7 @@ pub async fn list_variables(
         return Err(ApiError::Forbidden);
     }
 
-    #[cfg(feature = "postgres")]
-    let variables = sqlx::query_as::<_, VariableRow>(
-        "SELECT id, application_id, name, value, description, is_secret, created_at, updated_at \
-         FROM app_variables WHERE application_id = $1 ORDER BY name",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let variables = sqlx::query_as::<_, VariableRow>(
-        "SELECT id, application_id, name, value, description, is_secret, created_at, updated_at \
-         FROM app_variables WHERE application_id = $1 ORDER BY name",
-    )
-    .bind(DbUuid::from(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let variables = var_repo::list_app_variables(&state.db, app_id).await?;
 
     // Mask secret values for users below Edit level
     let variables: Vec<Value> = variables
@@ -118,7 +90,6 @@ pub async fn create_variable(
         return Err(ApiError::Forbidden);
     }
 
-    // Input validation
     validate_length("name", &body.name, 1, 200)?;
     validate_optional_length("description", &body.description, 2000)?;
 
@@ -133,38 +104,15 @@ pub async fn create_variable(
     )
     .await?;
 
-    #[cfg(feature = "postgres")]
-    let variable = sqlx::query_as::<_, VariableRow>(
-        r#"
-        INSERT INTO app_variables (id, application_id, name, value, description, is_secret)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, application_id, name, value, description, is_secret, created_at, updated_at
-        "#,
+    let variable = var_repo::create_app_variable(
+        &state.db,
+        var_id,
+        app_id,
+        &body.name,
+        &body.value,
+        body.description.as_deref(),
+        body.is_secret.unwrap_or(false),
     )
-    .bind(var_id)
-    .bind(crate::db::bind_id(app_id))
-    .bind(&body.name)
-    .bind(&body.value)
-    .bind(&body.description)
-    .bind(body.is_secret.unwrap_or(false))
-    .fetch_one(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let variable = sqlx::query_as::<_, VariableRow>(
-        r#"
-        INSERT INTO app_variables (id, application_id, name, value, description, is_secret)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, application_id, name, value, description, is_secret, created_at, updated_at
-        "#,
-    )
-    .bind(DbUuid::from(var_id))
-    .bind(DbUuid::from(app_id))
-    .bind(&body.name)
-    .bind(&body.value)
-    .bind(&body.description)
-    .bind(body.is_secret.unwrap_or(false))
-    .fetch_one(&state.db)
     .await?;
 
     Ok((StatusCode::CREATED, Json(json!(variable))))
@@ -182,7 +130,6 @@ pub async fn update_variable(
         return Err(ApiError::Forbidden);
     }
 
-    // Input validation
     validate_optional_length("description", &body.description, 2000)?;
 
     log_action(
@@ -195,38 +142,16 @@ pub async fn update_variable(
     )
     .await?;
 
-    let update_var_sql = format!(
-        "UPDATE app_variables SET
-            value = COALESCE($3, value),
-            description = COALESCE($4, description),
-            is_secret = COALESCE($5, is_secret),
-            updated_at = {}
-        WHERE id = $2 AND application_id = $1
-        RETURNING id, application_id, name, value, description, is_secret, created_at, updated_at",
-        crate::db::sql::now()
-    );
-
-    #[cfg(feature = "postgres")]
-    let variable = sqlx::query_as::<_, VariableRow>(&update_var_sql)
-        .bind(crate::db::bind_id(app_id))
-        .bind(var_id)
-        .bind(&body.value)
-        .bind(&body.description)
-        .bind(body.is_secret)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_not_found()?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let variable = sqlx::query_as::<_, VariableRow>(&update_var_sql)
-        .bind(DbUuid::from(app_id))
-        .bind(DbUuid::from(var_id))
-        .bind(&body.value)
-        .bind(&body.description)
-        .bind(body.is_secret)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_not_found()?;
+    let variable = var_repo::update_app_variable(
+        &state.db,
+        app_id,
+        var_id,
+        body.value.as_deref(),
+        body.description.as_deref(),
+        body.is_secret,
+    )
+    .await?
+    .ok_or_not_found()?;
 
     Ok(Json(json!(variable)))
 }
@@ -252,21 +177,7 @@ pub async fn delete_variable(
     )
     .await?;
 
-    #[cfg(feature = "postgres")]
-    let result = sqlx::query("DELETE FROM app_variables WHERE id = $1 AND application_id = $2")
-        .bind(var_id)
-        .bind(crate::db::bind_id(app_id))
-        .execute(&state.db)
-        .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let result = sqlx::query("DELETE FROM app_variables WHERE id = $1 AND application_id = $2")
-        .bind(DbUuid::from(var_id))
-        .bind(DbUuid::from(app_id))
-        .execute(&state.db)
-        .await?;
-
-    if result.rows_affected() == 0 {
+    if !var_repo::delete_app_variable(&state.db, var_id, app_id).await? {
         return Err(ApiError::NotFound);
     }
 
@@ -278,16 +189,9 @@ pub async fn delete_variable(
 #[allow(dead_code)]
 pub async fn resolve_variables(
     db: &crate::db::DbPool,
-    app_id: DbUuid,
+    app_id: crate::db::DbUuid,
 ) -> Result<std::collections::HashMap<String, String>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT name, value FROM app_variables WHERE application_id = $1",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(db)
-    .await?;
-
-    Ok(rows.into_iter().collect())
+    var_repo::resolve_variables(db, *app_id).await
 }
 
 /// Interpolate $(var_name) patterns in a command string using the provided variables.

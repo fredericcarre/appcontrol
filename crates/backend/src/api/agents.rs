@@ -8,6 +8,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+#[allow(unused_imports)]
 use crate::db::{DbPool, DbUuid};
 use crate::error::{ApiError, OptionExt};
 use crate::AppState;
@@ -53,22 +54,7 @@ pub async fn list_agents(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let agents = sqlx::query_as::<_, AgentListRow>(
-        r#"
-        SELECT a.id, a.hostname, a.organization_id, a.gateway_id, a.labels, a.ip_addresses,
-               a.version, a.os_name, a.os_version, a.cpu_arch, a.cpu_cores,
-               a.total_memory_mb, a.disk_total_gb,
-               a.last_heartbeat_at, a.is_active, a.created_at,
-               g.name as gateway_name, g.zone as gateway_zone
-        FROM agents a
-        LEFT JOIN gateways g ON a.gateway_id = g.id
-        WHERE a.organization_id = $1
-        ORDER BY a.hostname
-        "#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
+    let agents = state.agent_repo.list_agents(*user.organization_id).await?;
 
     // Get live connection status from the WebSocket hub
     let connected_agents = state.ws_hub.connected_agent_ids();
@@ -82,10 +68,10 @@ pub async fn list_agents(
     let agents_with_status: Vec<Value> = agents
         .into_iter()
         .map(|a| {
-            let connected = connected_agent_set.contains(&*a.id);
+            let connected = connected_agent_set.contains(&a.id);
             let gateway_connected = a
                 .gateway_id
-                .map(|gid| connected_gateway_set.contains(&*gid))
+                .map(|gid| connected_gateway_set.contains(&gid))
                 .unwrap_or(false);
             json!({
                 "id": a.id,
@@ -120,20 +106,24 @@ pub async fn get_agent(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let agent = sqlx::query_as::<_, AgentRow>(
-        r#"
-        SELECT id, hostname, organization_id, gateway_id, labels, ip_addresses, version, last_heartbeat_at, is_active, created_at
-        FROM agents
-        WHERE id = $1 AND organization_id = $2
-        "#,
-    )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let agent = state
+        .agent_repo
+        .get_agent(id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
-    Ok(Json(json!(agent)))
+    Ok(Json(json!({
+        "id": agent.id,
+        "hostname": agent.hostname,
+        "organization_id": agent.organization_id,
+        "gateway_id": agent.gateway_id,
+        "labels": agent.labels,
+        "ip_addresses": agent.ip_addresses,
+        "version": agent.version,
+        "last_heartbeat_at": agent.last_heartbeat_at,
+        "is_active": agent.is_active,
+        "created_at": agent.created_at,
+    })))
 }
 
 /// POST /api/v1/agents/:id/block — Block an agent (security action)
@@ -150,18 +140,11 @@ pub async fn block_agent(
     }
 
     // Get the agent to verify it exists and get info for logging
-    let agent: Option<(String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT hostname, gateway_id FROM agents WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?;
-
-    let (hostname, gateway_id) = match agent {
-        Some(a) => a,
-        None => return Err(ApiError::NotFound),
-    };
+    let (hostname, gateway_id) = state
+        .agent_repo
+        .get_agent_info(agent_id, *user.organization_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     // Log before execute
     crate::middleware::audit::log_action(
@@ -175,35 +158,14 @@ pub async fn block_agent(
     .await
     .ok();
 
-    let mut tx = state.db.begin().await?;
-
     // 1. Suspend the agent and clear gateway association
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE agents SET is_active = false, gateway_id = NULL WHERE id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&mut *tx)
-        .await?;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE agents SET is_active = 0, gateway_id = NULL WHERE id = $1")
-        .bind(DbUuid::from(agent_id))
-        .execute(&mut *tx)
-        .await?;
+    state.agent_repo.block_agent(agent_id).await?;
 
     // 2. Log the block event in certificate_events if table exists
-    sqlx::query(
-        r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
-           SELECT $1, 'blocked', certificate_fingerprint, certificate_cn
-           FROM agents WHERE id = $1"#,
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .execute(&mut *tx)
-    .await
-    .ok(); // Don't fail if table doesn't exist yet
+    crate::repository::agents::log_agent_block_event(&state.db, agent_id).await;
 
     // 3. Transition all components of this agent to UNREACHABLE
     let components_affected = transition_agent_components_to_unreachable(&state, agent_id).await;
-
-    tx.commit().await?;
 
     // 4. Send block command to all gateways — adds agent to blocklist
     // so it's rejected even on reconnection attempts
@@ -233,17 +195,11 @@ pub async fn unblock_agent(
     }
 
     // Get the agent to verify it exists
-    let agent: Option<(String,)> =
-        sqlx::query_as("SELECT hostname FROM agents WHERE id = $1 AND organization_id = $2")
-            .bind(crate::db::bind_id(agent_id))
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
-
-    let hostname = match agent {
-        Some((h,)) => h,
-        None => return Err(ApiError::NotFound),
-    };
+    let (hostname, _) = state
+        .agent_repo
+        .get_agent_info(agent_id, *user.organization_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
 
     // Log before execute
     crate::middleware::audit::log_action(
@@ -258,16 +214,7 @@ pub async fn unblock_agent(
     .ok();
 
     // Reactivate the agent
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE agents SET is_active = true WHERE id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE agents SET is_active = 1 WHERE id = $1")
-        .bind(DbUuid::from(agent_id))
-        .execute(&state.db)
-        .await?;
+    state.agent_repo.unblock_agent(agent_id).await?;
 
     // Send unblock command to all gateways — removes agent from blocklist
     state.ws_hub.unblock_agent(agent_id);
@@ -312,21 +259,18 @@ pub async fn get_agent_metrics(
     Query(params): Query<MetricsQuery>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify agent belongs to user's organization
-    let agent_exists: Option<(DbUuid,)> =
-        sqlx::query_as("SELECT id FROM agents WHERE id = $1 AND organization_id = $2")
-            .bind(crate::db::bind_id(agent_id))
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
-
-    if agent_exists.is_none() {
+    if !crate::repository::agents::agent_exists_in_org(&state.db, agent_id, *user.organization_id)
+        .await?
+    {
         return Err(ApiError::NotFound);
     }
 
     // Clamp minutes to valid range
     let minutes = params.minutes.clamp(1, 1440);
 
-    let metrics = fetch_agent_metrics(&state.db, agent_id, minutes).await?;
+    let metrics =
+        crate::repository::agents::fetch_agent_metrics::<MetricPoint>(&state.db, agent_id, minutes)
+            .await?;
 
     Ok(Json(json!({
         "agent_id": agent_id,
@@ -349,18 +293,10 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
         app_name: String,
     }
 
-    let components: Vec<ComponentInfo> = sqlx::query_as(
-        r#"
-        SELECT c.id, c.name, c.application_id, a.name AS app_name
-        FROM components c
-        JOIN applications a ON c.application_id = a.id
-        WHERE c.agent_id = $1
-        "#,
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let components: Vec<ComponentInfo> =
+        crate::repository::agents::get_agent_components(&state.db, agent_id)
+            .await
+            .unwrap_or_default();
 
     let mut affected = 0;
 
@@ -384,31 +320,12 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
             "previous_state": current_state.to_string(),
             "agent_id": agent_id.to_string(),
         });
-        #[cfg(feature = "postgres")]
-        let result = sqlx::query(
-            r#"
-            INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, 'UNREACHABLE', 'agent_blocked', $3)
-            "#,
+        let result = crate::repository::agents::insert_unreachable_transition(
+            &state.db,
+            *comp.id,
+            &current_state.to_string(),
+            &details_json,
         )
-        .bind(*comp.id)
-        .bind(current_state.to_string())
-        .bind(&details_json)
-        .execute(&state.db)
-        .await;
-
-        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        let result = sqlx::query(
-            r#"
-            INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, $3, 'UNREACHABLE', 'agent_blocked', $4)
-            "#,
-        )
-        .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
-        .bind(*comp.id)
-        .bind(current_state.to_string())
-        .bind(serde_json::to_string(&details_json).unwrap_or_default())
-        .execute(&state.db)
         .await;
 
         if result.is_ok() {
@@ -461,10 +378,7 @@ pub async fn delete_agent(
 
     // Verify agent exists and belongs to user's organization
     let agent: Option<(DbUuid, String)> =
-        sqlx::query_as("SELECT id, hostname FROM agents WHERE id = $1 AND organization_id = $2")
-            .bind(crate::db::bind_id(agent_id))
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
+        crate::repository::agents::get_agent_in_org(&state.db, agent_id, *user.organization_id)
             .await?;
 
     let (_, hostname) = agent.ok_or(ApiError::NotFound)?;
@@ -486,35 +400,8 @@ pub async fn delete_agent(
     // 1. Transition components to UNREACHABLE
     let components_affected = transition_agent_components_to_unreachable(&state, agent_id).await;
 
-    // 2. Clear agent_id from components (don't delete components)
-    sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
-
-    // 3. Delete discovery reports for this agent
-    sqlx::query("DELETE FROM discovery_reports WHERE agent_id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
-
-    // 4. Delete certificate events for this agent
-    sqlx::query("DELETE FROM certificate_events WHERE agent_id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
-
-    // 5. Delete binding profile mappings for this agent
-    sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
-
-    // 6. Delete the agent
-    sqlx::query("DELETE FROM agents WHERE id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
+    // 2-6. Delete agent and cascade
+    crate::repository::agents::delete_agent_cascade(&state.db, agent_id).await?;
 
     tracing::info!(
         agent_id = %agent_id,
@@ -562,8 +449,12 @@ pub async fn bulk_delete_agents(
     }
 
     // Verify all agents belong to the user's organization
-    let valid_agents =
-        verify_agents_in_org(&state.db, &body.agent_ids, *user.organization_id).await?;
+    let valid_agents = crate::repository::agents::verify_agents_in_org(
+        &state.db,
+        &body.agent_ids,
+        *user.organization_id,
+    )
+    .await?;
 
     if valid_agents.is_empty() {
         return Err(ApiError::NotFound);
@@ -596,7 +487,7 @@ pub async fn bulk_delete_agents(
 
     // 2. Clear agent_id from components (don't delete components)
     // 3-6. Delete related records and agents
-    bulk_delete_agent_records(&mut tx, &valid_ids).await?;
+    crate::repository::agents::bulk_delete_agent_records(&mut tx, &valid_ids).await?;
 
     let delete_result = valid_ids.len();
 
@@ -616,152 +507,4 @@ pub async fn bulk_delete_agents(
     })))
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Helper functions for cross-database compatibility
-// ══════════════════════════════════════════════════════════════════════════════
-
-#[cfg(feature = "postgres")]
-async fn fetch_agent_metrics(
-    db: &DbPool,
-    agent_id: Uuid,
-    minutes: i32,
-) -> Result<Vec<MetricPoint>, sqlx::Error> {
-    sqlx::query_as::<_, MetricPoint>(&format!(
-        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
-             FROM agent_metrics
-             WHERE agent_id = $1 AND created_at > {} - ($2 || ' minutes')::interval
-             ORDER BY created_at ASC",
-        crate::db::sql::now()
-    ))
-    .bind(crate::db::bind_id(agent_id))
-    .bind(minutes)
-    .fetch_all(db)
-    .await
-}
-
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn fetch_agent_metrics(
-    db: &DbPool,
-    agent_id: Uuid,
-    minutes: i32,
-) -> Result<Vec<MetricPoint>, sqlx::Error> {
-    sqlx::query_as::<_, MetricPoint>(
-        "SELECT cpu_pct, memory_pct, disk_used_pct, created_at
-             FROM agent_metrics
-             WHERE agent_id = $1 AND created_at > datetime('now', '-' || $2 || ' minutes')
-             ORDER BY created_at ASC",
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .bind(minutes)
-    .fetch_all(db)
-    .await
-}
-
-/// Verify agents belong to organization - returns (id, hostname) pairs
-#[cfg(feature = "postgres")]
-async fn verify_agents_in_org(
-    pool: &DbPool,
-    agent_ids: &[Uuid],
-    org_id: Uuid,
-) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
-    sqlx::query_as("SELECT id, hostname FROM agents WHERE id = ANY($1) AND organization_id = $2")
-        .bind(agent_ids)
-        .bind(org_id)
-        .fetch_all(pool)
-        .await
-}
-
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn verify_agents_in_org(
-    pool: &DbPool,
-    agent_ids: &[Uuid],
-    org_id: Uuid,
-) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
-    if agent_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let placeholders: Vec<String> = (1..=agent_ids.len()).map(|i| format!("${}", i)).collect();
-    let org_placeholder = format!("${}", agent_ids.len() + 1);
-    let query = format!(
-        "SELECT id, hostname FROM agents WHERE id IN ({}) AND organization_id = {}",
-        placeholders.join(", "),
-        org_placeholder
-    );
-    let mut q = sqlx::query_as::<_, (String, String)>(&query);
-    for id in agent_ids {
-        q = q.bind(id.to_string());
-    }
-    q = q.bind(org_id.to_string());
-    let rows: Vec<(String, String)> = q.fetch_all(pool).await?;
-    // Parse UUID strings back
-    Ok(rows
-        .into_iter()
-        .filter_map(|(id_str, hostname)| Uuid::parse_str(&id_str).ok().map(|id| (id, hostname)))
-        .collect())
-}
-
-/// Delete all agent-related records in a transaction
-#[cfg(feature = "postgres")]
-async fn bulk_delete_agent_records<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
-    agent_ids: &[Uuid],
-) -> Result<(), sqlx::Error> {
-    // Clear agent_id from components
-    sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = ANY($1)")
-        .bind(agent_ids)
-        .execute(&mut **tx)
-        .await?;
-    // Delete discovery reports
-    sqlx::query("DELETE FROM discovery_reports WHERE agent_id = ANY($1)")
-        .bind(agent_ids)
-        .execute(&mut **tx)
-        .await?;
-    // Delete certificate events
-    sqlx::query("DELETE FROM certificate_events WHERE agent_id = ANY($1)")
-        .bind(agent_ids)
-        .execute(&mut **tx)
-        .await?;
-    // Delete binding profile mappings
-    sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = ANY($1)")
-        .bind(agent_ids)
-        .execute(&mut **tx)
-        .await?;
-    // Delete agents
-    sqlx::query("DELETE FROM agents WHERE id = ANY($1)")
-        .bind(agent_ids)
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
-}
-
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn bulk_delete_agent_records<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Sqlite>,
-    agent_ids: &[Uuid],
-) -> Result<(), sqlx::Error> {
-    // For SQLite, we loop through individual deletes
-    for agent_id in agent_ids {
-        let id_str = agent_id.to_string();
-        sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = $1")
-            .bind(&id_str)
-            .execute(&mut **tx)
-            .await?;
-        sqlx::query("DELETE FROM discovery_reports WHERE agent_id = $1")
-            .bind(&id_str)
-            .execute(&mut **tx)
-            .await?;
-        sqlx::query("DELETE FROM certificate_events WHERE agent_id = $1")
-            .bind(&id_str)
-            .execute(&mut **tx)
-            .await?;
-        sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = $1")
-            .bind(&id_str)
-            .execute(&mut **tx)
-            .await?;
-        sqlx::query("DELETE FROM agents WHERE id = $1")
-            .bind(&id_str)
-            .execute(&mut **tx)
-            .await?;
-    }
-    Ok(())
-}
+// Helper functions moved to repository::agents

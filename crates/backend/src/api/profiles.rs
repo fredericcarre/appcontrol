@@ -147,22 +147,8 @@ pub async fn list_profiles(
         mapping_count: Option<i64>,
     }
 
-    let profiles: Vec<ProfileRow> = sqlx::query_as(
-        r#"
-        SELECT
-            p.id, p.name, p.description, p.profile_type, p.is_active,
-            p.gateway_ids, p.auto_failover, p.created_at,
-            COUNT(m.id) as mapping_count
-        FROM binding_profiles p
-        LEFT JOIN binding_profile_mappings m ON p.id = m.profile_id
-        WHERE p.application_id = $1
-        GROUP BY p.id
-        ORDER BY p.profile_type, p.name
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let profiles: Vec<ProfileRow> =
+        crate::repository::misc_queries::list_profiles_with_count(&state.db, app_id).await?;
 
     let summaries = profiles
         .into_iter()
@@ -196,32 +182,12 @@ pub async fn get_profile(
         return Err(ApiError::Forbidden);
     }
 
-    let profile: Option<BindingProfile> = sqlx::query_as(
-        r#"
-        SELECT id, application_id, name, description, profile_type, is_active,
-               gateway_ids, auto_failover, created_at, created_by
-        FROM binding_profiles
-        WHERE application_id = $1 AND name = $2
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(&name)
-    .fetch_optional(&state.db)
-    .await?;
-
+    let profile: Option<BindingProfile> =
+        crate::repository::misc_queries::get_profile_by_name(&state.db, app_id, &name).await?;
     let profile = profile.ok_or(ApiError::NotFound)?;
 
-    let mappings: Vec<ProfileMapping> = sqlx::query_as(
-        r#"
-        SELECT id, profile_id, component_name, host, agent_id, resolved_via
-        FROM binding_profile_mappings
-        WHERE profile_id = $1
-        ORDER BY component_name
-        "#,
-    )
-    .bind(profile.id)
-    .fetch_all(&state.db)
-    .await?;
+    let mappings: Vec<ProfileMapping> =
+        crate::repository::misc_queries::get_profile_mappings(&state.db, profile.id).await?;
 
     Ok(Json(json!({
         "profile": profile,
@@ -252,14 +218,7 @@ pub async fn create_profile(
     }
 
     // Check if name already exists
-    let exists: Option<(Uuid,)> =
-        sqlx::query_as("SELECT id FROM binding_profiles WHERE application_id = $1 AND name = $2")
-            .bind(crate::db::bind_id(app_id))
-            .bind(&body.name)
-            .fetch_optional(&state.db)
-            .await?;
-
-    if exists.is_some() {
+    if crate::repository::misc_queries::profile_name_exists(&state.db, app_id, &body.name).await? {
         return Err(ApiError::Validation(format!(
             "Profile '{}' already exists",
             body.name
@@ -284,53 +243,34 @@ pub async fn create_profile(
     .await?;
 
     // Create profile
-    let profile: BindingProfile = sqlx::query_as(
-        r#"
-        INSERT INTO binding_profiles (id, application_id, name, description, profile_type, is_active, gateway_ids, auto_failover, created_by)
-        VALUES ($1, $2, $3, $4, $5, false, $6, $7, $8)
-        RETURNING id, application_id, name, description, profile_type, is_active, gateway_ids, auto_failover, created_at, created_by
-        "#,
+    let profile: BindingProfile = crate::repository::misc_queries::create_binding_profile(
+        &state.db,
+        profile_id,
+        app_id,
+        &body.name,
+        body.description.as_deref(),
+        &body.profile_type,
+        &UuidArray::from(body.gateway_ids.clone()),
+        body.auto_failover.unwrap_or(false),
+        *user.user_id,
     )
-    .bind(profile_id)
-    .bind(crate::db::bind_id(app_id))
-    .bind(&body.name)
-    .bind(&body.description)
-    .bind(&body.profile_type)
-    .bind(UuidArray::from(body.gateway_ids.clone()))
-    .bind(body.auto_failover.unwrap_or(false))
-    .bind(crate::db::bind_id(user.user_id))
-    .fetch_one(&state.db)
     .await?;
 
     // Copy mappings from another profile if specified
     if let Some(copy_from_id) = body.copy_from_profile_id {
-        sqlx::query(
-            r#"
-            INSERT INTO binding_profile_mappings (profile_id, component_name, host, agent_id, resolved_via)
-            SELECT $1, component_name, host, agent_id, resolved_via
-            FROM binding_profile_mappings
-            WHERE profile_id = $2
-            "#,
-        )
-        .bind(profile_id)
-        .bind(copy_from_id)
-        .execute(&state.db)
-        .await?;
+        crate::repository::misc_queries::copy_profile_mappings(&state.db, profile_id, copy_from_id)
+            .await?;
     } else if let Some(ref mappings) = body.mappings {
         // Create manual mappings
         for m in mappings {
-            sqlx::query(
-                r#"
-                INSERT INTO binding_profile_mappings (profile_id, component_name, host, agent_id, resolved_via)
-                VALUES ($1, $2, $3, $4, $5)
-                "#,
+            crate::repository::misc_queries::insert_profile_mapping(
+                &state.db,
+                profile_id,
+                &m.component_name,
+                &m.host,
+                m.agent_id,
+                &m.resolved_via,
             )
-            .bind(profile_id)
-            .bind(&m.component_name)
-            .bind(&m.host)
-            .bind(m.agent_id)
-            .bind(&m.resolved_via)
-            .execute(&state.db)
             .await?;
         }
     }
@@ -353,13 +293,8 @@ pub async fn activate_profile(
     }
 
     // Get profile
-    let profile: Option<BindingProfile> = sqlx::query_as(
-        "SELECT id, application_id, name, description, profile_type, is_active, gateway_ids, auto_failover, created_at, created_by FROM binding_profiles WHERE application_id = $1 AND name = $2",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(&name)
-    .fetch_optional(&state.db)
-    .await?;
+    let profile: Option<BindingProfile> =
+        crate::repository::misc_queries::get_profile_by_name(&state.db, app_id, &name).await?;
 
     let profile = profile.ok_or(ApiError::NotFound)?;
 
@@ -371,21 +306,8 @@ pub async fn activate_profile(
     }
 
     // Get currently active profile name for logging
-    #[cfg(feature = "postgres")]
-    let current_active: Option<(String,)> = sqlx::query_as(
-        "SELECT name FROM binding_profiles WHERE application_id = $1 AND is_active = true",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_optional(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let current_active: Option<(String,)> = sqlx::query_as(
-        "SELECT name FROM binding_profiles WHERE application_id = $1 AND is_active = 1",
-    )
-    .bind(DbUuid::from(app_id))
-    .fetch_optional(&state.db)
-    .await?;
+    let current_active =
+        crate::repository::misc_queries::get_active_profile_name(&state.db, app_id).await?;
 
     // Log switchover action
     log_action(
@@ -402,87 +324,22 @@ pub async fn activate_profile(
     )
     .await?;
 
-    // Deactivate all profiles
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE binding_profiles SET is_active = false WHERE application_id = $1")
-        .bind(crate::db::bind_id(app_id))
-        .execute(&state.db)
-        .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE binding_profiles SET is_active = 0 WHERE application_id = $1")
-        .bind(DbUuid::from(app_id))
-        .execute(&state.db)
-        .await?;
-
-    // Activate the selected profile
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE binding_profiles SET is_active = true WHERE id = $1")
-        .bind(profile.id)
-        .execute(&state.db)
-        .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE binding_profiles SET is_active = 1 WHERE id = $1")
-        .bind(profile.id)
-        .execute(&state.db)
-        .await?;
+    // Deactivate all profiles and activate the selected one
+    crate::repository::misc_queries::deactivate_all_profiles(&state.db, app_id).await?;
+    crate::repository::misc_queries::activate_profile(&state.db, *profile.id).await?;
 
     // Update component agent_ids based on profile mappings
-    sqlx::query(
-        r#"
-        UPDATE components c
-        SET agent_id = m.agent_id
-        FROM binding_profile_mappings m
-        JOIN binding_profiles p ON m.profile_id = p.id
-        WHERE c.application_id = $1
-          AND p.id = $2
-          AND c.name = m.component_name
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(profile.id)
-    .execute(&state.db)
-    .await?;
+    crate::repository::misc_queries::apply_profile_mappings(&state.db, app_id, *profile.id).await?;
 
     // Log to switchover_log
     let switchover_id = Uuid::new_v4();
-    #[cfg(feature = "postgres")]
-    sqlx::query(
-        r#"
-        INSERT INTO switchover_log (switchover_id, application_id, phase, status, details)
-        VALUES ($1, $2, 'COMMIT', 'completed', $3)
-        "#,
+    crate::repository::misc_queries::log_profile_activation(
+        &state.db,
+        switchover_id,
+        app_id,
+        &name,
+        *profile.id,
     )
-    .bind(crate::db::bind_id(switchover_id))
-    .bind(crate::db::bind_id(app_id))
-    .bind(json!({
-        "type": "profile_activation",
-        "profile_name": &name,
-        "profile_id": profile.id
-    }))
-    .execute(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query(
-        r#"
-        INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-        VALUES ($1, $2, $3, 'COMMIT', 'completed', $4)
-        "#,
-    )
-    .bind(crate::db::bind_id(Uuid::new_v4()))
-    .bind(crate::db::bind_id(switchover_id))
-    .bind(crate::db::bind_id(app_id))
-    .bind(
-        json!({
-            "type": "profile_activation",
-            "profile_name": &name,
-            "profile_id": profile.id
-        })
-        .to_string(),
-    )
-    .execute(&state.db)
     .await?;
 
     Ok(Json(json!({
@@ -507,13 +364,8 @@ pub async fn delete_profile(
     }
 
     // Get profile
-    let profile: Option<BindingProfile> = sqlx::query_as(
-        "SELECT id, application_id, name, description, profile_type, is_active, gateway_ids, auto_failover, created_at, created_by FROM binding_profiles WHERE application_id = $1 AND name = $2",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(&name)
-    .fetch_optional(&state.db)
-    .await?;
+    let profile: Option<BindingProfile> =
+        crate::repository::misc_queries::get_profile_by_name(&state.db, app_id, &name).await?;
 
     let profile = profile.ok_or(ApiError::NotFound)?;
 
@@ -538,10 +390,7 @@ pub async fn delete_profile(
     .await?;
 
     // Delete profile (mappings cascade)
-    sqlx::query("DELETE FROM binding_profiles WHERE id = $1")
-        .bind(profile.id)
-        .execute(&state.db)
-        .await?;
+    crate::repository::misc_queries::delete_binding_profile(&state.db, profile.id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -557,17 +406,9 @@ pub async fn list_dr_pattern_rules(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Vec<DrPatternRule>>, ApiError> {
-    let rules: Vec<DrPatternRule> = sqlx::query_as(
-        r#"
-        SELECT id, organization_id, name, search_pattern, replace_pattern, priority, is_active, created_at
-        FROM dr_pattern_rules
-        WHERE organization_id = $1
-        ORDER BY priority DESC, name
-        "#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
+    let rules: Vec<DrPatternRule> =
+        crate::repository::misc_queries::list_dr_pattern_rules(&state.db, *user.organization_id)
+            .await?;
 
     Ok(Json(rules))
 }
@@ -609,21 +450,16 @@ pub async fn create_dr_pattern_rule(
     )
     .await?;
 
-    let rule: DrPatternRule = sqlx::query_as(
-        r#"
-        INSERT INTO dr_pattern_rules (id, organization_id, name, search_pattern, replace_pattern, priority, is_active)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, organization_id, name, search_pattern, replace_pattern, priority, is_active, created_at
-        "#,
+    let rule: DrPatternRule = crate::repository::misc_queries::create_dr_pattern_rule(
+        &state.db,
+        rule_id,
+        *user.organization_id,
+        &body.name,
+        &body.search_pattern,
+        &body.replace_pattern,
+        body.priority.unwrap_or(0),
+        body.is_active.unwrap_or(true),
     )
-    .bind(rule_id)
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&body.name)
-    .bind(&body.search_pattern)
-    .bind(&body.replace_pattern)
-    .bind(body.priority.unwrap_or(0))
-    .bind(body.is_active.unwrap_or(true))
-    .fetch_one(&state.db)
     .await?;
 
     Ok((StatusCode::CREATED, Json(rule)))
@@ -665,22 +501,16 @@ pub async fn update_dr_pattern_rule(
     )
     .await?;
 
-    let rule: DrPatternRule = sqlx::query_as(
-        r#"
-        UPDATE dr_pattern_rules
-        SET name = $2, search_pattern = $3, replace_pattern = $4, priority = $5, is_active = $6
-        WHERE id = $1 AND organization_id = $7
-        RETURNING id, organization_id, name, search_pattern, replace_pattern, priority, is_active, created_at
-        "#,
+    let rule: DrPatternRule = crate::repository::misc_queries::update_dr_pattern_rule(
+        &state.db,
+        rule_id,
+        *user.organization_id,
+        &body.name,
+        &body.search_pattern,
+        &body.replace_pattern,
+        body.priority.unwrap_or(0),
+        body.is_active.unwrap_or(true),
     )
-    .bind(rule_id)
-    .bind(&body.name)
-    .bind(&body.search_pattern)
-    .bind(&body.replace_pattern)
-    .bind(body.priority.unwrap_or(0))
-    .bind(body.is_active.unwrap_or(true))
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_one(&state.db)
     .await
     .map_err(|_| ApiError::NotFound)?;
 
@@ -710,13 +540,14 @@ pub async fn delete_dr_pattern_rule(
     )
     .await?;
 
-    let result = sqlx::query("DELETE FROM dr_pattern_rules WHERE id = $1 AND organization_id = $2")
-        .bind(rule_id)
-        .bind(crate::db::bind_id(user.organization_id))
-        .execute(&state.db)
-        .await?;
+    let rows_affected = crate::repository::misc_queries::delete_dr_pattern_rule(
+        &state.db,
+        rule_id,
+        *user.organization_id,
+    )
+    .await?;
 
-    if result.rows_affected() == 0 {
+    if rows_affected == 0 {
         return Err(ApiError::NotFound);
     }
 

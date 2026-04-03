@@ -61,38 +61,11 @@ impl HeartbeatBatcher {
     }
 }
 
-#[cfg(feature = "postgres")]
 async fn batch_update_heartbeats(
     db: &crate::db::DbPool,
     agent_ids: &[Uuid],
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE agents SET last_heartbeat_at = now() WHERE id = ANY($1)")
-        .bind(agent_ids)
-        .execute(db)
-        .await?;
-    Ok(())
-}
-
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn batch_update_heartbeats(
-    db: &crate::db::DbPool,
-    agent_ids: &[Uuid],
-) -> Result<(), sqlx::Error> {
-    if agent_ids.is_empty() {
-        return Ok(());
-    }
-    // For SQLite, use IN clause with individual placeholders
-    let placeholders: Vec<String> = (1..=agent_ids.len()).map(|i| format!("${}", i)).collect();
-    let query = format!(
-        "UPDATE agents SET last_heartbeat_at = datetime('now') WHERE id IN ({})",
-        placeholders.join(", ")
-    );
-    let mut q = sqlx::query(&query);
-    for id in agent_ids {
-        q = q.bind(id.to_string());
-    }
-    q.execute(db).await?;
-    Ok(())
+    crate::repository::queries::batch_update_agent_heartbeats(db, agent_ids).await
 }
 
 impl Default for HeartbeatBatcher {

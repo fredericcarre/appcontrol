@@ -247,13 +247,25 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DbJson {
 }
 
 /// Type alias for the database pool.
-/// We use PgPool for PostgreSQL-specific features but can switch to AnyPool
-/// for portable deployment.
 #[cfg(feature = "postgres")]
 pub type DbPool = sqlx::PgPool;
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 pub type DbPool = sqlx::SqlitePool;
+
+/// Type alias for database transactions.
+#[cfg(feature = "postgres")]
+pub type DbTransaction<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub type DbTransaction<'a> = sqlx::Transaction<'a, sqlx::Sqlite>;
+
+/// Type alias for database row types (used in generic repository functions).
+#[cfg(feature = "postgres")]
+pub type DbRow = sqlx::postgres::PgRow;
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub type DbRow = sqlx::sqlite::SqliteRow;
 
 /// Create a database connection pool based on configuration.
 ///

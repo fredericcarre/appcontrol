@@ -3,15 +3,15 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::db::DbUuid;
 use crate::error::{validate_length, ApiError};
 use crate::middleware::audit::log_action;
+use crate::repository::misc_queries;
 use crate::AppState;
 
 // ============================================================================
@@ -33,18 +33,8 @@ pub struct ActivateBreakGlassRequest {
     pub duration_minutes: Option<i32>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct BreakGlassSessionRow {
-    pub id: DbUuid,
-    pub account_id: DbUuid,
-    pub organization_id: DbUuid,
-    pub activated_by_ip: String,
-    pub reason: String,
-    pub started_at: chrono::DateTime<chrono::Utc>,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub actions_taken: i32,
-}
+// Re-export for backward compatibility
+pub use misc_queries::BreakGlassSessionRow;
 
 /// Simple password hash using base64 of XOR folding.
 /// In production, replace with argon2 or bcrypt.
@@ -90,15 +80,13 @@ pub async fn create_break_glass_account(
     )
     .await?;
 
-    sqlx::query(
-        "INSERT INTO break_glass_accounts (id, organization_id, username, password_hash) \
-         VALUES ($1, $2, $3, $4)",
+    misc_queries::create_break_glass_account(
+        &state.db,
+        id,
+        user.organization_id,
+        &body.username,
+        &password_hash,
     )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&body.username)
-    .bind(&password_hash)
-    .execute(&state.db)
     .await?;
 
     Ok((
@@ -120,13 +108,7 @@ pub async fn list_break_glass_accounts(
         return Err(ApiError::Forbidden);
     }
 
-    let accounts = sqlx::query_as::<_, (DbUuid, String, bool, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, username, is_active, last_rotated_at FROM break_glass_accounts \
-         WHERE organization_id = $1 ORDER BY username",
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
+    let accounts = misc_queries::list_break_glass_accounts(&state.db, user.organization_id).await?;
 
     let result: Vec<Value> = accounts
         .into_iter()
@@ -156,27 +138,9 @@ pub async fn activate_break_glass(
     let password_hash = hash_password(&body.password);
 
     // Validate credentials
-    #[cfg(feature = "postgres")]
-    let account = sqlx::query_as::<_, (DbUuid, DbUuid)>(
-        "SELECT id, organization_id FROM break_glass_accounts \
-         WHERE username = $1 AND password_hash = $2 AND is_active = true",
-    )
-    .bind(&body.username)
-    .bind(&password_hash)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::Unauthorized)?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let account = sqlx::query_as::<_, (DbUuid, DbUuid)>(
-        "SELECT id, organization_id FROM break_glass_accounts \
-         WHERE username = $1 AND password_hash = $2 AND is_active = 1",
-    )
-    .bind(&body.username)
-    .bind(&password_hash)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::Unauthorized)?;
+    let account = misc_queries::find_break_glass_account(&state.db, &body.username, &password_hash)
+        .await?
+        .ok_or(ApiError::Unauthorized)?;
 
     let (account_id, organization_id) = account;
 
@@ -185,42 +149,30 @@ pub async fn activate_break_glass(
 
     // Create session (APPEND-ONLY)
     let session_id = Uuid::new_v4();
-    let session = sqlx::query_as::<_, BreakGlassSessionRow>(&format!(
-        "INSERT INTO break_glass_sessions (
-                id, account_id, organization_id, activated_by_ip, reason, expires_at
-            ) VALUES ($1, $2, $3, $4, $5, {} + make_interval(mins => $6))
-            RETURNING id, account_id, organization_id, activated_by_ip, reason,
-                      started_at, expires_at, ended_at, actions_taken",
-        crate::db::sql::now()
-    ))
-    .bind(session_id)
-    .bind(account_id)
-    .bind(organization_id)
-    .bind("0.0.0.0") // In production, extract from X-Forwarded-For
-    .bind(&body.reason)
-    .bind(duration_minutes)
-    .fetch_one(&state.db)
+    let session = misc_queries::create_break_glass_session(
+        &state.db,
+        session_id,
+        account_id,
+        organization_id,
+        "0.0.0.0", // In production, extract from X-Forwarded-For
+        &body.reason,
+        duration_minutes,
+    )
     .await?;
 
     // Log the break-glass activation as a CRITICAL security event
-    let _ = sqlx::query(
-        &format!(
-            "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details, created_at)
-             VALUES ($1, $2, 'break_glass_activated', 'organization', $3, $4, {})",
-            crate::db::sql::now()
-        ),
+    let _ = misc_queries::log_break_glass_activation(
+        &state.db,
+        account_id,
+        organization_id,
+        json!({
+            "session_id": session_id,
+            "username": body.username,
+            "reason": body.reason,
+            "duration_minutes": duration_minutes,
+            "break_glass": true,
+        }),
     )
-    .bind(Uuid::new_v4())
-    .bind(account_id)
-    .bind(organization_id)
-    .bind(json!({
-        "session_id": session_id,
-        "username": body.username,
-        "reason": body.reason,
-        "duration_minutes": duration_minutes,
-        "break_glass": true,
-    }))
-    .execute(&state.db)
     .await;
 
     // Broadcast security alert
@@ -247,15 +199,7 @@ pub async fn list_break_glass_sessions(
         return Err(ApiError::Forbidden);
     }
 
-    let sessions = sqlx::query_as::<_, BreakGlassSessionRow>(
-        "SELECT id, account_id, organization_id, activated_by_ip, reason, \
-         started_at, expires_at, ended_at, actions_taken \
-         FROM break_glass_sessions WHERE organization_id = $1 \
-         ORDER BY started_at DESC LIMIT 50",
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
+    let sessions = misc_queries::list_break_glass_sessions(&state.db, user.organization_id).await?;
 
     Ok(Json(json!({ "sessions": sessions })))
 }
@@ -270,17 +214,10 @@ pub async fn end_break_glass_session(
         return Err(ApiError::Forbidden);
     }
 
-    let result = sqlx::query(&format!(
-        "UPDATE break_glass_sessions SET ended_at = {} \
-         WHERE id = $1 AND organization_id = $2 AND ended_at IS NULL",
-        crate::db::sql::now()
-    ))
-    .bind(session_id)
-    .bind(crate::db::bind_id(user.organization_id))
-    .execute(&state.db)
-    .await?;
+    let rows =
+        misc_queries::end_break_glass_session(&state.db, session_id, user.organization_id).await?;
 
-    if result.rows_affected() == 0 {
+    if rows == 0 {
         return Err(ApiError::NotFound);
     }
 

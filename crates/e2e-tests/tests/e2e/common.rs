@@ -331,6 +331,26 @@ impl TestContext {
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
+            app_repo: appcontrol_backend::repository::apps::create_app_repository(pool.clone()),
+            component_repo: appcontrol_backend::repository::components::create_component_repository(
+                pool.clone(),
+            ),
+            team_repo: appcontrol_backend::repository::teams::create_team_repository(pool.clone()),
+            permission_repo:
+                appcontrol_backend::repository::permissions::create_permission_repository(
+                    pool.clone(),
+                ),
+            site_repo: appcontrol_backend::repository::sites::create_site_repository(pool.clone()),
+            enrollment_repo:
+                appcontrol_backend::repository::enrollment::create_enrollment_repository(
+                    pool.clone(),
+                ),
+            agent_repo: appcontrol_backend::repository::agents::create_agent_repository(
+                pool.clone(),
+            ),
+            gateway_repo: appcontrol_backend::repository::gateways::create_gateway_repository(
+                pool.clone(),
+            ),
             db: pool.clone(),
             ws_hub: appcontrol_backend::websocket::Hub::new(),
             config,
@@ -465,6 +485,26 @@ impl TestContext {
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
+            app_repo: appcontrol_backend::repository::apps::create_app_repository(pool.clone()),
+            component_repo: appcontrol_backend::repository::components::create_component_repository(
+                pool.clone(),
+            ),
+            team_repo: appcontrol_backend::repository::teams::create_team_repository(pool.clone()),
+            permission_repo:
+                appcontrol_backend::repository::permissions::create_permission_repository(
+                    pool.clone(),
+                ),
+            site_repo: appcontrol_backend::repository::sites::create_site_repository(pool.clone()),
+            enrollment_repo:
+                appcontrol_backend::repository::enrollment::create_enrollment_repository(
+                    pool.clone(),
+                ),
+            agent_repo: appcontrol_backend::repository::agents::create_agent_repository(
+                pool.clone(),
+            ),
+            gateway_repo: appcontrol_backend::repository::gateways::create_gateway_repository(
+                pool.clone(),
+            ),
             db: pool.clone(),
             ws_hub: appcontrol_backend::websocket::Hub::new(),
             config,

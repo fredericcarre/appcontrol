@@ -40,24 +40,13 @@ pub async fn get_topology(
     let format = params.format.as_deref().unwrap_or("json");
 
     // Fetch application name
-    let app_name = sqlx::query_scalar::<_, String>("SELECT name FROM applications WHERE id = $1")
-        .bind(crate::db::bind_id(app_id))
-        .fetch_optional(&state.db)
+    let app_name = crate::repository::misc_queries::get_app_name(&state.db, app_id)
         .await?
         .ok_or(ApiError::NotFound)?;
 
     // Fetch components with current state
-    let components = sqlx::query_as::<_, (DbUuid, String, String, Option<String>, String)>(
-        r#"
-        SELECT c.id, c.name, c.component_type, c.host, c.current_state
-        FROM components c
-        WHERE c.application_id = $1
-        ORDER BY c.name
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let components =
+        crate::repository::misc_queries::get_components_for_topology(&state.db, app_id).await?;
 
     // Build name lookup
     let name_map: HashMap<DbUuid, String> = components
@@ -74,12 +63,7 @@ pub async fn get_topology(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     // Fetch dependencies
-    let deps = sqlx::query_as::<_, (DbUuid, DbUuid)>(
-        "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let deps = crate::repository::misc_queries::get_deps_for_topology(&state.db, app_id).await?;
 
     match format {
         "dot" => {
@@ -264,13 +248,10 @@ pub async fn get_plan(
         let mut level_components = Vec::new();
 
         for &comp_id in level {
-            let row = sqlx::query_as::<_, (String, String, Option<String>, bool)>(
-                "SELECT name, current_state, host, is_optional FROM components WHERE id = $1",
-            )
-            .bind(crate::db::bind_id(comp_id))
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            let row =
+                crate::repository::misc_queries::get_component_plan_detail(&state.db, comp_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?;
 
             if let Some((name, current_state, host, is_optional)) = row {
                 let action = predict_action(operation, &current_state);
@@ -353,12 +334,8 @@ pub async fn validate_sequence(
     let operation = body.operation.as_deref().unwrap_or("start");
 
     // Fetch components and build name→id map
-    let components = sqlx::query_as::<_, (DbUuid, String)>(
-        "SELECT id, name FROM components WHERE application_id = $1",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let components =
+        crate::repository::misc_queries::get_component_ids_and_names(&state.db, app_id).await?;
 
     let name_to_id: HashMap<String, Uuid> = components
         .iter()
@@ -404,12 +381,7 @@ pub async fn validate_sequence(
     // Detect conflicts: for each dependency A depends on B,
     // check that B appears before A in the proposed sequence
     let mut conflicts = Vec::new();
-    let deps = sqlx::query_as::<_, (DbUuid, DbUuid)>(
-        "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await?;
+    let deps = crate::repository::misc_queries::get_deps_for_topology(&state.db, app_id).await?;
 
     for (from, to) in &deps {
         // "from" depends on "to" (to must start before from)
@@ -504,34 +476,13 @@ pub async fn dependency_history(
     let offset = params.offset.unwrap_or(0);
 
     // Query config_versions for dependency-related changes
-    let rows = sqlx::query_as::<_, (DbUuid, String, Value, Value, DbUuid, chrono::DateTime<chrono::Utc>)>(
-        r#"
-        SELECT cv.id, cv.change_type, cv.before_snapshot, cv.after_snapshot, cv.changed_by, cv.created_at
-        FROM config_versions cv
-        WHERE cv.entity_id = $1
-          AND cv.change_type IN ('create_dependency', 'delete_dependency', 'import_yaml', 'update_app')
-        ORDER BY cv.created_at DESC
-        LIMIT $2 OFFSET $3
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.db)
-    .await?;
+    let rows =
+        crate::repository::misc_queries::get_dependency_history(&state.db, app_id, limit, offset)
+            .await?;
 
-    let total = sqlx::query_scalar::<_, i64>(
-        r#"
-        SELECT COUNT(*)
-        FROM config_versions cv
-        WHERE cv.entity_id = $1
-          AND cv.change_type IN ('create_dependency', 'delete_dependency', 'import_yaml', 'update_app')
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0);
+    let total = crate::repository::misc_queries::count_dependency_history(&state.db, app_id)
+        .await
+        .unwrap_or(0);
 
     let entries: Vec<Value> = rows
         .iter()

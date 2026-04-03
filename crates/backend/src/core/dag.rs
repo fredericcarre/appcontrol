@@ -201,50 +201,24 @@ impl Dag {
 pub async fn build_dag(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Result<Dag, DagError> {
     let app_id: Uuid = app_id.into();
 
-    #[cfg(feature = "postgres")]
-    let components = sqlx::query_as::<_, (crate::db::DbUuid,)>(
-        "SELECT id FROM components WHERE application_id = $1",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(pool)
-    .await
-    .map_err(|e| DagError::Database(e.to_string()))?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let components = sqlx::query_as::<_, (crate::db::DbUuid,)>(
-        "SELECT id FROM components WHERE application_id = $1",
-    )
-    .bind(crate::db::DbUuid::from(app_id))
-    .fetch_all(pool)
-    .await
-    .map_err(|e| DagError::Database(e.to_string()))?;
-
-    #[cfg(feature = "postgres")]
-    let deps = sqlx::query_as::<_, (crate::db::DbUuid, crate::db::DbUuid)>(
-        "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(pool)
-    .await
-    .map_err(|e| DagError::Database(e.to_string()))?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let deps = sqlx::query_as::<_, (crate::db::DbUuid, crate::db::DbUuid)>(
-        "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
-    )
-    .bind(crate::db::DbUuid::from(app_id))
-    .fetch_all(pool)
-    .await
-    .map_err(|e| DagError::Database(e.to_string()))?;
+    let repo = crate::repository::components::create_component_repository(pool.clone());
+    let components = repo
+        .list_components(app_id)
+        .await
+        .map_err(|e| DagError::Database(e.to_string()))?;
+    let deps = repo
+        .list_dependencies(app_id)
+        .await
+        .map_err(|e| DagError::Database(e.to_string()))?;
 
     let mut dag = Dag::new();
 
-    for (id,) in components {
-        dag.add_node(*id);
+    for c in components {
+        dag.add_node(c.id);
     }
 
-    for (from, to) in deps {
-        dag.add_edge(*from, *to);
+    for d in deps {
+        dag.add_edge(d.from_component_id, d.to_component_id);
     }
 
     // Validate no cycles

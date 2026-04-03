@@ -17,6 +17,8 @@ use crate::core::permissions::effective_permission;
 use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::middleware::audit;
+use crate::repository::misc_queries;
+use crate::repository::misc_queries::{LogComponentRow, LogSourceRow};
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
 
@@ -157,21 +159,9 @@ pub async fn list_log_sources(
     )
     .await?;
 
-    let rows = sqlx::query_as::<_, LogSourceRow>(
-        r#"
-        SELECT id, component_id, name, source_type, description,
-               file_path, event_log_name, event_log_source, event_log_level,
-               command, command_timeout_seconds,
-               max_lines, max_age_hours, is_sensitive, display_order, created_at
-        FROM component_log_sources
-        WHERE component_id = $1
-        ORDER BY display_order, name
-        "#,
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let rows = misc_queries::list_log_sources(&state.db, component_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     // Filter sensitive sources if user doesn't have edit permission
     let can_see_sensitive = effective_permission(
@@ -240,36 +230,27 @@ pub async fn create_log_source(
     let id = Uuid::new_v4();
     let now = Utc::now();
 
-    sqlx::query(
-        r#"
-        INSERT INTO component_log_sources (
-            id, component_id, organization_id, name, source_type, description,
-            file_path, event_log_name, event_log_source, event_log_level,
-            command, command_timeout_seconds,
-            max_lines, max_age_hours, is_sensitive, display_order,
-            created_by, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $18)
-        "#,
+    misc_queries::create_log_source(
+        &state.db,
+        id,
+        component_id,
+        component.organization_id,
+        &req.name,
+        &req.source_type,
+        &req.description,
+        &req.file_path,
+        &req.event_log_name,
+        &req.event_log_source,
+        &req.event_log_level,
+        &req.command,
+        req.command_timeout_seconds.unwrap_or(30),
+        req.max_lines.unwrap_or(1000),
+        req.max_age_hours.unwrap_or(24),
+        req.is_sensitive.unwrap_or(false),
+        req.display_order.unwrap_or(0),
+        user.user_id,
+        now,
     )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(component_id))
-    .bind(component.organization_id)
-    .bind(&req.name)
-    .bind(&req.source_type)
-    .bind(&req.description)
-    .bind(&req.file_path)
-    .bind(&req.event_log_name)
-    .bind(&req.event_log_source)
-    .bind(&req.event_log_level)
-    .bind(&req.command)
-    .bind(req.command_timeout_seconds.unwrap_or(30))
-    .bind(req.max_lines.unwrap_or(1000))
-    .bind(req.max_age_hours.unwrap_or(24))
-    .bind(req.is_sensitive.unwrap_or(false))
-    .bind(req.display_order.unwrap_or(0))
-    .bind(crate::db::bind_id(user.user_id))
-    .bind(now)
-    .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -319,13 +300,10 @@ pub async fn update_log_source(
     Json(req): Json<UpdateLogSourceRequest>,
 ) -> Result<Json<LogSourceResponse>, ApiError> {
     // Get source and component
-    let source =
-        sqlx::query_as::<_, LogSourceRow>("SELECT * FROM component_log_sources WHERE id = $1")
-            .bind(source_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::NotFound)?;
+    let source = misc_queries::get_log_source_by_id(&state.db, source_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound)?;
 
     // Check edit permission on component
     get_component_with_permission(&state, &user, source.component_id, PermissionLevel::Edit)
@@ -347,30 +325,22 @@ pub async fn update_log_source(
     let is_sensitive = req.is_sensitive.unwrap_or(source.is_sensitive);
     let display_order = req.display_order.unwrap_or(source.display_order);
 
-    sqlx::query(&format!(
-        "UPDATE component_log_sources SET
-                name = $2, description = $3, file_path = $4,
-                event_log_name = $5, event_log_source = $6, event_log_level = $7,
-                command = $8, command_timeout_seconds = $9,
-                max_lines = $10, max_age_hours = $11, is_sensitive = $12, display_order = $13,
-                updated_at = {}
-            WHERE id = $1",
-        crate::db::sql::now()
-    ))
-    .bind(source_id)
-    .bind(&name)
-    .bind(&description)
-    .bind(&file_path)
-    .bind(&event_log_name)
-    .bind(&event_log_source)
-    .bind(&event_log_level)
-    .bind(&command)
-    .bind(command_timeout_seconds)
-    .bind(max_lines)
-    .bind(max_age_hours)
-    .bind(is_sensitive)
-    .bind(display_order)
-    .execute(&state.db)
+    misc_queries::update_log_source(
+        &state.db,
+        source_id,
+        &name,
+        &description,
+        &file_path,
+        &event_log_name,
+        &event_log_source,
+        &event_log_level,
+        &command,
+        command_timeout_seconds,
+        max_lines,
+        max_age_hours,
+        is_sensitive,
+        display_order,
+    )
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -403,21 +373,16 @@ pub async fn delete_log_source(
     Path(source_id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     // Get source
-    let source =
-        sqlx::query_as::<_, LogSourceRow>("SELECT * FROM component_log_sources WHERE id = $1")
-            .bind(source_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::NotFound)?;
+    let source = misc_queries::get_log_source_by_id(&state.db, source_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound)?;
 
     // Check edit permission on component
     get_component_with_permission(&state, &user, source.component_id, PermissionLevel::Edit)
         .await?;
 
-    sqlx::query("DELETE FROM component_log_sources WHERE id = $1")
-        .bind(source_id)
-        .execute(&state.db)
+    misc_queries::delete_log_source(&state.db, source_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -465,25 +430,19 @@ pub async fn get_component_logs(
     // Determine which source to use
     let entries = match query.source.as_deref() {
         None | Some("process") => {
-            // Get process stdout/stderr (default)
             source_type = "process".to_string();
             source_name = "Console output".to_string();
-
-            // TODO: Request logs from agent via WebSocket
-            // For now, return placeholder
             get_process_logs_from_agent(&state, &component, &query).await?
         }
         Some(source_id_str) => {
-            // Get from declared log source
             let source_id = Uuid::parse_str(source_id_str)
                 .map_err(|_| ApiError::Validation("Invalid source ID".into()))?;
 
-            let source = sqlx::query_as::<_, LogSourceRow>(
-                "SELECT * FROM component_log_sources WHERE id = $1 AND component_id = $2",
+            let source = misc_queries::get_log_source_by_id_and_component(
+                &state.db,
+                source_id,
+                component_id,
             )
-            .bind(source_id)
-            .bind(crate::db::bind_id(component_id))
-            .fetch_optional(&state.db)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
             .ok_or(ApiError::NotFound)?;
@@ -567,18 +526,11 @@ pub async fn run_diagnostic_command(
     .await?;
 
     // Find the command source
-    let source = sqlx::query_as::<_, LogSourceRow>(
-        r#"
-        SELECT * FROM component_log_sources
-        WHERE component_id = $1 AND source_type = 'command' AND name = $2
-        "#,
-    )
-    .bind(crate::db::bind_id(component_id))
-    .bind(&command_name)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?
-    .ok_or_else(|| ApiError::NotFound)?;
+    let source =
+        misc_queries::get_log_source_by_component_type_name(&state.db, component_id, &command_name)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::NotFound)?;
 
     // Check sensitive access
     if source.is_sensitive {
@@ -625,43 +577,6 @@ pub async fn run_diagnostic_command(
 // Helper Functions
 // ============================================================================
 
-#[derive(Debug, sqlx::FromRow)]
-struct LogSourceRow {
-    id: DbUuid,
-    component_id: DbUuid,
-    #[allow(dead_code)]
-    organization_id: DbUuid,
-    name: String,
-    source_type: String,
-    description: Option<String>,
-    file_path: Option<String>,
-    event_log_name: Option<String>,
-    event_log_source: Option<String>,
-    event_log_level: Option<String>,
-    command: Option<String>,
-    command_timeout_seconds: i32,
-    max_lines: i32,
-    max_age_hours: i32,
-    is_sensitive: bool,
-    display_order: i32,
-    #[allow(dead_code)]
-    created_by: Option<DbUuid>,
-    created_at: DateTime<Utc>,
-    #[allow(dead_code)]
-    updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct ComponentRow {
-    #[allow(dead_code)]
-    id: DbUuid,
-    application_id: DbUuid,
-    organization_id: DbUuid,
-    name: String,
-    #[allow(dead_code)]
-    agent_id: Option<DbUuid>,
-}
-
 fn row_to_response(row: LogSourceRow) -> LogSourceResponse {
     LogSourceResponse {
         id: *row.id,
@@ -688,15 +603,11 @@ async fn get_component_with_permission(
     user: &AuthUser,
     component_id: DbUuid,
     required_level: PermissionLevel,
-) -> Result<ComponentRow, ApiError> {
-    let component = sqlx::query_as::<_, ComponentRow>(
-        "SELECT id, application_id, organization_id, name, agent_id FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?
-    .ok_or_else(|| ApiError::NotFound)?;
+) -> Result<LogComponentRow, ApiError> {
+    let component = misc_queries::get_component_for_logs(&state.db, component_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound)?;
 
     let permission = effective_permission(
         &state.db,
@@ -722,32 +633,23 @@ async fn log_access_audit(
     source_name: &str,
     query: &GetLogsQuery,
 ) -> Result<(), ApiError> {
-    let org_id =
-        sqlx::query_scalar::<_, DbUuid>("SELECT organization_id FROM components WHERE id = $1")
-            .bind(crate::db::bind_id(component_id))
-            .fetch_one(&state.db)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let org_id = misc_queries::get_component_org_id(&state.db, component_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    sqlx::query(
-        r#"
-        INSERT INTO log_access_audit (
-            id, organization_id, user_id, component_id, log_source_id,
-            source_type, source_name, lines_requested, filter_applied, time_range_hours
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        "#,
+    misc_queries::insert_log_access_audit(
+        &state.db,
+        Uuid::new_v4(),
+        org_id,
+        user.user_id,
+        component_id,
+        log_source_id,
+        source_type,
+        source_name,
+        query.lines,
+        &query.filter,
+        parse_time_range_hours(&query.since),
     )
-    .bind(Uuid::new_v4())
-    .bind(org_id)
-    .bind(crate::db::bind_id(user.user_id))
-    .bind(crate::db::bind_id(component_id))
-    .bind(log_source_id)
-    .bind(source_type)
-    .bind(source_name)
-    .bind(query.lines)
-    .bind(&query.filter)
-    .bind(parse_time_range_hours(&query.since))
-    .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -772,11 +674,9 @@ fn parse_time_range_hours(since: &Option<String>) -> Option<i32> {
 
 async fn get_process_logs_from_agent(
     _state: &AppState,
-    _component: &ComponentRow,
+    _component: &LogComponentRow,
     _query: &GetLogsQuery,
 ) -> Result<Vec<LogEntry>, ApiError> {
-    // TODO: Send GetProcessLogs message to agent via WebSocket hub
-    // For now, return placeholder
     Ok(vec![LogEntry {
         timestamp: Some(Utc::now()),
         level: Some("INFO".into()),
@@ -786,11 +686,10 @@ async fn get_process_logs_from_agent(
 
 async fn get_file_logs_from_agent(
     _state: &AppState,
-    _component: &ComponentRow,
+    _component: &LogComponentRow,
     _source: &LogSourceRow,
     _query: &GetLogsQuery,
 ) -> Result<Vec<LogEntry>, ApiError> {
-    // TODO: Send GetFileLogs message to agent via WebSocket hub
     Ok(vec![LogEntry {
         timestamp: Some(Utc::now()),
         level: Some("INFO".into()),
@@ -800,11 +699,10 @@ async fn get_file_logs_from_agent(
 
 async fn get_event_logs_from_agent(
     _state: &AppState,
-    _component: &ComponentRow,
+    _component: &LogComponentRow,
     _source: &LogSourceRow,
     _query: &GetLogsQuery,
 ) -> Result<Vec<LogEntry>, ApiError> {
-    // TODO: Send GetEventLogs message to agent via WebSocket hub
     Ok(vec![LogEntry {
         timestamp: Some(Utc::now()),
         level: Some("INFO".into()),
@@ -814,11 +712,10 @@ async fn get_event_logs_from_agent(
 
 async fn execute_command_on_agent(
     _state: &AppState,
-    _component: &ComponentRow,
+    _component: &LogComponentRow,
     _command: &str,
     _timeout: i32,
 ) -> Result<DiagnosticCommandResponse, ApiError> {
-    // TODO: Send ExecuteDiagnosticCommand message to agent via WebSocket hub
     Ok(DiagnosticCommandResponse {
         command_name: "placeholder".into(),
         exit_code: 0,

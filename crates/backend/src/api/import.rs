@@ -177,26 +177,19 @@ pub async fn import_yaml_map(
     .await?;
 
     // Create application
-    sqlx::query(
-        "INSERT INTO applications (id, name, description, organization_id, site_id) VALUES ($1, $2, $3, $4, $5)",
+    crate::repository::import_queries::create_import_application(
+        &state.db,
+        app_id,
+        app_name,
+        app_desc,
+        *user.organization_id,
+        body.site_id,
     )
-    .bind(crate::db::bind_id(app_id))
-    .bind(app_name)
-    .bind(app_desc)
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(crate::db::bind_id(body.site_id))
-    .execute(&state.db)
     .await?;
 
     // Grant owner to importing user
-    let _ = sqlx::query(
-        "INSERT INTO app_permissions_users (id, application_id, user_id, permission_level, granted_by) VALUES ($1, $2, $3, 'owner', $3)",
-    )
-    .bind(crate::db::bind_id(Uuid::new_v4()))
-    .bind(crate::db::bind_id(app_id))
-    .bind(crate::db::bind_id(user.user_id))
-    .execute(&state.db)
-    .await;
+    crate::repository::import_queries::grant_owner_permission(&state.db, app_id, *user.user_id)
+        .await?;
 
     // ── Import variables ────────────────────────────────────────────
     let mut variables_created = 0;
@@ -210,15 +203,13 @@ pub async fn import_yaml_map(
         };
         let value = var.value.as_deref().unwrap_or("");
 
-        sqlx::query(
-            "INSERT INTO app_variables (id, application_id, name, value, description) VALUES ($1, $2, $3, $4, $5)",
+        crate::repository::import_queries::create_app_variable(
+            &state.db,
+            app_id,
+            name,
+            value,
+            var.description.as_deref(),
         )
-        .bind(crate::db::bind_id(Uuid::new_v4()))
-        .bind(crate::db::bind_id(app_id))
-        .bind(name)
-        .bind(value)
-        .bind(var.description.as_deref())
-        .execute(&state.db)
         .await?;
 
         variables_created += 1;
@@ -233,14 +224,13 @@ pub async fn import_yaml_map(
         if let Some(ref group_name) = comp.group {
             if !group_map.contains_key(group_name) {
                 let group_id = Uuid::new_v4();
-                sqlx::query(
-                    "INSERT INTO component_groups (id, application_id, name, display_order) VALUES ($1, $2, $3, $4)",
+                crate::repository::import_queries::create_component_group(
+                    &state.db,
+                    group_id,
+                    app_id,
+                    group_name,
+                    groups_created as i32,
                 )
-                .bind(crate::db::bind_id(group_id))
-                .bind(crate::db::bind_id(app_id))
-                .bind(group_name)
-                .bind(groups_created as i32)
-                .execute(&state.db)
                 .await?;
 
                 group_map.insert(group_name.clone(), group_id);
@@ -284,27 +274,23 @@ pub async fn import_yaml_map(
         let pos_x = comp.position_x.unwrap_or((idx % 5) as f32 * 250.0);
         let pos_y = comp.position_y.unwrap_or((idx / 5) as f32 * 200.0);
 
-        sqlx::query(
-            r#"INSERT INTO components (id, application_id, name, display_name, description, component_type,
-                icon, group_id, check_cmd, start_cmd, stop_cmd, integrity_check_cmd,
-                position_x, position_y, current_state)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'STOPPED')"#,
+        crate::repository::import_queries::create_import_component_yaml(
+            &state.db,
+            comp_id,
+            app_id,
+            comp_name,
+            comp.display_name.as_deref(),
+            comp.description.as_deref(),
+            comp_type,
+            icon,
+            group_id,
+            &check_cmd,
+            &start_cmd,
+            &stop_cmd,
+            &integrity_cmd,
+            pos_x,
+            pos_y,
         )
-        .bind(crate::db::bind_id(comp_id))
-        .bind(crate::db::bind_id(app_id))
-        .bind(comp_name)
-        .bind(comp.display_name.as_deref())
-        .bind(comp.description.as_deref())
-        .bind(comp_type)
-        .bind(icon)
-        .bind(group_id.map(crate::db::bind_id))
-        .bind(&check_cmd)
-        .bind(&start_cmd)
-        .bind(&stop_cmd)
-        .bind(&integrity_cmd)
-        .bind(pos_x)
-        .bind(pos_y)
-        .execute(&state.db)
         .await?;
 
         comp_name_to_id.insert(comp_name.clone(), comp_id);
@@ -330,17 +316,15 @@ pub async fn import_yaml_map(
             let cmd_id = Uuid::new_v4();
             let display = action.display_name.as_deref().unwrap_or(&action_name);
 
-            sqlx::query(
-                r#"INSERT INTO component_commands (id, component_id, name, command, description, requires_confirmation)
-                VALUES ($1, $2, $3, $4, $5, $6)"#,
+            crate::repository::import_queries::create_component_command(
+                &state.db,
+                cmd_id,
+                comp_id,
+                display,
+                cmd_text,
+                action.description.as_deref(),
+                action.requires_confirmation.unwrap_or(false),
             )
-            .bind(crate::db::bind_id(cmd_id))
-            .bind(crate::db::bind_id(comp_id))
-            .bind(display)
-            .bind(cmd_text)
-            .bind(action.description.as_deref())
-            .bind(action.requires_confirmation.unwrap_or(false))
-            .execute(&state.db)
             .await?;
 
             commands_created += 1;
@@ -352,19 +336,16 @@ pub async fn import_yaml_map(
                     None => continue,
                 };
 
-                sqlx::query(
-                    r#"INSERT INTO command_input_params (id, command_id, name, description, default_value, validation_regex, required, display_order)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+                crate::repository::import_queries::create_command_input_param(
+                    &state.db,
+                    cmd_id,
+                    param_name,
+                    param.description.as_deref(),
+                    param.default_value.as_deref(),
+                    param.validation_regex.as_deref(),
+                    param.required.unwrap_or(true),
+                    pidx as i32,
                 )
-                .bind(crate::db::bind_id(Uuid::new_v4()))
-                .bind(crate::db::bind_id(cmd_id))
-                .bind(param_name)
-                .bind(param.description.as_deref())
-                .bind(param.default_value.as_deref())
-                .bind(param.validation_regex.as_deref())
-                .bind(param.required.unwrap_or(true))
-                .bind(pidx as i32)
-                .execute(&state.db)
                 .await?;
             }
         }
@@ -382,15 +363,9 @@ pub async fn import_yaml_map(
 
             let link_type = map_link_type(link.link_type.as_deref());
 
-            sqlx::query(
-                "INSERT INTO component_links (id, component_id, label, url, link_type) VALUES ($1, $2, $3, $4, $5)",
+            crate::repository::import_queries::create_component_link(
+                &state.db, comp_id, label, url, link_type,
             )
-            .bind(crate::db::bind_id(Uuid::new_v4()))
-            .bind(crate::db::bind_id(comp_id))
-            .bind(label)
-            .bind(url)
-            .bind(link_type)
-            .execute(&state.db)
             .await?;
 
             links_created += 1;
@@ -421,15 +396,8 @@ pub async fn import_yaml_map(
                 }
             };
 
-            sqlx::query(
-                "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id) VALUES ($1, $2, $3, $4)",
-            )
-            .bind(crate::db::bind_id(Uuid::new_v4()))
-            .bind(crate::db::bind_id(app_id))
-            .bind(crate::db::bind_id(from_id))
-            .bind(crate::db::bind_id(to_id))
-            .execute(&state.db)
-            .await?;
+            crate::repository::import_queries::create_dependency(&state.db, app_id, from_id, to_id)
+                .await?;
 
             dependencies_created += 1;
         }
@@ -746,41 +714,32 @@ pub async fn import_json_map(
 
     // Create application
     let tags_json = serde_json::to_value(&app_data.tags).unwrap_or(Value::Null);
-    sqlx::query(
-        "INSERT INTO applications (id, name, description, organization_id, site_id, tags) VALUES ($1, $2, $3, $4, $5, $6)",
+    crate::repository::import_queries::create_import_application_with_tags(
+        &state.db,
+        app_id,
+        &app_data.name,
+        app_data.description.as_deref(),
+        *user.organization_id,
+        body.site_id,
+        &tags_json,
     )
-    .bind(crate::db::bind_id(app_id))
-    .bind(&app_data.name)
-    .bind(&app_data.description)
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(crate::db::bind_id(body.site_id))
-    .bind(&tags_json)
-    .execute(&state.db)
     .await?;
 
     // Grant owner to importing user
-    let _ = sqlx::query(
-        "INSERT INTO app_permissions_users (id, application_id, user_id, permission_level, granted_by) VALUES ($1, $2, $3, 'owner', $3)",
-    )
-    .bind(crate::db::bind_id(Uuid::new_v4()))
-    .bind(crate::db::bind_id(app_id))
-    .bind(crate::db::bind_id(user.user_id))
-    .execute(&state.db)
-    .await;
+    crate::repository::import_queries::grant_owner_permission(&state.db, app_id, *user.user_id)
+        .await?;
 
     // ── Import variables ────────────────────────────────────────────
     let mut variables_created = 0;
     for var in &app_data.variables {
-        sqlx::query(
-            "INSERT INTO app_variables (id, application_id, name, value, description, is_secret) VALUES ($1, $2, $3, $4, $5, $6)",
+        crate::repository::import_queries::create_app_variable_with_secret(
+            &state.db,
+            app_id,
+            &var.name,
+            &var.value,
+            var.description.as_deref(),
+            var.is_secret,
         )
-        .bind(crate::db::bind_id(Uuid::new_v4()))
-        .bind(crate::db::bind_id(app_id))
-        .bind(&var.name)
-        .bind(&var.value)
-        .bind(&var.description)
-        .bind(var.is_secret)
-        .execute(&state.db)
         .await?;
 
         variables_created += 1;
@@ -792,16 +751,15 @@ pub async fn import_json_map(
 
     for group in &app_data.groups {
         let group_id = Uuid::new_v4();
-        sqlx::query(
-            "INSERT INTO component_groups (id, application_id, name, description, color, display_order) VALUES ($1, $2, $3, $4, $5, $6)",
+        crate::repository::import_queries::create_component_group_full(
+            &state.db,
+            group_id,
+            app_id,
+            &group.name,
+            group.description.as_deref(),
+            group.color.as_deref(),
+            group.display_order,
         )
-        .bind(crate::db::bind_id(group_id))
-        .bind(crate::db::bind_id(app_id))
-        .bind(&group.name)
-        .bind(&group.description)
-        .bind(&group.color)
-        .bind(group.display_order)
-        .execute(&state.db)
         .await?;
 
         group_map.insert(group.name.clone(), group_id);
@@ -863,44 +821,34 @@ pub async fn import_json_map(
             .as_ref()
             .map(|nodes| serde_json::json!(nodes));
 
-        sqlx::query(
-            r#"INSERT INTO components (
-                id, application_id, name, display_name, description, component_type,
-                icon, group_id, host, check_cmd, start_cmd, stop_cmd,
-                integrity_check_cmd, post_start_check_cmd, infra_check_cmd,
-                rebuild_cmd, rebuild_infra_cmd,
-                check_interval_seconds, start_timeout_seconds, stop_timeout_seconds,
-                is_optional, position_x, position_y, cluster_size, cluster_nodes, current_state
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, 'STOPPED'
-            )"#,
+        crate::repository::import_queries::create_import_component_json(
+            &state.db,
+            comp_id,
+            app_id,
+            &comp.name,
+            comp.display_name.as_deref(),
+            comp.description.as_deref(),
+            comp_type,
+            icon,
+            group_id,
+            comp.host.as_deref(),
+            &check_cmd,
+            &start_cmd,
+            &stop_cmd,
+            &integrity_cmd,
+            &post_start_cmd,
+            &infra_cmd,
+            &rebuild_cmd,
+            &rebuild_infra_cmd,
+            comp.check_interval_seconds,
+            comp.start_timeout_seconds,
+            comp.stop_timeout_seconds,
+            comp.is_optional,
+            pos_x,
+            pos_y,
+            comp.cluster_size,
+            &cluster_nodes_json,
         )
-        .bind(crate::db::bind_id(comp_id))
-        .bind(crate::db::bind_id(app_id))
-        .bind(&comp.name)
-        .bind(&comp.display_name)
-        .bind(&comp.description)
-        .bind(comp_type)
-        .bind(icon)
-        .bind(group_id.map(crate::db::bind_id))
-        .bind(&comp.host)
-        .bind(&check_cmd)
-        .bind(&start_cmd)
-        .bind(&stop_cmd)
-        .bind(&integrity_cmd)
-        .bind(&post_start_cmd)
-        .bind(&infra_cmd)
-        .bind(&rebuild_cmd)
-        .bind(&rebuild_infra_cmd)
-        .bind(comp.check_interval_seconds)
-        .bind(comp.start_timeout_seconds)
-        .bind(comp.stop_timeout_seconds)
-        .bind(comp.is_optional)
-        .bind(pos_x)
-        .bind(pos_y)
-        .bind(comp.cluster_size)
-        .bind(&cluster_nodes_json)
-        .execute(&state.db)
         .await?;
 
         comp_name_to_id.insert(comp.name.clone(), comp_id);
@@ -910,17 +858,15 @@ pub async fn import_json_map(
         for custom_cmd in &comp.custom_commands {
             let cmd_id = Uuid::new_v4();
 
-            sqlx::query(
-                r#"INSERT INTO component_commands (id, component_id, name, command, description, requires_confirmation)
-                VALUES ($1, $2, $3, $4, $5, $6)"#,
+            crate::repository::import_queries::create_component_command(
+                &state.db,
+                cmd_id,
+                comp_id,
+                &custom_cmd.name,
+                &custom_cmd.command,
+                custom_cmd.description.as_deref(),
+                custom_cmd.requires_confirmation,
             )
-            .bind(crate::db::bind_id(cmd_id))
-            .bind(crate::db::bind_id(comp_id))
-            .bind(&custom_cmd.name)
-            .bind(&custom_cmd.command)
-            .bind(&custom_cmd.description)
-            .bind(custom_cmd.requires_confirmation)
-            .execute(&state.db)
             .await?;
 
             commands_created += 1;
@@ -932,39 +878,32 @@ pub async fn import_json_map(
                     .as_ref()
                     .and_then(|v| serde_json::to_value(v).ok());
 
-                sqlx::query(
-                    r#"INSERT INTO command_input_params (
-                        id, command_id, name, description, default_value, validation_regex,
-                        required, param_type, enum_values, display_order
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
+                crate::repository::import_queries::create_command_input_param_full(
+                    &state.db,
+                    cmd_id,
+                    &param.name,
+                    param.description.as_deref(),
+                    param.default_value.as_deref(),
+                    param.validation_regex.as_deref(),
+                    param.required,
+                    &param.param_type,
+                    &enum_vals_json,
+                    pidx as i32,
                 )
-                .bind(crate::db::bind_id(Uuid::new_v4()))
-                .bind(crate::db::bind_id(cmd_id))
-                .bind(&param.name)
-                .bind(&param.description)
-                .bind(&param.default_value)
-                .bind(&param.validation_regex)
-                .bind(param.required)
-                .bind(&param.param_type)
-                .bind(&enum_vals_json)
-                .bind(pidx as i32)
-                .execute(&state.db)
                 .await?;
             }
         }
 
         // ── Import links ───────────────────────────────────────────────
         for (lidx, link) in comp.links.iter().enumerate() {
-            sqlx::query(
-                "INSERT INTO component_links (id, component_id, label, url, link_type, display_order) VALUES ($1, $2, $3, $4, $5, $6)",
+            crate::repository::import_queries::create_component_link_ordered(
+                &state.db,
+                comp_id,
+                &link.label,
+                &link.url,
+                &link.link_type,
+                lidx as i32,
             )
-            .bind(crate::db::bind_id(Uuid::new_v4()))
-            .bind(crate::db::bind_id(comp_id))
-            .bind(&link.label)
-            .bind(&link.url)
-            .bind(&link.link_type)
-            .bind(lidx as i32)
-            .execute(&state.db)
             .await?;
 
             links_created += 1;
@@ -999,15 +938,9 @@ pub async fn import_json_map(
 
         let dep_type = dep.dep_type.as_deref().unwrap_or("strong");
 
-        sqlx::query(
-            "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id, dep_type) VALUES ($1, $2, $3, $4, $5)",
+        crate::repository::import_queries::create_dependency_typed(
+            &state.db, app_id, from_id, to_id, dep_type,
         )
-        .bind(crate::db::bind_id(Uuid::new_v4()))
-        .bind(crate::db::bind_id(app_id))
-        .bind(crate::db::bind_id(from_id))
-        .bind(crate::db::bind_id(to_id))
-        .bind(dep_type)
-        .execute(&state.db)
         .await?;
 
         dependencies_created += 1;

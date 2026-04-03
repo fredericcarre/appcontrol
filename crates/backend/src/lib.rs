@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 pub mod api;
 pub mod auth;
 pub mod config;
@@ -5,6 +6,7 @@ pub mod core;
 pub mod db;
 pub mod error;
 pub mod middleware;
+pub mod repository;
 pub mod terminal;
 pub mod websocket;
 
@@ -30,6 +32,15 @@ pub struct AppState {
     pub terminal_sessions: terminal::TerminalSessionManager,
     pub log_subscriptions: websocket::LogSubscriptionManager,
     pub pending_log_requests: websocket::PendingLogRequests,
+    // Repository instances — all database queries go through these
+    pub app_repo: Box<dyn repository::apps::AppRepository>,
+    pub component_repo: Box<dyn repository::components::ComponentRepository>,
+    pub team_repo: Box<dyn repository::teams::TeamRepository>,
+    pub permission_repo: Box<dyn repository::permissions::PermissionRepository>,
+    pub site_repo: Box<dyn repository::sites::SiteRepository>,
+    pub enrollment_repo: Box<dyn repository::enrollment::EnrollmentRepository>,
+    pub agent_repo: Box<dyn repository::agents::AgentRepository>,
+    pub gateway_repo: Box<dyn repository::gateways::GatewayRepository>,
 }
 
 /// Build a CORS layer based on configuration.
