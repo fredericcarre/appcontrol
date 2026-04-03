@@ -28,6 +28,7 @@ pub mod schedule_queries;
 pub mod sites;
 pub mod switchover_queries;
 pub mod teams;
+pub mod startup_queries;
 pub mod websocket_queries;
 
 /// Database-agnostic pool type.
