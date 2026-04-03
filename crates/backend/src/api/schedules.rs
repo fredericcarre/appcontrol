@@ -119,7 +119,7 @@ pub struct ListSchedulesQuery {
 
 #[derive(sqlx::FromRow)]
 #[allow(dead_code)]
-struct ScheduleRow {
+pub struct ScheduleRow {
     id: DbUuid,
     organization_id: DbUuid,
     application_id: Option<DbUuid>,
@@ -140,7 +140,7 @@ struct ScheduleRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct ExecutionRow {
+pub struct ExecutionRow {
     id: DbUuid,
     schedule_id: DbUuid,
     action_log_id: Option<DbUuid>,
@@ -183,27 +183,16 @@ async fn get_target_info(
     application_id: Option<DbUuid>,
     component_id: Option<DbUuid>,
 ) -> (String, DbUuid, String) {
+    use crate::repository::schedule_queries as sched_repo;
     if let Some(app_id) = application_id {
-        let name: Option<String> =
-            sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-                .bind(crate::db::bind_id(app_id))
-                .fetch_optional(db)
-                .await
-                .ok()
-                .flatten();
+        let name = sched_repo::get_app_name_by_id(db, *app_id).await;
         (
             "application".to_string(),
             app_id,
             name.unwrap_or_else(|| app_id.to_string()),
         )
     } else if let Some(comp_id) = component_id {
-        let name: Option<String> =
-            sqlx::query_scalar("SELECT COALESCE(display_name, name) FROM components WHERE id = $1")
-                .bind(crate::db::bind_id(comp_id))
-                .fetch_optional(db)
-                .await
-                .ok()
-                .flatten();
+        let name = sched_repo::get_comp_display_name(db, *comp_id).await;
         (
             "component".to_string(),
             comp_id,
@@ -248,12 +237,11 @@ fn row_to_response(
 
 /// Get app_id from component_id for permission checks
 async fn get_app_id_for_component(db: &crate::db::DbPool, component_id: DbUuid) -> Option<DbUuid> {
-    sqlx::query_scalar("SELECT application_id FROM components WHERE id = $1")
-        .bind(crate::db::bind_id(component_id))
-        .fetch_optional(db)
+    crate::repository::schedule_queries::get_component_app_id_sched(db, *component_id)
         .await
         .ok()
         .flatten()
+        .map(DbUuid::from)
 }
 
 // ============================================================================
@@ -275,48 +263,19 @@ pub async fn list_app_schedules(
 
     let include_disabled = query.include_disabled.unwrap_or(false);
 
+    use crate::repository::schedule_queries as sched_repo;
     let rows = if include_disabled {
-        sqlx::query_as::<_, ScheduleRow>(
-            r#"
-            SELECT id, organization_id, application_id, component_id, name, description,
-                   operation, cron_expression, timezone, is_enabled,
-                   last_run_at, next_run_at, last_run_status, last_run_message,
-                   created_by, created_at, updated_at
-            FROM operation_schedules
-            WHERE application_id = $1
-            ORDER BY created_at DESC
-            "#,
-        )
-        .bind(crate::db::bind_id(app_id))
-        .fetch_all(&state.db)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        sched_repo::list_app_schedules_all(&state.db, app_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
     } else {
-        sqlx::query_as::<_, ScheduleRow>(
-            r#"
-            SELECT id, organization_id, application_id, component_id, name, description,
-                   operation, cron_expression, timezone, is_enabled,
-                   last_run_at, next_run_at, last_run_status, last_run_message,
-                   created_by, created_at, updated_at
-            FROM operation_schedules
-            WHERE application_id = $1 AND is_enabled = true
-            ORDER BY created_at DESC
-            "#,
-        )
-        .bind(crate::db::bind_id(app_id))
-        .fetch_all(&state.db)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        sched_repo::list_app_schedules(&state.db, app_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
     };
 
     // Get app name once for all schedules
-    let app_name: Option<String> =
-        sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-            .bind(crate::db::bind_id(app_id))
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
+    let app_name = sched_repo::get_app_name_by_id(&state.db, app_id).await;
     let target_name = app_name.unwrap_or_else(|| app_id.to_string());
 
     let responses: Vec<ScheduleResponse> = rows
