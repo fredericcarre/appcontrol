@@ -117,6 +117,241 @@ pub async fn fetch_due_operation_schedules(pool: &DbPool) -> Result<Vec<DueOpera
     .await
 }
 
+// ============================================================================
+// Snapshot schedule queries (core/snapshot_scheduler.rs)
+// ============================================================================
+
+/// Fetch due snapshot schedules (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn fetch_due_snapshot_schedules<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        SELECT id, organization_id, name, agent_ids, frequency, retention_days
+        FROM snapshot_schedules
+        WHERE enabled = true
+          AND next_run_at IS NOT NULL
+          AND next_run_at <= now()
+        ORDER BY next_run_at ASC
+        LIMIT 10
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch most recent discovery report IDs per agent (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn fetch_recent_report_ids(
+    pool: &DbPool,
+    agent_ids: &[uuid::Uuid],
+) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT DISTINCT ON (agent_id) id
+        FROM discovery_reports
+        WHERE agent_id = ANY($1)
+          AND scanned_at > now() - interval '1 minute'
+        ORDER BY agent_id, scanned_at DESC
+        "#,
+    )
+    .bind(agent_ids)
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch most recent discovery report IDs per agent (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn fetch_recent_report_ids(
+    pool: &DbPool,
+    agent_ids: &[uuid::Uuid],
+) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
+    if agent_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (1..=agent_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT id FROM discovery_reports
+        WHERE agent_id IN ({})
+          AND scanned_at > datetime('now', '-1 minute')
+        GROUP BY agent_id
+        HAVING scanned_at = MAX(scanned_at)
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_scalar::<_, String>(&query);
+    for id in agent_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows: Vec<String> = q.fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+        .collect())
+}
+
+/// Fetch services from discovery reports for correlation (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn fetch_services_for_correlation(
+    pool: &DbPool,
+    report_ids: &[uuid::Uuid],
+) -> Result<serde_json::Value, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(jsonb_agg(svc), '[]'::jsonb)
+        FROM (
+            SELECT
+                r.hostname,
+                p->>'name' as process_name,
+                p->'listening_ports' as ports,
+                p->'technology_hint' as technology_hint
+            FROM discovery_reports r,
+                 jsonb_array_elements(r.report->'processes') p
+            WHERE r.id = ANY($1)
+              AND p->'listening_ports' IS NOT NULL
+              AND jsonb_array_length(p->'listening_ports') > 0
+        ) svc
+        "#,
+    )
+    .bind(report_ids)
+    .fetch_one(pool)
+    .await
+}
+
+/// Fetch services from discovery reports for correlation (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn fetch_services_for_correlation(
+    pool: &DbPool,
+    report_ids: &[uuid::Uuid],
+) -> Result<serde_json::Value, sqlx::Error> {
+    if report_ids.is_empty() {
+        return Ok(serde_json::json!([]));
+    }
+    let placeholders: Vec<String> = (1..=report_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        "SELECT hostname, report FROM discovery_reports WHERE id IN ({})",
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, (String, String)>(&query);
+    for id in report_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows: Vec<(String, String)> = q.fetch_all(pool).await?;
+
+    let mut services = Vec::new();
+    for (hostname, report_str) in rows {
+        if let Ok(report) = serde_json::from_str::<serde_json::Value>(&report_str) {
+            if let Some(processes) = report.get("processes").and_then(|p| p.as_array()) {
+                for p in processes {
+                    if let Some(ports) = p.get("listening_ports").and_then(|lp| lp.as_array()) {
+                        if !ports.is_empty() {
+                            services.push(serde_json::json!({
+                                "hostname": hostname,
+                                "process_name": p.get("name"),
+                                "ports": ports,
+                                "technology_hint": p.get("technology_hint"),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(serde_json::Value::Array(services))
+}
+
+/// Insert a scheduled snapshot record (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn insert_scheduled_snapshot(
+    pool: &DbPool,
+    snapshot_id: uuid::Uuid,
+    schedule_id: DbUuid,
+    organization_id: DbUuid,
+    agent_ids: &crate::db::UuidArray,
+    report_ids: &crate::db::UuidArray,
+    correlation_result: &serde_json::Value,
+    expires_at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO scheduled_snapshots
+            (id, schedule_id, organization_id, agent_ids, report_ids, correlation_result, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "#,
+    )
+    .bind(snapshot_id)
+    .bind(schedule_id)
+    .bind(organization_id)
+    .bind(agent_ids)
+    .bind(report_ids)
+    .bind(correlation_result)
+    .bind(expires_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Update snapshot schedule after run (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn update_snapshot_schedule_after_run(
+    pool: &DbPool,
+    schedule_id: DbUuid,
+    next_run: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE snapshot_schedules
+        SET last_run_at = now(),
+            next_run_at = $2
+        WHERE id = $1
+        "#,
+    )
+    .bind(schedule_id)
+    .bind(next_run)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Update snapshot schedule after run (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn update_snapshot_schedule_after_run(
+    pool: &DbPool,
+    schedule_id: DbUuid,
+    next_run: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE snapshot_schedules
+        SET last_run_at = datetime('now'),
+            next_run_at = $2
+        WHERE id = $1
+        "#,
+    )
+    .bind(schedule_id.to_string())
+    .bind(next_run.to_rfc3339())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Delete expired snapshots (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn cleanup_expired_snapshots(pool: &DbPool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM scheduled_snapshots
+        WHERE expires_at IS NOT NULL
+          AND expires_at < now()
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 /// Fetch due operation schedules (SQLite).
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 pub async fn fetch_due_operation_schedules(pool: &DbPool) -> Result<Vec<DueOperationSchedule>, sqlx::Error> {
