@@ -164,15 +164,7 @@ pub async fn block_agent(
     state.agent_repo.block_agent(agent_id).await?;
 
     // 2. Log the block event in certificate_events if table exists
-    sqlx::query(
-        r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
-           SELECT $1, 'blocked', certificate_fingerprint, certificate_cn
-           FROM agents WHERE id = $1"#,
-    )
-    .bind(crate::db::bind_id(agent_id))
-    .execute(&state.db)
-    .await
-    .ok(); // Don't fail if table doesn't exist yet
+    crate::repository::agents::log_agent_block_event(&state.db, agent_id).await;
 
     // 3. Transition all components of this agent to UNREACHABLE
     let components_affected = transition_agent_components_to_unreachable(&state, agent_id).await;
@@ -341,32 +333,9 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
             "previous_state": current_state.to_string(),
             "agent_id": agent_id.to_string(),
         });
-        #[cfg(feature = "postgres")]
-        let result = sqlx::query(
-            r#"
-            INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, 'UNREACHABLE', 'agent_blocked', $3)
-            "#,
-        )
-        .bind(*comp.id)
-        .bind(current_state.to_string())
-        .bind(&details_json)
-        .execute(&state.db)
-        .await;
-
-        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        let result = sqlx::query(
-            r#"
-            INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, $3, 'UNREACHABLE', 'agent_blocked', $4)
-            "#,
-        )
-        .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
-        .bind(*comp.id)
-        .bind(current_state.to_string())
-        .bind(serde_json::to_string(&details_json).unwrap_or_default())
-        .execute(&state.db)
-        .await;
+        let result = crate::repository::agents::insert_unreachable_transition(
+            &state.db, *comp.id, &current_state.to_string(), &details_json,
+        ).await;
 
         if result.is_ok() {
             affected += 1;
@@ -443,35 +412,8 @@ pub async fn delete_agent(
     // 1. Transition components to UNREACHABLE
     let components_affected = transition_agent_components_to_unreachable(&state, agent_id).await;
 
-    // 2. Clear agent_id from components (don't delete components)
-    sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
-
-    // 3. Delete discovery reports for this agent
-    sqlx::query("DELETE FROM discovery_reports WHERE agent_id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
-
-    // 4. Delete certificate events for this agent
-    sqlx::query("DELETE FROM certificate_events WHERE agent_id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
-
-    // 5. Delete binding profile mappings for this agent
-    sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
-
-    // 6. Delete the agent
-    sqlx::query("DELETE FROM agents WHERE id = $1")
-        .bind(crate::db::bind_id(agent_id))
-        .execute(&state.db)
-        .await?;
+    // 2-6. Delete agent and cascade
+    crate::repository::agents::delete_agent_cascade(&state.db, agent_id).await?;
 
     tracing::info!(
         agent_id = %agent_id,

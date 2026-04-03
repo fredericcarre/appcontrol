@@ -396,3 +396,84 @@ pub fn create_agent_repository(pool: DbPool) -> Box<dyn AgentRepository> {
         Box::new(SqliteAgentRepository::new(pool))
     }
 }
+
+// ============================================================================
+// Free functions (api/agents.rs queries)
+// ============================================================================
+
+/// Insert a state transition to UNREACHABLE when an agent is blocked.
+pub async fn insert_unreachable_transition(
+    pool: &DbPool,
+    component_id: Uuid,
+    from_state: &str,
+    details_json: &serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    sqlx::query(
+        r#"INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
+           VALUES ($1, $2, 'UNREACHABLE', 'agent_blocked', $3)"#,
+    )
+    .bind(component_id)
+    .bind(from_state)
+    .bind(details_json)
+    .execute(pool)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger, details)
+           VALUES ($1, $2, $3, 'UNREACHABLE', 'agent_blocked', $4)"#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(DbUuid::from(component_id))
+    .bind(from_state)
+    .bind(serde_json::to_string(details_json).unwrap_or_default())
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Log a block event in certificate_events.
+pub async fn log_agent_block_event(
+    pool: &DbPool,
+    agent_id: Uuid,
+) {
+    sqlx::query(
+        r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
+           SELECT $1, 'blocked', certificate_fingerprint, certificate_cn
+           FROM agents WHERE id = $1"#,
+    )
+    .bind(crate::db::bind_id(agent_id))
+    .execute(pool)
+    .await
+    .ok();
+}
+
+/// Delete an agent and its related records.
+pub async fn delete_agent_cascade(
+    pool: &DbPool,
+    agent_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = $1")
+        .bind(crate::db::bind_id(agent_id))
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM discovery_reports WHERE agent_id = $1")
+        .bind(crate::db::bind_id(agent_id))
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM certificate_events WHERE agent_id = $1")
+        .bind(crate::db::bind_id(agent_id))
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM binding_profile_mappings WHERE agent_id = $1")
+        .bind(crate::db::bind_id(agent_id))
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM agents WHERE id = $1")
+        .bind(crate::db::bind_id(agent_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
