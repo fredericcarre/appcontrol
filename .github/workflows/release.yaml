@@ -200,15 +200,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Also log in to corp GHCR for image mirroring
-      - name: Log in to corp GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: xcomponent
-          password: ${{ secrets.CORP_GITHUB_TOKEN }}
-
-      # Rust images use pre-built binaries (fast - no compilation)
+      # Build and push to fredericcarre registry first
       - name: Build and push backend
         uses: docker/build-push-action@v6
         with:
@@ -219,8 +211,6 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-backend:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-backend:latest
-            ghcr.io/xcomponent/appcontrol-backend:${{ steps.version.outputs.VERSION }}
-            ghcr.io/xcomponent/appcontrol-backend:latest
           build-args: |
             BINARY_PATH=binaries/appcontrol-backend-linux-amd64
 
@@ -234,8 +224,6 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-gateway:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-gateway:latest
-            ghcr.io/xcomponent/appcontrol-gateway:${{ steps.version.outputs.VERSION }}
-            ghcr.io/xcomponent/appcontrol-gateway:latest
           build-args: |
             BINARY_PATH=binaries/appcontrol-gateway-linux-amd64
 
@@ -249,12 +237,9 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-agent:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-agent:latest
-            ghcr.io/xcomponent/appcontrol-agent:${{ steps.version.outputs.VERSION }}
-            ghcr.io/xcomponent/appcontrol-agent:latest
           build-args: |
             BINARY_PATH=binaries/appcontrol-agent-linux-amd64
 
-      # Frontend doesn't need Rust binaries - still uses npm build
       - name: Build and push frontend
         uses: docker/build-push-action@v6
         with:
@@ -265,12 +250,9 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-frontend:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-frontend:latest
-            ghcr.io/xcomponent/appcontrol-frontend:${{ steps.version.outputs.VERSION }}
-            ghcr.io/xcomponent/appcontrol-frontend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Azure gateway uses pre-built binaries (gateway + agent + azure-cli)
       - name: Build and push azure-gateway
         uses: docker/build-push-action@v6
         with:
@@ -281,8 +263,6 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-azure-gateway:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-azure-gateway:latest
-            ghcr.io/xcomponent/appcontrol-azure-gateway:${{ steps.version.outputs.VERSION }}
-            ghcr.io/xcomponent/appcontrol-azure-gateway:latest
           build-args: |
             GATEWAY_BINARY_PATH=binaries/appcontrol-gateway-linux-amd64
             AGENT_BINARY_PATH=binaries/appcontrol-agent-linux-amd64
@@ -300,8 +280,27 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-init-certs:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-init-certs:latest
-            ghcr.io/xcomponent/appcontrol-init-certs:${{ steps.version.outputs.VERSION }}
-            ghcr.io/xcomponent/appcontrol-init-certs:latest
+
+      # Mirror images to corp registry (separate login to avoid token conflict)
+      - name: Log in to corp GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: xcomponent
+          password: ${{ secrets.CORP_GITHUB_TOKEN }}
+
+      - name: Mirror images to xcomponent registry
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          IMAGES="appcontrol-backend appcontrol-gateway appcontrol-agent appcontrol-frontend appcontrol-azure-gateway appcontrol-init-certs"
+          for img in $IMAGES; do
+            echo "Mirroring $img..."
+            docker pull ${{ env.REGISTRY }}/${img}:${VERSION} || true
+            docker tag ${{ env.REGISTRY }}/${img}:${VERSION} ghcr.io/xcomponent/${img}:${VERSION}
+            docker tag ${{ env.REGISTRY }}/${img}:${VERSION} ghcr.io/xcomponent/${img}:latest
+            docker push ghcr.io/xcomponent/${img}:${VERSION}
+            docker push ghcr.io/xcomponent/${img}:latest
+          done
 
   # ---------------------------------------------------------------------------
   # Package Helm chart
