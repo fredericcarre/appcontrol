@@ -1959,10 +1959,11 @@ pub async fn log_certificate_event_with_days(
     let expires_at =
         (chrono::Utc::now() + chrono::Duration::days(_validity_days as i64)).to_rfc3339();
     sqlx::query(&format!(
-        "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
-             VALUES ($1, $2, $3, {now}, $4)",
+        "INSERT INTO certificate_events (id, event_type, fingerprint, cn, issued_at, expires_at) \
+             VALUES ($1, $2, $3, $4, {now}, $5)",
         now = db::sql::now()
     ))
+    .bind(DbUuid::new_v4())
     .bind(event_type)
     .bind(fingerprint)
     .bind(cn)
@@ -2002,10 +2003,11 @@ pub async fn log_certificate_event_fixed_interval(
     expires_at_str: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(&format!(
-        "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
-             VALUES ('issued', $1, $2, {now}, $3)",
+        "INSERT INTO certificate_events (id, event_type, fingerprint, cn, issued_at, expires_at) \
+             VALUES ($1, 'issued', $2, $3, {now}, $4)",
         now = db::sql::now()
     ))
+    .bind(DbUuid::new_v4())
     .bind(fingerprint)
     .bind(cn)
     .bind(expires_at_str)
@@ -2889,16 +2891,17 @@ pub async fn insert_certificate_event(
             (chrono::Utc::now() + chrono::Duration::days(validity_days as i64)).to_rfc3339();
         let sql = if scope == "gateway" {
             format!(
-                "INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
-                 VALUES ($1, 'issued', $2, $3, {now}, $4)"
+                "INSERT INTO certificate_events (id, gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
+                 VALUES ($1, $2, 'issued', $3, $4, {now}, $5)"
             )
         } else {
             format!(
-                "INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn, issued_at, expires_at)
-                 VALUES ($1, 'issued', $2, $3, {now}, $4)"
+                "INSERT INTO certificate_events (id, agent_id, event_type, fingerprint, cn, issued_at, expires_at)
+                 VALUES ($1, $2, 'issued', $3, $4, {now}, $5)"
             )
         };
         sqlx::query(&sql)
+            .bind(DbUuid::new_v4())
             .bind(DbUuid::from(entity_id))
             .bind(fingerprint)
             .bind(hostname)
