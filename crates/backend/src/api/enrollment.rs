@@ -205,11 +205,7 @@ pub async fn init_pki(
     validate_length("org_name", &req.org_name, 1, 200)?;
 
     // Check if CA already exists
-    let existing: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
+    let existing = crate::repository::misc_queries::get_org_ca_cert(&state.db, *user.organization_id).await?;
 
     if let Some((Some(ref _cert),)) = existing {
         return Err(ApiError::Conflict(
@@ -233,12 +229,7 @@ pub async fn init_pki(
     .await
     .ok();
 
-    sqlx::query("UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1")
-        .bind(crate::db::bind_id(user.organization_id))
-        .bind(&ca.cert_pem)
-        .bind(&ca.key_pem)
-        .execute(&state.db)
-        .await?;
+    crate::repository::misc_queries::update_org_ca(&state.db, *user.organization_id, &ca.cert_pem, &ca.key_pem).await?;
 
     let fingerprint = appcontrol_common::fingerprint_pem(&ca.cert_pem).unwrap_or_default();
 
@@ -254,11 +245,7 @@ pub async fn get_ca_cert(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
+    let row = crate::repository::misc_queries::get_org_ca_cert(&state.db, *user.organization_id).await?;
 
     match row {
         Some((Some(cert_pem),)) => {
@@ -313,11 +300,7 @@ pub async fn import_pki(
         .map_err(|e| ApiError::Validation(format!("Invalid CA keypair: {}", e)))?;
 
     // Check if CA already exists
-    let existing: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
+    let existing = crate::repository::misc_queries::get_org_ca_cert(&state.db, *user.organization_id).await?;
 
     if let Some((Some(_),)) = existing {
         if !req.force {
@@ -341,12 +324,7 @@ pub async fn import_pki(
     .await
     .ok();
 
-    sqlx::query("UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1")
-        .bind(crate::db::bind_id(user.organization_id))
-        .bind(&req.ca_cert_pem)
-        .bind(&req.ca_key_pem)
-        .execute(&state.db)
-        .await?;
+    crate::repository::misc_queries::update_org_ca(&state.db, *user.organization_id, &req.ca_cert_pem, &req.ca_key_pem).await?;
 
     tracing::info!(
         org_id = %user.organization_id,
@@ -421,34 +399,15 @@ pub async fn enroll(
     // Hash the token and look it up
     let token_hash = hex::encode(sha2::Sha256::digest(req.token.as_bytes()));
 
-    let token_row = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            Uuid,
-            String,
-            Option<i32>,
-            i32,
-            chrono::DateTime<chrono::Utc>,
-            Option<String>,
-        ),
-    >(
-        r#"SELECT id, organization_id, scope, max_uses, current_uses, expires_at, zone
-           FROM enrollment_tokens
-           WHERE token_hash = $1
-           AND revoked_at IS NULL"#,
-    )
-    .bind(&token_hash)
-    .fetch_optional(&state.db)
-    .await?;
+    let token_row = crate::repository::misc_queries::lookup_enrollment_token_by_hash(&state.db, &token_hash).await?;
 
     let (token_id, org_id, scope, max_uses, current_uses, expires_at, token_zone) = match token_row
     {
         Some(row) => row,
         None => {
-            log_enrollment_event(
+            crate::repository::misc_queries::log_enrollment_event(
                 &state.db,
-                DbUuid::from(Uuid::nil()),
+                Uuid::nil(),
                 None,
                 "invalid_token",
                 &req.hostname,
@@ -466,10 +425,10 @@ pub async fn enroll(
                 // OK - gateway zone matches token zone
             }
             Some(gw_zone) => {
-                log_enrollment_event(
+                crate::repository::misc_queries::log_enrollment_event(
                     &state.db,
-                    DbUuid::from(org_id),
-                    Some(token_id.into()),
+                    org_id,
+                    Some(token_id),
                     "zone_mismatch",
                     &req.hostname,
                     &client_ip,
@@ -484,10 +443,10 @@ pub async fn enroll(
                 return Err(ApiError::Forbidden);
             }
             None => {
-                log_enrollment_event(
+                crate::repository::misc_queries::log_enrollment_event(
                     &state.db,
-                    DbUuid::from(org_id),
-                    Some(token_id.into()),
+                    org_id,
+                    Some(token_id),
                     "zone_required",
                     &req.hostname,
                     &client_ip,
@@ -502,10 +461,10 @@ pub async fn enroll(
 
     // Check expiry
     if chrono::Utc::now() > expires_at {
-        log_enrollment_event(
+        crate::repository::misc_queries::log_enrollment_event(
             &state.db,
-            DbUuid::from(org_id),
-            Some(token_id.into()),
+            org_id,
+            Some(token_id),
             "token_expired",
             &req.hostname,
             &client_ip,
@@ -517,10 +476,10 @@ pub async fn enroll(
     // Check usage limit
     if let Some(max) = max_uses {
         if current_uses >= max {
-            log_enrollment_event(
+            crate::repository::misc_queries::log_enrollment_event(
                 &state.db,
-                DbUuid::from(org_id),
-                Some(token_id.into()),
+                org_id,
+                Some(token_id),
                 "token_exhausted",
                 &req.hostname,
                 &client_ip,
@@ -533,11 +492,7 @@ pub async fn enroll(
     }
 
     // Load organization CA
-    let ca_row: Option<(Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT ca_cert_pem, ca_key_pem FROM organizations WHERE id = $1")
-            .bind(org_id)
-            .fetch_optional(&state.db)
-            .await?;
+    let ca_row = crate::repository::misc_queries::get_org_ca_keypair(&state.db, org_id).await?;
 
     let (ca_cert_pem, ca_key_pem) = match ca_row {
         Some((Some(cert), Some(key))) => (cert, key),
@@ -576,20 +531,13 @@ pub async fn enroll(
     let entity_id = Uuid::new_v5(&Uuid::NAMESPACE_DNS, req.hostname.as_bytes());
 
     // Check if this fingerprint is already revoked (re-enrollment with a compromised host)
-    let is_revoked: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM revoked_certificates WHERE organization_id = $1 AND cn = $2)",
-    )
-    .bind(org_id)
-    .bind(&req.hostname)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(false);
+    let is_revoked = crate::repository::misc_queries::is_cn_revoked(&state.db, org_id, &req.hostname).await;
 
     if is_revoked {
-        log_enrollment_event(
+        crate::repository::misc_queries::log_enrollment_event(
             &state.db,
-            DbUuid::from(org_id),
-            Some(token_id.into()),
+            org_id,
+            Some(token_id),
             "invalid_token",
             &req.hostname,
             &client_ip,
@@ -599,122 +547,31 @@ pub async fn enroll(
     }
 
     // Increment token usage
-    sqlx::query("UPDATE enrollment_tokens SET current_uses = current_uses + 1 WHERE id = $1")
-        .bind(token_id)
-        .execute(&state.db)
-        .await?;
+    crate::repository::misc_queries::increment_token_uses(&state.db, token_id).await?;
 
     // Upsert the appropriate record based on scope
     match scope.as_str() {
         "gateway" => {
-            // Upsert gateway record with certificate identity
-            sqlx::query(
-                // NOTE: On conflict, we do NOT override is_active to preserve blocked status.
-                r#"INSERT INTO gateways (id, organization_id, name, zone, hostname, is_active, certificate_fingerprint, certificate_cn)
-                   VALUES ($1, $2, $3, 'default', $3, true, $4, $5)
-                   ON CONFLICT (id) DO UPDATE SET
-                       hostname = EXCLUDED.hostname,
-                       certificate_fingerprint = EXCLUDED.certificate_fingerprint,
-                       certificate_cn = EXCLUDED.certificate_cn"#,
-            )
-            .bind(entity_id)
-            .bind(org_id)
-            .bind(&req.hostname)
-            .bind(&fingerprint)
-            .bind(&req.hostname)
-            .execute(&state.db)
-            .await?;
+            crate::repository::misc_queries::upsert_gateway_enrollment(
+                &state.db, entity_id, org_id, &req.hostname, &fingerprint,
+            ).await?;
         }
         _ => {
-            // Upsert agent record
-            // NOTE: On conflict, we do NOT override is_active to preserve blocked status.
-            // A blocked agent must be explicitly unblocked before it can reconnect.
-            sqlx::query(
-                r#"INSERT INTO agents (id, organization_id, hostname, is_active, certificate_fingerprint, certificate_cn, identity_verified)
-                   VALUES ($1, $2, $3, true, $4, $5, true)
-                   ON CONFLICT (id) DO UPDATE SET
-                       hostname = EXCLUDED.hostname,
-                       certificate_fingerprint = EXCLUDED.certificate_fingerprint,
-                       certificate_cn = EXCLUDED.certificate_cn,
-                       identity_verified = true"#,
-            )
-            .bind(entity_id)
-            .bind(org_id)
-            .bind(&req.hostname)
-            .bind(&fingerprint)
-            .bind(&req.hostname)
-            .execute(&state.db)
-            .await?;
+            crate::repository::misc_queries::upsert_agent_enrollment(
+                &state.db, entity_id, org_id, &req.hostname, &fingerprint,
+            ).await?;
         }
     }
 
     // Log enrollment event (APPEND-ONLY)
-    sqlx::query(
-        r#"INSERT INTO enrollment_events
-           (organization_id, token_id, event_type, hostname, ip_address, agent_id, cert_fingerprint, cert_cn)
-           VALUES ($1, $2, 'success', $3, $4, $5, $6, $7)"#,
-    )
-    .bind(org_id)
-    .bind(token_id)
-    .bind(&req.hostname)
-    .bind(client_ip.clone())
-    .bind(entity_id)
-    .bind(&fingerprint)
-    .bind(&req.hostname)
-    .execute(&state.db)
-    .await
-    .ok();
+    crate::repository::misc_queries::log_enrollment_success(
+        &state.db, org_id, token_id, &req.hostname, &client_ip, entity_id, &fingerprint,
+    ).await;
 
-    // Log certificate event — link to the correct entity type
-    let expires_at_str =
-        (chrono::Utc::now() + chrono::Duration::days(validity_days as i64)).to_rfc3339();
-    let now = crate::db::sql::now();
-
-    #[cfg(feature = "postgres")]
-    {
-        let cert_event_sql = if scope == "gateway" {
-            format!(
-                "INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
-                 VALUES ($1, 'issued', $2, $3, {now}, {now} + $4 * interval '1 day')"
-            )
-        } else {
-            format!(
-                "INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn, issued_at, expires_at)
-                 VALUES ($1, 'issued', $2, $3, {now}, {now} + $4 * interval '1 day')"
-            )
-        };
-        sqlx::query(&cert_event_sql)
-            .bind(entity_id)
-            .bind(&fingerprint)
-            .bind(&req.hostname)
-            .bind(validity_days as i32)
-            .execute(&state.db)
-            .await
-            .ok();
-    }
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    {
-        let cert_event_sql = if scope == "gateway" {
-            format!(
-                "INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
-                 VALUES ($1, 'issued', $2, $3, {now}, $4)"
-            )
-        } else {
-            format!(
-                "INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn, issued_at, expires_at)
-                 VALUES ($1, 'issued', $2, $3, {now}, $4)"
-            )
-        };
-        sqlx::query(&cert_event_sql)
-            .bind(crate::db::bind_id(entity_id))
-            .bind(&fingerprint)
-            .bind(&req.hostname)
-            .bind(&expires_at_str)
-            .execute(&state.db)
-            .await
-            .ok();
-    }
+    // Log certificate event
+    crate::repository::misc_queries::insert_certificate_event(
+        &state.db, entity_id, &scope, &fingerprint, &req.hostname, validity_days,
+    ).await;
 
     // Response field is "agent_id" for backward compat even for gateways
     Ok(Json(json!({
@@ -728,29 +585,6 @@ pub async fn enroll(
     })))
 }
 
-/// Log a failed enrollment attempt (APPEND-ONLY).
-async fn log_enrollment_event(
-    db: &crate::db::DbPool,
-    org_id: DbUuid,
-    token_id: Option<DbUuid>,
-    event_type: &str,
-    hostname: &str,
-    ip_address: &str,
-) {
-    sqlx::query(
-        r#"INSERT INTO enrollment_events (organization_id, token_id, event_type, hostname, ip_address)
-           VALUES ($1, $2, $3, $4, $5)"#,
-    )
-    .bind(org_id)
-    .bind(token_id)
-    .bind(event_type)
-    .bind(hostname)
-    .bind(ip_address)
-    .execute(db)
-    .await
-    .ok();
-}
-
 // ---------------------------------------------------------------------------
 // Enrollment events (audit trail)
 // ---------------------------------------------------------------------------
@@ -759,33 +593,22 @@ pub async fn list_enrollment_events(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let events = sqlx::query_as::<_, (DbUuid, Option<DbUuid>, String, Option<String>, Option<String>, Option<DbUuid>, Option<String>, chrono::DateTime<chrono::Utc>)>(
-        r#"SELECT id, token_id, event_type, hostname, ip_address, agent_id, cert_fingerprint, created_at
-           FROM enrollment_events
-           WHERE organization_id = $1
-           ORDER BY created_at DESC
-           LIMIT 100"#,
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
+    let events = crate::repository::misc_queries::list_enrollment_events(&state.db, *user.organization_id).await?;
 
     let events_json: Vec<Value> = events
         .into_iter()
-        .map(
-            |(id, token_id, event_type, hostname, ip_address, agent_id, cert_fp, created_at)| {
-                json!({
-                    "id": id,
-                    "token_id": token_id,
-                    "event_type": event_type,
-                    "hostname": hostname,
-                    "ip_address": ip_address,
-                    "agent_id": agent_id,
-                    "cert_fingerprint": cert_fp,
-                    "created_at": created_at,
-                })
-            },
-        )
+        .map(|e| {
+            json!({
+                "id": e.id,
+                "token_id": e.token_id,
+                "event_type": e.event_type,
+                "hostname": e.hostname,
+                "ip_address": e.ip_address,
+                "agent_id": e.agent_id,
+                "cert_fingerprint": e.cert_fingerprint,
+                "created_at": e.created_at,
+            })
+        })
         .collect();
 
     Ok(Json(json!({ "events": events_json })))

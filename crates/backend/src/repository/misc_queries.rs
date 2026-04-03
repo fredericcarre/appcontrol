@@ -2465,3 +2465,405 @@ pub async fn list_user_accessible_sites(
     .fetch_all(pool)
     .await
 }
+
+// ============================================================================
+// Enrollment queries (api/enrollment.rs)
+// ============================================================================
+
+/// Get organization CA cert PEM (for checking if CA exists).
+pub async fn get_org_ca_cert(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<Option<(Option<String>,)>, sqlx::Error> {
+    sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT ca_cert_pem FROM organizations WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Update organization CA cert and key.
+pub async fn update_org_ca(
+    pool: &DbPool,
+    org_id: Uuid,
+    cert_pem: &str,
+    key_pem: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1")
+        .bind(crate::db::bind_id(org_id))
+        .bind(cert_pem)
+        .bind(key_pem)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Get organization CA cert and key PEM (for signing).
+pub async fn get_org_ca_keypair(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<Option<(Option<String>, Option<String>)>, sqlx::Error> {
+    sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT ca_cert_pem, ca_key_pem FROM organizations WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Look up an enrollment token by its hash. Returns (id, org_id, scope, max_uses, current_uses, expires_at, zone).
+pub async fn lookup_enrollment_token_by_hash(
+    pool: &DbPool,
+    token_hash: &str,
+) -> Result<
+    Option<(
+        Uuid,
+        Uuid,
+        String,
+        Option<i32>,
+        i32,
+        chrono::DateTime<chrono::Utc>,
+        Option<String>,
+    )>,
+    sqlx::Error,
+> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                Uuid,
+                String,
+                Option<i32>,
+                i32,
+                chrono::DateTime<chrono::Utc>,
+                Option<String>,
+            ),
+        >(
+            r#"SELECT id, organization_id, scope, max_uses, current_uses, expires_at, zone
+               FROM enrollment_tokens
+               WHERE token_hash = $1
+               AND revoked_at IS NULL"#,
+        )
+        .bind(token_hash)
+        .fetch_optional(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            id: DbUuid,
+            organization_id: DbUuid,
+            scope: String,
+            max_uses: Option<i32>,
+            current_uses: i32,
+            expires_at: chrono::DateTime<chrono::Utc>,
+            zone: Option<String>,
+        }
+        let row = sqlx::query_as::<_, Row>(
+            r#"SELECT id, organization_id, scope, max_uses, current_uses, expires_at, zone
+               FROM enrollment_tokens
+               WHERE token_hash = $1
+               AND revoked_at IS NULL"#,
+        )
+        .bind(token_hash)
+        .fetch_optional(pool)
+        .await?;
+        Ok(row.map(|r| (
+            r.id.into_inner(),
+            r.organization_id.into_inner(),
+            r.scope,
+            r.max_uses,
+            r.current_uses,
+            r.expires_at,
+            r.zone,
+        )))
+    }
+}
+
+/// Check if a CN is in the revoked certificates list.
+pub async fn is_cn_revoked(
+    pool: &DbPool,
+    org_id: Uuid,
+    cn: &str,
+) -> bool {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM revoked_certificates WHERE organization_id = $1 AND cn = $2)",
+        )
+        .bind(org_id)
+        .bind(cn)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let count: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM revoked_certificates WHERE organization_id = $1 AND cn = $2",
+        )
+        .bind(DbUuid::from(org_id))
+        .bind(cn)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+        count > 0
+    }
+}
+
+/// Increment enrollment token usage count.
+pub async fn increment_token_uses(
+    pool: &DbPool,
+    token_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE enrollment_tokens SET current_uses = current_uses + 1 WHERE id = $1")
+        .bind(crate::db::bind_id(token_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Upsert gateway record during enrollment.
+pub async fn upsert_gateway_enrollment(
+    pool: &DbPool,
+    id: Uuid,
+    org_id: Uuid,
+    hostname: &str,
+    fingerprint: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO gateways (id, organization_id, name, zone, hostname, is_active, certificate_fingerprint, certificate_cn)
+           VALUES ($1, $2, $3, 'default', $3, true, $4, $5)
+           ON CONFLICT (id) DO UPDATE SET
+               hostname = EXCLUDED.hostname,
+               certificate_fingerprint = EXCLUDED.certificate_fingerprint,
+               certificate_cn = EXCLUDED.certificate_cn"#,
+    )
+    .bind(crate::db::bind_id(id))
+    .bind(crate::db::bind_id(org_id))
+    .bind(hostname)
+    .bind(fingerprint)
+    .bind(hostname)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Upsert agent record during enrollment.
+pub async fn upsert_agent_enrollment(
+    pool: &DbPool,
+    id: Uuid,
+    org_id: Uuid,
+    hostname: &str,
+    fingerprint: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO agents (id, organization_id, hostname, is_active, certificate_fingerprint, certificate_cn, identity_verified)
+           VALUES ($1, $2, $3, true, $4, $5, true)
+           ON CONFLICT (id) DO UPDATE SET
+               hostname = EXCLUDED.hostname,
+               certificate_fingerprint = EXCLUDED.certificate_fingerprint,
+               certificate_cn = EXCLUDED.certificate_cn,
+               identity_verified = true"#,
+    )
+    .bind(crate::db::bind_id(id))
+    .bind(crate::db::bind_id(org_id))
+    .bind(hostname)
+    .bind(fingerprint)
+    .bind(hostname)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Log a successful enrollment event (APPEND-ONLY).
+pub async fn log_enrollment_success(
+    pool: &DbPool,
+    org_id: Uuid,
+    token_id: Uuid,
+    hostname: &str,
+    ip_address: &str,
+    agent_id: Uuid,
+    fingerprint: &str,
+) {
+    sqlx::query(
+        r#"INSERT INTO enrollment_events
+           (organization_id, token_id, event_type, hostname, ip_address, agent_id, cert_fingerprint, cert_cn)
+           VALUES ($1, $2, 'success', $3, $4, $5, $6, $7)"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(crate::db::bind_id(token_id))
+    .bind(hostname)
+    .bind(ip_address)
+    .bind(crate::db::bind_id(agent_id))
+    .bind(fingerprint)
+    .bind(hostname)
+    .execute(pool)
+    .await
+    .ok();
+}
+
+/// Insert a certificate event (APPEND-ONLY).
+pub async fn insert_certificate_event(
+    pool: &DbPool,
+    entity_id: Uuid,
+    scope: &str,
+    fingerprint: &str,
+    hostname: &str,
+    validity_days: u32,
+) {
+    let now = crate::db::sql::now();
+    #[cfg(feature = "postgres")]
+    {
+        let sql = if scope == "gateway" {
+            format!(
+                "INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
+                 VALUES ($1, 'issued', $2, $3, {now}, {now} + $4 * interval '1 day')"
+            )
+        } else {
+            format!(
+                "INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn, issued_at, expires_at)
+                 VALUES ($1, 'issued', $2, $3, {now}, {now} + $4 * interval '1 day')"
+            )
+        };
+        sqlx::query(&sql)
+            .bind(entity_id)
+            .bind(fingerprint)
+            .bind(hostname)
+            .bind(validity_days as i32)
+            .execute(pool)
+            .await
+            .ok();
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let expires_at_str =
+            (chrono::Utc::now() + chrono::Duration::days(validity_days as i64)).to_rfc3339();
+        let sql = if scope == "gateway" {
+            format!(
+                "INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn, issued_at, expires_at)
+                 VALUES ($1, 'issued', $2, $3, {now}, $4)"
+            )
+        } else {
+            format!(
+                "INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn, issued_at, expires_at)
+                 VALUES ($1, 'issued', $2, $3, {now}, $4)"
+            )
+        };
+        sqlx::query(&sql)
+            .bind(DbUuid::from(entity_id))
+            .bind(fingerprint)
+            .bind(hostname)
+            .bind(&expires_at_str)
+            .execute(pool)
+            .await
+            .ok();
+    }
+}
+
+/// Log a failed enrollment attempt (APPEND-ONLY).
+pub async fn log_enrollment_event(
+    pool: &DbPool,
+    org_id: Uuid,
+    token_id: Option<Uuid>,
+    event_type: &str,
+    hostname: &str,
+    ip_address: &str,
+) {
+    sqlx::query(
+        r#"INSERT INTO enrollment_events (organization_id, token_id, event_type, hostname, ip_address)
+           VALUES ($1, $2, $3, $4, $5)"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(token_id.map(crate::db::bind_id))
+    .bind(event_type)
+    .bind(hostname)
+    .bind(ip_address)
+    .execute(pool)
+    .await
+    .ok();
+}
+
+/// Enrollment event row for listing.
+#[derive(Debug)]
+pub struct EnrollmentEventRow {
+    pub id: Uuid,
+    pub token_id: Option<Uuid>,
+    pub event_type: String,
+    pub hostname: Option<String>,
+    pub ip_address: Option<String>,
+    pub agent_id: Option<Uuid>,
+    pub cert_fingerprint: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// List enrollment events for an organization.
+pub async fn list_enrollment_events(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<Vec<EnrollmentEventRow>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            id: Uuid,
+            token_id: Option<Uuid>,
+            event_type: String,
+            hostname: Option<String>,
+            ip_address: Option<String>,
+            agent_id: Option<Uuid>,
+            cert_fingerprint: Option<String>,
+            created_at: chrono::DateTime<chrono::Utc>,
+        }
+        let rows = sqlx::query_as::<_, Row>(
+            r#"SELECT id, token_id, event_type, hostname, ip_address, agent_id, cert_fingerprint, created_at
+               FROM enrollment_events
+               WHERE organization_id = $1
+               ORDER BY created_at DESC
+               LIMIT 100"#,
+        )
+        .bind(org_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| EnrollmentEventRow {
+            id: r.id, token_id: r.token_id, event_type: r.event_type,
+            hostname: r.hostname, ip_address: r.ip_address,
+            agent_id: r.agent_id, cert_fingerprint: r.cert_fingerprint,
+            created_at: r.created_at,
+        }).collect())
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            id: DbUuid,
+            token_id: Option<DbUuid>,
+            event_type: String,
+            hostname: Option<String>,
+            ip_address: Option<String>,
+            agent_id: Option<DbUuid>,
+            cert_fingerprint: Option<String>,
+            created_at: chrono::DateTime<chrono::Utc>,
+        }
+        let rows = sqlx::query_as::<_, Row>(
+            r#"SELECT id, token_id, event_type, hostname, ip_address, agent_id, cert_fingerprint, created_at
+               FROM enrollment_events
+               WHERE organization_id = $1
+               ORDER BY created_at DESC
+               LIMIT 100"#,
+        )
+        .bind(DbUuid::from(org_id))
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| EnrollmentEventRow {
+            id: r.id.into_inner(), token_id: r.token_id.map(|v| v.into_inner()),
+            event_type: r.event_type, hostname: r.hostname, ip_address: r.ip_address,
+            agent_id: r.agent_id.map(|v| v.into_inner()),
+            cert_fingerprint: r.cert_fingerprint, created_at: r.created_at,
+        }).collect())
+    }
+}
