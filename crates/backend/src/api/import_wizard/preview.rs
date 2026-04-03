@@ -37,13 +37,9 @@ pub async fn preview_import(
     let mut warnings = Vec::new();
 
     // Check for existing application with same name
-    let existing_row: Option<(Uuid, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT id, name, created_at FROM applications WHERE organization_id = $1 AND name = $2",
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&app_name)
-    .fetch_optional(&state.db)
-    .await?;
+    let existing_row = crate::repository::import_queries::find_existing_app_for_preview(
+        &state.db, *user.organization_id, &app_name,
+    ).await?;
 
     let existing_application = existing_row.map(|(id, name, created_at)| ExistingApplicationInfo {
         id, name, component_count: 0, created_at,

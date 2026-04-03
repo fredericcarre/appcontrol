@@ -496,6 +496,294 @@ pub async fn find_agent_at_site_by_host(
     }
 }
 
+/// Create a default site for an organization.
+pub async fn create_default_site(
+    pool: &DbPool,
+    site_id: Uuid,
+    org_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO sites (id, organization_id, name, code, site_type) VALUES ($1, $2, $3, $4, $5)")
+        .bind(crate::db::bind_id(site_id))
+        .bind(crate::db::bind_id(org_id))
+        .bind("Default Site")
+        .bind("DEFAULT")
+        .bind("primary")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Find an existing application by org and name. Returns (id,).
+pub async fn find_app_by_name(
+    pool: &DbPool,
+    org_id: Uuid,
+    name: &str,
+) -> Result<Option<(Uuid,)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid,)>("SELECT id FROM applications WHERE organization_id = $1 AND name = $2")
+        .bind(crate::db::bind_id(org_id))
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Delete components, binding_profiles, app_variables, and component_groups for an update-style import.
+pub async fn delete_app_children_for_update(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM components WHERE application_id = $1")
+        .bind(crate::db::bind_id(app_id))
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM binding_profiles WHERE application_id = $1")
+        .bind(crate::db::bind_id(app_id))
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM app_variables WHERE application_id = $1")
+        .bind(crate::db::bind_id(app_id))
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM component_groups WHERE application_id = $1")
+        .bind(crate::db::bind_id(app_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Update an existing application (for update-style import).
+pub async fn update_application_for_import(
+    pool: &DbPool,
+    app_id: Uuid,
+    description: Option<&str>,
+    site_id: Uuid,
+    tags_json: &Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
+        "UPDATE applications SET description = $1, site_id = $2, tags = $3, updated_at = {} WHERE id = $4",
+        crate::db::sql::now()
+    ))
+    .bind(description)
+    .bind(crate::db::bind_id(site_id))
+    .bind(tags_json)
+    .bind(crate::db::bind_id(app_id))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert a new application with tags (for fresh import).
+pub async fn insert_application_for_import(
+    pool: &DbPool,
+    app_id: Uuid,
+    name: &str,
+    description: Option<&str>,
+    org_id: Uuid,
+    site_id: Uuid,
+    tags_json: &Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO applications (id, name, description, organization_id, site_id, tags) VALUES ($1, $2, $3, $4, $5, $6)")
+        .bind(crate::db::bind_id(app_id))
+        .bind(name)
+        .bind(description)
+        .bind(crate::db::bind_id(org_id))
+        .bind(crate::db::bind_id(site_id))
+        .bind(tags_json)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Insert an import component with agent_id and full fields.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_import_component_with_agent(
+    pool: &DbPool,
+    comp_id: Uuid,
+    app_id: Uuid,
+    name: &str,
+    display_name: Option<&str>,
+    description: Option<&str>,
+    component_type: &str,
+    icon: &str,
+    group_id: Option<Uuid>,
+    host: Option<&str>,
+    agent_id: Uuid,
+    check_cmd: Option<&str>,
+    start_cmd: Option<&str>,
+    stop_cmd: Option<&str>,
+    integrity_cmd: Option<&str>,
+    post_start_cmd: Option<&str>,
+    infra_cmd: Option<&str>,
+    rebuild_cmd: Option<&str>,
+    rebuild_infra_cmd: Option<&str>,
+    check_interval_seconds: i32,
+    start_timeout_seconds: i32,
+    stop_timeout_seconds: i32,
+    is_optional: bool,
+    pos_x: f32,
+    pos_y: f32,
+    cluster_size: Option<i32>,
+    cluster_nodes_json: &Option<Value>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO components (
+            id, application_id, name, display_name, description, component_type,
+            icon, group_id, host, agent_id, check_cmd, start_cmd, stop_cmd,
+            integrity_check_cmd, post_start_check_cmd, infra_check_cmd,
+            rebuild_cmd, rebuild_infra_cmd,
+            check_interval_seconds, start_timeout_seconds, stop_timeout_seconds,
+            is_optional, position_x, position_y, cluster_size, cluster_nodes
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26
+        )"#,
+    )
+    .bind(crate::db::bind_id(comp_id))
+    .bind(crate::db::bind_id(app_id))
+    .bind(name)
+    .bind(display_name)
+    .bind(description)
+    .bind(component_type)
+    .bind(icon)
+    .bind(group_id.map(crate::db::bind_id))
+    .bind(host)
+    .bind(crate::db::bind_id(agent_id))
+    .bind(check_cmd)
+    .bind(start_cmd)
+    .bind(stop_cmd)
+    .bind(integrity_cmd)
+    .bind(post_start_cmd)
+    .bind(infra_cmd)
+    .bind(rebuild_cmd)
+    .bind(rebuild_infra_cmd)
+    .bind(check_interval_seconds)
+    .bind(start_timeout_seconds)
+    .bind(stop_timeout_seconds)
+    .bind(is_optional)
+    .bind(pos_x)
+    .bind(pos_y)
+    .bind(cluster_size)
+    .bind(cluster_nodes_json)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Find a site by org and code. Returns (id,).
+pub async fn find_site_by_code(
+    pool: &DbPool,
+    org_id: Uuid,
+    code: &str,
+) -> Result<Option<(Uuid,)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid,)>("SELECT id FROM sites WHERE organization_id = $1 AND code = $2")
+        .bind(crate::db::bind_id(org_id))
+        .bind(code)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Upsert a site override for a component.
+pub async fn upsert_site_override(
+    pool: &DbPool,
+    component_id: Uuid,
+    site_id: Uuid,
+    agent_id_override: Option<Uuid>,
+    check_cmd_override: Option<&str>,
+    start_cmd_override: Option<&str>,
+    stop_cmd_override: Option<&str>,
+    rebuild_cmd_override: Option<&str>,
+    env_vars_override: &Option<Value>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO site_overrides (component_id, site_id, agent_id_override, check_cmd_override, start_cmd_override, stop_cmd_override, rebuild_cmd_override, env_vars_override)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (component_id, site_id) DO UPDATE SET
+            agent_id_override = EXCLUDED.agent_id_override,
+            check_cmd_override = EXCLUDED.check_cmd_override,
+            start_cmd_override = EXCLUDED.start_cmd_override,
+            stop_cmd_override = EXCLUDED.stop_cmd_override,
+            rebuild_cmd_override = EXCLUDED.rebuild_cmd_override,
+            env_vars_override = EXCLUDED.env_vars_override"#,
+    )
+    .bind(crate::db::bind_id(component_id))
+    .bind(crate::db::bind_id(site_id))
+    .bind(agent_id_override.map(crate::db::bind_id))
+    .bind(check_cmd_override)
+    .bind(start_cmd_override)
+    .bind(stop_cmd_override)
+    .bind(rebuild_cmd_override)
+    .bind(env_vars_override)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Create a binding profile with gateway IDs.
+pub async fn create_binding_profile(
+    pool: &DbPool,
+    profile_id: Uuid,
+    app_id: Uuid,
+    name: &str,
+    description: Option<&str>,
+    profile_type: &str,
+    is_active: bool,
+    gateway_ids: crate::db::UuidArray,
+    auto_failover: bool,
+    created_by: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO binding_profiles (id, application_id, name, description, profile_type, is_active, gateway_ids, auto_failover, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+    )
+    .bind(crate::db::bind_id(profile_id))
+    .bind(crate::db::bind_id(app_id))
+    .bind(name)
+    .bind(description)
+    .bind(profile_type)
+    .bind(is_active)
+    .bind(gateway_ids)
+    .bind(auto_failover)
+    .bind(crate::db::bind_id(created_by))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Create a binding profile mapping.
+pub async fn create_binding_profile_mapping(
+    pool: &DbPool,
+    profile_id: Uuid,
+    component_name: &str,
+    host: &str,
+    agent_id: Uuid,
+    resolved_via: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO binding_profile_mappings (profile_id, component_name, host, agent_id, resolved_via) VALUES ($1, $2, $3, $4, $5)"#,
+    )
+    .bind(crate::db::bind_id(profile_id))
+    .bind(component_name)
+    .bind(host)
+    .bind(crate::db::bind_id(agent_id))
+    .bind(resolved_via)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Find an existing application by org and name for preview. Returns (id, name, created_at).
+pub async fn find_existing_app_for_preview(
+    pool: &DbPool,
+    org_id: Uuid,
+    name: &str,
+) -> Result<Option<(Uuid, String, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, name, created_at FROM applications WHERE organization_id = $1 AND name = $2",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+}
+
 /// Find the default site for an organization (prefer 'primary' type).
 pub async fn find_default_site(
     pool: &DbPool,
