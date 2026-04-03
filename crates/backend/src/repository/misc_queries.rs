@@ -1547,3 +1547,230 @@ pub async fn history_command_executions(
             .collect())
     }
 }
+
+// ============================================================================
+// Approval queries (api/approvals.rs)
+// ============================================================================
+
+/// Row type for approval requests.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct ApprovalRow {
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
+    pub operation_type: String,
+    pub resource_type: String,
+    pub resource_id: DbUuid,
+    pub risk_level: String,
+    pub requested_by: DbUuid,
+    pub request_payload: Value,
+    pub status: String,
+    pub required_approvals: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub resolved_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Check if an approval policy is enabled for an operation type.
+pub async fn check_approval_policy(
+    pool: &DbPool,
+    organization_id: DbUuid,
+    operation_type: &str,
+) -> Result<Option<(bool,)>, sqlx::Error> {
+    sqlx::query_as::<_, (bool,)>(
+        "SELECT enabled FROM approval_policies WHERE organization_id = $1 AND operation_type = $2",
+    )
+    .bind(organization_id)
+    .bind(operation_type)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Insert a new approval request and return it.
+pub async fn insert_approval_request(
+    pool: &DbPool,
+    request_id: Uuid,
+    organization_id: DbUuid,
+    operation_type: &str,
+    resource_type: &str,
+    resource_id: Uuid,
+    risk_level: &str,
+    requested_by: DbUuid,
+    request_payload: &Value,
+    required_approvals: i32,
+    timeout_minutes: i32,
+) -> Result<ApprovalRow, sqlx::Error> {
+    sqlx::query_as::<_, ApprovalRow>(&format!(
+        "INSERT INTO approval_requests (
+                id, organization_id, operation_type, resource_type, resource_id,
+                risk_level, requested_by, request_payload, required_approvals, expires_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, {} + make_interval(mins => $10))
+            RETURNING id, organization_id, operation_type, resource_type, resource_id,
+                      risk_level, requested_by, request_payload, status, required_approvals,
+                      created_at, expires_at, resolved_at",
+        db::sql::now()
+    ))
+    .bind(request_id)
+    .bind(crate::db::bind_id(organization_id))
+    .bind(operation_type)
+    .bind(resource_type)
+    .bind(resource_id)
+    .bind(risk_level)
+    .bind(crate::db::bind_id(requested_by))
+    .bind(request_payload)
+    .bind(required_approvals)
+    .bind(timeout_minutes)
+    .fetch_one(pool)
+    .await
+}
+
+/// List approval requests for an organization.
+pub async fn list_approval_requests(
+    pool: &DbPool,
+    organization_id: DbUuid,
+) -> Result<Vec<ApprovalRow>, sqlx::Error> {
+    sqlx::query_as::<_, ApprovalRow>(
+        r#"
+        SELECT id, organization_id, operation_type, resource_type, resource_id,
+               risk_level, requested_by, request_payload, status, required_approvals,
+               created_at, expires_at, resolved_at
+        FROM approval_requests
+        WHERE organization_id = $1
+        ORDER BY created_at DESC
+        LIMIT 100
+        "#,
+    )
+    .bind(crate::db::bind_id(organization_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Get a single approval request by id and org.
+pub async fn get_approval_request(
+    pool: &DbPool,
+    request_id: Uuid,
+    organization_id: DbUuid,
+) -> Result<Option<ApprovalRow>, sqlx::Error> {
+    sqlx::query_as::<_, ApprovalRow>(
+        r#"
+        SELECT id, organization_id, operation_type, resource_type, resource_id,
+               risk_level, requested_by, request_payload, status, required_approvals,
+               created_at, expires_at, resolved_at
+        FROM approval_requests
+        WHERE id = $1 AND organization_id = $2
+        "#,
+    )
+    .bind(request_id)
+    .bind(crate::db::bind_id(organization_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Expire an approval request.
+pub async fn expire_approval_request(
+    pool: &DbPool,
+    request_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
+        "UPDATE approval_requests SET status = 'expired', resolved_at = {} WHERE id = $1",
+        db::sql::now()
+    ))
+    .bind(request_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert an approval decision.
+pub async fn insert_approval_decision(
+    pool: &DbPool,
+    decision_id: Uuid,
+    request_id: Uuid,
+    decided_by: DbUuid,
+    decision: &str,
+    reason: &Option<String>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO approval_decisions (id, request_id, decided_by, decision, reason) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(decision_id)
+    .bind(request_id)
+    .bind(crate::db::bind_id(decided_by))
+    .bind(decision)
+    .bind(reason)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Count approvals for a request.
+pub async fn count_approvals(
+    pool: &DbPool,
+    request_id: Uuid,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM approval_decisions WHERE request_id = $1 AND decision = 'approved'",
+    )
+    .bind(request_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// Update approval request status.
+pub async fn update_approval_status(
+    pool: &DbPool,
+    request_id: Uuid,
+    status: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
+        "UPDATE approval_requests SET status = $2, resolved_at = {} WHERE id = $1",
+        db::sql::now()
+    ))
+    .bind(request_id)
+    .bind(status)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// List approval policies for an organization.
+pub async fn list_approval_policies(
+    pool: &DbPool,
+    organization_id: DbUuid,
+) -> Result<Vec<(DbUuid, String, String, i32, i32, bool)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String, i32, i32, bool)>(
+        "SELECT id, operation_type, risk_level, required_approvals, timeout_minutes, enabled \
+         FROM approval_policies WHERE organization_id = $1 ORDER BY operation_type",
+    )
+    .bind(crate::db::bind_id(organization_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Upsert an approval policy.
+pub async fn upsert_approval_policy(
+    pool: &DbPool,
+    organization_id: DbUuid,
+    operation_type: &str,
+    risk_level: &str,
+    required_approvals: i32,
+    timeout_minutes: i32,
+    enabled: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO approval_policies (organization_id, operation_type, risk_level, required_approvals, timeout_minutes, enabled)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (organization_id, operation_type)
+        DO UPDATE SET risk_level = $3, required_approvals = $4, timeout_minutes = $5, enabled = $6
+        "#,
+    )
+    .bind(crate::db::bind_id(organization_id))
+    .bind(operation_type)
+    .bind(risk_level)
+    .bind(required_approvals)
+    .bind(timeout_minutes)
+    .bind(enabled)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
