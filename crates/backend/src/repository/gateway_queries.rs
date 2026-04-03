@@ -1043,6 +1043,19 @@ pub async fn deactivate_agent_tx<'a>(
     Ok(())
 }
 
+/// Deactivate agent and clear identity (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn deactivate_agent_tx<'a>(
+    tx: &mut crate::db::DbTransaction<'a>,
+    agent_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE agents SET is_active = 0, identity_verified = 0 WHERE id = $1")
+        .bind(DbUuid::from(agent_id))
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 /// Insert an agent blocked event in transaction.
 pub async fn insert_agent_blocked_event_tx<'a>(
     tx: &mut crate::db::DbTransaction<'a>,
