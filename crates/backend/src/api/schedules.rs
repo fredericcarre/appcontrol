@@ -336,9 +336,8 @@ pub async fn create_app_schedule(
     }
 
     // Get org_id from application
-    let org_id: Uuid = sqlx::query_scalar("SELECT organization_id FROM applications WHERE id = $1")
-        .bind(crate::db::bind_id(app_id))
-        .fetch_optional(&state.db)
+    use crate::repository::schedule_queries as sched_repo;
+    let org_id: Uuid = sched_repo::get_org_id_for_app_sched(&state.db, app_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound)?;
@@ -365,51 +364,21 @@ pub async fn create_app_schedule(
     // Create schedule
     let schedule_id = Uuid::new_v4();
 
-    sqlx::query(
-        r#"
-        INSERT INTO operation_schedules
-            (id, organization_id, application_id, name, description, operation,
-             cron_expression, timezone, is_enabled, next_run_at, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $10)
-        "#,
+    sched_repo::create_operation_schedule(
+        &state.db, schedule_id, org_id, app_id, None,
+        &req.name, req.description.as_deref(), &req.operation,
+        &cron_expression, &req.timezone, next_run_at, *user.user_id,
     )
-    .bind(schedule_id)
-    .bind(org_id)
-    .bind(crate::db::bind_id(app_id))
-    .bind(&req.name)
-    .bind(&req.description)
-    .bind(&req.operation)
-    .bind(&cron_expression)
-    .bind(&req.timezone)
-    .bind(next_run_at)
-    .bind(crate::db::bind_id(user.user_id))
-    .execute(&state.db)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     // Fetch the created schedule
-    let row = sqlx::query_as::<_, ScheduleRow>(
-        r#"
-        SELECT id, organization_id, application_id, component_id, name, description,
-               operation, cron_expression, timezone, is_enabled,
-               last_run_at, next_run_at, last_run_status, last_run_message,
-               created_by, created_at, updated_at
-        FROM operation_schedules
-        WHERE id = $1
-        "#,
-    )
-    .bind(schedule_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let row = sched_repo::get_schedule_by_id(&state.db, schedule_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::Internal("Schedule not found after creation".to_string()))?;
 
-    let app_name: Option<String> =
-        sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-            .bind(crate::db::bind_id(app_id))
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
+    let app_name = sched_repo::get_app_name_by_id(&state.db, app_id).await;
     let target_name = app_name.unwrap_or_else(|| app_id.to_string());
 
     let response = row_to_response(row, "application".to_string(), app_id.into(), target_name);
