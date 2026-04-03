@@ -171,7 +171,7 @@ struct VarRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct GroupRow {
+pub struct GroupRow {
     id: DbUuid,
     name: String,
     description: Option<String>,
@@ -180,7 +180,7 @@ struct GroupRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct ComponentRow {
+pub struct ComponentRow {
     id: DbUuid,
     name: String,
     display_name: Option<String>,
@@ -206,7 +206,7 @@ struct ComponentRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct CustomCmdRow {
+pub struct CustomCmdRow {
     id: DbUuid,
     component_id: DbUuid,
     name: String,
@@ -216,7 +216,7 @@ struct CustomCmdRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct CmdParamRow {
+pub struct CmdParamRow {
     command_id: DbUuid,
     name: String,
     description: Option<String>,
@@ -228,7 +228,7 @@ struct CmdParamRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct LinkRow {
+pub struct LinkRow {
     component_id: DbUuid,
     label: String,
     url: String,
@@ -260,13 +260,14 @@ pub async fn export_app_json(
     let include_secrets = params.include_secrets.unwrap_or(false);
 
     // Fetch application
-    let app = sqlx::query_as::<_, AppRow>(
-        "SELECT name, description, tags FROM applications WHERE id = $1",
-    )
-    .bind(app_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    let app_row = crate::repository::misc_queries::get_app_for_export(&state.db, app_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let app = AppRow {
+        name: app_row.0,
+        description: app_row.1,
+        tags: app_row.2,
+    };
 
     // Parse tags
     let tags: Vec<String> = app
@@ -275,12 +276,16 @@ pub async fn export_app_json(
         .unwrap_or_default();
 
     // Fetch variables
-    let var_rows = sqlx::query_as::<_, VarRow>(
-        "SELECT name, value, description, is_secret FROM app_variables WHERE application_id = $1 ORDER BY name",
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+    let var_raw = crate::repository::misc_queries::get_vars_for_export(&state.db, app_id).await?;
+    let var_rows: Vec<VarRow> = var_raw
+        .into_iter()
+        .map(|(name, value, description, is_secret)| VarRow {
+            name,
+            value,
+            description,
+            is_secret,
+        })
+        .collect();
 
     let variables: Vec<VariableExport> = var_rows
         .into_iter()
@@ -297,12 +302,8 @@ pub async fn export_app_json(
         .collect();
 
     // Fetch groups and build ID → name map
-    let group_rows = sqlx::query_as::<_, GroupRow>(
-        "SELECT id, name, description, color, display_order FROM component_groups WHERE application_id = $1 ORDER BY display_order",
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+    let group_rows =
+        crate::repository::misc_queries::get_groups_for_export(&state.db, app_id).await?;
 
     let group_id_to_name: HashMap<DbUuid, String> =
         group_rows.iter().map(|g| (g.id, g.name.clone())).collect();
@@ -318,53 +319,20 @@ pub async fn export_app_json(
         .collect();
 
     // Fetch components
-    let comp_rows = sqlx::query_as::<_, ComponentRow>(
-        r#"
-        SELECT id, name, display_name, description, component_type, icon, group_id, host,
-               check_cmd, start_cmd, stop_cmd, integrity_check_cmd, post_start_check_cmd,
-               infra_check_cmd, rebuild_cmd, rebuild_infra_cmd,
-               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds,
-               is_optional, position_x, position_y
-        FROM components WHERE application_id = $1 ORDER BY name
-        "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+    let comp_rows =
+        crate::repository::misc_queries::get_components_for_export(&state.db, app_id).await?;
 
     // Build component ID → name map for dependencies
     let comp_id_to_name: HashMap<DbUuid, String> =
         comp_rows.iter().map(|c| (c.id, c.name.clone())).collect();
 
     // Fetch all custom commands
-    let cmd_rows = sqlx::query_as::<_, CustomCmdRow>(
-        r#"
-        SELECT cc.id, cc.component_id, cc.name, cc.command, cc.description, cc.requires_confirmation
-        FROM component_commands cc
-        JOIN components c ON c.id = cc.component_id
-        WHERE c.application_id = $1
-        ORDER BY cc.name
-        "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+    let cmd_rows =
+        crate::repository::misc_queries::get_custom_cmds_for_export(&state.db, app_id).await?;
 
     // Fetch all command parameters
-    let param_rows = sqlx::query_as::<_, CmdParamRow>(
-        r#"
-        SELECT cip.command_id, cip.name, cip.description, cip.default_value,
-               cip.validation_regex, cip.required, cip.param_type, cip.enum_values
-        FROM command_input_params cip
-        JOIN component_commands cc ON cc.id = cip.command_id
-        JOIN components c ON c.id = cc.component_id
-        WHERE c.application_id = $1
-        ORDER BY cip.display_order
-        "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+    let param_rows =
+        crate::repository::misc_queries::get_cmd_params_for_export(&state.db, app_id).await?;
 
     // Group parameters by command ID
     let mut params_by_cmd: HashMap<DbUuid, Vec<CommandParamExport>> = HashMap::new();
@@ -398,18 +366,8 @@ pub async fn export_app_json(
     }
 
     // Fetch all links
-    let link_rows = sqlx::query_as::<_, LinkRow>(
-        r#"
-        SELECT cl.component_id, cl.label, cl.url, cl.link_type
-        FROM component_links cl
-        JOIN components c ON c.id = cl.component_id
-        WHERE c.application_id = $1
-        ORDER BY cl.display_order
-        "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+    let link_rows =
+        crate::repository::misc_queries::get_links_for_export(&state.db, app_id).await?;
 
     // Group links by component ID
     let mut links_by_comp: HashMap<DbUuid, Vec<LinkExport>> = HashMap::new();
@@ -493,12 +451,14 @@ pub async fn export_app_json(
         .collect();
 
     // Fetch dependencies
-    let dep_rows = sqlx::query_as::<_, DepRow>(
-        "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+    let dep_raw = crate::repository::misc_queries::get_deps_for_export(&state.db, app_id).await?;
+    let dep_rows: Vec<DepRow> = dep_raw
+        .into_iter()
+        .map(|(f, t)| DepRow {
+            from_component_id: f,
+            to_component_id: t,
+        })
+        .collect();
 
     let dependencies: Vec<DependencyExport> = dep_rows
         .into_iter()

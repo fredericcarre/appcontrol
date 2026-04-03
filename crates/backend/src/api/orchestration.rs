@@ -41,27 +41,10 @@ pub struct PreflightResult {
 /// Check if all agents for an application are reachable before starting
 pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult {
     // Get all components with their agent information
-    let components = sqlx::query_as::<
-        _,
-        (
-            DbUuid,
-            String,
-            Option<DbUuid>,
-            Option<String>,
-            Option<DbUuid>,
-        ),
-    >(
-        r#"
-        SELECT c.id, c.name, c.agent_id, a.hostname, a.gateway_id
-        FROM components c
-        LEFT JOIN agents a ON c.agent_id = a.id
-        WHERE c.application_id = $1 AND c.is_optional = false
-        "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let components =
+        crate::repository::core_queries::get_components_for_preflight(&state.db, app_id)
+            .await
+            .unwrap_or_default();
 
     // Get connected agents and gateways from WebSocket hub
     let connected_agents: HashSet<Uuid> = state.ws_hub.connected_agent_ids().into_iter().collect();
@@ -91,14 +74,10 @@ pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult 
                 if let Some(gid) = gateway_id {
                     if !seen_gateways.contains(&gid) && !connected_gateways.contains(&gid) {
                         // Get gateway name
-                        let gw_name = sqlx::query_scalar::<_, String>(
-                            "SELECT name FROM gateways WHERE id = $1",
+                        let gw_name = crate::repository::core_queries::get_gateway_name_by_id(
+                            &state.db, *gid,
                         )
-                        .bind(gid)
-                        .fetch_optional(&state.db)
                         .await
-                        .ok()
-                        .flatten()
                         .unwrap_or_else(|| gid.to_string());
 
                         disconnected_gateways.push((gid, gw_name));
@@ -233,7 +212,7 @@ pub async fn start(
     // Acquire operation lock — prevents concurrent start/stop on the same app
     let guard = state
         .operation_lock
-        .try_lock(app_id, "orchestration_start", user.user_id)
+        .try_lock(app_id, "orchestration_start", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -268,7 +247,7 @@ pub async fn stop(
     // Acquire operation lock — prevents concurrent start/stop on the same app
     let guard = state
         .operation_lock
-        .try_lock(app_id, "orchestration_stop", user.user_id)
+        .try_lock(app_id, "orchestration_stop", *user.user_id)
         .await
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
@@ -303,17 +282,8 @@ pub async fn status(
         return Err(ApiError::Forbidden);
     }
 
-    let components = sqlx::query_as::<_, (DbUuid, String, String)>(
-        r#"
-        SELECT c.id, c.name, c.current_state
-        FROM components c
-        WHERE c.application_id = $1
-        ORDER BY c.name
-        "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+    let components =
+        crate::repository::core_queries::get_component_states(&state.db, app_id).await?;
 
     let data: Vec<Value> = components
         .iter()
@@ -344,16 +314,9 @@ pub async fn wait_running(
     let start_time = std::time::Instant::now();
 
     loop {
-        let components = sqlx::query_as::<_, (DbUuid, String, String)>(
-            r#"
-            SELECT c.id, c.name, c.current_state
-            FROM components c
-            WHERE c.application_id = $1 AND c.is_optional = false
-            "#,
-        )
-        .bind(app_id)
-        .fetch_all(&state.db)
-        .await?;
+        let components =
+            crate::repository::core_queries::get_required_component_states(&state.db, app_id)
+                .await?;
 
         let total = components.len();
         let running_count = components.iter().filter(|(_, _, s)| s == "RUNNING").count();
@@ -464,16 +427,8 @@ pub async fn health(
     }
 
     // Get component states
-    let components = sqlx::query_as::<_, (DbUuid, String, String, Option<DbUuid>)>(
-        r#"
-        SELECT c.id, c.name, c.current_state, c.agent_id
-        FROM components c
-        WHERE c.application_id = $1 AND c.is_optional = false
-        "#,
-    )
-    .bind(app_id)
-    .fetch_all(&state.db)
-    .await?;
+    let components =
+        crate::repository::core_queries::get_component_states_with_agent(&state.db, app_id).await?;
 
     // Pre-flight check for real-time agent status
     let preflight = preflight_check(&state, app_id).await;

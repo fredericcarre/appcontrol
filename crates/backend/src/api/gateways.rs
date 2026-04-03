@@ -14,8 +14,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+#[allow(unused_imports)]
 use crate::db::DbUuid;
 use crate::error::{ApiError, OptionExt};
+use crate::repository::gateway_queries as gw_repo;
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -49,7 +51,7 @@ pub struct GatewayRow {
 /// Response struct for gateway list with additional computed fields
 #[derive(Debug, Serialize)]
 pub struct GatewayListItem {
-    pub id: DbUuid,
+    pub id: Uuid,
     pub name: String,
     pub zone: String,
     pub status: String, // "active", "suspended"
@@ -61,7 +63,7 @@ pub struct GatewayListItem {
     pub version: Option<String>,
     pub last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
     // Site information
-    pub site_id: Option<DbUuid>,
+    pub site_id: Option<Uuid>,
     pub site_name: Option<String>,
     pub site_code: Option<String>,
 }
@@ -69,14 +71,14 @@ pub struct GatewayListItem {
 /// Site summary for grouping gateways
 #[derive(Debug, Serialize)]
 pub struct SiteSummary {
-    pub site_id: Option<DbUuid>,
+    pub site_id: Option<Uuid>,
     pub site_name: String,
     pub site_code: String,
     /// DEPRECATED: Legacy zone field for backward compatibility. Same as site_code.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zone: Option<String>,
     pub gateway_count: i64,
-    pub active_gateway_id: Option<DbUuid>,
+    pub active_gateway_id: Option<Uuid>,
     pub failover_active: bool,
     pub gateways: Vec<GatewayListItem>,
 }
@@ -86,44 +88,10 @@ pub async fn list_gateways(
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
     // Allow all authenticated users to view gateways (read-only)
-    let gateways = sqlx::query_as::<
-        _,
-        (
-            DbUuid,
-            String,
-            Option<String>,
-            bool,
-            bool,
-            i32,
-            Option<String>,
-            Option<chrono::DateTime<chrono::Utc>>,
-            i64,
-            Option<DbUuid>,
-            Option<String>,
-            Option<String>,
-        ),
-    >(
-        r#"SELECT
-               g.id,
-               g.name,
-               g.zone,
-               g.is_active,
-               COALESCE(g.is_primary, false) as is_primary,
-               COALESCE(g.priority, 0) as priority,
-               g.version,
-               g.last_heartbeat_at,
-               COALESCE((SELECT COUNT(*) FROM agents a WHERE a.gateway_id = g.id), 0) as agent_count,
-               g.site_id,
-               s.name as site_name,
-               s.code as site_code
-           FROM gateways g
-           LEFT JOIN sites s ON s.id = g.site_id
-           WHERE g.organization_id = $1
-           ORDER BY COALESCE(s.name, 'zzz'), g.priority, g.name"#,
-    )
-    .bind(user.organization_id)
-    .fetch_all(&state.db)
-    .await?;
+    let gateways = state
+        .gateway_repo
+        .list_gateways(*user.organization_id)
+        .await?;
 
     // Get the set of gateways actually connected via WebSocket
     let connected_ids: std::collections::HashSet<Uuid> =
@@ -132,25 +100,24 @@ pub async fn list_gateways(
     // Group by site_id and compute failover status
     // Key is (site_id, site_name, site_code)
     let mut sites_map: std::collections::HashMap<
-        (Option<DbUuid>, String, String),
+        (Option<Uuid>, String, String),
         Vec<GatewayListItem>,
     > = std::collections::HashMap::new();
 
-    for (
-        id,
-        name,
-        zone,
-        is_active,
-        is_primary,
-        priority,
-        version,
-        last_heartbeat,
-        agent_count,
-        site_id,
-        site_name,
-        site_code,
-    ) in gateways
-    {
+    for gw in gateways {
+        let id = gw.id;
+        let name = gw.name;
+        let zone = gw.zone;
+        let is_active = gw.is_active;
+        let is_primary = gw.is_primary;
+        let priority = gw.priority;
+        let version = gw.version;
+        let last_heartbeat = gw.last_heartbeat_at;
+        let agent_count = gw.agent_count;
+        let site_id = gw.site_id;
+        let site_name = gw.site_name;
+        let site_code = gw.site_code;
+
         // Connection status is determined by actual WebSocket connection in the hub
         let connected = is_active && connected_ids.contains(&id);
 
@@ -254,22 +221,28 @@ pub async fn get_gateway(
         return Err(ApiError::Forbidden);
     }
 
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"SELECT id, organization_id, name, zone, hostname, port, site_id,
-                  certificate_fingerprint, is_active,
-                  COALESCE(is_primary, false) as is_primary,
-                  COALESCE(priority, 0) as priority,
-                  version, last_heartbeat_at, created_at
-           FROM gateways
-           WHERE id = $1 AND organization_id = $2"#,
-    )
-    .bind(id)
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let gw = state
+        .gateway_repo
+        .get_gateway(id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
-    Ok(Json(json!(gw)))
+    Ok(Json(json!({
+        "id": gw.id,
+        "organization_id": gw.organization_id,
+        "name": gw.name,
+        "zone": gw.zone,
+        "hostname": gw.hostname,
+        "port": gw.port,
+        "site_id": gw.site_id,
+        "certificate_fingerprint": gw.certificate_fingerprint,
+        "is_active": gw.is_active,
+        "is_primary": gw.is_primary,
+        "priority": gw.priority,
+        "version": gw.version,
+        "last_heartbeat_at": gw.last_heartbeat_at,
+        "created_at": gw.created_at,
+    })))
 }
 
 pub async fn update_gateway(
@@ -284,15 +257,7 @@ pub async fn update_gateway(
 
     // If site_id is provided, verify it belongs to the same org
     if let Some(site_id) = req.site_id {
-        let site_exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM sites WHERE id = $1 AND organization_id = $2)",
-        )
-        .bind(site_id)
-        .bind(user.organization_id)
-        .fetch_one(&state.db)
-        .await?;
-
-        if !site_exists {
+        if !gw_repo::site_exists_in_org(&state.db, site_id, *user.organization_id).await? {
             return Err(ApiError::Validation(
                 "site_id does not exist in this organization".to_string(),
             ));
@@ -301,35 +266,14 @@ pub async fn update_gateway(
 
     // If setting as primary, first unset any existing primary in the same site
     if req.is_primary == Some(true) {
-        let gw_info: Option<(Option<DbUuid>, String)> = sqlx::query_as(
-            "SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2",
-        )
-        .bind(id)
-        .bind(user.organization_id)
-        .fetch_optional(&state.db)
-        .await?;
+        let gw_info =
+            gw_repo::get_gateway_site_and_zone(&state.db, id, *user.organization_id).await?;
 
         if let Some((site_id, zone)) = gw_info {
             if let Some(sid) = site_id {
-                // Unset primary within same site
-                sqlx::query(
-                    "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND site_id = $2 AND id != $3",
-                )
-                .bind(user.organization_id)
-                .bind(sid)
-                .bind(id)
-                .execute(&state.db)
-                .await?;
+                gw_repo::unset_primary_in_site(&state.db, *user.organization_id, sid, id).await?;
             } else {
-                // Fallback: use zone for gateways without site assignment
-                sqlx::query(
-                    "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND site_id IS NULL AND id != $3",
-                )
-                .bind(user.organization_id)
-                .bind(&zone)
-                .bind(id)
-                .execute(&state.db)
-                .await?;
+                gw_repo::unset_primary_in_zone(&state.db, *user.organization_id, &zone, id).await?;
             }
         }
     }
@@ -350,28 +294,16 @@ pub async fn update_gateway(
     .await
     .ok();
 
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"UPDATE gateways SET
-               name = COALESCE($3, name),
-               site_id = COALESCE($4, site_id),
-               is_active = COALESCE($5, is_active),
-               is_primary = COALESCE($6, is_primary),
-               priority = COALESCE($7, priority)
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active,
-                     COALESCE(is_primary, false) as is_primary,
-                     COALESCE(priority, 0) as priority,
-                     version, last_heartbeat_at, created_at"#,
+    let gw = gw_repo::update_gateway_returning(
+        &state.db,
+        id,
+        *user.organization_id,
+        &req.name,
+        req.site_id,
+        req.is_active,
+        req.is_primary,
+        req.priority,
     )
-    .bind(id)
-    .bind(user.organization_id)
-    .bind(&req.name)
-    .bind(req.site_id)
-    .bind(req.is_active)
-    .bind(req.is_primary)
-    .bind(req.priority)
-    .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
 
@@ -389,17 +321,10 @@ pub async fn set_gateway_primary(
     }
 
     // Get the gateway's site_id
-    let gw: Option<(Option<Uuid>, String)> =
-        sqlx::query_as("SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2")
-            .bind(gateway_id)
-            .bind(user.organization_id)
-            .fetch_optional(&state.db)
-            .await?;
-
-    let (site_id, zone) = match gw {
-        Some((s, z)) => (s, z),
-        None => return Err(ApiError::NotFound),
-    };
+    let (site_id, zone) =
+        gw_repo::get_gateway_site_and_zone(&state.db, gateway_id, *user.organization_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
 
     crate::middleware::audit::log_action(
         &state.db,
@@ -416,38 +341,23 @@ pub async fn set_gateway_primary(
 
     // Unset existing primary in the same site (or same zone if no site assigned)
     if let Some(sid) = site_id {
-        sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND site_id = $2 AND id != $3")
-            .bind(user.organization_id)
-            .bind(sid)
-            .bind(gateway_id)
-            .execute(&mut *tx)
-            .await?;
+        gw_repo::unset_primary_in_site_tx(&mut tx, *user.organization_id, sid, gateway_id).await?;
     } else {
-        // Fallback: use zone for gateways without site assignment
-        sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND site_id IS NULL AND id != $3")
-            .bind(user.organization_id)
-            .bind(&zone)
-            .bind(gateway_id)
-            .execute(&mut *tx)
+        gw_repo::unset_primary_in_zone_tx(&mut tx, *user.organization_id, &zone, gateway_id)
             .await?;
     }
 
     // Set this gateway as primary
-    sqlx::query("UPDATE gateways SET is_primary = true WHERE id = $1")
-        .bind(gateway_id)
-        .execute(&mut *tx)
-        .await?;
+    gw_repo::set_primary_tx(&mut tx, gateway_id).await?;
 
     // Log status event
-    sqlx::query(
-        r#"INSERT INTO gateway_status_events (organization_id, gateway_id, event_type, triggered_by)
-           VALUES ($1, $2, 'promoted_to_primary', 'manual')"#,
+    gw_repo::insert_gateway_status_event_tx(
+        &mut tx,
+        *user.organization_id,
+        gateway_id,
+        "promoted_to_primary",
     )
-    .bind(user.organization_id)
-    .bind(gateway_id)
-    .execute(&mut *tx)
-    .await
-    .ok(); // Don't fail if table doesn't exist yet
+    .await?;
 
     tx.commit().await?;
 
@@ -465,29 +375,11 @@ pub async fn list_gateway_agents(
     Path(gateway_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify gateway belongs to user's org
-    let gateway_exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM gateways WHERE id = $1 AND organization_id = $2)",
-    )
-    .bind(gateway_id)
-    .bind(user.organization_id)
-    .fetch_one(&state.db)
-    .await?;
-
-    if !gateway_exists {
+    if !gw_repo::gateway_exists_in_org(&state.db, gateway_id, *user.organization_id).await? {
         return Err(ApiError::NotFound);
     }
 
-    let agents =
-        sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
-            r#"SELECT id, hostname, is_active, last_heartbeat_at
-           FROM agents
-           WHERE gateway_id = $1 AND organization_id = $2
-           ORDER BY hostname"#,
-        )
-        .bind(gateway_id)
-        .bind(user.organization_id)
-        .fetch_all(&state.db)
-        .await?;
+    let agents = gw_repo::list_gateway_agents(&state.db, gateway_id, *user.organization_id).await?;
 
     // Get live connection status from the WebSocket hub
     let connected_agents = state.ws_hub.connected_agent_ids();
@@ -495,13 +387,13 @@ pub async fn list_gateway_agents(
 
     let agents_json: Vec<Value> = agents
         .into_iter()
-        .map(|(id, hostname, is_active, last_heartbeat_at)| {
-            let connected = connected_set.contains(&id);
+        .map(|a| {
+            let connected = connected_set.contains(&a.id);
             json!({
-                "id": id,
-                "hostname": hostname,
-                "is_active": is_active,
-                "last_heartbeat_at": last_heartbeat_at,
+                "id": a.id,
+                "hostname": a.hostname,
+                "is_active": a.is_active,
+                "last_heartbeat_at": a.last_heartbeat_at,
                 "connected": connected,
             })
         })
@@ -531,39 +423,18 @@ pub async fn suspend_gateway(
     .await
     .ok();
 
-    #[cfg(feature = "postgres")]
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"UPDATE gateways SET is_active = false
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active,
-                     COALESCE(is_primary, false) as is_primary,
-                     COALESCE(priority, 0) as priority,
-                     version, last_heartbeat_at, created_at"#,
-    )
-    .bind(gateway_id)
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let gw = gw_repo::suspend_gateway(&state.db, gateway_id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"UPDATE gateways SET is_active = 0
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active,
-                     COALESCE(is_primary, 0) as is_primary,
-                     COALESCE(priority, 0) as priority,
-                     version, last_heartbeat_at, created_at"#,
-    )
-    .bind(DbUuid::from(gateway_id))
-    .bind(DbUuid::from(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
-
-    Ok(Json(json!(gw)))
+    Ok(Json(json!({
+        "id": gw.id, "organization_id": gw.organization_id, "name": gw.name,
+        "zone": gw.zone, "hostname": gw.hostname, "port": gw.port,
+        "site_id": gw.site_id, "certificate_fingerprint": gw.certificate_fingerprint,
+        "is_active": gw.is_active, "is_primary": gw.is_primary, "priority": gw.priority,
+        "version": gw.version, "last_heartbeat_at": gw.last_heartbeat_at,
+        "created_at": gw.created_at,
+    })))
 }
 
 /// POST /api/v1/gateways/:id/activate — Activate a suspended gateway
@@ -587,50 +458,29 @@ pub async fn activate_gateway(
     .await
     .ok();
 
-    #[cfg(feature = "postgres")]
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"UPDATE gateways SET is_active = true
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active,
-                     COALESCE(is_primary, false) as is_primary,
-                     COALESCE(priority, 0) as priority,
-                     version, last_heartbeat_at, created_at"#,
-    )
-    .bind(gateway_id)
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"UPDATE gateways SET is_active = 1
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active,
-                     COALESCE(is_primary, 0) as is_primary,
-                     COALESCE(priority, 0) as priority,
-                     version, last_heartbeat_at, created_at"#,
-    )
-    .bind(DbUuid::from(gateway_id))
-    .bind(DbUuid::from(user.organization_id))
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let gw = gw_repo::activate_gateway(&state.db, gateway_id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
     // Send ClearBlocklist to the gateway so all agents can reconnect
     // This fixes the bug where agents remain blocked after gateway activation
     let clear_msg = appcontrol_common::GatewayEnvelope::ClearBlocklist;
-    if let Ok(json) = serde_json::to_string(&clear_msg) {
-        state.ws_hub.send_to_gateway(gateway_id, &json);
+    if let Ok(json_str) = serde_json::to_string(&clear_msg) {
+        state.ws_hub.send_to_gateway(gateway_id, &json_str);
         tracing::info!(
             gateway_id = %gateway_id,
             "Sent ClearBlocklist to gateway after activation"
         );
     }
 
-    Ok(Json(json!(gw)))
+    Ok(Json(json!({
+        "id": gw.id, "organization_id": gw.organization_id, "name": gw.name,
+        "zone": gw.zone, "hostname": gw.hostname, "port": gw.port,
+        "site_id": gw.site_id, "certificate_fingerprint": gw.certificate_fingerprint,
+        "is_active": gw.is_active, "is_primary": gw.is_primary, "priority": gw.priority,
+        "version": gw.version, "last_heartbeat_at": gw.last_heartbeat_at,
+        "created_at": gw.created_at,
+    })))
 }
 
 /// DELETE /api/v1/gateways/:id — Delete a gateway
@@ -655,18 +505,11 @@ pub async fn delete_gateway(
     .ok();
 
     // First disconnect all agents from this gateway
-    sqlx::query("UPDATE agents SET gateway_id = NULL WHERE gateway_id = $1")
-        .bind(gateway_id)
-        .execute(&state.db)
-        .await?;
+    gw_repo::disconnect_agents_from_gateway(&state.db, gateway_id).await?;
 
-    let result = sqlx::query("DELETE FROM gateways WHERE id = $1 AND organization_id = $2")
-        .bind(gateway_id)
-        .bind(user.organization_id)
-        .execute(&state.db)
-        .await?;
+    let rows = gw_repo::delete_gateway(&state.db, gateway_id, *user.organization_id).await?;
 
-    if result.rows_affected() == 0 {
+    if rows == 0 {
         return Err(ApiError::NotFound);
     }
 
@@ -687,17 +530,10 @@ pub async fn block_gateway(
     }
 
     // Get the gateway to verify it exists and get agent count
-    let gw: Option<(String, String)> =
-        sqlx::query_as("SELECT name, zone FROM gateways WHERE id = $1 AND organization_id = $2")
-            .bind(gateway_id)
-            .bind(user.organization_id)
-            .fetch_optional(&state.db)
-            .await?;
-
-    let (name, zone) = match gw {
-        Some(g) => g,
-        None => return Err(ApiError::NotFound),
-    };
+    let (name, zone) =
+        gw_repo::get_gateway_name_and_zone(&state.db, gateway_id, *user.organization_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
 
     // Log before execute
     crate::middleware::audit::log_action(
@@ -714,43 +550,19 @@ pub async fn block_gateway(
     let mut tx = state.db.begin().await?;
 
     // 1. Suspend the gateway
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
-        .bind(gateway_id)
-        .execute(&mut *tx)
-        .await?;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE gateways SET is_active = 0 WHERE id = $1")
-        .bind(DbUuid::from(gateway_id))
-        .execute(&mut *tx)
-        .await?;
+    gw_repo::deactivate_gateway_tx(&mut tx, gateway_id).await?;
 
     // 2. Get all agents connected to this gateway
     let agent_ids: Vec<Uuid> =
-        sqlx::query_scalar("SELECT id FROM agents WHERE gateway_id = $1 AND organization_id = $2")
-            .bind(gateway_id)
-            .bind(user.organization_id)
-            .fetch_all(&mut *tx)
-            .await?;
-
+        gw_repo::get_gateway_agent_ids_tx(&mut tx, gateway_id, *user.organization_id).await?;
     let agent_count = agent_ids.len();
 
     // 3. Disconnect all agents (set gateway_id = NULL)
-    sqlx::query("UPDATE agents SET gateway_id = NULL WHERE gateway_id = $1")
-        .bind(gateway_id)
-        .execute(&mut *tx)
-        .await?;
+    gw_repo::disconnect_agents_tx(&mut tx, gateway_id).await?;
 
     // 4. Log gateway status event
-    sqlx::query(
-        r#"INSERT INTO gateway_status_events (organization_id, gateway_id, event_type, triggered_by)
-           VALUES ($1, $2, 'blocked', 'manual')"#,
-    )
-    .bind(user.organization_id)
-    .bind(gateway_id)
-    .execute(&mut *tx)
-    .await
-    .ok(); // Don't fail if table doesn't exist yet
+    gw_repo::insert_gateway_status_event_tx(&mut tx, *user.organization_id, gateway_id, "blocked")
+        .await?;
 
     // 5. Transition all components of affected agents to UNREACHABLE
     let mut components_affected = 0;
@@ -806,13 +618,7 @@ pub async fn revoke_agent_cert(
     }
 
     // Get agent's current fingerprint
-    let agent: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT certificate_fingerprint, certificate_cn FROM agents WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(agent_id)
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let agent = gw_repo::get_agent_cert_info(&state.db, agent_id, *user.organization_id).await?;
 
     let (fingerprint, cn) = match agent {
         Some((Some(fp), cn)) => (fp, cn),
@@ -839,41 +645,23 @@ pub async fn revoke_agent_cert(
     let mut tx = state.db.begin().await?;
 
     // Insert into revoked_certificates (APPEND-ONLY)
-    sqlx::query(
-        r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, agent_id, reason, revoked_by)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    let cn_str = cn.as_deref().unwrap_or("");
+    gw_repo::insert_revoked_agent_cert_tx(
+        &mut tx,
+        *user.organization_id,
+        &fingerprint,
+        cn_str,
+        agent_id,
+        &req.reason,
+        *user.user_id,
     )
-    .bind(user.organization_id)
-    .bind(&fingerprint)
-    .bind(&cn)
-    .bind(agent_id)
-    .bind(&req.reason)
-    .bind(user.user_id)
-    .execute(&mut *tx)
     .await?;
 
     // Log certificate event
-    sqlx::query(
-        r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
-           VALUES ($1, 'revoked', $2, $3)"#,
-    )
-    .bind(agent_id)
-    .bind(&fingerprint)
-    .bind(&cn)
-    .execute(&mut *tx)
-    .await?;
+    gw_repo::insert_agent_cert_event_tx(&mut tx, agent_id, "revoked", &fingerprint, cn_str).await?;
 
     // Deactivate the agent
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE agents SET is_active = false, identity_verified = false WHERE id = $1")
-        .bind(agent_id)
-        .execute(&mut *tx)
-        .await?;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE agents SET is_active = 0, identity_verified = 0 WHERE id = $1")
-        .bind(DbUuid::from(agent_id))
-        .execute(&mut *tx)
-        .await?;
+    gw_repo::deactivate_agent_clear_identity_tx(&mut tx, agent_id).await?;
 
     tx.commit().await?;
 
@@ -895,13 +683,7 @@ pub async fn revoke_gateway_cert(
         return Err(ApiError::Forbidden);
     }
 
-    let gw: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT certificate_fingerprint, certificate_cn FROM gateways WHERE id = $1 AND organization_id = $2",
-    )
-    .bind(gateway_id)
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let gw = gw_repo::get_gateway_cert_info(&state.db, gateway_id, *user.organization_id).await?;
 
     let (fingerprint, cn) = match gw {
         Some((Some(fp), cn)) => (fp, cn),
@@ -926,39 +708,22 @@ pub async fn revoke_gateway_cert(
 
     let mut tx = state.db.begin().await?;
 
-    sqlx::query(
-        r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, gateway_id, reason, revoked_by)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    let gw_cn_str = cn.as_deref().unwrap_or("");
+    gw_repo::insert_revoked_gateway_cert_tx(
+        &mut tx,
+        *user.organization_id,
+        &fingerprint,
+        gw_cn_str,
+        gateway_id,
+        &req.reason,
+        *user.user_id,
     )
-    .bind(user.organization_id)
-    .bind(&fingerprint)
-    .bind(&cn)
-    .bind(gateway_id)
-    .bind(&req.reason)
-    .bind(user.user_id)
-    .execute(&mut *tx)
     .await?;
 
-    sqlx::query(
-        r#"INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn)
-           VALUES ($1, 'revoked', $2, $3)"#,
-    )
-    .bind(gateway_id)
-    .bind(&fingerprint)
-    .bind(&cn)
-    .execute(&mut *tx)
-    .await?;
+    gw_repo::insert_gateway_cert_event_tx(&mut tx, gateway_id, "revoked", &fingerprint, gw_cn_str)
+        .await?;
 
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
-        .bind(gateway_id)
-        .execute(&mut *tx)
-        .await?;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE gateways SET is_active = 0 WHERE id = $1")
-        .bind(DbUuid::from(gateway_id))
-        .execute(&mut *tx)
-        .await?;
+    gw_repo::deactivate_gateway_for_revocation_tx(&mut tx, gateway_id).await?;
 
     tx.commit().await?;
 
@@ -978,39 +743,19 @@ pub async fn list_revoked_certificates(
         return Err(ApiError::Forbidden);
     }
 
-    let certs = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            Option<String>,
-            Option<Uuid>,
-            Option<Uuid>,
-            String,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
-        r#"SELECT id, fingerprint, cn, agent_id, gateway_id, reason, revoked_at
-           FROM revoked_certificates
-           WHERE organization_id = $1
-           ORDER BY revoked_at DESC
-           LIMIT 100"#,
-    )
-    .bind(user.organization_id)
-    .fetch_all(&state.db)
-    .await?;
+    let certs = gw_repo::list_revoked_certificates(&state.db, *user.organization_id).await?;
 
     let certs_json: Vec<Value> = certs
         .into_iter()
-        .map(|(id, fp, cn, agent_id, gateway_id, reason, revoked_at)| {
+        .map(|c| {
             json!({
-                "id": id,
-                "fingerprint": fp,
-                "cn": cn,
-                "agent_id": agent_id,
-                "gateway_id": gateway_id,
-                "reason": reason,
-                "revoked_at": revoked_at,
+                "id": c.id,
+                "fingerprint": c.fingerprint,
+                "cn": c.cn,
+                "agent_id": c.agent_id,
+                "gateway_id": c.gateway_id,
+                "reason": c.reason,
+                "revoked_at": c.revoked_at,
             })
         })
         .collect();
@@ -1021,14 +766,7 @@ pub async fn list_revoked_certificates(
 /// Check if a certificate fingerprint is revoked.
 /// Used internally by the gateway mTLS verification.
 pub async fn is_cert_revoked(db: &crate::db::DbPool, org_id: DbUuid, fingerprint: &str) -> bool {
-    sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM revoked_certificates WHERE organization_id = $1 AND fingerprint = $2)",
-    )
-    .bind(org_id)
-    .bind(fingerprint)
-    .fetch_one(db)
-    .await
-    .unwrap_or(false)
+    gw_repo::is_cert_revoked_in_org(db, *org_id, fingerprint).await
 }
 
 /// Verify an agent's certificate fingerprint matches what we issued (pinning).
@@ -1038,29 +776,7 @@ pub async fn verify_agent_cert_pinning(
     agent_id: DbUuid,
     presented_fingerprint: &str,
 ) -> bool {
-    #[cfg(feature = "postgres")]
-    let stored: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT certificate_fingerprint FROM agents WHERE id = $1 AND is_active = true AND identity_verified = true",
-    )
-    .bind(agent_id)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten();
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let stored: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT certificate_fingerprint FROM agents WHERE id = $1 AND is_active = 1 AND identity_verified = 1",
-    )
-    .bind(agent_id)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten();
-
-    match stored {
-        Some(Some(fp)) => fp == presented_fingerprint,
-        _ => false,
-    }
+    gw_repo::verify_agent_cert_pinning(db, *agent_id, presented_fingerprint).await
 }
 
 /// Helper: Transition all components of an agent to UNREACHABLE when gateway is blocked.
@@ -1072,32 +788,21 @@ async fn transition_gateway_agent_components_to_unreachable(
 ) -> i32 {
     use appcontrol_common::ComponentState;
 
-    #[derive(sqlx::FromRow)]
-    struct ComponentInfo {
-        id: DbUuid,
-        name: String,
-        application_id: DbUuid,
-        app_name: String,
-    }
-
-    let components: Vec<ComponentInfo> = sqlx::query_as(
-        r#"SELECT c.id, c.name, c.application_id, a.name AS app_name
-           FROM components c
-           JOIN applications a ON c.application_id = a.id
-           WHERE c.agent_id = $1"#,
-    )
-    .bind(agent_id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let components = match gw_repo::get_agent_components_for_unreachable(&state.db, *agent_id).await
+    {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
 
     let mut affected = 0;
 
     for comp in &components {
-        let current_state = match crate::core::fsm::get_current_state(&state.db, comp.id).await {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
+        let current_state =
+            match crate::core::fsm::get_current_state(&state.db, crate::db::bind_id(comp.id)).await
+            {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
 
         // Skip if already UNREACHABLE, STOPPED, or STOPPING
         match current_state {
@@ -1112,16 +817,13 @@ async fn transition_gateway_agent_components_to_unreachable(
             "agent_id": agent_id.to_string(),
             "gateway_id": gateway_id.to_string(),
         });
-        let result = sqlx::query(
-            r#"
-            INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
-            VALUES ($1, $2, 'UNREACHABLE', 'gateway_blocked', $3)
-            "#,
+
+        let result = gw_repo::insert_gateway_blocked_transition(
+            &state.db,
+            comp.id,
+            &current_state.to_string(),
+            &details_json,
         )
-        .bind(comp.id)
-        .bind(current_state.to_string())
-        .bind(details_json)
-        .execute(&state.db)
         .await;
 
         if result.is_ok() {
@@ -1130,8 +832,8 @@ async fn transition_gateway_agent_components_to_unreachable(
             state.ws_hub.broadcast(
                 comp.application_id,
                 appcontrol_common::WsEvent::StateChange {
-                    component_id: *comp.id,
-                    app_id: *comp.application_id,
+                    component_id: comp.id,
+                    app_id: comp.application_id,
                     component_name: Some(comp.name.clone()),
                     app_name: Some(comp.app_name.clone()),
                     from: current_state,

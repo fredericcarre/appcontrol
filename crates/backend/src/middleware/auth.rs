@@ -42,8 +42,8 @@ pub async fn auth_middleware(
             let org_id: uuid::Uuid = claims.org.parse().map_err(|_| StatusCode::UNAUTHORIZED)?;
 
             AuthUser {
-                user_id,
-                organization_id: org_id,
+                user_id: crate::db::DbUuid::from(user_id),
+                organization_id: crate::db::DbUuid::from(org_id),
                 email: claims.email,
                 role: claims.role,
             }
@@ -104,39 +104,11 @@ pub async fn is_token_revoked_public(pool: &crate::db::DbPool, token: &str) -> b
 }
 
 /// Check if a token has been revoked (stored in revoked_tokens table).
-#[cfg(feature = "postgres")]
 async fn is_token_revoked(pool: &crate::db::DbPool, token: &str) -> bool {
     let fingerprint = token_fingerprint(token);
 
-    match sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM revoked_tokens WHERE fingerprint = $1 AND expires_at > now())",
-    )
-    .bind(&fingerprint)
-    .fetch_one(pool)
-    .await
-    {
-        Ok(exists) => exists,
-        Err(e) => {
-            tracing::warn!("Token revocation check failed: {} — allowing token", e);
-            false // Fail open: if DB check fails, allow the token
-        }
-    }
-}
-
-/// Check if a token has been revoked (SQLite version).
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn is_token_revoked(pool: &crate::db::DbPool, token: &str) -> bool {
-    let fingerprint = token_fingerprint(token);
-
-    // SQLite uses datetime('now') instead of now()
-    match sqlx::query_scalar::<_, i32>(
-        "SELECT COUNT(*) FROM revoked_tokens WHERE fingerprint = $1 AND expires_at > datetime('now')",
-    )
-    .bind(&fingerprint)
-    .fetch_one(pool)
-    .await
-    {
-        Ok(count) => count > 0,
+    match crate::repository::auth_queries::is_token_revoked(pool, &fingerprint).await {
+        Ok(revoked) => revoked,
         Err(e) => {
             tracing::warn!("Token revocation check failed: {} — allowing token", e);
             false // Fail open: if DB check fails, allow the token
@@ -146,78 +118,24 @@ async fn is_token_revoked(pool: &crate::db::DbPool, token: &str) -> bool {
 
 /// Revoke a token by adding it to the revoked_tokens table.
 /// The entry expires when the token would have expired (max 24h + 1h buffer).
-#[cfg(feature = "postgres")]
 pub async fn revoke_token(pool: &crate::db::DbPool, token: &str) -> Result<(), String> {
     let fingerprint = token_fingerprint(token);
     // Token expires in 24h max, so set expiry to 24h + buffer
     let ttl_secs: i64 = 86400 + 3600; // 25 hours
 
-    sqlx::query(
-        "INSERT INTO revoked_tokens (fingerprint, expires_at) VALUES ($1, now() + $2 * interval '1 second') ON CONFLICT (fingerprint) DO NOTHING",
-    )
-    .bind(&fingerprint)
-    .bind(ttl_secs)
-    .execute(pool)
-    .await
-    .map_err(|e| format!("Database error: {}", e))?;
-
-    tracing::info!("Token revoked (fingerprint={})", fingerprint);
-    Ok(())
-}
-
-/// Revoke a token (SQLite version).
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn revoke_token(pool: &crate::db::DbPool, token: &str) -> Result<(), String> {
-    let fingerprint = token_fingerprint(token);
-    // Token expires in 24h max, so set expiry to 24h + buffer
-    let ttl_secs: i64 = 86400 + 3600; // 25 hours
-
-    // SQLite uses datetime() with modifier instead of interval arithmetic
-    sqlx::query(
-        "INSERT OR IGNORE INTO revoked_tokens (fingerprint, expires_at) VALUES ($1, datetime('now', '+' || $2 || ' seconds'))",
-    )
-    .bind(&fingerprint)
-    .bind(ttl_secs)
-    .execute(pool)
-    .await
-    .map_err(|e| format!("Database error: {}", e))?;
+    crate::repository::auth_queries::revoke_token_by_fingerprint(pool, &fingerprint, ttl_secs)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
 
     tracing::info!("Token revoked (fingerprint={})", fingerprint);
     Ok(())
 }
 
 /// Cleanup expired revocation entries (called periodically from background task).
-#[cfg(feature = "postgres")]
 pub async fn cleanup_expired_revocations(pool: &crate::db::DbPool) {
-    match sqlx::query("DELETE FROM revoked_tokens WHERE expires_at < now()")
-        .execute(pool)
-        .await
-    {
-        Ok(result) if result.rows_affected() > 0 => {
-            tracing::debug!(
-                cleaned = result.rows_affected(),
-                "Cleaned expired token revocations"
-            );
-        }
-        Err(e) => {
-            tracing::warn!("Failed to cleanup expired revocations: {}", e);
-        }
-        _ => {}
-    }
-}
-
-/// Cleanup expired revocation entries (SQLite version).
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn cleanup_expired_revocations(pool: &crate::db::DbPool) {
-    match sqlx::query("DELETE FROM revoked_tokens WHERE expires_at < datetime('now')")
-        .execute(pool)
-        .await
-    {
-        Ok(result) if result.rows_affected() > 0 => {
-            tracing::debug!(
-                cleaned = result.rows_affected(),
-                "Cleaned expired token revocations"
-            );
+    match crate::repository::auth_queries::cleanup_expired_revocations(pool).await {
+        Ok(cleaned) if cleaned > 0 => {
+            tracing::debug!(cleaned, "Cleaned expired token revocations");
         }
         Err(e) => {
             tracing::warn!("Failed to cleanup expired revocations: {}", e);

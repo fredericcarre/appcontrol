@@ -50,45 +50,17 @@ pub async fn create_api_key(
     )
     .await?;
 
-    #[cfg(feature = "postgres")]
-    sqlx::query(
-        r#"
-        INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, scopes, expires_at)
-        VALUES ($1, $2, $3, encode(sha256($4::bytea), 'hex'), $5, $6, $7)
-        "#,
+    crate::repository::misc_queries::create_api_key(
+        &state.db,
+        key_id,
+        *user.user_id,
+        &body.name,
+        raw_key.as_bytes(),
+        key_prefix,
+        &scopes,
+        body.expires_at,
     )
-    .bind(key_id)
-    .bind(user.user_id)
-    .bind(&body.name)
-    .bind(raw_key.as_bytes())
-    .bind(key_prefix)
-    .bind(&scopes)
-    .bind(body.expires_at)
-    .execute(&state.db)
     .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(raw_key.as_bytes());
-        let key_hash = hex::encode(hasher.finalize());
-        sqlx::query(
-            r#"
-            INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, scopes, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#,
-        )
-        .bind(DbUuid::from(key_id))
-        .bind(DbUuid::from(user.user_id))
-        .bind(&body.name)
-        .bind(&key_hash)
-        .bind(key_prefix)
-        .bind(&scopes)
-        .bind(body.expires_at)
-        .execute(&state.db)
-        .await?;
-    }
 
     Ok((
         StatusCode::CREATED,
@@ -106,40 +78,20 @@ pub async fn list_api_keys(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let keys = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            String,
-            Value,
-            bool,
-            Option<chrono::DateTime<chrono::Utc>>,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
-        r#"
-        SELECT id, name, key_prefix, scopes, is_active, expires_at, created_at
-        FROM api_keys
-        WHERE user_id = $1
-        ORDER BY created_at DESC
-        "#,
-    )
-    .bind(user.user_id)
-    .fetch_all(&state.db)
-    .await?;
+    let keys = crate::repository::misc_queries::list_api_keys(&state.db, *user.user_id).await?;
 
     let data: Vec<Value> = keys
         .iter()
-        .map(|(id, name, prefix, scopes, active, expires, created)| {
+        .map(|k| {
+            let scopes_val: Value = serde_json::from_str(&k.scopes).unwrap_or(json!([]));
             json!({
-                "id": id,
-                "name": name,
-                "key_prefix": prefix,
-                "scopes": scopes,
-                "is_active": active,
-                "expires_at": expires,
-                "created_at": created,
+                "id": k.id,
+                "name": k.name,
+                "key_prefix": k.key_prefix,
+                "scopes": scopes_val,
+                "is_active": k.is_active,
+                "expires_at": k.expires_at,
+                "created_at": k.created_at,
             })
         })
         .collect();
@@ -152,22 +104,10 @@ pub async fn delete_api_key(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    #[cfg(feature = "postgres")]
-    let result =
-        sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1 AND user_id = $2")
-            .bind(id)
-            .bind(user.user_id)
-            .execute(&state.db)
-            .await?;
+    let rows_affected =
+        crate::repository::misc_queries::deactivate_api_key(&state.db, id, *user.user_id).await?;
 
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let result = sqlx::query("UPDATE api_keys SET is_active = 0 WHERE id = $1 AND user_id = $2")
-        .bind(DbUuid::from(id))
-        .bind(DbUuid::from(user.user_id))
-        .execute(&state.db)
-        .await?;
-
-    if result.rows_affected() == 0 {
+    if rows_affected == 0 {
         return Err(ApiError::NotFound);
     }
 

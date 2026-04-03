@@ -50,21 +50,18 @@ pub async fn detect_error_branch(
 
     // Get component details
     let mut branch_components = Vec::new();
+    let app_repo = crate::repository::apps::create_app_repository(pool.clone());
     for &comp_id in &affected {
-        let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
-            .bind(comp_id)
-            .fetch_optional(pool)
+        let name = app_repo
+            .get_component_name(comp_id)
             .await
             .map_err(|e| BranchError::Database(e.to_string()))?
             .unwrap_or_default();
 
-        let state = sqlx::query_scalar::<_, String>(
-            "SELECT COALESCE((SELECT to_state FROM state_transitions WHERE component_id = $1 ORDER BY created_at DESC LIMIT 1), 'UNKNOWN')",
-        )
-        .bind(comp_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| BranchError::Database(e.to_string()))?;
+        let state = crate::core::fsm::get_current_state(pool, comp_id)
+            .await
+            .map(|s| s.to_string())
+            .unwrap_or_else(|_| "UNKNOWN".to_string());
 
         branch_components.push(serde_json::json!({
             "component_id": comp_id,

@@ -145,6 +145,18 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DbUuid {
     }
 }
 
+/// Convert a Uuid for use in SQL query bind parameters.
+///
+/// On PostgreSQL, DbUuid is transparent to Uuid (native UUID type).
+/// On SQLite, DbUuid encodes as TEXT (hyphenated string) matching our schema.
+///
+/// Use this when binding UUID values from `Path<Uuid>` or other non-DbUuid
+/// sources in queries that must work on both databases.
+#[inline]
+pub fn bind_id(id: impl Into<Uuid>) -> DbUuid {
+    DbUuid::from(id.into())
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // DbJson — cross-database JSON value type
 // ══════════════════════════════════════════════════════════════════════════════
@@ -235,13 +247,25 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DbJson {
 }
 
 /// Type alias for the database pool.
-/// We use PgPool for PostgreSQL-specific features but can switch to AnyPool
-/// for portable deployment.
 #[cfg(feature = "postgres")]
 pub type DbPool = sqlx::PgPool;
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 pub type DbPool = sqlx::SqlitePool;
+
+/// Type alias for database transactions.
+#[cfg(feature = "postgres")]
+pub type DbTransaction<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub type DbTransaction<'a> = sqlx::Transaction<'a, sqlx::Sqlite>;
+
+/// Type alias for database row types (used in generic repository functions).
+#[cfg(feature = "postgres")]
+pub type DbRow = sqlx::postgres::PgRow;
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub type DbRow = sqlx::sqlite::SqliteRow;
 
 /// Create a database connection pool based on configuration.
 ///

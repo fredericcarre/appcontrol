@@ -164,7 +164,11 @@ mod test_app_crud {
         let resp = ctx
             .delete_as("admin", &format!("/api/v1/apps/{app_id}"))
             .await;
-        assert_eq!(resp.status(), 200);
+        assert!(
+            resp.status() == 200 || resp.status() == 204,
+            "Delete should succeed, got {}",
+            resp.status()
+        );
 
         // Verify deleted
         let resp = ctx.get(&format!("/api/v1/apps/{app_id}")).await;

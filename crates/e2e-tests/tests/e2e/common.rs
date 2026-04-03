@@ -1,14 +1,18 @@
 // Shared E2E test infrastructure.
 //
-// TestContext sets up a temporary PostgreSQL database, starts the backend
-// in-process on a random port, seeds users, and provides HTTP helpers.
-// Each test gets a fully isolated database that is dropped on cleanup.
+// TestContext sets up a temporary database (PostgreSQL or SQLite),
+// starts the backend in-process on a random port, seeds users, and
+// provides HTTP helpers. Each test gets a fully isolated database.
+//
+// Backend is selected at compile time via feature flags:
+//   --features postgres  (default)
+//   --no-default-features --features sqlite
 
 #![allow(dead_code)]
 
+use appcontrol_backend::db::{bind_id, DbUuid};
 use reqwest::{Client, Response};
 use serde_json::{json, Value};
-use sqlx::PgPool;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,13 +20,53 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
-/// Run SQL migration files from the migrations/ directory at runtime.
-/// Supports our V001__name.sql naming convention by sorting on the V-prefix number.
-async fn run_migrations(pool: &PgPool) {
+/// Helper to convert a DbUuid query_scalar result to Uuid.
+fn to_uuid(d: DbUuid) -> Uuid {
+    d.into_inner()
+}
+
+/// Helper to convert a Vec<DbUuid> to Vec<Uuid>.
+fn to_uuids(v: Vec<DbUuid>) -> Vec<Uuid> {
+    v.into_iter().map(|d| d.into_inner()).collect()
+}
+
+// Database pool type — selected at compile time
+#[cfg(feature = "postgres")]
+use sqlx::PgPool;
+
+#[cfg(feature = "postgres")]
+pub type DbPool = PgPool;
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub type DbPool = sqlx::SqlitePool;
+
+/// Run SQL migration files at runtime.
+/// PostgreSQL: reads from migrations/ (root)
+/// SQLite: reads from migrations/sqlite/
+async fn run_migrations(pool: &DbPool) {
+    #[cfg(feature = "postgres")]
     let migrations_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let migrations_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+
     let migrations_dir = migrations_dir
         .canonicalize()
         .expect("Cannot find migrations directory");
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        // SQLite needs a tracking table
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS _migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+        )
+        .execute(pool)
+        .await
+        .expect("Failed to create _migrations table");
+    }
 
     let mut entries: Vec<_> = std::fs::read_dir(&migrations_dir)
         .expect("Cannot read migrations directory")
@@ -48,7 +92,7 @@ async fn run_migrations(pool: &PgPool) {
 // ---------------------------------------------------------------------------
 
 pub struct TestContext {
-    pub db_pool: PgPool,
+    pub db_pool: DbPool,
     pub api_url: String,
     pub ws_url: String,
     pub admin_user_id: Uuid,
@@ -66,44 +110,85 @@ pub struct TestContext {
     _server_handle: tokio::task::JoinHandle<()>,
 }
 
-impl TestContext {
-    /// Create a fresh test environment:
-    /// 1. Create a temporary PostgreSQL database
-    /// 2. Run migrations
-    /// 3. Seed organization + 4 users (admin, operator, viewer, editor)
-    /// 4. Start backend on a random port
-    pub async fn new() -> Self {
-        let db_name = format!("test_{}", Uuid::new_v4().simple());
-        let admin_url = std::env::var("TEST_DATABASE_ADMIN_URL")
-            .unwrap_or_else(|_| "postgres://appcontrol:test@localhost:5432/postgres".to_string());
+// ---------------------------------------------------------------------------
+// Database setup — the ONLY part that differs between PG and SQLite
+// ---------------------------------------------------------------------------
 
-        // Create temp DB
-        let admin_pool = PgPool::connect(&admin_url)
-            .await
-            .expect("Cannot connect to PostgreSQL. Is it running?");
-        sqlx::query(&format!("CREATE DATABASE {db_name}"))
-            .execute(&admin_pool)
-            .await
-            .expect("Failed to create temp database");
+/// PostgreSQL: create a temporary database, run migrations, return pool + URL.
+#[cfg(feature = "postgres")]
+async fn setup_database() -> (DbPool, String, String) {
+    let db_name = format!("test_{}", Uuid::new_v4().simple());
+    let admin_url = std::env::var("TEST_DATABASE_ADMIN_URL")
+        .unwrap_or_else(|_| "postgres://appcontrol:test@localhost:5432/postgres".to_string());
 
-        let db_url = format!("postgres://appcontrol:test@localhost:5432/{db_name}");
-        let pool = PgPool::connect(&db_url).await.unwrap();
+    let admin_pool = PgPool::connect(&admin_url)
+        .await
+        .expect("Cannot connect to PostgreSQL. Is it running?");
+    sqlx::query(&format!("CREATE DATABASE {db_name}"))
+        .execute(&admin_pool)
+        .await
+        .expect("Failed to create temp database");
 
-        // Run migrations
-        run_migrations(&pool).await;
+    let db_url = format!("postgres://appcontrol:test@localhost:5432/{db_name}");
+    let pool = PgPool::connect(&db_url).await.unwrap();
+    run_migrations(&pool).await;
 
-        // Seed organization and users
-        let org_id = Uuid::new_v4();
-        let admin_id = Uuid::new_v4();
-        let operator_id = Uuid::new_v4();
-        let viewer_id = Uuid::new_v4();
-        let editor_id = Uuid::new_v4();
+    (pool, db_url, db_name)
+}
 
+/// SQLite: create a temporary file, run migrations, return pool + URL.
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn setup_database() -> (DbPool, String, String) {
+    let tmp_dir = std::env::temp_dir().join(format!("appcontrol_e2e_{}", Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let db_path = tmp_dir.join("test.db");
+    let db_url = format!("sqlite:{}", db_path.display());
+    let db_name = tmp_dir.to_string_lossy().to_string();
+
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(4)
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                use sqlx::Executor;
+                conn.execute("PRAGMA journal_mode=WAL").await?;
+                conn.execute("PRAGMA busy_timeout=30000").await?;
+                conn.execute("PRAGMA foreign_keys=ON").await?;
+                conn.execute("PRAGMA synchronous=NORMAL").await?;
+                Ok(())
+            })
+        })
+        .connect_with(
+            db_url
+                .parse::<sqlx::sqlite::SqliteConnectOptions>()
+                .unwrap()
+                .create_if_missing(true),
+        )
+        .await
+        .expect("Failed to create SQLite pool");
+
+    run_migrations(&pool).await;
+
+    (pool, db_url, db_name)
+}
+
+/// Seed organization, users, and default site.
+/// Uses DbUuid for SQLite TEXT encoding, raw Uuid for PostgreSQL.
+async fn seed_data(
+    pool: &DbPool,
+    org_id: Uuid,
+    admin_id: Uuid,
+    operator_id: Uuid,
+    viewer_id: Uuid,
+    editor_id: Uuid,
+    default_site_id: Uuid,
+) {
+    #[cfg(feature = "postgres")]
+    {
         sqlx::query(
             "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')",
         )
-        .bind(org_id)
-        .execute(&pool)
+        .bind(bind_id(org_id))
+        .execute(pool)
         .await
         .unwrap();
 
@@ -118,24 +203,94 @@ impl TestContext {
                  VALUES ($1, $2, $3, $3, $4, $3 || '@test.local')",
             )
             .bind(id)
-            .bind(org_id)
+            .bind(bind_id(org_id))
             .bind(name)
             .bind(role)
-            .execute(&pool)
+            .execute(pool)
             .await
             .unwrap();
         }
 
-        // Create default site
-        let default_site_id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')",
         )
-        .bind(default_site_id)
-        .bind(org_id)
-        .execute(&pool)
+        .bind(bind_id(default_site_id))
+        .bind(bind_id(org_id))
+        .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        use appcontrol_backend::db::DbUuid;
+
+        sqlx::query(
+            "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')",
+        )
+        .bind(DbUuid::from(org_id))
+        .execute(pool)
+        .await
+        .unwrap();
+
+        for (id, name, role) in [
+            (admin_id, "admin", "admin"),
+            (operator_id, "operator", "operator"),
+            (viewer_id, "viewer", "viewer"),
+            (editor_id, "editor", "editor"),
+        ] {
+            sqlx::query(
+                "INSERT INTO users (id, organization_id, external_id, display_name, role, email)
+                 VALUES ($1, $2, $3, $3, $4, $5)",
+            )
+            .bind(DbUuid::from(id))
+            .bind(DbUuid::from(org_id))
+            .bind(name)
+            .bind(role)
+            .bind(format!("{}@test.local", name))
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+
+        sqlx::query(
+            "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')",
+        )
+        .bind(DbUuid::from(default_site_id))
+        .bind(DbUuid::from(org_id))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+impl TestContext {
+    /// Create a fresh test environment:
+    /// 1. Create a temporary database (PG or SQLite based on feature)
+    /// 2. Run migrations
+    /// 3. Seed organization + 4 users (admin, operator, viewer, editor)
+    /// 4. Start backend on a random port
+    pub async fn new() -> Self {
+        let (pool, db_url, db_name) = setup_database().await;
+
+        // Seed organization and users
+        let org_id = Uuid::new_v4();
+        let admin_id = Uuid::new_v4();
+        let operator_id = Uuid::new_v4();
+        let viewer_id = Uuid::new_v4();
+        let editor_id = Uuid::new_v4();
+        let default_site_id = Uuid::new_v4();
+
+        seed_data(
+            &pool,
+            org_id,
+            admin_id,
+            operator_id,
+            viewer_id,
+            editor_id,
+            default_site_id,
+        )
+        .await;
 
         // Start backend on random port
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -145,7 +300,6 @@ impl TestContext {
 
         let config = appcontrol_backend::config::AppConfig {
             database_url: db_url,
-
             port: addr.port(),
             jwt_secret: "test-jwt-secret".to_string(),
             jwt_issuer: "appcontrol-test".to_string(),
@@ -177,6 +331,26 @@ impl TestContext {
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
+            app_repo: appcontrol_backend::repository::apps::create_app_repository(pool.clone()),
+            component_repo: appcontrol_backend::repository::components::create_component_repository(
+                pool.clone(),
+            ),
+            team_repo: appcontrol_backend::repository::teams::create_team_repository(pool.clone()),
+            permission_repo:
+                appcontrol_backend::repository::permissions::create_permission_repository(
+                    pool.clone(),
+                ),
+            site_repo: appcontrol_backend::repository::sites::create_site_repository(pool.clone()),
+            enrollment_repo:
+                appcontrol_backend::repository::enrollment::create_enrollment_repository(
+                    pool.clone(),
+                ),
+            agent_repo: appcontrol_backend::repository::agents::create_agent_repository(
+                pool.clone(),
+            ),
+            gateway_repo: appcontrol_backend::repository::gateways::create_gateway_repository(
+                pool.clone(),
+            ),
             db: pool.clone(),
             ws_hub: appcontrol_backend::websocket::Hub::new(),
             config,
@@ -243,66 +417,25 @@ impl TestContext {
         sp_entity_id: &str,
         admin_group: Option<String>,
     ) -> Self {
-        let db_name = format!("test_{}", Uuid::new_v4().simple());
-        let admin_url = std::env::var("TEST_DATABASE_ADMIN_URL")
-            .unwrap_or_else(|_| "postgres://appcontrol:test@localhost:5432/postgres".to_string());
-
-        let admin_pool = PgPool::connect(&admin_url)
-            .await
-            .expect("Cannot connect to PostgreSQL. Is it running?");
-        sqlx::query(&format!("CREATE DATABASE {db_name}"))
-            .execute(&admin_pool)
-            .await
-            .expect("Failed to create temp database");
-
-        let db_url = format!("postgres://appcontrol:test@localhost:5432/{db_name}");
-        let pool = PgPool::connect(&db_url).await.unwrap();
-
-        run_migrations(&pool).await;
+        let (pool, db_url, db_name) = setup_database().await;
 
         let org_id = Uuid::new_v4();
         let admin_id = Uuid::new_v4();
         let operator_id = Uuid::new_v4();
         let viewer_id = Uuid::new_v4();
         let editor_id = Uuid::new_v4();
-
-        sqlx::query(
-            "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Test Org', 'test-org')",
-        )
-        .bind(org_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        for (id, name, role) in [
-            (admin_id, "admin", "admin"),
-            (operator_id, "operator", "operator"),
-            (viewer_id, "viewer", "viewer"),
-            (editor_id, "editor", "editor"),
-        ] {
-            sqlx::query(
-                "INSERT INTO users (id, organization_id, external_id, display_name, role, email)
-                 VALUES ($1, $2, $3, $3, $4, $3 || '@test.local')",
-            )
-            .bind(id)
-            .bind(org_id)
-            .bind(name)
-            .bind(role)
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-
-        // Create default site
         let default_site_id = Uuid::new_v4();
-        sqlx::query(
-            "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')",
+
+        seed_data(
+            &pool,
+            org_id,
+            admin_id,
+            operator_id,
+            viewer_id,
+            editor_id,
+            default_site_id,
         )
-        .bind(default_site_id)
-        .bind(org_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+        .await;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
@@ -311,7 +444,6 @@ impl TestContext {
 
         let config = appcontrol_backend::config::AppConfig {
             database_url: db_url,
-
             port: addr.port(),
             jwt_secret: "test-jwt-secret".to_string(),
             jwt_issuer: "appcontrol-test".to_string(),
@@ -353,6 +485,26 @@ impl TestContext {
         };
 
         let state = Arc::new(appcontrol_backend::AppState {
+            app_repo: appcontrol_backend::repository::apps::create_app_repository(pool.clone()),
+            component_repo: appcontrol_backend::repository::components::create_component_repository(
+                pool.clone(),
+            ),
+            team_repo: appcontrol_backend::repository::teams::create_team_repository(pool.clone()),
+            permission_repo:
+                appcontrol_backend::repository::permissions::create_permission_repository(
+                    pool.clone(),
+                ),
+            site_repo: appcontrol_backend::repository::sites::create_site_repository(pool.clone()),
+            enrollment_repo:
+                appcontrol_backend::repository::enrollment::create_enrollment_repository(
+                    pool.clone(),
+                ),
+            agent_repo: appcontrol_backend::repository::agents::create_agent_repository(
+                pool.clone(),
+            ),
+            gateway_repo: appcontrol_backend::repository::gateways::create_gateway_repository(
+                pool.clone(),
+            ),
             db: pool.clone(),
             ws_hub: appcontrol_backend::websocket::Hub::new(),
             config,
@@ -741,16 +893,16 @@ impl TestContext {
         sqlx::query(
             "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD')",
         )
-        .bind(site_a)
-        .bind(self.organization_id)
+        .bind(bind_id(site_a))
+        .bind(bind_id(self.organization_id))
         .execute(&self.db_pool)
         .await
         .unwrap();
         sqlx::query(
             "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'DR', 'DR')",
         )
-        .bind(site_b)
-        .bind(self.organization_id)
+        .bind(bind_id(site_b))
+        .bind(bind_id(self.organization_id))
         .execute(&self.db_pool)
         .await
         .unwrap();
@@ -846,21 +998,41 @@ impl TestContext {
     // ---- State helpers ----
 
     pub async fn set_all_running(&self, app_id: Uuid) {
-        let comp_ids =
-            sqlx::query_scalar::<_, Uuid>("SELECT id FROM components WHERE application_id = $1")
-                .bind(app_id)
+        let comp_ids = to_uuids(
+            sqlx::query_scalar::<_, DbUuid>("SELECT id FROM components WHERE application_id = $1")
+                .bind(bind_id(app_id))
                 .fetch_all(&self.db_pool)
                 .await
-                .unwrap();
+                .unwrap(),
+        );
         for cid in comp_ids {
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
                  VALUES ($1, 'UNKNOWN', 'RUNNING', 'test_setup')",
             )
-            .bind(cid)
+            .bind(bind_id(cid))
             .execute(&self.db_pool)
             .await
             .unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger)
+                 VALUES ($1, $2, 'UNKNOWN', 'RUNNING', 'test_setup')",
+            )
+            .bind(bind_id(Uuid::new_v4()))
+            .bind(bind_id(cid))
+            .execute(&self.db_pool)
+            .await
+            .unwrap();
+
+            // Also update the cached current_state column
+            sqlx::query("UPDATE components SET current_state = 'RUNNING' WHERE id = $1")
+                .bind(bind_id(cid))
+                .execute(&self.db_pool)
+                .await
+                .unwrap();
         }
     }
 
@@ -883,26 +1055,49 @@ impl TestContext {
 
     pub async fn force_component_state(&self, app_id: Uuid, name: &str, state: &str) {
         let comp_id = self.component_id(app_id, name).await;
+        #[cfg(feature = "postgres")]
         sqlx::query(
             "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
              VALUES ($1, 'UNKNOWN', $2, 'test_setup')",
         )
-        .bind(comp_id)
+        .bind(bind_id(comp_id))
         .bind(state)
         .execute(&self.db_pool)
         .await
         .unwrap();
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        sqlx::query(
+            "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger)
+             VALUES ($1, $2, 'UNKNOWN', $3, 'test_setup')",
+        )
+        .bind(bind_id(Uuid::new_v4()))
+        .bind(bind_id(comp_id))
+        .bind(state)
+        .execute(&self.db_pool)
+        .await
+        .unwrap();
+
+        // Also update the cached current_state column
+        sqlx::query("UPDATE components SET current_state = $1 WHERE id = $2")
+            .bind(state)
+            .bind(bind_id(comp_id))
+            .execute(&self.db_pool)
+            .await
+            .unwrap();
     }
 
     pub async fn component_id(&self, app_id: Uuid, name: &str) -> Uuid {
-        sqlx::query_scalar::<_, Uuid>(
-            "SELECT id FROM components WHERE application_id = $1 AND name = $2",
+        to_uuid(
+            sqlx::query_scalar::<_, DbUuid>(
+                "SELECT id FROM components WHERE application_id = $1 AND name = $2",
+            )
+            .bind(bind_id(app_id))
+            .bind(name)
+            .fetch_one(&self.db_pool)
+            .await
+            .unwrap(),
         )
-        .bind(app_id)
-        .bind(name)
-        .fetch_one(&self.db_pool)
-        .await
-        .unwrap()
     }
 
     pub fn component_state<'a>(&self, status: &'a AppStatus, name: &str) -> &'a str {
@@ -993,7 +1188,7 @@ impl TestContext {
              WHERE c.application_id = $1
              ORDER BY st.created_at",
         )
-        .bind(app_id)
+        .bind(bind_id(app_id))
         .fetch_all(&self.db_pool)
         .await
         .unwrap()
@@ -1012,7 +1207,7 @@ impl TestContext {
              WHERE c.application_id = $1 AND c.name = $2
              ORDER BY st.created_at",
         )
-        .bind(app_id)
+        .bind(bind_id(app_id))
         .bind(name)
         .fetch_all(&self.db_pool)
         .await
@@ -1029,7 +1224,7 @@ impl TestContext {
              FROM action_log WHERE resource_id = $1 AND action = $2
              ORDER BY created_at",
         )
-        .bind(app_id)
+        .bind(bind_id(app_id))
         .bind(action)
         .fetch_all(&self.db_pool)
         .await
@@ -1064,7 +1259,7 @@ impl TestContext {
              ORDER BY created_at",
         )
         .bind(resource_type)
-        .bind(resource_id)
+        .bind(bind_id(resource_id))
         .fetch_all(&self.db_pool)
         .await
         .unwrap()
@@ -1076,7 +1271,7 @@ impl TestContext {
              FROM switchover_log WHERE switchover_id = $1
              ORDER BY created_at",
         )
-        .bind(switchover_id)
+        .bind(bind_id(switchover_id))
         .fetch_all(&self.db_pool)
         .await
         .unwrap()
@@ -1093,7 +1288,7 @@ impl TestContext {
              FROM check_events WHERE component_id = $1
              ORDER BY created_at",
         )
-        .bind(component_id)
+        .bind(bind_id(component_id))
         .fetch_all(&self.db_pool)
         .await
         .unwrap()
@@ -1105,7 +1300,7 @@ impl TestContext {
         sqlx::query(
             "UPDATE components SET check_cmd = 'exit 2' WHERE application_id = $1 AND name = $2",
         )
-        .bind(app_id)
+        .bind(bind_id(app_id))
         .bind(name)
         .execute(&self.db_pool)
         .await
@@ -1114,15 +1309,27 @@ impl TestContext {
 
     pub async fn configure_check_results(&self, app_id: Uuid, configs: Vec<(&str, i32, i32, i32)>) {
         for (name, health, integrity, infra) in configs {
-            sqlx::query(
-                "UPDATE components SET
+            #[cfg(feature = "postgres")]
+            let sql = "UPDATE components SET
                     check_cmd = CASE WHEN $3 = 0 THEN 'exit 0' ELSE 'exit ' || $3::text END,
                     integrity_check_cmd = CASE WHEN $4 = 0 THEN 'exit 0' ELSE 'exit ' || $4::text END,
                     infra_check_cmd = CASE WHEN $5 = 0 THEN 'exit 0' ELSE 'exit ' || $5::text END
-                 WHERE application_id = $1 AND name = $2"
-            )
-            .bind(app_id).bind(name).bind(health).bind(integrity).bind(infra)
-            .execute(&self.db_pool).await.unwrap();
+                 WHERE application_id = $1 AND name = $2";
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let sql = "UPDATE components SET
+                    check_cmd = CASE WHEN $3 = 0 THEN 'exit 0' ELSE 'exit ' || CAST($3 AS TEXT) END,
+                    integrity_check_cmd = CASE WHEN $4 = 0 THEN 'exit 0' ELSE 'exit ' || CAST($4 AS TEXT) END,
+                    infra_check_cmd = CASE WHEN $5 = 0 THEN 'exit 0' ELSE 'exit ' || CAST($5 AS TEXT) END
+                 WHERE application_id = $1 AND name = $2";
+            sqlx::query(sql)
+                .bind(bind_id(app_id))
+                .bind(name)
+                .bind(health)
+                .bind(integrity)
+                .bind(infra)
+                .execute(&self.db_pool)
+                .await
+                .unwrap();
         }
     }
 
@@ -1223,46 +1430,86 @@ impl TestContext {
 
     pub async fn disconnect_agent(&self, hostname: &str) {
         // Find components linked to agents with this hostname and mark them UNREACHABLE
-        let comp_ids = sqlx::query_scalar::<_, Uuid>(
-            "SELECT c.id FROM components c
-             JOIN agents a ON c.agent_id = a.id
-             WHERE a.hostname = $1",
-        )
-        .bind(hostname)
-        .fetch_all(&self.db_pool)
-        .await
-        .unwrap();
+        let comp_ids = to_uuids(
+            sqlx::query_scalar::<_, DbUuid>(
+                "SELECT c.id FROM components c
+                 JOIN agents a ON c.agent_id = a.id
+                 WHERE a.hostname = $1",
+            )
+            .bind(hostname)
+            .fetch_all(&self.db_pool)
+            .await
+            .unwrap(),
+        );
         for cid in comp_ids {
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
                  VALUES ($1, 'RUNNING', 'UNREACHABLE', 'agent_disconnect')",
             )
-            .bind(cid)
+            .bind(bind_id(cid))
             .execute(&self.db_pool)
             .await
             .unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger)
+                 VALUES ($1, $2, 'RUNNING', 'UNREACHABLE', 'agent_disconnect')",
+            )
+            .bind(bind_id(Uuid::new_v4()))
+            .bind(bind_id(cid))
+            .execute(&self.db_pool)
+            .await
+            .unwrap();
+
+            sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
+                .bind(bind_id(cid))
+                .execute(&self.db_pool)
+                .await
+                .unwrap();
         }
     }
 
     pub async fn reconnect_agent(&self, hostname: &str) {
-        let comp_ids = sqlx::query_scalar::<_, Uuid>(
-            "SELECT c.id FROM components c
-             JOIN agents a ON c.agent_id = a.id
-             WHERE a.hostname = $1",
-        )
-        .bind(hostname)
-        .fetch_all(&self.db_pool)
-        .await
-        .unwrap();
+        let comp_ids = to_uuids(
+            sqlx::query_scalar::<_, DbUuid>(
+                "SELECT c.id FROM components c
+                 JOIN agents a ON c.agent_id = a.id
+                 WHERE a.hostname = $1",
+            )
+            .bind(hostname)
+            .fetch_all(&self.db_pool)
+            .await
+            .unwrap(),
+        );
         for cid in comp_ids {
+            #[cfg(feature = "postgres")]
             sqlx::query(
                 "INSERT INTO state_transitions (component_id, from_state, to_state, trigger)
                  VALUES ($1, 'UNREACHABLE', 'RUNNING', 'agent_reconnect')",
             )
-            .bind(cid)
+            .bind(bind_id(cid))
             .execute(&self.db_pool)
             .await
             .unwrap();
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger)
+                 VALUES ($1, $2, 'UNREACHABLE', 'RUNNING', 'agent_reconnect')",
+            )
+            .bind(bind_id(Uuid::new_v4()))
+            .bind(bind_id(cid))
+            .execute(&self.db_pool)
+            .await
+            .unwrap();
+
+            sqlx::query("UPDATE components SET current_state = 'RUNNING' WHERE id = $1")
+                .bind(bind_id(cid))
+                .execute(&self.db_pool)
+                .await
+                .unwrap();
         }
     }
 
@@ -1285,7 +1532,7 @@ impl TestContext {
         sqlx::query(
             "INSERT INTO organizations (id, name, slug) VALUES ($1, 'Other Org', 'other-org')",
         )
-        .bind(org2_id)
+        .bind(bind_id(org2_id))
         .execute(&self.db_pool)
         .await
         .unwrap();
@@ -1293,8 +1540,8 @@ impl TestContext {
             "INSERT INTO users (id, organization_id, external_id, display_name, role, email)
              VALUES ($1, $2, 'other_admin', 'Other Admin', 'admin', 'other@test.local')",
         )
-        .bind(user2_id)
-        .bind(org2_id)
+        .bind(bind_id(user2_id))
+        .bind(bind_id(org2_id))
         .execute(&self.db_pool)
         .await
         .unwrap();
@@ -1306,16 +1553,26 @@ impl TestContext {
     // ---- Cleanup ----
 
     pub async fn cleanup(&self) {
-        let admin_url = std::env::var("TEST_DATABASE_ADMIN_URL")
-            .unwrap_or_else(|_| "postgres://appcontrol:test@localhost:5432/postgres".to_string());
-        let admin_pool = PgPool::connect(&admin_url).await.unwrap();
-        sqlx::query(&format!(
-            "DROP DATABASE IF EXISTS {} WITH (FORCE)",
-            self.db_name
-        ))
-        .execute(&admin_pool)
-        .await
-        .unwrap();
+        #[cfg(feature = "postgres")]
+        {
+            let admin_url = std::env::var("TEST_DATABASE_ADMIN_URL").unwrap_or_else(|_| {
+                "postgres://appcontrol:test@localhost:5432/postgres".to_string()
+            });
+            let admin_pool = PgPool::connect(&admin_url).await.unwrap();
+            sqlx::query(&format!(
+                "DROP DATABASE IF EXISTS {} WITH (FORCE)",
+                self.db_name
+            ))
+            .execute(&admin_pool)
+            .await
+            .unwrap();
+        }
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        {
+            // SQLite cleanup: remove temp directory (db_name stores the path)
+            let _ = std::fs::remove_dir_all(&self.db_name);
+        }
     }
 }
 
@@ -1348,7 +1605,7 @@ pub struct App {
 
 #[derive(Debug, serde::Deserialize, sqlx::FromRow)]
 pub struct StateTransition {
-    pub component_id: Uuid,
+    pub component_id: DbUuid,
     pub component_name: String,
     pub from_state: String,
     pub to_state: String,
@@ -1358,24 +1615,24 @@ pub struct StateTransition {
 
 #[derive(Debug, serde::Deserialize, sqlx::FromRow)]
 pub struct ActionLog {
-    pub user_id: Uuid,
+    pub user_id: DbUuid,
     pub action: String,
     pub resource_type: String,
-    pub resource_id: Uuid,
+    pub resource_id: DbUuid,
     pub details: Value,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, serde::Deserialize, sqlx::FromRow)]
 pub struct ConfigVersion {
-    pub changed_by: Uuid,
+    pub changed_by: DbUuid,
     pub before_snapshot: Option<Value>,
     pub after_snapshot: Value,
 }
 
 #[derive(Debug, serde::Deserialize, sqlx::FromRow)]
 pub struct SwitchoverLogEntry {
-    pub switchover_id: Uuid,
+    pub switchover_id: DbUuid,
     pub phase: String,
     pub status: String,
     pub details: Value,
@@ -1391,7 +1648,7 @@ pub struct JobStatus {
 
 #[derive(Debug, serde::Deserialize, sqlx::FromRow)]
 pub struct CheckEvent {
-    pub component_id: Uuid,
+    pub component_id: DbUuid,
     pub check_type: String,
     pub exit_code: i32,
     pub stdout: Option<String>,

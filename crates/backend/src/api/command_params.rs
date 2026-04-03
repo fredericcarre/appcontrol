@@ -61,15 +61,9 @@ async fn app_id_for_command(
     command_id: impl Into<Uuid>,
 ) -> Result<Uuid, ApiError> {
     let command_id: Uuid = command_id.into();
-    let id = sqlx::query_scalar::<_, DbUuid>(
-        "SELECT c.application_id FROM component_commands cc \
-         JOIN components c ON c.id = cc.component_id \
-         WHERE cc.id = $1",
-    )
-    .bind(command_id)
-    .fetch_optional(db)
-    .await?
-    .ok_or_not_found()?;
+    let id = crate::repository::misc_queries::get_app_id_for_command(db, command_id)
+        .await?
+        .ok_or_not_found()?;
     Ok(id.into_inner())
 }
 
@@ -85,14 +79,8 @@ pub async fn list_params(
         return Err(ApiError::Forbidden);
     }
 
-    let params = sqlx::query_as::<_, InputParamRow>(
-        "SELECT id, command_id, name, description, default_value, validation_regex, required, display_order, \
-         param_type, enum_values, created_at \
-         FROM command_input_params WHERE command_id = $1 ORDER BY display_order, name",
-    )
-    .bind(command_id)
-    .fetch_all(&state.db)
-    .await?;
+    let params =
+        crate::repository::misc_queries::list_input_params_raw(&state.db, command_id).await?;
 
     Ok(Json(json!({ "params": params })))
 }
@@ -136,24 +124,19 @@ pub async fn create_param(
 
     let param_type = body.param_type.as_deref().unwrap_or("string");
 
-    let param = sqlx::query_as::<_, InputParamRow>(
-        r#"
-        INSERT INTO command_input_params (id, command_id, name, description, default_value, validation_regex, required, display_order, param_type, enum_values)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING id, command_id, name, description, default_value, validation_regex, required, display_order, param_type, enum_values, created_at
-        "#,
+    let param = crate::repository::misc_queries::create_input_param(
+        &state.db,
+        param_id,
+        command_id,
+        &body.name,
+        body.description.as_deref(),
+        body.default_value.as_deref(),
+        body.validation_regex.as_deref(),
+        body.required.unwrap_or(true),
+        body.display_order.unwrap_or(0),
+        param_type,
+        body.enum_values.as_ref(),
     )
-    .bind(param_id)
-    .bind(command_id)
-    .bind(&body.name)
-    .bind(&body.description)
-    .bind(&body.default_value)
-    .bind(&body.validation_regex)
-    .bind(body.required.unwrap_or(true))
-    .bind(body.display_order.unwrap_or(0))
-    .bind(param_type)
-    .bind(&body.enum_values)
-    .fetch_one(&state.db)
     .await?;
 
     Ok((StatusCode::CREATED, Json(json!(param))))
@@ -181,13 +164,11 @@ pub async fn delete_param(
     )
     .await?;
 
-    let result = sqlx::query("DELETE FROM command_input_params WHERE id = $1 AND command_id = $2")
-        .bind(param_id)
-        .bind(command_id)
-        .execute(&state.db)
-        .await?;
+    let rows_affected =
+        crate::repository::misc_queries::delete_input_param(&state.db, param_id, command_id)
+            .await?;
 
-    if result.rows_affected() == 0 {
+    if rows_affected == 0 {
         return Err(ApiError::NotFound);
     }
 

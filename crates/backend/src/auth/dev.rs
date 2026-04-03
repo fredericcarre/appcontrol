@@ -60,16 +60,9 @@ pub async fn dev_login(
     }
 
     // Look up user by role name (admin, operator, viewer)
-    #[cfg(feature = "postgres")]
-    let q = "SELECT u.id, u.organization_id, u.email, u.role FROM users u WHERE u.role = $1 AND u.is_active = true LIMIT 1";
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let q = "SELECT u.id, u.organization_id, u.email, u.role FROM users u WHERE u.role = $1 AND u.is_active = 1 LIMIT 1";
-
-    let row: Option<(Uuid, Uuid, String, String)> = sqlx::query_as(q)
-    .bind(&req.username)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let row = crate::repository::auth_queries::find_user_by_role(&state.db, &req.username)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let (user_id, org_id, email, role) = row.ok_or(StatusCode::UNAUTHORIZED)?;
 
@@ -154,23 +147,12 @@ pub async fn email_login(
     }
 
     // Look up user by email
-    #[cfg(feature = "postgres")]
-    let email_q = "SELECT u.id, u.organization_id, u.display_name, u.role, o.name \
-           FROM users u JOIN organizations o ON o.id = u.organization_id \
-           WHERE u.email = $1 AND u.is_active = true";
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let email_q = "SELECT u.id, u.organization_id, u.display_name, u.role, o.name \
-           FROM users u JOIN organizations o ON o.id = u.organization_id \
-           WHERE u.email = $1 AND u.is_active = 1";
-
-    let row: Option<(Uuid, Uuid, String, String, String)> = sqlx::query_as(email_q)
-    .bind(&req.email)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error during login: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"message": "Internal error"})))
-    })?;
+    let row = crate::repository::auth_queries::find_user_by_email_with_org(&state.db, &req.email)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error during login: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"message": "Internal error"})))
+        })?;
 
     let (user_id, org_id, display_name, role, org_name) = row.ok_or_else(|| {
         (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"message": "Invalid credentials"})))

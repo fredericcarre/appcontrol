@@ -131,8 +131,8 @@ async fn test_import_yaml_map() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD')",
     )
-    .bind(site_id)
-    .bind(ctx.organization_id)
+    .bind(bind_id(site_id))
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -155,7 +155,7 @@ async fn test_import_yaml_map() {
     // Verify counts
     assert_eq!(result["application_name"], "LYNX-PRD");
     assert_eq!(result["components_created"], 5);
-    assert_eq!(result["groups_created"], 4); // Bases de données, Serveurs applicatifs, Fronts web, Middlewares, Traitements batch
+    assert_eq!(result["groups_created"], 5); // Bases de données, Serveurs applicatifs, Fronts web, Middlewares, Traitements batch
     assert_eq!(result["variables_created"], 3);
     assert!(result["dependencies_created"].as_i64().unwrap() >= 4);
     assert!(result["commands_created"].as_i64().unwrap() >= 2); // purge_logs + deploy (standard actions excluded)
@@ -221,8 +221,8 @@ async fn test_import_creates_links() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD2')",
     )
-    .bind(site_id)
-    .bind(ctx.organization_id)
+    .bind(bind_id(site_id))
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -274,8 +274,8 @@ async fn test_import_creates_command_params() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD3')",
     )
-    .bind(site_id)
-    .bind(ctx.organization_id)
+    .bind(bind_id(site_id))
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -292,13 +292,14 @@ async fn test_import_creates_command_params() {
 
     // Find the purge_logs command for oracle-db
     let oracle_id = ctx.component_id(app_id, "oracle-db").await;
-    let cmd_id: Uuid = sqlx::query_scalar(
+    let cmd_id: Uuid = sqlx::query_scalar::<_, appcontrol_backend::db::DbUuid>(
         "SELECT id FROM component_commands WHERE component_id = $1 AND name = 'Purge Logs'",
     )
-    .bind(oracle_id)
+    .bind(bind_id(oracle_id))
     .fetch_one(&ctx.db_pool)
     .await
-    .unwrap();
+    .unwrap()
+    .into_inner();
 
     // Check input params
     let resp = ctx.get(&format!("/api/v1/commands/{cmd_id}/params")).await;
@@ -312,13 +313,14 @@ async fn test_import_creates_command_params() {
 
     // Find the deploy command for tomcat-app
     let tomcat_id = ctx.component_id(app_id, "tomcat-app").await;
-    let deploy_cmd_id: Uuid = sqlx::query_scalar(
+    let deploy_cmd_id: Uuid = sqlx::query_scalar::<_, appcontrol_backend::db::DbUuid>(
         "SELECT id FROM component_commands WHERE component_id = $1 AND name = 'Deploy WAR'",
     )
-    .bind(tomcat_id)
+    .bind(bind_id(tomcat_id))
     .fetch_one(&ctx.db_pool)
     .await
-    .unwrap();
+    .unwrap()
+    .into_inner();
 
     let resp = ctx
         .get(&format!("/api/v1/commands/{deploy_cmd_id}/params"))
@@ -344,8 +346,8 @@ async fn test_import_invalid_yaml() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD4')",
     )
-    .bind(site_id)
-    .bind(ctx.organization_id)
+    .bind(bind_id(site_id))
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -370,8 +372,8 @@ async fn test_import_missing_dependency_warns() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD5')",
     )
-    .bind(site_id)
-    .bind(ctx.organization_id)
+    .bind(bind_id(site_id))
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();
@@ -418,8 +420,8 @@ async fn test_import_audit_trail() {
     sqlx::query(
         "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'PRD', 'PRD6')",
     )
-    .bind(site_id)
-    .bind(ctx.organization_id)
+    .bind(bind_id(site_id))
+    .bind(bind_id(ctx.organization_id))
     .execute(&ctx.db_pool)
     .await
     .unwrap();

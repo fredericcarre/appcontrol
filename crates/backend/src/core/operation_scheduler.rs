@@ -11,23 +11,13 @@ use chrono::{DateTime, Utc};
 use cron::Schedule as CronSchedule;
 use uuid::Uuid;
 
+#[allow(unused_imports)]
 use crate::db::{DbPool, DbUuid};
 use crate::middleware::audit;
 use crate::AppState;
 
-/// Row returned when querying for due schedules.
-#[derive(Debug, sqlx::FromRow)]
-#[allow(dead_code)]
-struct DueSchedule {
-    id: DbUuid,
-    organization_id: DbUuid,
-    application_id: Option<DbUuid>,
-    component_id: Option<DbUuid>,
-    name: String,
-    operation: String,
-    cron_expression: String,
-    timezone: String,
-}
+/// Alias for the schedule row type from the repository.
+type DueSchedule = crate::repository::schedule_queries::DueOperationSchedule;
 
 /// Start the operation scheduler background task.
 /// Runs every `check_interval`, queries for schedules whose next_run_at has passed,
@@ -47,37 +37,8 @@ pub async fn run_operation_scheduler(state: Arc<AppState>, check_interval: Durat
 /// Find and execute all schedules that are due.
 async fn execute_due_schedules(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // Find schedules where next_run_at <= now() and enabled = true
-    // Use FOR UPDATE SKIP LOCKED to prevent multiple backend instances from picking up the same schedule
-    #[cfg(feature = "postgres")]
-    let due_schedules = sqlx::query_as::<_, DueSchedule>(
-        r#"
-        SELECT id, organization_id, application_id, component_id, name, operation, cron_expression, timezone
-        FROM operation_schedules
-        WHERE is_enabled = true
-          AND next_run_at IS NOT NULL
-          AND next_run_at <= now()
-        ORDER BY next_run_at ASC
-        LIMIT 10
-        FOR UPDATE SKIP LOCKED
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let due_schedules = sqlx::query_as::<_, DueSchedule>(
-        r#"
-        SELECT id, organization_id, application_id, component_id, name, operation, cron_expression, timezone
-        FROM operation_schedules
-        WHERE is_enabled = 1
-          AND next_run_at IS NOT NULL
-          AND next_run_at <= datetime('now')
-        ORDER BY next_run_at ASC
-        LIMIT 10
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let due_schedules =
+        crate::repository::schedule_queries::fetch_due_operation_schedules(&state.db).await?;
 
     for schedule in due_schedules {
         tracing::info!(
@@ -106,31 +67,17 @@ async fn execute_single_schedule(state: &Arc<AppState>, schedule: &DueSchedule) 
 
     // Determine the target (application or component)
     let (resource_type, resource_id, target_name) = if let Some(app_id) = schedule.application_id {
-        let app_name: Option<String> =
-            sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-                .bind(app_id)
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten();
+        let app_name =
+            crate::repository::core_queries::get_application_name(&state.db, app_id).await;
         (
             "application",
             app_id,
             app_name.unwrap_or_else(|| app_id.to_string()),
         )
     } else if let Some(comp_id) = schedule.component_id {
-        let comp_name: Option<String> =
-            sqlx::query_scalar("SELECT COALESCE(display_name, name) FROM components WHERE id = $1")
-                .bind(comp_id)
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten();
-        (
-            "component",
-            comp_id,
-            comp_name.unwrap_or_else(|| comp_id.to_string()),
-        )
+        let comp_name =
+            crate::repository::core_queries::get_component_display_name(&state.db, *comp_id).await;
+        ("component", comp_id, comp_name.to_string())
     } else {
         return Err("Schedule has no target (neither application_id nor component_id)".to_string());
     };
@@ -201,36 +148,15 @@ async fn execute_single_schedule(state: &Arc<AppState>, schedule: &DueSchedule) 
         Err(msg) => ("failed", Some(msg.as_str())),
     };
 
-    #[cfg(feature = "postgres")]
-    let _ = sqlx::query(
-        r#"
-        INSERT INTO operation_schedule_executions (id, schedule_id, action_log_id, status, message, duration_ms)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        "#,
+    let _ = crate::repository::core_queries::insert_schedule_execution(
+        &state.db,
+        execution_id,
+        schedule.id,
+        action_id,
+        status,
+        message,
+        duration_ms,
     )
-    .bind(execution_id)
-    .bind(schedule.id)
-    .bind(action_id)
-    .bind(status)
-    .bind(message)
-    .bind(duration_ms)
-    .execute(&state.db)
-    .await;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let _ = sqlx::query(
-        r#"
-        INSERT INTO operation_schedule_executions (id, schedule_id, action_log_id, status, message, duration_ms)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        "#,
-    )
-    .bind(execution_id.to_string())
-    .bind(schedule.id.to_string())
-    .bind(action_id.to_string())
-    .bind(status)
-    .bind(message)
-    .bind(duration_ms)
-    .execute(&state.db)
     .await;
 
     operation_result
@@ -302,42 +228,13 @@ async fn update_schedule_after_run(
         "Calculated next run time"
     );
 
-    #[cfg(feature = "postgres")]
-    sqlx::query(
-        r#"
-        UPDATE operation_schedules
-        SET last_run_at = now(),
-            last_run_status = $2,
-            last_run_message = $3,
-            next_run_at = $4,
-            updated_at = now()
-        WHERE id = $1
-        "#,
+    crate::repository::core_queries::update_operation_schedule_after_run(
+        db,
+        schedule.id,
+        status,
+        message.as_deref(),
+        next_run,
     )
-    .bind(schedule.id)
-    .bind(status)
-    .bind(&message)
-    .bind(next_run)
-    .execute(db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query(
-        r#"
-        UPDATE operation_schedules
-        SET last_run_at = datetime('now'),
-            last_run_status = $2,
-            last_run_message = $3,
-            next_run_at = $4,
-            updated_at = datetime('now')
-        WHERE id = $1
-        "#,
-    )
-    .bind(schedule.id.to_string())
-    .bind(status)
-    .bind(&message)
-    .bind(next_run.map(|dt| dt.to_rfc3339()))
-    .execute(db)
     .await?;
 
     Ok(())

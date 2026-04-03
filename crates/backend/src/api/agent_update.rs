@@ -76,18 +76,16 @@ pub async fn upload_binary(
     )
     .await?;
 
-    sqlx::query(
-        "INSERT INTO agent_binaries (id, version, platform, checksum_sha256, size_bytes, binary_data, uploaded_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    crate::repository::misc_queries::insert_agent_binary(
+        &state.db,
+        id,
+        &body.version,
+        &platform,
+        &body.checksum_sha256,
+        binary.len() as i64,
+        &binary,
+        *user.user_id,
     )
-    .bind(id)
-    .bind(&body.version)
-    .bind(&platform)
-    .bind(&body.checksum_sha256)
-    .bind(binary.len() as i64)
-    .bind(&binary)
-    .bind(user.user_id)
-    .execute(&state.db)
     .await?;
 
     Ok(Json(json!({
@@ -107,22 +105,7 @@ pub async fn list_binaries(
         return Err(ApiError::Forbidden);
     }
 
-    let rows = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            String,
-            String,
-            i64,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
-        "SELECT id, version, platform, checksum_sha256, size_bytes, uploaded_at
-         FROM agent_binaries ORDER BY uploaded_at DESC",
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let rows = crate::repository::misc_queries::list_agent_binaries(&state.db).await?;
 
     let binaries: Vec<Value> = rows
         .iter()
@@ -158,12 +141,9 @@ pub async fn push_update_to_agent(
     }
 
     // Get the binary
-    let binary_row = sqlx::query_as::<_, (Vec<u8>, String, i64)>(
-        "SELECT binary_data, checksum_sha256, size_bytes FROM agent_binaries WHERE version = $1",
-    )
-    .bind(&body.version)
-    .fetch_optional(&state.db)
-    .await?;
+    let binary_row =
+        crate::repository::misc_queries::get_agent_binary_by_version(&state.db, &body.version)
+            .await?;
 
     let (binary_data, checksum, size) = binary_row.ok_or(ApiError::NotFound)?;
 
@@ -185,15 +165,13 @@ pub async fn push_update_to_agent(
     .await?;
 
     // Create tracking task
-    sqlx::query(
-        "INSERT INTO agent_update_tasks (id, agent_id, target_version, status, total_chunks)
-         VALUES ($1, $2, $3, 'in_progress', $4)",
+    crate::repository::misc_queries::create_agent_update_task(
+        &state.db,
+        update_id,
+        agent_id,
+        &body.version,
+        total_chunks as i32,
     )
-    .bind(update_id)
-    .bind(agent_id)
-    .bind(&body.version)
-    .bind(total_chunks as i32)
-    .execute(&state.db)
     .await?;
 
     // Send chunks via WebSocket in background
@@ -222,21 +200,22 @@ pub async fn push_update_to_agent(
                     chunk = i,
                     "Failed to send binary chunk — agent unreachable"
                 );
-                let _ = sqlx::query(
-                    &format!("UPDATE agent_update_tasks SET status = 'failed', error = 'Agent unreachable', completed_at = {} WHERE id = $1", crate::db::sql::now()),
+                let _ = crate::repository::misc_queries::fail_agent_update_task(
+                    &state_clone.db,
+                    update_id,
+                    "Agent unreachable",
                 )
-                .bind(update_id)
-                .execute(&state_clone.db)
                 .await;
                 return;
             }
 
             // Update progress
-            let _ = sqlx::query("UPDATE agent_update_tasks SET chunks_sent = $2 WHERE id = $1")
-                .bind(update_id)
-                .bind((i + 1) as i32)
-                .execute(&state_clone.db)
-                .await;
+            let _ = crate::repository::misc_queries::update_agent_update_progress(
+                &state_clone.db,
+                update_id,
+                (i + 1) as i32,
+            )
+            .await;
 
             // Small delay between chunks to avoid overwhelming the WebSocket
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -322,26 +301,7 @@ pub async fn list_update_tasks(
         return Err(ApiError::Forbidden);
     }
 
-    let rows = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            Uuid,
-            String,
-            String,
-            i32,
-            i32,
-            Option<String>,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
-        "SELECT id, agent_id, target_version, status, chunks_sent, total_chunks, error, started_at
-         FROM agent_update_tasks
-         ORDER BY started_at DESC
-         LIMIT 100",
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let rows = crate::repository::misc_queries::list_agent_update_tasks(&state.db).await?;
 
     let tasks: Vec<Value> = rows
         .iter()

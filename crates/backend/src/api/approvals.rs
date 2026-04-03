@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -13,6 +13,7 @@ use crate::core::permissions::effective_permission;
 use crate::db::DbUuid;
 use crate::error::{ApiError, OptionExt};
 use crate::middleware::audit::log_action;
+use crate::repository::misc_queries;
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
 
@@ -35,22 +36,8 @@ pub struct ApprovalDecisionRequest {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct ApprovalRow {
-    pub id: DbUuid,
-    pub organization_id: DbUuid,
-    pub operation_type: String,
-    pub resource_type: String,
-    pub resource_id: DbUuid,
-    pub risk_level: String,
-    pub requested_by: DbUuid,
-    pub request_payload: Value,
-    pub status: String,
-    pub required_approvals: i32,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-    pub resolved_at: Option<chrono::DateTime<chrono::Utc>>,
-}
+// Re-export from repository
+pub use misc_queries::ApprovalRow;
 
 // ============================================================================
 // Risk Classification
@@ -100,15 +87,10 @@ pub async fn check_approval_required(
     let risk_level = classify_risk(operation_type);
 
     // Check org-specific policy
-    let policy = sqlx::query_as::<_, (bool,)>(
-        "SELECT enabled FROM approval_policies WHERE organization_id = $1 AND operation_type = $2",
-    )
-    .bind(organization_id)
-    .bind(operation_type)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+    let policy = misc_queries::check_approval_policy(pool, organization_id, operation_type)
+        .await
+        .ok()
+        .flatten();
 
     match policy {
         Some((true,)) => Some(risk_level.to_string()),
@@ -154,27 +136,19 @@ pub async fn create_approval_request(
     )
     .await?;
 
-    let row = sqlx::query_as::<_, ApprovalRow>(&format!(
-        "INSERT INTO approval_requests (
-                id, organization_id, operation_type, resource_type, resource_id,
-                risk_level, requested_by, request_payload, required_approvals, expires_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, {} + make_interval(mins => $10))
-            RETURNING id, organization_id, operation_type, resource_type, resource_id,
-                      risk_level, requested_by, request_payload, status, required_approvals,
-                      created_at, expires_at, resolved_at",
-        crate::db::sql::now()
-    ))
-    .bind(request_id)
-    .bind(user.organization_id)
-    .bind(&body.operation_type)
-    .bind(&body.resource_type)
-    .bind(body.resource_id)
-    .bind(risk_level)
-    .bind(user.user_id)
-    .bind(body.payload.as_ref().unwrap_or(&json!({})))
-    .bind(required)
-    .bind(timeout)
-    .fetch_one(&state.db)
+    let row = misc_queries::insert_approval_request(
+        &state.db,
+        request_id,
+        user.organization_id,
+        &body.operation_type,
+        &body.resource_type,
+        body.resource_id,
+        risk_level,
+        user.user_id,
+        body.payload.as_ref().unwrap_or(&json!({})),
+        required,
+        timeout,
+    )
     .await?;
 
     // Broadcast approval request event via WebSocket
@@ -201,20 +175,7 @@ pub async fn list_approval_requests(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let requests = sqlx::query_as::<_, ApprovalRow>(
-        r#"
-        SELECT id, organization_id, operation_type, resource_type, resource_id,
-               risk_level, requested_by, request_payload, status, required_approvals,
-               created_at, expires_at, resolved_at
-        FROM approval_requests
-        WHERE organization_id = $1
-        ORDER BY created_at DESC
-        LIMIT 100
-        "#,
-    )
-    .bind(user.organization_id)
-    .fetch_all(&state.db)
-    .await?;
+    let requests = misc_queries::list_approval_requests(&state.db, user.organization_id).await?;
 
     Ok(Json(json!({ "requests": requests })))
 }
@@ -227,23 +188,12 @@ pub async fn decide_approval(
     Json(body): Json<ApprovalDecisionRequest>,
 ) -> Result<Json<Value>, ApiError> {
     // Fetch the request
-    let request = sqlx::query_as::<_, ApprovalRow>(
-        r#"
-        SELECT id, organization_id, operation_type, resource_type, resource_id,
-               risk_level, requested_by, request_payload, status, required_approvals,
-               created_at, expires_at, resolved_at
-        FROM approval_requests
-        WHERE id = $1 AND organization_id = $2
-        "#,
-    )
-    .bind(request_id)
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let request = misc_queries::get_approval_request(&state.db, request_id, user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
     // 4-eyes: requester cannot approve their own request
-    if request.requested_by == DbUuid::from(user.user_id) {
+    if request.requested_by == user.user_id {
         return Err(ApiError::Forbidden);
     }
 
@@ -256,13 +206,7 @@ pub async fn decide_approval(
 
     // Check if expired
     if request.expires_at < chrono::Utc::now() {
-        let _ = sqlx::query(&format!(
-            "UPDATE approval_requests SET status = 'expired', resolved_at = {} WHERE id = $1",
-            crate::db::sql::now()
-        ))
-        .bind(request_id)
-        .execute(&state.db)
-        .await;
+        let _ = misc_queries::expire_approval_request(&state.db, request_id).await;
         return Err(ApiError::Conflict(
             "Approval request has expired".to_string(),
         ));
@@ -282,25 +226,20 @@ pub async fn decide_approval(
 
     // Record the decision
     let decision_id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO approval_decisions (id, request_id, decided_by, decision, reason) VALUES ($1, $2, $3, $4, $5)",
+    misc_queries::insert_approval_decision(
+        &state.db,
+        decision_id,
+        request_id,
+        user.user_id,
+        &body.decision,
+        &body.reason,
     )
-    .bind(decision_id)
-    .bind(request_id)
-    .bind(user.user_id)
-    .bind(&body.decision)
-    .bind(&body.reason)
-    .execute(&state.db)
     .await?;
 
     // Count approvals
-    let approval_count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM approval_decisions WHERE request_id = $1 AND decision = 'approved'",
-    )
-    .bind(request_id)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0);
+    let approval_count = misc_queries::count_approvals(&state.db, request_id)
+        .await
+        .unwrap_or(0);
 
     let new_status = if body.decision == "rejected" {
         "rejected"
@@ -311,14 +250,7 @@ pub async fn decide_approval(
     };
 
     if new_status != "pending" {
-        sqlx::query(&format!(
-            "UPDATE approval_requests SET status = $2, resolved_at = {} WHERE id = $1",
-            crate::db::sql::now()
-        ))
-        .bind(request_id)
-        .bind(new_status)
-        .execute(&state.db)
-        .await?;
+        misc_queries::update_approval_status(&state.db, request_id, new_status).await?;
     }
 
     log_action(
@@ -353,13 +285,7 @@ pub async fn list_approval_policies(
         return Err(ApiError::Forbidden);
     }
 
-    let policies = sqlx::query_as::<_, (DbUuid, String, String, i32, i32, bool)>(
-        "SELECT id, operation_type, risk_level, required_approvals, timeout_minutes, enabled \
-         FROM approval_policies WHERE organization_id = $1 ORDER BY operation_type",
-    )
-    .bind(user.organization_id)
-    .fetch_all(&state.db)
-    .await?;
+    let policies = misc_queries::list_approval_policies(&state.db, user.organization_id).await?;
 
     let result: Vec<Value> = policies
         .into_iter()
@@ -405,21 +331,15 @@ pub async fn upsert_approval_policy(
         .unwrap_or_else(|| default_timeout_minutes(risk_level));
     let enabled = body.enabled.unwrap_or(true);
 
-    sqlx::query(
-        r#"
-        INSERT INTO approval_policies (organization_id, operation_type, risk_level, required_approvals, timeout_minutes, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (organization_id, operation_type)
-        DO UPDATE SET risk_level = $3, required_approvals = $4, timeout_minutes = $5, enabled = $6
-        "#,
+    misc_queries::upsert_approval_policy(
+        &state.db,
+        user.organization_id,
+        &body.operation_type,
+        risk_level,
+        required,
+        timeout,
+        enabled,
     )
-    .bind(user.organization_id)
-    .bind(&body.operation_type)
-    .bind(risk_level)
-    .bind(required)
-    .bind(timeout)
-    .bind(enabled)
-    .execute(&state.db)
     .await?;
 
     log_action(

@@ -11,7 +11,9 @@ use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use appcontrol_backend::{config, create_router, db, middleware, terminal, websocket, AppState};
+use appcontrol_backend::{
+    config, create_router, db, middleware, repository, terminal, websocket, AppState,
+};
 
 #[derive(Parser)]
 #[command(
@@ -139,6 +141,14 @@ async fn main() -> anyhow::Result<()> {
     let log_subscriptions = websocket::LogSubscriptionManager::new();
 
     let state = Arc::new(AppState {
+        app_repo: repository::apps::create_app_repository(pool.clone()),
+        component_repo: repository::components::create_component_repository(pool.clone()),
+        team_repo: repository::teams::create_team_repository(pool.clone()),
+        permission_repo: repository::permissions::create_permission_repository(pool.clone()),
+        site_repo: repository::sites::create_site_repository(pool.clone()),
+        enrollment_repo: repository::enrollment::create_enrollment_repository(pool.clone()),
+        agent_repo: repository::agents::create_agent_repository(pool.clone()),
+        gateway_repo: repository::gateways::create_gateway_repository(pool.clone()),
         db: pool,
         ws_hub,
         config,
@@ -339,13 +349,17 @@ async fn ensure_check_event_partitions(pool: &crate::db::DbPool) -> anyhow::Resu
             let next_month_year = if month == 12 { year + 1 } else { year };
             let next_month = if month == 12 { 1 } else { month + 1 };
 
-            let sql = format!(
-                "CREATE TABLE IF NOT EXISTS {} PARTITION OF check_events \
-                 FOR VALUES FROM ('{}-{:02}-01') TO ('{}-{:02}-01')",
-                partition_name, year, month, next_month_year, next_month
-            );
-
-            if let Err(e) = sqlx::query(&sql).execute(pool).await {
+            if let Err(e) =
+                appcontrol_backend::repository::startup_queries::create_check_event_partition(
+                    pool,
+                    &partition_name,
+                    year,
+                    month,
+                    next_month_year,
+                    next_month,
+                )
+                .await
+            {
                 let err_str = e.to_string();
                 // Ignore "already exists" errors (partition overlap)
                 if !err_str.contains("already exists") && !err_str.contains("overlap") {
@@ -373,12 +387,9 @@ use chrono::Datelike;
 ///
 /// Uses UPSERT to override any migration-seeded data with the configured values.
 async fn seed_initial_user(pool: &crate::db::DbPool, seed: &config::SeedConfig) {
-    use appcontrol_backend::db::DbUuid;
+    use appcontrol_backend::repository::startup_queries as repo;
 
-    let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+    let user_count = repo::count_users(pool).await;
 
     if user_count > 0 {
         tracing::debug!("Users already exist — skipping seed");
@@ -398,36 +409,22 @@ async fn seed_initial_user(pool: &crate::db::DbPool, seed: &config::SeedConfig) 
     let user_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
 
     // Create or update the default organization
-    let org_result = sqlx::query(
-        "INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3) \
-         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug",
-    )
-    .bind(DbUuid::from(org_id))
-    .bind(&seed.org_name)
-    .bind(&seed.org_slug)
-    .execute(pool)
-    .await;
-
-    if let Err(e) = org_result {
+    if let Err(e) = repo::upsert_organization(pool, org_id, &seed.org_name, &seed.org_slug).await {
         tracing::warn!("Failed to seed organization: {}", e);
         return;
     }
 
     // Create or update the admin user (platform super-admin + org admin)
-    let user_result = sqlx::query(
-        "INSERT INTO users (id, organization_id, external_id, email, display_name, role, platform_role, auth_provider, password_hash) \
-         VALUES ($1, $2, 'seed-admin', $3, $4, 'admin', 'super_admin', 'local', $5) \
-         ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, password_hash = EXCLUDED.password_hash",
+    match repo::upsert_admin_user(
+        pool,
+        user_id,
+        org_id,
+        &seed.admin_email,
+        &seed.admin_display_name,
+        &password_hash,
     )
-    .bind(DbUuid::from(user_id))
-    .bind(DbUuid::from(org_id))
-    .bind(&seed.admin_email)
-    .bind(&seed.admin_display_name)
-    .bind(&password_hash)
-    .execute(pool)
-    .await;
-
-    match user_result {
+    .await
+    {
         Ok(_) => {
             tracing::info!(
                 email = %seed.admin_email,
@@ -448,26 +445,14 @@ async fn seed_initial_user(pool: &crate::db::DbPool, seed: &config::SeedConfig) 
 /// Without this, the admin must manually call `POST /api/v1/pki/init` before any
 /// agent can enroll. This eliminates that manual step — zero-config mTLS.
 async fn auto_init_pki(pool: &crate::db::DbPool) {
-    use appcontrol_backend::db::DbUuid;
+    use appcontrol_backend::repository::startup_queries as repo;
 
-    let orgs_without_ca: Vec<(DbUuid, String)> =
-        sqlx::query_as("SELECT id, name FROM organizations WHERE ca_cert_pem IS NULL")
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+    let orgs_without_ca = repo::find_orgs_without_ca(pool).await;
 
     for (org_id, org_name) in orgs_without_ca {
         match appcontrol_common::generate_ca(&org_name, 3650) {
             Ok(ca) => {
-                if let Err(e) = sqlx::query(
-                    "UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1",
-                )
-                .bind(org_id)
-                .bind(&ca.cert_pem)
-                .bind(&ca.key_pem)
-                .execute(pool)
-                .await
-                {
+                if let Err(e) = repo::store_ca_cert(pool, org_id, &ca.cert_pem, &ca.key_pem).await {
                     tracing::warn!(org = %org_name, "Failed to store auto-generated CA: {}", e);
                 } else {
                     let fp = appcontrol_common::fingerprint_pem(&ca.cert_pem).unwrap_or_default();
@@ -499,35 +484,17 @@ async fn run_data_retention(
     action_log_days: u32,
     check_events_days: u32,
 ) {
+    use appcontrol_backend::repository::startup_queries as repo;
+
     if action_log_days > 0 {
         let interval = format!("{} days", action_log_days);
 
         // Ensure archive table exists (idempotent)
-        let _ = sqlx::query(
-            "CREATE TABLE IF NOT EXISTS action_log_archive (LIKE action_log INCLUDING ALL)",
-        )
-        .execute(pool)
-        .await;
+        repo::ensure_action_log_archive_pg(pool).await;
 
         // Move old entries to archive (INSERT + DELETE in a transaction)
-        match sqlx::query(
-            r#"
-            WITH archived AS (
-                INSERT INTO action_log_archive
-                SELECT * FROM action_log WHERE created_at < now() - $1::interval
-                ON CONFLICT DO NOTHING
-                RETURNING id
-            )
-            SELECT count(*) FROM archived
-            "#,
-        )
-        .bind(&interval)
-        .fetch_one(pool)
-        .await
-        {
-            Ok(row) => {
-                use sqlx::Row;
-                let count: i64 = row.get(0);
+        match repo::archive_action_log_pg(pool, &interval).await {
+            Ok(count) => {
                 if count > 0 {
                     tracing::info!(
                         archived = count,
@@ -548,13 +515,7 @@ async fn run_data_retention(
         let cutoff_year = cutoff.year();
         let cutoff_month = cutoff.month();
 
-        // List existing partitions and drop those older than cutoff
-        let partitions: Vec<String> = sqlx::query_scalar(
-            "SELECT tablename FROM pg_tables WHERE tablename LIKE 'check_events_y%' AND schemaname = 'public'"
-        )
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+        let partitions = repo::list_check_event_partitions(pool).await;
 
         for partition_name in partitions {
             // Parse year/month from partition name: check_events_y2025m03
@@ -565,8 +526,7 @@ async fn run_data_retention(
                         (parts[0].parse::<i32>(), parts[1].parse::<u32>())
                     {
                         if year < cutoff_year || (year == cutoff_year && month < cutoff_month) {
-                            let sql = format!("DROP TABLE IF EXISTS {}", partition_name);
-                            match sqlx::query(&sql).execute(pool).await {
+                            match repo::drop_partition(pool, &partition_name).await {
                                 Ok(_) => {
                                     tracing::info!(
                                         partition = partition_name,
@@ -597,6 +557,7 @@ async fn run_data_retention(
     action_log_days: u32,
     check_events_days: u32,
 ) {
+    use appcontrol_backend::repository::startup_queries as repo;
     use chrono::Duration;
 
     if action_log_days > 0 {
@@ -604,33 +565,10 @@ async fn run_data_retention(
         let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
 
         // Create archive table if needed (SQLite syntax)
-        let _ = sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS action_log_archive (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                action TEXT NOT NULL,
-                resource_type TEXT NOT NULL,
-                resource_id TEXT NOT NULL,
-                details TEXT,
-                status TEXT NOT NULL DEFAULT 'in_progress',
-                error_message TEXT,
-                completed_at TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )"#,
-        )
-        .execute(pool)
-        .await;
+        repo::ensure_action_log_archive_sqlite(pool).await;
 
         // Archive old entries
-        let result = sqlx::query(
-            "INSERT OR IGNORE INTO action_log_archive SELECT * FROM action_log WHERE created_at < ?",
-        )
-        .bind(&cutoff_str)
-        .execute(pool)
-        .await;
-
-        if let Ok(result) = result {
-            let count = result.rows_affected();
+        if let Ok(count) = repo::archive_action_log_sqlite(pool, &cutoff_str).await {
             if count > 0 {
                 tracing::info!(
                     archived = count,
@@ -646,13 +584,8 @@ async fn run_data_retention(
         let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
 
         // SQLite: simple DELETE (no partitioning)
-        match sqlx::query("DELETE FROM check_events WHERE created_at < ?")
-            .bind(&cutoff_str)
-            .execute(pool)
-            .await
-        {
-            Ok(result) => {
-                let count = result.rows_affected();
+        match repo::delete_old_check_events_sqlite(pool, &cutoff_str).await {
+            Ok(count) => {
                 if count > 0 {
                     tracing::info!(
                         deleted = count,
@@ -683,26 +616,10 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
 
     // Ensure tracking table exists (cross-database compatible syntax)
     #[cfg(feature = "postgres")]
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS _migrations (
-            version INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )",
-    )
-    .execute(pool)
-    .await?;
+    appcontrol_backend::repository::startup_queries::ensure_migrations_table_pg(pool).await?;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS _migrations (
-            version INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )",
-    )
-    .execute(pool)
-    .await?;
+    appcontrol_backend::repository::startup_queries::ensure_migrations_table_sqlite(pool).await?;
 
     // Find migration files.
     // Try multiple locations in priority order:
@@ -845,9 +762,8 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
     migration_entries.sort_by_key(|(v, _, _)| *v);
 
     // Get already applied versions
-    let applied: Vec<i32> = sqlx::query_scalar("SELECT version FROM _migrations ORDER BY version")
-        .fetch_all(pool)
-        .await?;
+    let applied =
+        appcontrol_backend::repository::startup_queries::get_applied_migrations(pool).await?;
 
     let mut applied_count = 0;
     for (version, name, sql) in &migration_entries {
@@ -875,7 +791,11 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
             if trimmed.is_empty() {
                 continue;
             }
-            sqlx::query(trimmed).execute(&mut *tx).await.map_err(|e| {
+            appcontrol_backend::repository::startup_queries::execute_migration_statement(
+                &mut tx, trimmed,
+            )
+            .await
+            .map_err(|e| {
                 tracing::error!(
                     "Migration V{:03} failed on statement: {}\nError: {}",
                     version,
@@ -885,10 +805,7 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
                 e
             })?;
         }
-        sqlx::query("INSERT INTO _migrations (version, name) VALUES ($1, $2)")
-            .bind(version)
-            .bind(name)
-            .execute(&mut *tx)
+        appcontrol_backend::repository::startup_queries::record_migration(&mut tx, *version, name)
             .await?;
         tx.commit().await?;
 

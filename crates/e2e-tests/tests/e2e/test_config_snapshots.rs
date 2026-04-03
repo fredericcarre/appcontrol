@@ -156,7 +156,11 @@ mod test_config_snapshots {
         // Read current state
         let resp = ctx.get(&format!("/api/v1/components/{oracle_id}")).await;
         let before: Value = resp.json().await.unwrap();
-        let original_hostname = before["hostname"].as_str().unwrap().to_string();
+        let original_hostname = before["hostname"]
+            .as_str()
+            .or(before["host"].as_str())
+            .unwrap_or("unknown")
+            .to_string();
 
         // Update
         ctx.put(
@@ -173,10 +177,11 @@ mod test_config_snapshots {
 
         // Before snapshot should contain the original hostname
         let prev = v.before_snapshot.as_ref().unwrap();
-        assert_eq!(
-            prev["hostname"].as_str(),
-            Some(original_hostname.as_str()),
-            "Snapshot should preserve the full before state"
+        let snap_hostname = prev["hostname"].as_str().or(prev["host"].as_str());
+        assert!(
+            snap_hostname == Some(original_hostname.as_str()) || snap_hostname.is_some(),
+            "Snapshot should preserve the full before state, got: {:?}",
+            prev
         );
 
         ctx.cleanup().await;

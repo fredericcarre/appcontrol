@@ -80,15 +80,10 @@ pub async fn start_rotation(
     appcontrol_common::validate_ca_keypair(new_ca_cert_pem, new_ca_key_pem)
         .map_err(|e| ApiError::Validation(format!("Invalid CA keypair: {}", e)))?;
 
-    // Check if there's already a rotation in progress
-    let existing: Option<(Uuid,)> = sqlx::query_as(
-        r#"SELECT rotation_id FROM rotation_progress
-           WHERE organization_id = $1 AND status = 'in_progress'"#,
-    )
-    .bind(org_id)
-    .fetch_optional(pool)
-    .await?;
+    use crate::repository::core_queries as repo;
 
+    // Check if there's already a rotation in progress
+    let existing = repo::find_active_rotation(pool, org_id).await?;
     if existing.is_some() {
         return Err(ApiError::Conflict(
             "A certificate rotation is already in progress".to_string(),
@@ -96,12 +91,7 @@ pub async fn start_rotation(
     }
 
     // Check that the organization has an existing CA
-    let current_ca: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
-            .bind(org_id)
-            .fetch_optional(pool)
-            .await?;
-
+    let current_ca = repo::get_current_ca(pool, org_id).await?;
     if current_ca.is_none() || current_ca.as_ref().and_then(|c| c.0.as_ref()).is_none() {
         return Err(ApiError::Validation(
             "No existing CA to rotate from. Use PKI init instead.".to_string(),
@@ -111,52 +101,22 @@ pub async fn start_rotation(
     let rotation_id = Uuid::new_v4();
 
     // Count total agents and gateways that need to migrate
-    let agent_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM agents WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
-    )
-    .bind(org_id)
-    .fetch_one(pool)
-    .await?;
-
-    let gateway_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM gateways WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
-    )
-    .bind(org_id)
-    .fetch_one(pool)
-    .await?;
+    let agent_count = repo::count_certified_agents(pool, org_id).await?;
+    let gateway_count = repo::count_certified_gateways(pool, org_id).await?;
 
     // Start transaction to update org and create progress record
-    let mut tx = pool.begin().await?;
-
-    // Store pending CA
-    sqlx::query(&format!(
-        "UPDATE organizations \
-             SET pending_ca_cert_pem = $2, pending_ca_key_pem = $3, rotation_started_at = {} \
-             WHERE id = $1",
-        crate::db::sql::now()
-    ))
-    .bind(org_id)
-    .bind(new_ca_cert_pem)
-    .bind(new_ca_key_pem)
-    .execute(&mut *tx)
-    .await?;
-
-    // Create progress tracking record
-    sqlx::query(
-        r#"INSERT INTO rotation_progress
-           (organization_id, rotation_id, total_agents, total_gateways, initiated_by, grace_period_secs)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    repo::start_rotation_tx(
+        pool,
+        org_id,
+        rotation_id,
+        new_ca_cert_pem,
+        new_ca_key_pem,
+        agent_count.0,
+        gateway_count.0,
+        initiated_by,
+        grace_period_secs as i32,
     )
-    .bind(org_id)
-    .bind(rotation_id)
-    .bind(agent_count.0 as i32)
-    .bind(gateway_count.0 as i32)
-    .bind(initiated_by)
-    .bind(grace_period_secs as i32)
-    .execute(&mut *tx)
     .await?;
-
-    tx.commit().await?;
 
     let new_fp = appcontrol_common::fingerprint_pem(new_ca_cert_pem).unwrap_or_default();
     tracing::info!(
@@ -183,44 +143,24 @@ pub async fn record_migration(
     new_fingerprint: &str,
     hostname: &str,
 ) -> Result<(), ApiError> {
-    // Insert migration record
-    sqlx::query(
-        r#"INSERT INTO certificate_rotations
-           (organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, new_fingerprint, status, hostname)
-           VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7)
-           ON CONFLICT DO NOTHING"#,
+    use crate::repository::core_queries as repo;
+
+    repo::insert_cert_migration(
+        pool,
+        org_id,
+        rotation_id,
+        agent_id,
+        gateway_id,
+        old_fingerprint,
+        new_fingerprint,
+        hostname,
     )
-    .bind(org_id)
-    .bind(rotation_id)
-    .bind(agent_id)
-    .bind(gateway_id)
-    .bind(old_fingerprint)
-    .bind(new_fingerprint)
-    .bind(hostname)
-    .execute(pool)
     .await?;
 
-    // Update progress counter
     if agent_id.is_some() {
-        sqlx::query(
-            r#"UPDATE rotation_progress
-               SET migrated_agents = migrated_agents + 1
-               WHERE organization_id = $1 AND rotation_id = $2"#,
-        )
-        .bind(org_id)
-        .bind(rotation_id)
-        .execute(pool)
-        .await?;
+        repo::increment_migrated_agents(pool, org_id, rotation_id).await?;
     } else if gateway_id.is_some() {
-        sqlx::query(
-            r#"UPDATE rotation_progress
-               SET migrated_gateways = migrated_gateways + 1
-               WHERE organization_id = $1 AND rotation_id = $2"#,
-        )
-        .bind(org_id)
-        .bind(rotation_id)
-        .execute(pool)
-        .await?;
+        repo::increment_migrated_gateways(pool, org_id, rotation_id).await?;
     }
 
     // Check if rotation is complete
@@ -241,43 +181,24 @@ pub async fn record_migration_failure(
     hostname: &str,
     error_message: &str,
 ) -> Result<(), ApiError> {
-    sqlx::query(
-        r#"INSERT INTO certificate_rotations
-           (organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, status, hostname, error_message)
-           VALUES ($1, $2, $3, $4, $5, 'failed', $6, $7)
-           ON CONFLICT DO NOTHING"#,
+    use crate::repository::core_queries as repo;
+
+    repo::insert_cert_migration_failure(
+        pool,
+        org_id,
+        rotation_id,
+        agent_id,
+        gateway_id,
+        old_fingerprint,
+        hostname,
+        error_message,
     )
-    .bind(org_id)
-    .bind(rotation_id)
-    .bind(agent_id)
-    .bind(gateway_id)
-    .bind(old_fingerprint)
-    .bind(hostname)
-    .bind(error_message)
-    .execute(pool)
     .await?;
 
-    // Update failure counter
     if agent_id.is_some() {
-        sqlx::query(
-            r#"UPDATE rotation_progress
-               SET failed_agents = failed_agents + 1
-               WHERE organization_id = $1 AND rotation_id = $2"#,
-        )
-        .bind(org_id)
-        .bind(rotation_id)
-        .execute(pool)
-        .await?;
+        repo::increment_failed_agents(pool, org_id, rotation_id).await?;
     } else if gateway_id.is_some() {
-        sqlx::query(
-            r#"UPDATE rotation_progress
-               SET failed_gateways = failed_gateways + 1
-               WHERE organization_id = $1 AND rotation_id = $2"#,
-        )
-        .bind(org_id)
-        .bind(rotation_id)
-        .execute(pool)
-        .await?;
+        repo::increment_failed_gateways(pool, org_id, rotation_id).await?;
     }
 
     Ok(())
@@ -289,28 +210,13 @@ async fn check_rotation_completion(
     org_id: Uuid,
     rotation_id: Uuid,
 ) -> Result<bool, ApiError> {
-    let progress: Option<(i32, i32, i32, i32)> = sqlx::query_as(
-        r#"SELECT total_agents, total_gateways, migrated_agents, migrated_gateways
-           FROM rotation_progress
-           WHERE organization_id = $1 AND rotation_id = $2"#,
-    )
-    .bind(org_id)
-    .bind(rotation_id)
-    .fetch_optional(pool)
-    .await?;
+    use crate::repository::core_queries as repo;
+
+    let progress = repo::get_rotation_counts(pool, org_id, rotation_id).await?;
 
     if let Some((total_agents, total_gateways, migrated_agents, migrated_gateways)) = progress {
         if migrated_agents >= total_agents && migrated_gateways >= total_gateways {
-            sqlx::query(&format!(
-                "UPDATE rotation_progress \
-                     SET status = 'ready', completed_at = {} \
-                     WHERE organization_id = $1 AND rotation_id = $2 AND status = 'in_progress'",
-                crate::db::sql::now()
-            ))
-            .bind(org_id)
-            .bind(rotation_id)
-            .execute(pool)
-            .await?;
+            repo::mark_rotation_ready(pool, org_id, rotation_id).await?;
 
             tracing::info!(
                 org_id = %org_id,
@@ -331,31 +237,9 @@ pub async fn get_rotation_progress(
     pool: &DbPool,
     org_id: Uuid,
 ) -> Result<Option<RotationProgress>, ApiError> {
-    let row: Option<(
-        Uuid,
-        String,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        DateTime<Utc>,
-        Option<DateTime<Utc>>,
-        Option<DateTime<Utc>>,
-        i32,
-    )> = sqlx::query_as(
-        r#"SELECT rotation_id, status, total_agents, total_gateways,
-                  migrated_agents, migrated_gateways, failed_agents, failed_gateways,
-                  started_at, completed_at, finalized_at, grace_period_secs
-           FROM rotation_progress
-           WHERE organization_id = $1
-           ORDER BY started_at DESC
-           LIMIT 1"#,
-    )
-    .bind(org_id)
-    .fetch_optional(pool)
-    .await?;
+    use crate::repository::core_queries as repo;
+
+    let row = repo::get_rotation_progress_details(pool, org_id).await?;
 
     if let Some((
         rotation_id,
@@ -373,12 +257,7 @@ pub async fn get_rotation_progress(
     )) = row
     {
         // Get fingerprints
-        let ca_row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT ca_cert_pem, pending_ca_cert_pem FROM organizations WHERE id = $1",
-        )
-        .bind(org_id)
-        .fetch_optional(pool)
-        .await?;
+        let ca_row = repo::get_ca_certs(pool, org_id).await?;
 
         let (old_fp, new_fp) = if let Some((current_ca, pending_ca)) = ca_row {
             (
@@ -416,17 +295,9 @@ pub async fn get_rotation_progress(
 /// This should only be called after all entities have migrated (status = 'ready').
 /// After finalization, the old CA is removed and only the new CA is trusted.
 pub async fn finalize_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiError> {
-    // Check that rotation is ready
-    let progress: Option<(Uuid, String)> = sqlx::query_as(
-        r#"SELECT rotation_id, status FROM rotation_progress
-           WHERE organization_id = $1
-           ORDER BY started_at DESC
-           LIMIT 1"#,
-    )
-    .bind(org_id)
-    .fetch_optional(pool)
-    .await?;
+    use crate::repository::core_queries as repo;
 
+    let progress = repo::get_rotation_status(pool, org_id).await?;
     let rotation_id = match progress {
         Some((rid, status)) if status == "ready" => rid,
         Some((_, status)) => {
@@ -441,35 +312,7 @@ pub async fn finalize_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiErr
     };
 
     // Start transaction to swap CAs
-    let mut tx = pool.begin().await?;
-
-    // Move pending CA to primary, clear pending
-    sqlx::query(
-        r#"UPDATE organizations
-           SET ca_cert_pem = pending_ca_cert_pem,
-               ca_key_pem = pending_ca_key_pem,
-               pending_ca_cert_pem = NULL,
-               pending_ca_key_pem = NULL,
-               rotation_started_at = NULL
-           WHERE id = $1"#,
-    )
-    .bind(org_id)
-    .execute(&mut *tx)
-    .await?;
-
-    // Mark rotation as finalized
-    sqlx::query(&format!(
-        "UPDATE rotation_progress \
-             SET status = 'completed', finalized_at = {} \
-             WHERE organization_id = $1 AND rotation_id = $2",
-        crate::db::sql::now()
-    ))
-    .bind(org_id)
-    .bind(rotation_id)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
+    repo::finalize_rotation_tx(pool, org_id, rotation_id).await?;
 
     tracing::info!(
         org_id = %org_id,
@@ -485,16 +328,9 @@ pub async fn finalize_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiErr
 /// This clears the pending CA and marks the rotation as cancelled.
 /// Entities that already migrated will need to re-enroll with the original CA.
 pub async fn cancel_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiError> {
-    let progress: Option<(Uuid, String)> = sqlx::query_as(
-        r#"SELECT rotation_id, status FROM rotation_progress
-           WHERE organization_id = $1
-           ORDER BY started_at DESC
-           LIMIT 1"#,
-    )
-    .bind(org_id)
-    .fetch_optional(pool)
-    .await?;
+    use crate::repository::core_queries as repo;
 
+    let progress = repo::get_rotation_status(pool, org_id).await?;
     let rotation_id = match progress {
         Some((rid, status)) if status == "in_progress" => rid,
         Some((_, status)) => {
@@ -508,32 +344,7 @@ pub async fn cancel_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiError
         }
     };
 
-    let mut tx = pool.begin().await?;
-
-    // Clear pending CA
-    sqlx::query(
-        r#"UPDATE organizations
-           SET pending_ca_cert_pem = NULL,
-               pending_ca_key_pem = NULL,
-               rotation_started_at = NULL
-           WHERE id = $1"#,
-    )
-    .bind(org_id)
-    .execute(&mut *tx)
-    .await?;
-
-    // Mark rotation as cancelled
-    sqlx::query(
-        r#"UPDATE rotation_progress
-           SET status = 'cancelled'
-           WHERE organization_id = $1 AND rotation_id = $2"#,
-    )
-    .bind(org_id)
-    .bind(rotation_id)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
+    repo::cancel_rotation_tx(pool, org_id, rotation_id).await?;
 
     tracing::info!(
         org_id = %org_id,
@@ -549,11 +360,7 @@ pub async fn cancel_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiError
 /// During rotation, returns both old and new CAs concatenated.
 /// Otherwise, returns just the current CA.
 pub async fn get_ca_bundle(pool: &DbPool, org_id: Uuid) -> Result<String, ApiError> {
-    let row: Option<(Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT ca_cert_pem, pending_ca_cert_pem FROM organizations WHERE id = $1")
-            .bind(org_id)
-            .fetch_optional(pool)
-            .await?;
+    let row = crate::repository::core_queries::get_ca_certs(pool, org_id).await?;
 
     match row {
         Some((Some(current), pending)) => {

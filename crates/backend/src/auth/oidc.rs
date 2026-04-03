@@ -187,8 +187,8 @@ pub async fn oidc_callback(
 
     // Generate our own JWT
     let jwt_token = super::jwt::create_token(
-        auth_user.user_id,
-        auth_user.organization_id,
+        *auth_user.user_id,
+        *auth_user.organization_id,
         &auth_user.email,
         &auth_user.role,
         &state.config.jwt_secret,
@@ -231,52 +231,41 @@ async fn find_or_create_oidc_user(
     display_name: &str,
     oidc_sub: &str,
 ) -> Result<AuthUser, sqlx::Error> {
+    use crate::repository::auth_queries;
+
     // Try to find by email first
-    let existing = sqlx::query_as::<_, (DbUuid, DbUuid, String, String)>(
-        "SELECT id, organization_id, email, role FROM users WHERE email = $1",
-    )
-    .bind(email)
-    .fetch_optional(pool)
-    .await?;
+    let existing = auth_queries::find_user_by_email_for_oidc(pool, email).await?;
 
     if let Some((user_id, org_id, email, role)) = existing {
         // Update OIDC subject if not set
-        let _ = sqlx::query("UPDATE users SET oidc_sub = $1 WHERE id = $2 AND oidc_sub IS NULL")
-            .bind(oidc_sub)
-            .bind(user_id)
-            .execute(pool)
-            .await;
+        let _ = auth_queries::update_oidc_sub_if_null(pool, user_id, oidc_sub).await;
 
         return Ok(AuthUser {
-            user_id: *user_id,
-            organization_id: *org_id,
+            user_id,
+            organization_id: org_id,
             email,
             role,
         });
     }
 
     // Auto-create user in default organization
-    let org_id = sqlx::query_scalar::<_, DbUuid>("SELECT id FROM organizations LIMIT 1")
-        .fetch_one(pool)
-        .await?;
+    let org_id = auth_queries::get_default_org_id(pool).await?;
 
     let user_id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO users (id, organization_id, external_id, email, display_name, role, oidc_sub)
-         VALUES ($1, $2, $3, $4, $5, 'viewer', $6)",
+    auth_queries::create_oidc_user(
+        pool,
+        user_id,
+        org_id,
+        &format!("oidc:{oidc_sub}"),
+        email,
+        display_name,
+        oidc_sub,
     )
-    .bind(user_id)
-    .bind(org_id)
-    .bind(format!("oidc:{oidc_sub}"))
-    .bind(email)
-    .bind(display_name)
-    .bind(oidc_sub)
-    .execute(pool)
     .await?;
 
     Ok(AuthUser {
-        user_id,
-        organization_id: *org_id,
+        user_id: DbUuid::from(user_id),
+        organization_id: org_id,
         email: email.to_string(),
         role: "viewer".to_string(),
     })

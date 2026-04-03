@@ -47,8 +47,15 @@ impl IntoResponse for ApiError {
                 "Resource not found".to_string(),
             ),
             ApiError::Database(sqlx::Error::Database(db_err)) => {
-                // PostgreSQL unique violation
-                if db_err.code().as_deref() == Some("23505") {
+                // PostgreSQL unique violation = "23505", SQLite UNIQUE constraint = "2067"
+                let is_unique_violation =
+                    matches!(db_err.code().as_deref(), Some("23505") | Some("2067"));
+                // Also check message for SQLite which may not always set code
+                let is_unique_msg = db_err
+                    .message()
+                    .to_lowercase()
+                    .contains("unique constraint");
+                if is_unique_violation || is_unique_msg {
                     (
                         StatusCode::CONFLICT,
                         "conflict",
@@ -56,7 +63,7 @@ impl IntoResponse for ApiError {
                     )
                 } else {
                     tracing::error!(
-                        pg_code = ?db_err.code(),
+                        db_code = ?db_err.code(),
                         "Database error: {}", db_err
                     );
                     (

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[allow(unused_imports)]
 use crate::db::{DbPool, DbUuid};
 use appcontrol_common::{CheckStatus, DiagnosticRecommendation};
 
@@ -70,13 +71,9 @@ pub async fn diagnose_app(
 ) -> Result<Vec<ComponentDiagnosis>, DiagnosticError> {
     let app_id: Uuid = app_id.into();
     // Get all components
-    let components = sqlx::query_as::<_, (DbUuid, String)>(
-        "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
-    )
-    .bind(app_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| DiagnosticError::Database(e.to_string()))?;
+    let components = crate::repository::core_queries::get_components_for_diagnostic(pool, app_id)
+        .await
+        .map_err(|e| DiagnosticError::Database(e.to_string()))?;
 
     if components.is_empty() {
         return Ok(Vec::new());
@@ -86,7 +83,7 @@ pub async fn diagnose_app(
 
     // Single query: get latest check result per (component_id, check_type)
     let comp_ids_uuid: Vec<Uuid> = comp_ids.iter().map(|id| id.into_inner()).collect();
-    let latest_checks = fetch_latest_checks(pool, &comp_ids_uuid)
+    let latest_checks = crate::repository::core_queries::fetch_latest_checks(pool, &comp_ids_uuid)
         .await
         .map_err(|e| DiagnosticError::Database(e.to_string()))?;
 
@@ -133,67 +130,7 @@ pub async fn diagnose_app(
     Ok(diagnoses)
 }
 
-/// Fetch latest check results for given component IDs
-#[cfg(feature = "postgres")]
-async fn fetch_latest_checks(
-    pool: &DbPool,
-    comp_ids: &[Uuid],
-) -> Result<Vec<(DbUuid, String, i16)>, sqlx::Error> {
-    sqlx::query_as::<_, (DbUuid, String, i16)>(
-        r#"
-        SELECT component_id, check_type, exit_code
-        FROM (
-            SELECT component_id, check_type, exit_code,
-                   ROW_NUMBER() OVER (PARTITION BY component_id, check_type ORDER BY created_at DESC) as rn
-            FROM check_events
-            WHERE component_id = ANY($1)
-              AND check_type IN ('health', 'integrity', 'infrastructure')
-        ) ranked
-        WHERE rn = 1
-        "#,
-    )
-    .bind(comp_ids)
-    .fetch_all(pool)
-    .await
-}
-
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-async fn fetch_latest_checks(
-    pool: &DbPool,
-    comp_ids: &[Uuid],
-) -> Result<Vec<(DbUuid, String, i16)>, sqlx::Error> {
-    if comp_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let placeholders: Vec<String> = (1..=comp_ids.len()).map(|i| format!("${}", i)).collect();
-    let query = format!(
-        r#"
-        SELECT component_id, check_type, exit_code
-        FROM (
-            SELECT component_id, check_type, exit_code,
-                   ROW_NUMBER() OVER (PARTITION BY component_id, check_type ORDER BY created_at DESC) as rn
-            FROM check_events
-            WHERE component_id IN ({})
-              AND check_type IN ('health', 'integrity', 'infrastructure')
-        ) ranked
-        WHERE rn = 1
-        "#,
-        placeholders.join(", ")
-    );
-    let mut q = sqlx::query_as::<_, (String, String, i16)>(&query);
-    for id in comp_ids {
-        q = q.bind(id.to_string());
-    }
-    let rows: Vec<(String, String, i16)> = q.fetch_all(pool).await?;
-    Ok(rows
-        .into_iter()
-        .filter_map(|(id_str, check_type, exit_code)| {
-            Uuid::parse_str(&id_str)
-                .ok()
-                .map(|id| (DbUuid::from(id), check_type, exit_code))
-        })
-        .collect())
-}
+// fetch_latest_checks moved to repository::core_queries
 
 #[cfg(test)]
 mod tests {

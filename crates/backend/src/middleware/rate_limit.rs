@@ -100,29 +100,8 @@ async fn check_rate_limit(
     }
 
     // PostgreSQL-backed rate limiting for HA deployments.
-    // Uses INSERT ON CONFLICT with window_start reset logic.
-    let result = sqlx::query_scalar::<_, i32>(
-        r#"
-        INSERT INTO rate_limit_counters (key, count, window_start)
-        VALUES ($1, 1, now())
-        ON CONFLICT (key) DO UPDATE SET
-            count = CASE
-                WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
-                THEN 1
-                ELSE rate_limit_counters.count + 1
-            END,
-            window_start = CASE
-                WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
-                THEN now()
-                ELSE rate_limit_counters.window_start
-            END
-        RETURNING count
-        "#,
-    )
-    .bind(key)
-    .bind(window_secs as i32)
-    .fetch_one(pool)
-    .await;
+    let result =
+        crate::repository::misc_queries::check_rate_limit_pg(pool, key, window_secs as i32).await;
 
     match result {
         Ok(count) => count <= max_requests as i32,
@@ -137,25 +116,8 @@ async fn check_rate_limit(
 }
 
 /// Cleanup expired rate limit counters (called periodically from background task).
-#[cfg(feature = "postgres")]
 pub async fn cleanup_rate_limit_counters(pool: &crate::db::DbPool) {
-    // Remove counters older than 2 minutes (window is 60s, 2x buffer)
-    let _ = sqlx::query(
-        "DELETE FROM rate_limit_counters WHERE window_start < now() - interval '2 minutes'",
-    )
-    .execute(pool)
-    .await;
-}
-
-/// Cleanup expired rate limit counters (SQLite version).
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn cleanup_rate_limit_counters(pool: &crate::db::DbPool) {
-    // Remove counters older than 2 minutes (window is 60s, 2x buffer)
-    let _ = sqlx::query(
-        "DELETE FROM rate_limit_counters WHERE window_start < datetime('now', '-2 minutes')",
-    )
-    .execute(pool)
-    .await;
+    crate::repository::misc_queries::cleanup_rate_limit_counters(pool).await;
 }
 
 /// Rate limiting middleware for auth endpoints (keyed by IP).

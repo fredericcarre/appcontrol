@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::error::ApiError;
+use crate::repository::misc_queries;
 use crate::AppState;
 
 // ---------------------------------------------------------------------------
@@ -21,22 +22,9 @@ use crate::AppState;
 
 /// Get the CA public certificate for trust establishment.
 ///
-/// This endpoint is intentionally unauthenticated to allow init containers
-/// and agents to retrieve the CA certificate before they have credentials.
-/// Only the public certificate is returned, never the private key.
-///
 /// GET /api/v1/pki/ca-public
 pub async fn get_ca_public(State(state): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
-    // Get the first organization's CA (for single-tenant deployments)
-    // In multi-tenant mode, this would need org identification via header
-    let row: Option<(Option<String>, String)> = sqlx::query_as(
-        r#"SELECT ca_cert_pem, slug FROM organizations
-           WHERE ca_cert_pem IS NOT NULL
-           ORDER BY created_at ASC
-           LIMIT 1"#,
-    )
-    .fetch_optional(&state.db)
-    .await?;
+    let row = misc_queries::get_first_ca_public(&state.db).await?;
 
     match row {
         Some((Some(cert_pem), org_slug)) => {
@@ -80,16 +68,12 @@ pub struct IssueServerCertResponse {
 
 /// Issue a server certificate for nginx TLS termination.
 ///
-/// This creates a certificate suitable for HTTPS server authentication,
-/// signed by the organization's CA.
-///
 /// POST /api/v1/pki/server-cert
 pub async fn issue_server_cert(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Json(req): Json<IssueServerCertRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    // Check admin permission
     if !user.is_admin() {
         return Err(ApiError::Forbidden);
     }
@@ -97,11 +81,7 @@ pub async fn issue_server_cert(
     crate::error::validate_length("common_name", &req.common_name, 1, 253)?;
 
     // Load organization CA
-    let ca_row: Option<(Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT ca_cert_pem, ca_key_pem FROM organizations WHERE id = $1")
-            .bind(user.organization_id)
-            .fetch_optional(&state.db)
-            .await?;
+    let ca_row = misc_queries::get_org_ca_cert_key(&state.db, user.organization_id).await?;
 
     let (ca_cert_pem, ca_key_pem) = match ca_row {
         Some((Some(cert), Some(key))) => (cert, key),
@@ -114,7 +94,6 @@ pub async fn issue_server_cert(
 
     let validity_days = req.validity_days.unwrap_or(365);
 
-    // Issue server certificate (same as gateway cert - server auth)
     let issued = appcontrol_common::issue_gateway_cert(
         &ca_cert_pem,
         &ca_key_pem,
@@ -130,10 +109,10 @@ pub async fn issue_server_cert(
     // Log the action
     crate::middleware::audit::log_action(
         &state.db,
-        user.user_id,
+        *user.user_id,
         "issue_server_cert",
         "organization",
-        user.organization_id,
+        *user.organization_id,
         json!({
             "common_name": &req.common_name,
             "san_dns": &req.san_dns,
@@ -146,15 +125,13 @@ pub async fn issue_server_cert(
     .ok();
 
     // Log certificate event
-    sqlx::query(&format!(
-        "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
-             VALUES ('issued', $1, $2, {now}, {now} + $3 * interval '1 day')",
-        now = crate::db::sql::now()
-    ))
-    .bind(&fingerprint)
-    .bind(&req.common_name)
-    .bind(validity_days as i32)
-    .execute(&state.db)
+    misc_queries::log_certificate_event_with_days(
+        &state.db,
+        "issued",
+        &fingerprint,
+        &req.common_name,
+        validity_days as i32,
+    )
     .await
     .ok();
 
@@ -197,18 +174,12 @@ fn default_validity_days() -> u32 {
 
 /// Export CA and server certificates to the configured volume path.
 ///
-/// Writes:
-/// - /certs/ca.crt (CA certificate)
-/// - /certs/server.crt (Server certificate)
-/// - /certs/server.key (Server private key)
-///
 /// POST /api/v1/pki/export-to-volume
 pub async fn export_to_volume(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Json(req): Json<ExportToVolumeRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    // Check admin permission
     if !user.is_admin() {
         return Err(ApiError::Forbidden);
     }
@@ -216,11 +187,7 @@ pub async fn export_to_volume(
     let export_path = std::env::var("CERT_EXPORT_PATH").unwrap_or_else(|_| "/certs".to_string());
 
     // Load organization CA
-    let ca_row: Option<(Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT ca_cert_pem, ca_key_pem FROM organizations WHERE id = $1")
-            .bind(user.organization_id)
-            .fetch_optional(&state.db)
-            .await?;
+    let ca_row = misc_queries::get_org_ca_cert_key(&state.db, user.organization_id).await?;
 
     let (ca_cert_pem, ca_key_pem) = match ca_row {
         Some((Some(cert), Some(key))) => (cert, key),
@@ -272,10 +239,10 @@ pub async fn export_to_volume(
     // Log the action
     crate::middleware::audit::log_action(
         &state.db,
-        user.user_id,
+        *user.user_id,
         "export_certs_to_volume",
         "organization",
-        user.organization_id,
+        *user.organization_id,
         json!({
             "export_path": &export_path,
             "common_name": &req.common_name,
@@ -328,18 +295,7 @@ pub async fn get_pki_status(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    // Get CA status
-    let ca_row: Option<(
-        Option<String>,
-        Option<String>,
-        Option<chrono::DateTime<chrono::Utc>>,
-    )> = sqlx::query_as(
-        r#"SELECT ca_cert_pem, pending_ca_cert_pem, rotation_started_at
-           FROM organizations WHERE id = $1"#,
-    )
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let ca_row = misc_queries::get_org_ca_status(&state.db, user.organization_id).await?;
 
     let (ca_cert, pending_cert, rotation_started) = ca_row.unwrap_or((None, None, None));
 
@@ -351,20 +307,9 @@ pub async fn get_pki_status(
         .as_ref()
         .and_then(|c| appcontrol_common::fingerprint_pem(c));
 
-    // Count enrolled entities
-    let agent_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM agents WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
-    )
-    .bind(user.organization_id)
-    .fetch_one(&state.db)
-    .await?;
-
-    let gateway_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM gateways WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
-    )
-    .bind(user.organization_id)
-    .fetch_one(&state.db)
-    .await?;
+    let agent_count = misc_queries::count_enrolled_agents(&state.db, user.organization_id).await?;
+    let gateway_count =
+        misc_queries::count_enrolled_gateways(&state.db, user.organization_id).await?;
 
     Ok(Json(json!({
         "ca_initialized": ca_cert.is_some(),
@@ -382,30 +327,20 @@ pub async fn get_pki_status(
 // ---------------------------------------------------------------------------
 
 /// Export PKI CA and gateway certificates to volume if CERT_EXPORT_PATH is configured.
-/// Called from main.rs after auto_init_pki().
-///
-/// Exports:
-/// - pki-ca.crt: The PKI CA certificate (for mTLS verification)
-/// - gateway.crt: Gateway server certificate (signed by PKI CA)
-/// - gateway.key: Gateway private key
 pub async fn export_certs_to_volume_if_configured(
     pool: &crate::db::DbPool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let export_path = match std::env::var("CERT_EXPORT_PATH") {
         Ok(p) if !p.is_empty() => p,
-        _ => return Ok(()), // Not configured, skip
+        _ => return Ok(()),
     };
 
-    // Load CA from first organization (single-tenant assumption for dev)
-    let ca_row: Option<(Uuid, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT id, ca_cert_pem, ca_key_pem FROM organizations WHERE ca_cert_pem IS NOT NULL LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await?;
+    // Load CA from first organization
+    let ca_row = misc_queries::get_first_org_with_ca(pool).await?;
 
     let (_org_id, ca_cert_pem, ca_key_pem) = match ca_row {
         Some((id, Some(cert), Some(key))) => (id, cert, key),
-        _ => return Ok(()), // No CA yet, skip
+        _ => return Ok(()),
     };
 
     // Create directory
@@ -421,13 +356,8 @@ pub async fn export_certs_to_volume_if_configured(
     let gateway_key_path = format!("{}/gateway.key", export_path);
 
     let needs_gateway_cert = if std::path::Path::new(&gateway_cert_path).exists() {
-        // Check if cert is still valid (expiring in > 30 days)
         match std::fs::read_to_string(&gateway_cert_path) {
-            Ok(cert_pem) => {
-                // Simple check: if the cert exists and was signed by the same CA, keep it
-                // In production, you'd verify expiry and CA fingerprint
-                !cert_pem.contains("BEGIN CERTIFICATE")
-            }
+            Ok(cert_pem) => !cert_pem.contains("BEGIN CERTIFICATE"),
             Err(_) => true,
         }
     } else {
@@ -435,8 +365,6 @@ pub async fn export_certs_to_volume_if_configured(
     };
 
     if needs_gateway_cert {
-        // Generate gateway certificate signed by PKI CA
-        // SANs include common Docker/Kubernetes hostnames
         let gateway_cn = std::env::var("GATEWAY_CERT_CN").unwrap_or_else(|_| "gateway".to_string());
         let san_dns = vec![
             "localhost".to_string(),
@@ -452,13 +380,10 @@ pub async fn export_certs_to_volume_if_configured(
             &gateway_cn,
             &san_dns,
             &san_ips,
-            365, // 1 year validity
+            365,
         )?;
 
-        // Write gateway certificate
         std::fs::write(&gateway_cert_path, &issued.cert_pem)?;
-
-        // Write gateway key with restricted permissions
         std::fs::write(&gateway_key_path, &issued.key_pem)?;
 
         #[cfg(unix)]
@@ -476,14 +401,25 @@ pub async fn export_certs_to_volume_if_configured(
         );
 
         // Log certificate event
-        sqlx::query(&format!(
-            "INSERT INTO certificate_events (event_type, fingerprint, cn, issued_at, expires_at) \
-                 VALUES ('issued', $1, $2, {now}, {now} + interval '365 days')",
-            now = crate::db::sql::now()
-        ))
-        .bind(&fingerprint)
-        .bind(&gateway_cn)
-        .execute(pool)
+        #[allow(unused_variables)]
+        let gw_expires = (chrono::Utc::now() + chrono::Duration::days(365)).to_rfc3339();
+        #[cfg(feature = "postgres")]
+        misc_queries::log_certificate_event_fixed_interval(
+            pool,
+            &fingerprint,
+            &gateway_cn,
+            "interval '365 days'",
+        )
+        .await
+        .ok();
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        misc_queries::log_certificate_event_fixed_interval(
+            pool,
+            &fingerprint,
+            &gateway_cn,
+            &gw_expires,
+        )
         .await
         .ok();
     }
@@ -531,13 +467,12 @@ pub async fn start_rotation(
         return Err(ApiError::Forbidden);
     }
 
-    // Log before execute
     crate::middleware::audit::log_action(
         &state.db,
-        user.user_id,
+        *user.user_id,
         "start_certificate_rotation",
         "organization",
-        user.organization_id,
+        *user.organization_id,
         json!({ "grace_period_secs": req.grace_period_secs }),
     )
     .await
@@ -545,17 +480,16 @@ pub async fn start_rotation(
 
     let rotation_id = crate::core::certificate_rotation::start_rotation(
         &state.db,
-        user.organization_id,
+        *user.organization_id,
         &req.new_ca_cert_pem,
         &req.new_ca_key_pem,
         req.grace_period_secs,
-        user.user_id,
+        *user.user_id,
     )
     .await?;
 
-    // Get progress for response
     let progress =
-        crate::core::certificate_rotation::get_rotation_progress(&state.db, user.organization_id)
+        crate::core::certificate_rotation::get_rotation_progress(&state.db, *user.organization_id)
             .await?;
 
     Ok(Json(json!({
@@ -573,7 +507,7 @@ pub async fn get_rotation_progress(
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
     let progress =
-        crate::core::certificate_rotation::get_rotation_progress(&state.db, user.organization_id)
+        crate::core::certificate_rotation::get_rotation_progress(&state.db, *user.organization_id)
             .await?;
 
     Ok(Json(json!({ "progress": progress })))
@@ -590,19 +524,18 @@ pub async fn finalize_rotation(
         return Err(ApiError::Forbidden);
     }
 
-    // Log before execute
     crate::middleware::audit::log_action(
         &state.db,
-        user.user_id,
+        *user.user_id,
         "finalize_certificate_rotation",
         "organization",
-        user.organization_id,
+        *user.organization_id,
         json!({}),
     )
     .await
     .ok();
 
-    crate::core::certificate_rotation::finalize_rotation(&state.db, user.organization_id).await?;
+    crate::core::certificate_rotation::finalize_rotation(&state.db, *user.organization_id).await?;
 
     Ok(Json(json!({ "status": "finalized" })))
 }
@@ -618,19 +551,18 @@ pub async fn cancel_rotation(
         return Err(ApiError::Forbidden);
     }
 
-    // Log before execute
     crate::middleware::audit::log_action(
         &state.db,
-        user.user_id,
+        *user.user_id,
         "cancel_certificate_rotation",
         "organization",
-        user.organization_id,
+        *user.organization_id,
         json!({}),
     )
     .await
     .ok();
 
-    crate::core::certificate_rotation::cancel_rotation(&state.db, user.organization_id).await?;
+    crate::core::certificate_rotation::cancel_rotation(&state.db, *user.organization_id).await?;
 
     Ok(Json(json!({ "status": "cancelled" })))
 }
@@ -643,7 +575,7 @@ pub async fn get_ca_bundle(
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
     let bundle =
-        crate::core::certificate_rotation::get_ca_bundle(&state.db, user.organization_id).await?;
+        crate::core::certificate_rotation::get_ca_bundle(&state.db, *user.organization_id).await?;
 
     Ok(Json(json!({ "ca_bundle_pem": bundle })))
 }

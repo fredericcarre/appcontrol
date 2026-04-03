@@ -4,14 +4,19 @@ version.workspace = true
 edition = "2021"
 publish = false
 
-# This crate exists only for integration tests.
-# Run: cargo test -p appcontrol-e2e-tests
+# Run with PostgreSQL (default):  cargo test -p appcontrol-e2e-tests
+# Run with SQLite:                cargo test -p appcontrol-e2e-tests --no-default-features --features sqlite
+
+[features]
+default = ["postgres"]
+postgres = ["sqlx/postgres", "appcontrol-backend/postgres"]
+sqlite = ["sqlx/sqlite", "appcontrol-backend/sqlite"]
 
 [dependencies]
-appcontrol-backend = { path = "../backend" }
+appcontrol-backend = { path = "../backend", default-features = false }
 appcontrol-common = { path = "../common" }
 tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.7", features = ["postgres", "runtime-tokio", "tls-rustls", "uuid", "chrono", "json"] }
+sqlx = { version = "0.7", features = ["runtime-tokio", "tls-rustls", "uuid", "chrono", "json"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -23,3 +28,4 @@ axum = "0.7"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 base64 = "0.22"
+bcrypt = "0.15"

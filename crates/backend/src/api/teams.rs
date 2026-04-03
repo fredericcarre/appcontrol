@@ -1,10 +1,9 @@
-use crate::db::DbUuid;
 use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -32,28 +31,27 @@ pub struct AddMemberRequest {
     pub role: Option<String>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct TeamRow {
-    pub id: DbUuid,
-    pub organization_id: DbUuid,
-    pub name: String,
-    pub description: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
 pub async fn list_teams(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let teams = sqlx::query_as::<_, TeamRow>(
-        "SELECT id, organization_id, name, description, created_at, updated_at FROM teams WHERE organization_id = $1 ORDER BY name",
-    )
-    .bind(user.organization_id)
-    .fetch_all(&state.db)
-    .await?;
+    let teams = state.team_repo.list_teams(*user.organization_id).await?;
 
-    Ok(Json(json!({ "teams": teams })))
+    let result: Vec<Value> = teams
+        .into_iter()
+        .map(|t| {
+            json!({
+                "id": t.id,
+                "organization_id": t.organization_id,
+                "name": t.name,
+                "description": t.description,
+                "created_at": t.created_at,
+                "updated_at": t.updated_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "teams": result })))
 }
 
 pub async fn get_team(
@@ -61,15 +59,16 @@ pub async fn get_team(
     Extension(_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let team = sqlx::query_as::<_, TeamRow>(
-        "SELECT id, organization_id, name, description, created_at, updated_at FROM teams WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let team = state.team_repo.get_team(id).await?.ok_or_not_found()?;
 
-    Ok(Json(json!(team)))
+    Ok(Json(json!({
+        "id": team.id,
+        "organization_id": team.organization_id,
+        "name": team.name,
+        "description": team.description,
+        "created_at": team.created_at,
+        "updated_at": team.updated_at,
+    })))
 }
 
 pub async fn create_team(
@@ -92,29 +91,28 @@ pub async fn create_team(
     )
     .await?;
 
-    let team = sqlx::query_as::<_, TeamRow>(
-        r#"
-        INSERT INTO teams (id, organization_id, name, description)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id, organization_id, name, description, created_at, updated_at
-        "#,
-    )
-    .bind(team_id)
-    .bind(user.organization_id)
-    .bind(&body.name)
-    .bind(&body.description)
-    .fetch_one(&state.db)
-    .await?;
+    let team = state
+        .team_repo
+        .create_team(
+            team_id,
+            *user.organization_id,
+            &body.name,
+            body.description.as_deref(),
+            *user.user_id,
+        )
+        .await?;
 
-    // Add creator as team lead
-    let _ =
-        sqlx::query("INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, 'lead')")
-            .bind(team_id)
-            .bind(user.user_id)
-            .execute(&state.db)
-            .await;
-
-    Ok((StatusCode::CREATED, Json(json!(team))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": team.id,
+            "organization_id": team.organization_id,
+            "name": team.name,
+            "description": team.description,
+            "created_at": team.created_at,
+            "updated_at": team.updated_at,
+        })),
+    ))
 }
 
 pub async fn update_team(
@@ -139,23 +137,20 @@ pub async fn update_team(
     )
     .await?;
 
-    let team = sqlx::query_as::<_, TeamRow>(&format!(
-        "UPDATE teams SET
-                name = COALESCE($2, name),
-                description = COALESCE($3, description),
-                updated_at = {}
-            WHERE id = $1
-            RETURNING id, organization_id, name, description, created_at, updated_at",
-        crate::db::sql::now()
-    ))
-    .bind(id)
-    .bind(&body.name)
-    .bind(&body.description)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let team = state
+        .team_repo
+        .update_team(id, body.name.as_deref(), body.description.as_deref())
+        .await?
+        .ok_or_not_found()?;
 
-    Ok(Json(json!(team)))
+    Ok(Json(json!({
+        "id": team.id,
+        "organization_id": team.organization_id,
+        "name": team.name,
+        "description": team.description,
+        "created_at": team.created_at,
+        "updated_at": team.updated_at,
+    })))
 }
 
 pub async fn delete_team(
@@ -173,12 +168,8 @@ pub async fn delete_team(
     )
     .await?;
 
-    let result = sqlx::query("DELETE FROM teams WHERE id = $1")
-        .bind(id)
-        .execute(&state.db)
-        .await?;
-
-    if result.rows_affected() == 0 {
+    let deleted = state.team_repo.delete_team(id).await?;
+    if !deleted {
         return Err(ApiError::NotFound);
     }
 
@@ -190,39 +181,19 @@ pub async fn list_members(
     Extension(_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let members = sqlx::query_as::<
-        _,
-        (
-            DbUuid,
-            DbUuid,
-            String,
-            chrono::DateTime<chrono::Utc>,
-            String,
-            Option<String>,
-        ),
-    >(
-        r#"
-        SELECT tm.id, tm.user_id, tm.role, tm.joined_at, u.email, u.display_name
-        FROM team_members tm
-        JOIN users u ON u.id = tm.user_id
-        WHERE tm.team_id = $1
-        ORDER BY tm.role, u.display_name, u.email
-        "#,
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await?;
+    let members = state.team_repo.list_members(id).await?;
 
     let result: Vec<Value> = members
-        .iter()
-        .map(|(mid, uid, role, joined, email, name)| {
+        .into_iter()
+        .map(|m| {
+            let name = m.display_name.unwrap_or_else(|| m.email.clone());
             json!({
-                "id": mid,
-                "user_id": uid,
-                "role": role,
-                "joined_at": joined,
-                "email": email,
-                "name": name.clone().unwrap_or_else(|| email.clone())
+                "id": m.id,
+                "user_id": m.user_id,
+                "role": m.role,
+                "joined_at": m.joined_at,
+                "email": m.email,
+                "name": name
             })
         })
         .collect();
@@ -238,14 +209,7 @@ pub async fn add_member(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     // Only admins and team leads can add members
     if !user.is_admin() {
-        let is_lead = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead')",
-        )
-        .bind(id)
-        .bind(user.user_id)
-        .fetch_one(&state.db)
-        .await?;
-
+        let is_lead = state.team_repo.is_team_lead(id, *user.user_id).await?;
         if !is_lead {
             return Err(ApiError::Forbidden);
         }
@@ -261,18 +225,10 @@ pub async fn add_member(
     )
     .await?;
 
-    let member_id = sqlx::query_scalar::<_, DbUuid>(
-        r#"
-        INSERT INTO team_members (team_id, user_id, role)
-        VALUES ($1, $2, $3)
-        RETURNING id
-        "#,
-    )
-    .bind(id)
-    .bind(body.user_id)
-    .bind(body.role.as_deref().unwrap_or("member"))
-    .fetch_one(&state.db)
-    .await?;
+    let member_id = state
+        .team_repo
+        .add_member(id, body.user_id, body.role.as_deref().unwrap_or("member"))
+        .await?;
 
     Ok((StatusCode::CREATED, Json(json!({"id": member_id}))))
 }
@@ -284,14 +240,7 @@ pub async fn remove_member(
 ) -> Result<StatusCode, ApiError> {
     // Only admins and team leads can remove members
     if !user.is_admin() {
-        let is_lead = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead')",
-        )
-        .bind(team_id)
-        .bind(user.user_id)
-        .fetch_one(&state.db)
-        .await?;
-
+        let is_lead = state.team_repo.is_team_lead(team_id, *user.user_id).await?;
         if !is_lead {
             return Err(ApiError::Forbidden);
         }
@@ -307,11 +256,7 @@ pub async fn remove_member(
     )
     .await?;
 
-    sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
-        .bind(team_id)
-        .bind(user_id)
-        .execute(&state.db)
-        .await?;
+    state.team_repo.remove_member(team_id, user_id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

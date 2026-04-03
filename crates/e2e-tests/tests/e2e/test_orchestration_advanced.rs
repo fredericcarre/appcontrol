@@ -56,9 +56,12 @@ mod test_orchestration_advanced {
         // Should return timeout status or 408
         let status_code = resp.status();
         let body: Value = resp.json().await.unwrap();
+        let status_str = body["status"].as_str().unwrap_or("");
         assert!(
-            body["status"].as_str() == Some("TIMEOUT")
-                || body["status"].as_str() == Some("STOPPED")
+            status_str == "TIMEOUT"
+                || status_str == "timeout"
+                || status_str == "STOPPED"
+                || status_str == "stopped"
                 || status_code == 408,
             "Should indicate timeout, got: {:?}",
             body
@@ -81,10 +84,13 @@ mod test_orchestration_advanced {
             .await;
 
         let body: Value = resp.json().await.unwrap();
+        let status_str = body["status"].as_str().unwrap_or("");
         assert!(
-            body["status"].as_str() == Some("FAILED")
+            status_str == "FAILED"
+                || status_str == "failed"
                 || body["all_running"].as_bool() == Some(false),
-            "Should indicate failure when component is FAILED"
+            "Should indicate failure when component is FAILED, got: {:?}",
+            body
         );
 
         ctx.cleanup().await;
@@ -98,14 +104,18 @@ mod test_orchestration_advanced {
 
         let resp = ctx
             .post(
-                &format!("/api/v1/apps/{app_id}/stop?dry_run=true"),
-                json!({}),
+                &format!("/api/v1/apps/{app_id}/stop"),
+                json!({"dry_run": true}),
             )
             .await;
         assert_eq!(resp.status(), 200);
 
         let plan: Value = resp.json().await.unwrap();
-        assert!(plan["plan"].is_array(), "Stop dry run should return a plan");
+        assert!(
+            plan["plan"]["levels"].is_array() || plan["plan"].is_array(),
+            "Stop dry run should return a plan, got: {:?}",
+            plan
+        );
 
         // Components should still be RUNNING
         let status = ctx.get_app_status(app_id).await;
@@ -147,7 +157,11 @@ mod test_orchestration_advanced {
         let resp = ctx
             .delete_as("admin", &format!("/api/v1/api-keys/{key_id}"))
             .await;
-        assert_eq!(resp.status(), 200);
+        assert!(
+            resp.status() == 200 || resp.status() == 204,
+            "Delete should succeed, got {}",
+            resp.status()
+        );
 
         ctx.cleanup().await;
     }

@@ -7,7 +7,7 @@ use axum::{
     extract::{Extension, Path, Query, State},
     response::Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -16,6 +16,7 @@ use crate::auth::AuthUser;
 #[allow(unused_imports)]
 use crate::db::DbUuid;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
+use crate::repository::misc_queries;
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -44,18 +45,8 @@ pub struct ListUsersQuery {
     pub search: Option<String>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct UserRow {
-    pub id: DbUuid,
-    pub organization_id: DbUuid,
-    pub email: String,
-    pub display_name: String,
-    pub role: String,
-    pub auth_provider: String,
-    pub is_active: bool,
-    pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
+// Re-export UserRow from repository for backward compatibility
+pub use misc_queries::UserRow;
 
 const VALID_ROLES: [&str; 4] = ["admin", "operator", "editor", "viewer"];
 
@@ -68,40 +59,13 @@ pub async fn list_users(
         return Err(ApiError::Forbidden);
     }
 
-    #[cfg(feature = "postgres")]
-    let users = sqlx::query_as::<_, UserRow>(
-        r#"SELECT id, organization_id, email, display_name, role, auth_provider,
-                  is_active, last_login_at, created_at
-           FROM users
-           WHERE organization_id = $1
-             AND ($2::text IS NULL OR role = $2)
-             AND ($3::bool IS NULL OR is_active = $3)
-             AND ($4::text IS NULL OR email ILIKE '%' || $4 || '%' OR display_name ILIKE '%' || $4 || '%')
-           ORDER BY display_name"#,
+    let users = misc_queries::list_users(
+        &state.db,
+        user.organization_id,
+        query.role.as_deref(),
+        query.is_active,
+        query.search.as_deref(),
     )
-    .bind(user.organization_id)
-    .bind(&query.role)
-    .bind(query.is_active)
-    .bind(&query.search)
-    .fetch_all(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let users = sqlx::query_as::<_, UserRow>(
-        r#"SELECT id, organization_id, email, display_name, role, auth_provider,
-                  is_active, last_login_at, created_at
-           FROM users
-           WHERE organization_id = $1
-             AND ($2 IS NULL OR role = $2)
-             AND ($3 IS NULL OR is_active = $3)
-             AND ($4 IS NULL OR email LIKE '%' || $4 || '%' OR display_name LIKE '%' || $4 || '%')
-           ORDER BY display_name"#,
-    )
-    .bind(DbUuid::from(user.organization_id))
-    .bind(&query.role)
-    .bind(query.is_active)
-    .bind(&query.search)
-    .fetch_all(&state.db)
     .await?;
 
     Ok(Json(json!({ "users": users })))
@@ -112,21 +76,13 @@ pub async fn get_user(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    if !user.is_admin() && user.user_id != id {
+    if !user.is_admin() && *user.user_id != id {
         return Err(ApiError::Forbidden);
     }
 
-    let target = sqlx::query_as::<_, UserRow>(
-        r#"SELECT id, organization_id, email, display_name, role, auth_provider,
-                  is_active, last_login_at, created_at
-           FROM users
-           WHERE id = $1 AND organization_id = $2"#,
-    )
-    .bind(id)
-    .bind(user.organization_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let target = misc_queries::get_user_by_id(&state.db, id, user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
     Ok(Json(json!(target)))
 }
@@ -179,19 +135,15 @@ pub async fn create_user(
         None
     };
 
-    let new_user = sqlx::query_as::<_, UserRow>(
-        r#"INSERT INTO users (organization_id, external_id, email, display_name, role, auth_provider, password_hash)
-           VALUES ($1, $2, $3, $4, $5, 'local', $6)
-           RETURNING id, organization_id, email, display_name, role, auth_provider,
-                     is_active, last_login_at, created_at"#,
+    let new_user = misc_queries::create_user(
+        &state.db,
+        user.organization_id,
+        &external_id,
+        &req.email,
+        &req.display_name,
+        role,
+        password_hash.as_deref(),
     )
-    .bind(user.organization_id)
-    .bind(&external_id)
-    .bind(&req.email)
-    .bind(&req.display_name)
-    .bind(role)
-    .bind(&password_hash)
-    .fetch_one(&state.db)
     .await?;
 
     Ok(Json(json!(new_user)))
@@ -244,23 +196,15 @@ pub async fn update_user(
     .await
     .ok();
 
-    let updated = sqlx::query_as::<_, UserRow>(
-        r#"UPDATE users SET
-               display_name = COALESCE($3, display_name),
-               role = COALESCE($4, role),
-               is_active = COALESCE($5, is_active),
-               password_hash = COALESCE($6, password_hash)
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, email, display_name, role, auth_provider,
-                     is_active, last_login_at, created_at"#,
+    let updated = misc_queries::update_user(
+        &state.db,
+        id,
+        user.organization_id,
+        req.display_name.as_deref(),
+        req.role.as_deref(),
+        req.is_active,
+        password_hash.as_deref(),
     )
-    .bind(id)
-    .bind(user.organization_id)
-    .bind(&req.display_name)
-    .bind(&req.role)
-    .bind(req.is_active)
-    .bind(&password_hash)
-    .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
 
@@ -272,21 +216,13 @@ pub async fn get_me(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let me = sqlx::query_as::<_, UserRow>(
-        r#"SELECT id, organization_id, email, display_name, role, auth_provider,
-                  is_active, last_login_at, created_at
-           FROM users WHERE id = $1"#,
-    )
-    .bind(user.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_not_found()?;
+    let me = misc_queries::get_user_by_id_only(&state.db, user.user_id)
+        .await?
+        .ok_or_not_found()?;
 
     // Also fetch platform_role
     let platform_role: Option<String> =
-        sqlx::query_scalar("SELECT platform_role FROM users WHERE id = $1")
-            .bind(user.user_id)
-            .fetch_optional(&state.db)
+        misc_queries::get_user_platform_role(&state.db, user.user_id)
             .await?
             .flatten();
 
@@ -309,11 +245,7 @@ pub async fn change_my_password(
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<Json<Value>, ApiError> {
     // Fetch current user's auth info
-    let user_info: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT auth_provider, password_hash FROM users WHERE id = $1")
-            .bind(user.user_id)
-            .fetch_optional(&state.db)
-            .await?;
+    let user_info = misc_queries::get_user_auth_info(&state.db, user.user_id).await?;
 
     let (auth_provider, password_hash) = user_info.ok_or_not_found()?;
 
@@ -361,11 +293,7 @@ pub async fn change_my_password(
     .ok();
 
     // Update password
-    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
-        .bind(&new_hash)
-        .bind(user.user_id)
-        .execute(&state.db)
-        .await?;
+    misc_queries::update_user_password(&state.db, user.user_id, &new_hash).await?;
 
     Ok(Json(
         serde_json::json!({ "status": "ok", "message": "Password changed successfully" }),

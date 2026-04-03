@@ -111,48 +111,14 @@ pub async fn dispatch_event(
     // Find all enabled webhook endpoints that subscribe to this event type,
     // scoped to the application's organization or the specific application.
     #[cfg(feature = "postgres")]
-    let webhook_sql: &str = r#"
-        SELECT w.id, w.url, w.secret, w.headers
-        FROM webhook_endpoints w
-        JOIN applications a ON a.organization_id = w.organization_id
-        WHERE a.id = $1
-          AND w.is_enabled = true
-          AND (w.application_id IS NULL OR w.application_id = $1)
-          AND w.event_types @> $2::jsonb
-        "#;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let webhook_sql: &str = r#"
-        SELECT w.id, w.url, w.secret, w.headers
-        FROM webhook_endpoints w
-        JOIN applications a ON a.organization_id = w.organization_id
-        WHERE a.id = $1
-          AND w.is_enabled = 1
-          AND (w.application_id IS NULL OR w.application_id = $1)
-          AND EXISTS (
-              SELECT 1 FROM json_each(w.event_types)
-              WHERE json_each.value = $2
-          )
-        "#;
-
-    #[cfg(feature = "postgres")]
     let event_bind = serde_json::json!([&event_type]);
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let event_bind = serde_json::json!(&event_type);
 
-    let webhooks = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            Option<String>,
-            Option<sqlx::types::Json<serde_json::Value>>,
-        ),
-    >(webhook_sql)
-    .bind(app_id)
-    .bind(event_bind)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| NotificationError::Database(e.to_string()))?;
+    let webhooks =
+        crate::repository::misc_queries::fetch_matching_webhooks(pool, app_id, &event_bind)
+            .await
+            .map_err(|e| NotificationError::Database(e.to_string()))?;
 
     if webhooks.is_empty() {
         return Ok(());
@@ -265,28 +231,23 @@ async fn deliver_webhook(
                 let response_body = resp.text().await.unwrap_or_default();
 
                 // Record delivery attempt
-                let _ = sqlx::query(
-                    r#"
-                    INSERT INTO webhook_deliveries (webhook_id, event_type, payload, status_code, response_body, attempt)
-                    VALUES ($1, $2, $3, $4, $5, $6)
-                    "#,
+                let _ = crate::repository::misc_queries::insert_webhook_delivery(
+                    pool,
+                    webhook_id,
+                    event_type,
+                    payload,
+                    Some(status_code),
+                    &response_body,
+                    attempt,
                 )
-                .bind(webhook_id)
-                .bind(event_type)
-                .bind(payload)
-                .bind(status_code)
-                .bind(&response_body)
-                .bind(attempt)
-                .execute(pool)
                 .await;
 
                 // Update last triggered timestamp
-                let _ = sqlx::query(
-                    &format!("UPDATE webhook_endpoints SET last_triggered_at = {}, last_status_code = $2 WHERE id = $1", crate::db::sql::now()),
+                let _ = crate::repository::misc_queries::update_webhook_last_triggered(
+                    pool,
+                    webhook_id,
+                    status_code,
                 )
-                .bind(webhook_id)
-                .bind(status_code)
-                .execute(pool)
                 .await;
 
                 if (200..300).contains(&(status_code as u16 as i32)) {
@@ -316,18 +277,15 @@ async fn deliver_webhook(
                 );
 
                 // Record failed attempt
-                let _ = sqlx::query(
-                    r#"
-                    INSERT INTO webhook_deliveries (webhook_id, event_type, payload, response_body, attempt)
-                    VALUES ($1, $2, $3, $4, $5)
-                    "#,
+                let _ = crate::repository::misc_queries::insert_webhook_delivery(
+                    pool,
+                    webhook_id,
+                    event_type,
+                    payload,
+                    None,
+                    &format!("Error: {}", e),
+                    attempt,
                 )
-                .bind(webhook_id)
-                .bind(event_type)
-                .bind(payload)
-                .bind(format!("Error: {}", e))
-                .bind(attempt)
-                .execute(pool)
                 .await;
             }
         }
