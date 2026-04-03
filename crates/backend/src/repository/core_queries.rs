@@ -2013,3 +2013,126 @@ pub async fn get_rotation_status(pool: &DbPool, org_id: Uuid) -> Result<Option<(
            WHERE organization_id = $1 ORDER BY started_at DESC LIMIT 1"#,
     ).bind(org_id).fetch_optional(pool).await
 }
+
+// ============================================================================
+// Resolution queries (migrated from core/resolution.rs)
+// ============================================================================
+
+/// Internal row for agent resolution queries
+#[derive(Debug, sqlx::FromRow)]
+pub struct ResolutionAgentRow {
+    pub agent_id: DbUuid,
+    pub hostname: String,
+    pub gateway_id: Option<DbUuid>,
+    pub gateway_name: Option<String>,
+    pub ip_addresses: sqlx::types::Json<Vec<String>>,
+    pub is_active: bool,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct PatternRuleRow {
+    pub search_pattern: String,
+    pub replace_pattern: String,
+}
+
+#[cfg(feature = "postgres")]
+pub async fn query_agents_exact_hostname(pool: &DbPool, org_id: DbUuid, host_lower: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    sqlx::query_as::<_, ResolutionAgentRow>(
+        r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1 AND LOWER(a.hostname) = $2 AND a.gateway_id = ANY($3)"#,
+    ).bind(org_id).bind(host_lower).bind(gateway_ids).fetch_all(pool).await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn query_agents_exact_hostname(pool: &DbPool, org_id: DbUuid, host_lower: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() { return Ok(Vec::new()); }
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1 AND LOWER(a.hostname) = $2 AND a.gateway_id IN ({})"#, placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, ResolutionAgentRow>(&query).bind(org_id.to_string()).bind(host_lower);
+    for gid in gateway_ids { q = q.bind(gid.to_string()); }
+    q.fetch_all(pool).await
+}
+
+#[cfg(feature = "postgres")]
+pub async fn query_agents_fqdn_match(pool: &DbPool, org_id: DbUuid, fqdn_pattern: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    sqlx::query_as::<_, ResolutionAgentRow>(
+        r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1 AND LOWER(a.hostname) LIKE $2 || '%' AND a.gateway_id = ANY($3)"#,
+    ).bind(org_id).bind(fqdn_pattern).bind(gateway_ids).fetch_all(pool).await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn query_agents_fqdn_match(pool: &DbPool, org_id: DbUuid, fqdn_pattern: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() { return Ok(Vec::new()); }
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1 AND LOWER(a.hostname) LIKE $2 || '%' AND a.gateway_id IN ({})"#, placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, ResolutionAgentRow>(&query).bind(org_id.to_string()).bind(fqdn_pattern);
+    for gid in gateway_ids { q = q.bind(gid.to_string()); }
+    q.fetch_all(pool).await
+}
+
+#[cfg(feature = "postgres")]
+pub async fn query_agents_ip_match(pool: &DbPool, org_id: DbUuid, ip: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    sqlx::query_as::<_, ResolutionAgentRow>(
+        r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1 AND a.ip_addresses @> $2::jsonb AND a.gateway_id = ANY($3)"#,
+    ).bind(org_id).bind(serde_json::json!([ip])).bind(gateway_ids).fetch_all(pool).await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn query_agents_ip_match(pool: &DbPool, org_id: DbUuid, ip: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() { return Ok(Vec::new()); }
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1 AND EXISTS (SELECT 1 FROM json_each(a.ip_addresses) WHERE json_each.value = $2)
+          AND a.gateway_id IN ({})"#, placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, ResolutionAgentRow>(&query).bind(org_id.to_string()).bind(ip);
+    for gid in gateway_ids { q = q.bind(gid.to_string()); }
+    q.fetch_all(pool).await
+}
+
+#[cfg(feature = "postgres")]
+pub async fn query_agents_list(pool: &DbPool, org_id: DbUuid, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    sqlx::query_as::<_, ResolutionAgentRow>(
+        r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1 AND a.gateway_id = ANY($2) ORDER BY a.hostname"#,
+    ).bind(org_id).bind(gateway_ids).fetch_all(pool).await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn query_agents_list(pool: &DbPool, org_id: DbUuid, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() { return Ok(Vec::new()); }
+    let placeholders: Vec<String> = (2..=1 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
+        FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
+        WHERE a.organization_id = $1 AND a.gateway_id IN ({}) ORDER BY a.hostname"#, placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, ResolutionAgentRow>(&query).bind(org_id.to_string());
+    for gid in gateway_ids { q = q.bind(gid.to_string()); }
+    q.fetch_all(pool).await
+}
+
+/// Fetch DR pattern rules for hostname suggestion.
+pub async fn fetch_pattern_rules(pool: &DbPool, org_id: DbUuid) -> Result<Vec<PatternRuleRow>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    let rules_sql: &str = "SELECT search_pattern, replace_pattern FROM dr_pattern_rules WHERE organization_id = $1 AND is_active = true ORDER BY priority DESC";
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let rules_sql: &str = "SELECT search_pattern, replace_pattern FROM dr_pattern_rules WHERE organization_id = $1 AND is_active = 1 ORDER BY priority DESC";
+    sqlx::query_as(rules_sql).bind(org_id).fetch_all(pool).await
+}
