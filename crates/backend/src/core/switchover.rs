@@ -90,36 +90,7 @@ async fn execute_validate(
     }
 
     // 2. Verify a binding profile exists for the target site
-    #[cfg(feature = "postgres")]
-    let profile_sql: &str = r#"
-        SELECT bp.id, bp.name,
-               (SELECT COUNT(*) FROM binding_profile_mappings WHERE profile_id = bp.id) as mapping_count
-        FROM binding_profiles bp
-        WHERE bp.application_id = $1
-          AND EXISTS (
-            SELECT 1 FROM unnest(bp.gateway_ids) AS gw_id
-            JOIN gateways g ON g.id = gw_id
-            WHERE g.site_id = $2
-          )
-        LIMIT 1
-        "#;
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let profile_sql: &str = r#"
-        SELECT bp.id, bp.name,
-               (SELECT COUNT(*) FROM binding_profile_mappings WHERE profile_id = bp.id) as mapping_count
-        FROM binding_profiles bp
-        WHERE bp.application_id = $1
-          AND EXISTS (
-            SELECT 1 FROM json_each(bp.gateway_ids) AS gw
-            JOIN gateways g ON g.id = gw.value
-            WHERE g.site_id = $2
-          )
-        LIMIT 1
-        "#;
-    let target_profile = sqlx::query_as::<_, (DbUuid, String, i64)>(profile_sql)
-        .bind(DbUuid::from(app_id))
-        .bind(DbUuid::from(target_site_id))
-        .fetch_optional(&state.db)
+    let target_profile = crate::repository::switchover_queries::find_profile_for_site(&state.db, app_id, target_site_id)
         .await
         .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
