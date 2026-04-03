@@ -200,6 +200,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Also log in to corp GHCR for image mirroring
+      - name: Log in to corp GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: xcomponent
+          password: ${{ secrets.CORP_GITHUB_TOKEN }}
+
       # Rust images use pre-built binaries (fast - no compilation)
       - name: Build and push backend
         uses: docker/build-push-action@v6
@@ -210,6 +218,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-backend:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-backend:latest
+            ghcr.io/xcomponent/appcontrol-backend:${{ steps.version.outputs.VERSION }}
+            ghcr.io/xcomponent/appcontrol-backend:latest
           build-args: |
             BINARY_PATH=binaries/appcontrol-backend-linux-amd64
 
@@ -222,6 +232,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-gateway:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-gateway:latest
+            ghcr.io/xcomponent/appcontrol-gateway:${{ steps.version.outputs.VERSION }}
+            ghcr.io/xcomponent/appcontrol-gateway:latest
           build-args: |
             BINARY_PATH=binaries/appcontrol-gateway-linux-amd64
 
@@ -234,6 +246,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-agent:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-agent:latest
+            ghcr.io/xcomponent/appcontrol-agent:${{ steps.version.outputs.VERSION }}
+            ghcr.io/xcomponent/appcontrol-agent:latest
           build-args: |
             BINARY_PATH=binaries/appcontrol-agent-linux-amd64
 
@@ -247,6 +261,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-frontend:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-frontend:latest
+            ghcr.io/xcomponent/appcontrol-frontend:${{ steps.version.outputs.VERSION }}
+            ghcr.io/xcomponent/appcontrol-frontend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -260,6 +276,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-azure-gateway:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-azure-gateway:latest
+            ghcr.io/xcomponent/appcontrol-azure-gateway:${{ steps.version.outputs.VERSION }}
+            ghcr.io/xcomponent/appcontrol-azure-gateway:latest
           build-args: |
             GATEWAY_BINARY_PATH=binaries/appcontrol-gateway-linux-amd64
             AGENT_BINARY_PATH=binaries/appcontrol-agent-linux-amd64
@@ -276,6 +294,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appcontrol-init-certs:${{ steps.version.outputs.VERSION }}
             ${{ env.REGISTRY }}/appcontrol-init-certs:latest
+            ghcr.io/xcomponent/appcontrol-init-certs:${{ steps.version.outputs.VERSION }}
+            ghcr.io/xcomponent/appcontrol-init-certs:latest
 
   # ---------------------------------------------------------------------------
   # Package Helm chart
@@ -418,6 +438,179 @@ jobs:
               --repo "${{ github.repository }}" \
               --title "AppControl ${{ github.ref_name }}" \
               --notes-file /tmp/release-notes.md \
+              --latest \
+              artifacts/*
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Mirror release to xcomponent/appcontrol-release
+  # ---------------------------------------------------------------------------
+  mirror-release:
+    name: Mirror to corp repo
+    runs-on: ubuntu-latest
+    needs: [github-release]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          pattern: binaries-*
+          merge-multiple: true
+
+      - name: Download Helm chart
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-chart
+          path: artifacts/
+
+      # Prepare docs, scripts, examples with corp repo substitution
+      - name: Prepare corp release assets
+        run: |
+          mkdir -p corp-assets/docs corp-assets/scripts corp-assets/examples corp-assets/docker corp-assets/openshift corp-assets/azure
+
+          # Copy docs
+          for f in README.md QUICKSTART.md RELEASE.md; do
+            [ -f "$f" ] && cp "$f" corp-assets/
+          done
+          cp docs/*.md corp-assets/docs/ 2>/dev/null || true
+
+          # Copy scripts
+          cp scripts/*.ps1 scripts/*.sh scripts/*.json scripts/*.md corp-assets/scripts/ 2>/dev/null || true
+
+          # Copy examples
+          cp examples/*.json examples/*.md corp-assets/examples/ 2>/dev/null || true
+
+          # Copy docker compose files
+          cp docker/docker-compose.release.yaml corp-assets/docker/
+          cp docker/docker-compose.prod.yaml corp-assets/docker/
+
+          # Copy openshift/azure deploy files
+          cp openshift/*.yaml openshift/*.sh corp-assets/openshift/ 2>/dev/null || true
+          cp azure/*.sh corp-assets/azure/ 2>/dev/null || true
+
+          # ---- Substitutions ----
+          # Replace GitHub repo references
+          find corp-assets -type f \( -name '*.md' -o -name '*.ps1' -o -name '*.sh' -o -name '*.json' -o -name '*.yaml' \) \
+            -exec sed -i 's|fredericcarre/appcontrol|xcomponent/appcontrol-release|g' {} +
+
+          # Replace Docker image registry
+          find corp-assets -type f \( -name '*.md' -o -name '*.ps1' -o -name '*.sh' -o -name '*.json' -o -name '*.yaml' \) \
+            -exec sed -i 's|ghcr\.io/fredericcarre|ghcr.io/xcomponent|g' {} +
+
+          # Create LICENSE
+          cat > corp-assets/LICENSE <<'LICENSE_EOF'
+          Copyright (c) 2024-2026 XComponent SAS. All rights reserved.
+
+          This software is provided as pre-compiled binaries for evaluation
+          and production use. Redistribution, reverse engineering, and offering
+          as a managed service are prohibited without a commercial license.
+
+          Contact: support@xcomponent.com for licensing inquiries.
+          LICENSE_EOF
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' corp-assets/LICENSE
+
+          # Package docs + scripts + examples into a zip
+          cd corp-assets
+          zip -r ../artifacts/appcontrol-docs-scripts.zip docs/ scripts/ examples/ docker/ openshift/ azure/ LICENSE README.md QUICKSTART.md RELEASE.md 2>/dev/null || true
+          cd ..
+
+          # Also copy compose files individually (useful for direct download)
+          cp corp-assets/docker/docker-compose.release.yaml artifacts/docker-compose.release.yaml
+          cp corp-assets/docker/docker-compose.prod.yaml artifacts/docker-compose.prod.yaml 2>/dev/null || true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum * > checksums-sha256.txt
+
+      - name: Generate corp release notes
+        run: |
+          cat > /tmp/corp-release-notes.md <<'NOTES_EOF'
+          ## AppControl ${{ github.ref_name }}
+
+          ### Quick Start
+
+          **Docker Compose (recommended):**
+          ```bash
+          # Download compose file
+          gh release download ${{ github.ref_name }} --repo xcomponent/appcontrol-release --pattern 'docker-compose.release.yaml'
+
+          # Start the full stack
+          APPCONTROL_VERSION=${{ steps.version.outputs.VERSION }} docker compose -f docker-compose.release.yaml up -d
+          ```
+
+          **Windows Standalone (SQLite, no Docker):**
+          ```powershell
+          # Download and extract all binaries + scripts
+          gh release download ${{ github.ref_name }} --repo xcomponent/appcontrol-release --pattern '*.exe' --dir appcontrol\bin
+          gh release download ${{ github.ref_name }} --repo xcomponent/appcontrol-release --pattern 'appcontrol-docs-scripts.zip'
+          Expand-Archive appcontrol-docs-scripts.zip -DestinationPath appcontrol
+
+          # Run the standalone setup
+          cd appcontrol\scripts
+          .\deploy-standalone.ps1
+          .\setup-site.ps1 -SiteName "Production"
+          ```
+
+          **CLI binary:**
+          ```bash
+          # Linux (amd64)
+          gh release download ${{ github.ref_name }} --repo xcomponent/appcontrol-release --pattern 'appctl-linux-amd64' --dir /usr/local/bin
+          chmod +x /usr/local/bin/appctl-linux-amd64 && mv /usr/local/bin/appctl-linux-amd64 /usr/local/bin/appctl
+          ```
+
+          **Docker images:**
+          ```bash
+          docker pull ghcr.io/xcomponent/appcontrol-backend:${{ steps.version.outputs.VERSION }}
+          docker pull ghcr.io/xcomponent/appcontrol-frontend:${{ steps.version.outputs.VERSION }}
+          docker pull ghcr.io/xcomponent/appcontrol-gateway:${{ steps.version.outputs.VERSION }}
+          docker pull ghcr.io/xcomponent/appcontrol-agent:${{ steps.version.outputs.VERSION }}
+          docker pull ghcr.io/xcomponent/appcontrol-init-certs:${{ steps.version.outputs.VERSION }}
+          ```
+
+          ### Assets
+
+          | Asset | Description |
+          |-------|-------------|
+          | `appctl-{os}-{arch}[.exe]` | CLI binary |
+          | `appcontrol-agent-{os}-{arch}[.exe]` | Agent binary |
+          | `appcontrol-backend-{os}-{arch}[.exe]` | Backend API (PostgreSQL) |
+          | `appcontrol-backend-sqlite-{os}-{arch}[.exe]` | Backend API (SQLite standalone) |
+          | `appcontrol-gateway-{os}-{arch}[.exe]` | Gateway binary |
+          | `docker-compose.release.yaml` | Docker Compose for production |
+          | `appcontrol-docs-scripts.zip` | Documentation, scripts, examples |
+          | `appcontrol-*.tgz` | Helm chart |
+          | `checksums-sha256.txt` | SHA-256 checksums |
+
+          ---
+          *AppControl — Operational mastery and IT system resilience.*
+          *Copyright (c) 2024-2026 XComponent SAS.*
+          NOTES_EOF
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' /tmp/corp-release-notes.md
+
+      - name: Create corp release
+        env:
+          GH_TOKEN: ${{ secrets.CORP_GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ github.ref_name }}" --repo xcomponent/appcontrol-release > /dev/null 2>&1; then
+            echo "Release exists — uploading assets"
+            gh release upload "${{ github.ref_name }}" \
+              --repo xcomponent/appcontrol-release \
+              --clobber \
+              artifacts/*
+          else
+            echo "Creating release ${{ github.ref_name }}"
+            gh release create "${{ github.ref_name }}" \
+              --repo xcomponent/appcontrol-release \
+              --title "AppControl ${{ github.ref_name }}" \
+              --notes-file /tmp/corp-release-notes.md \
               --latest \
               artifacts/*
           fi

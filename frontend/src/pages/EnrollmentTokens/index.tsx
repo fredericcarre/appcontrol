@@ -18,12 +18,15 @@ import {
   type CreateEnrollmentTokenResponse,
 } from '@/api/enrollment';
 
+// GitHub repo for release downloads (configurable via VITE_GITHUB_RELEASE_REPO)
+const GITHUB_RELEASE_REPO = import.meta.env.VITE_GITHUB_RELEASE_REPO || 'xcomponent/appcontrol-release';
+
 // Fetch the latest release version from GitHub API
 function useLatestReleaseVersion() {
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('https://api.github.com/repos/fredericcarre/appcontrol/releases')
+    fetch(`https://api.github.com/repos/${GITHUB_RELEASE_REPO}/releases`)
       .then((res) => res.json())
       .then((releases: Array<{ tag_name: string }>) => {
         if (releases && releases.length > 0) {
@@ -171,8 +174,8 @@ function CreatedTokenDisplay({
   const binaryName = token.scope === 'gateway' ? 'appcontrol-gateway' : 'appcontrol-agent';
   // Use specific version tag instead of /latest/download which doesn't work for pre-releases
   const releaseBaseUrl = latestVersion
-    ? `https://github.com/fredericcarre/appcontrol/releases/download/${latestVersion}`
-    : 'https://github.com/fredericcarre/appcontrol/releases/latest/download';
+    ? `https://github.com/${GITHUB_RELEASE_REPO}/releases/download/${latestVersion}`
+    : `https://github.com/${GITHUB_RELEASE_REPO}/releases/latest/download`;
 
   const getBinarySuffix = () => {
     if (selectedOs === 'windows') {
