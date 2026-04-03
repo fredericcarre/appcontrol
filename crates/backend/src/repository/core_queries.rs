@@ -1877,3 +1877,139 @@ pub async fn update_operation_schedule_after_run(
     .await?;
     Ok(())
 }
+
+// ============================================================================
+// Certificate rotation queries
+// ============================================================================
+
+/// Check if a rotation is already in progress for an organization.
+pub async fn find_active_rotation(pool: &DbPool, org_id: Uuid) -> Result<Option<(Uuid,)>, sqlx::Error> {
+    sqlx::query_as(
+        r#"SELECT rotation_id FROM rotation_progress WHERE organization_id = $1 AND status = 'in_progress'"#,
+    ).bind(org_id).fetch_optional(pool).await
+}
+
+/// Get current CA cert from an organization.
+pub async fn get_current_ca(pool: &DbPool, org_id: Uuid) -> Result<Option<(Option<String>,)>, sqlx::Error> {
+    sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
+        .bind(org_id).fetch_optional(pool).await
+}
+
+/// Count agents with certificates.
+pub async fn count_certified_agents(pool: &DbPool, org_id: Uuid) -> Result<(i64,), sqlx::Error> {
+    sqlx::query_as("SELECT COUNT(*) FROM agents WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL")
+        .bind(org_id).fetch_one(pool).await
+}
+
+/// Count gateways with certificates.
+pub async fn count_certified_gateways(pool: &DbPool, org_id: Uuid) -> Result<(i64,), sqlx::Error> {
+    sqlx::query_as("SELECT COUNT(*) FROM gateways WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL")
+        .bind(org_id).fetch_one(pool).await
+}
+
+/// Insert a certificate migration record.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_cert_migration(
+    pool: &DbPool, org_id: Uuid, rotation_id: Uuid,
+    agent_id: Option<Uuid>, gateway_id: Option<Uuid>,
+    old_fp: &str, new_fp: &str, hostname: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO certificate_rotations
+           (organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, new_fingerprint, status, hostname)
+           VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7) ON CONFLICT DO NOTHING"#,
+    ).bind(org_id).bind(rotation_id).bind(agent_id).bind(gateway_id)
+    .bind(old_fp).bind(new_fp).bind(hostname).execute(pool).await?;
+    Ok(())
+}
+
+/// Insert a certificate migration failure record.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_cert_migration_failure(
+    pool: &DbPool, org_id: Uuid, rotation_id: Uuid,
+    agent_id: Option<Uuid>, gateway_id: Option<Uuid>,
+    old_fp: &str, hostname: &str, error_message: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO certificate_rotations
+           (organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, status, hostname, error_message)
+           VALUES ($1, $2, $3, $4, $5, 'failed', $6, $7) ON CONFLICT DO NOTHING"#,
+    ).bind(org_id).bind(rotation_id).bind(agent_id).bind(gateway_id)
+    .bind(old_fp).bind(hostname).bind(error_message).execute(pool).await?;
+    Ok(())
+}
+
+/// Increment migrated agents counter.
+pub async fn increment_migrated_agents(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE rotation_progress SET migrated_agents = migrated_agents + 1 WHERE organization_id = $1 AND rotation_id = $2")
+        .bind(org_id).bind(rotation_id).execute(pool).await?;
+    Ok(())
+}
+
+/// Increment migrated gateways counter.
+pub async fn increment_migrated_gateways(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE rotation_progress SET migrated_gateways = migrated_gateways + 1 WHERE organization_id = $1 AND rotation_id = $2")
+        .bind(org_id).bind(rotation_id).execute(pool).await?;
+    Ok(())
+}
+
+/// Increment failed agents counter.
+pub async fn increment_failed_agents(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE rotation_progress SET failed_agents = failed_agents + 1 WHERE organization_id = $1 AND rotation_id = $2")
+        .bind(org_id).bind(rotation_id).execute(pool).await?;
+    Ok(())
+}
+
+/// Increment failed gateways counter.
+pub async fn increment_failed_gateways(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE rotation_progress SET failed_gateways = failed_gateways + 1 WHERE organization_id = $1 AND rotation_id = $2")
+        .bind(org_id).bind(rotation_id).execute(pool).await?;
+    Ok(())
+}
+
+/// Get rotation progress counts.
+pub async fn get_rotation_counts(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<Option<(i32, i32, i32, i32)>, sqlx::Error> {
+    sqlx::query_as(
+        r#"SELECT total_agents, total_gateways, migrated_agents, migrated_gateways
+           FROM rotation_progress WHERE organization_id = $1 AND rotation_id = $2"#,
+    ).bind(org_id).bind(rotation_id).fetch_optional(pool).await
+}
+
+/// Mark rotation as ready.
+pub async fn mark_rotation_ready(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
+        "UPDATE rotation_progress SET status = 'ready', completed_at = {} WHERE organization_id = $1 AND rotation_id = $2 AND status = 'in_progress'",
+        crate::db::sql::now()
+    )).bind(org_id).bind(rotation_id).execute(pool).await?;
+    Ok(())
+}
+
+/// Get rotation progress details.
+#[allow(clippy::type_complexity)]
+pub async fn get_rotation_progress_details(pool: &DbPool, org_id: Uuid) -> Result<Option<(
+    Uuid, String, i32, i32, i32, i32, i32, i32,
+    chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
+    Option<chrono::DateTime<chrono::Utc>>, i32,
+)>, sqlx::Error> {
+    sqlx::query_as(
+        r#"SELECT rotation_id, status, total_agents, total_gateways,
+                  migrated_agents, migrated_gateways, failed_agents, failed_gateways,
+                  started_at, completed_at, finalized_at, grace_period_secs
+           FROM rotation_progress WHERE organization_id = $1
+           ORDER BY started_at DESC LIMIT 1"#,
+    ).bind(org_id).fetch_optional(pool).await
+}
+
+/// Get CA certs for fingerprinting.
+pub async fn get_ca_certs(pool: &DbPool, org_id: Uuid) -> Result<Option<(Option<String>, Option<String>)>, sqlx::Error> {
+    sqlx::query_as("SELECT ca_cert_pem, pending_ca_cert_pem FROM organizations WHERE id = $1")
+        .bind(org_id).fetch_optional(pool).await
+}
+
+/// Get rotation status for finalize/cancel.
+pub async fn get_rotation_status(pool: &DbPool, org_id: Uuid) -> Result<Option<(Uuid, String)>, sqlx::Error> {
+    sqlx::query_as(
+        r#"SELECT rotation_id, status FROM rotation_progress
+           WHERE organization_id = $1 ORDER BY started_at DESC LIMIT 1"#,
+    ).bind(org_id).fetch_optional(pool).await
+}
