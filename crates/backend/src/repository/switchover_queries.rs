@@ -49,6 +49,60 @@ pub async fn find_profile_for_site(
         .await
 }
 
+/// Insert a new switchover log entry.
+pub async fn insert_switchover_log(
+    pool: &DbPool,
+    switchover_id: Uuid,
+    app_id: Uuid,
+    phase: &str,
+    status: &str,
+    details: Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
+        VALUES ($1, $2, $3, $4, $5, $6)"#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(DbUuid::from(switchover_id))
+    .bind(DbUuid::from(app_id))
+    .bind(phase)
+    .bind(status)
+    .bind(DbJson::from(details))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get the current active switchover phase. Returns (switchover_id, phase, status).
+pub async fn get_active_switchover(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Option<(DbUuid, String, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String)>(
+        r#"SELECT switchover_id, phase, status FROM switchover_log
+        WHERE application_id = $1 AND status = 'in_progress'
+        ORDER BY created_at DESC LIMIT 1"#,
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get switchover details from the PREPARE phase entry.
+pub async fn get_switchover_details_from_prepare(
+    pool: &DbPool,
+    switchover_id: Uuid,
+) -> Result<Option<DbJson>, sqlx::Error> {
+    sqlx::query_scalar::<_, DbJson>(
+        r#"SELECT details FROM switchover_log
+        WHERE switchover_id = $1 AND phase = 'PREPARE'
+        ORDER BY created_at ASC LIMIT 1"#,
+    )
+    .bind(DbUuid::from(switchover_id))
+    .fetch_optional(pool)
+    .await
+}
+
 /// Get the active profile for an application. Returns (profile_id, profile_name).
 pub async fn get_active_profile(
     pool: &DbPool,

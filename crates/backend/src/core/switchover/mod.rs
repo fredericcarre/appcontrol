@@ -9,6 +9,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::db::{DbJson, DbUuid};
+use crate::repository::switchover_queries as repo;
 use crate::AppState;
 
 #[derive(Debug, thiserror::Error)]
@@ -41,17 +42,12 @@ pub async fn start_switchover(
     initiated_by: Uuid,
 ) -> Result<Uuid, SwitchoverError> {
     let switchover_id = Uuid::new_v4();
-    let row_id = DbUuid::new_v4();
-    let details_json = DbJson::from(serde_json::json!({
+    let details_json = serde_json::json!({
         "target_site_id": target_site_id, "mode": mode,
         "component_ids": component_ids, "initiated_by": initiated_by,
-    }));
-    sqlx::query(
-        r#"INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-        VALUES ($1, $2, $3, 'PREPARE', 'in_progress', $4)"#,
-    )
-    .bind(row_id).bind(DbUuid::from(switchover_id)).bind(DbUuid::from(app_id)).bind(&details_json)
-    .execute(pool).await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
+    });
+    repo::insert_switchover_log(pool, switchover_id, app_id, "PREPARE", "in_progress", details_json)
+        .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     Ok(switchover_id)
 }
@@ -64,14 +60,9 @@ pub async fn advance_phase(
     let app_id: Uuid = app_id.into();
     let pool = &state.db;
 
-    let current = sqlx::query_as::<_, (DbUuid, String, String)>(
-        r#"SELECT switchover_id, phase, status FROM switchover_log
-        WHERE application_id = $1 AND status = 'in_progress'
-        ORDER BY created_at DESC LIMIT 1"#,
-    )
-    .bind(DbUuid::from(app_id)).fetch_optional(pool).await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?
-    .ok_or(SwitchoverError::NoActiveSwitchover)?;
+    let current = repo::get_active_switchover(pool, app_id)
+        .await.map_err(|e| SwitchoverError::Database(e.to_string()))?
+        .ok_or(SwitchoverError::NoActiveSwitchover)?;
 
     let (switchover_id, active_phase, _status) = current;
 
@@ -97,22 +88,12 @@ pub async fn advance_phase(
 
     match phase_result {
         Ok(details) => {
-            sqlx::query(
-                r#"INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-                VALUES ($1, $2, $3, $4, 'completed', $5)"#,
-            )
-            .bind(DbUuid::new_v4()).bind(crate::db::bind_id(switchover_id))
-            .bind(DbUuid::from(app_id)).bind(&active_phase).bind(DbJson::from(details.clone()))
-            .execute(pool).await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
+            repo::insert_switchover_log(pool, *switchover_id, app_id, &active_phase, "completed", details.clone())
+                .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
             if let Some(next) = next_phase {
-                sqlx::query(
-                    r#"INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-                    VALUES ($1, $2, $3, $4, 'in_progress', $5)"#,
-                )
-                .bind(DbUuid::new_v4()).bind(crate::db::bind_id(switchover_id))
-                .bind(DbUuid::from(app_id)).bind(next).bind(DbJson::from(serde_json::json!({})))
-                .execute(pool).await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
+                repo::insert_switchover_log(pool, *switchover_id, app_id, next, "in_progress", serde_json::json!({}))
+                    .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
             }
 
             let db = state.db.clone();
@@ -131,13 +112,7 @@ pub async fn advance_phase(
         }
         Err(e) => {
             let error_details = serde_json::json!({"error": e.to_string()});
-            let _ = sqlx::query(
-                r#"INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-                VALUES ($1, $2, $3, $4, 'failed', $5)"#,
-            )
-            .bind(DbUuid::new_v4()).bind(crate::db::bind_id(switchover_id))
-            .bind(DbUuid::from(app_id)).bind(&active_phase).bind(DbJson::from(error_details))
-            .execute(pool).await;
+            let _ = repo::insert_switchover_log(pool, *switchover_id, app_id, &active_phase, "failed", error_details).await;
             Err(e)
         }
     }
@@ -150,13 +125,8 @@ pub(crate) async fn get_switchover_details(
     pool: &crate::db::DbPool,
     switchover_id: Uuid,
 ) -> Result<Value, SwitchoverError> {
-    sqlx::query_scalar::<_, DbJson>(
-        r#"SELECT details FROM switchover_log
-        WHERE switchover_id = $1 AND phase = 'PREPARE'
-        ORDER BY created_at ASC LIMIT 1"#,
-    )
-    .bind(DbUuid::from(switchover_id)).fetch_optional(pool).await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?
-    .map(|dj| dj.0)
-    .ok_or(SwitchoverError::NoActiveSwitchover)
+    repo::get_switchover_details_from_prepare(pool, switchover_id)
+        .await.map_err(|e| SwitchoverError::Database(e.to_string()))?
+        .map(|dj| dj.0)
+        .ok_or(SwitchoverError::NoActiveSwitchover)
 }
