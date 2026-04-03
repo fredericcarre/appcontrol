@@ -40,6 +40,7 @@ TOTAL=0
 BACKEND_PID=0
 GATEWAY_PID=0
 AGENT_PID=0
+TOKEN=""
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,9 +82,9 @@ wait_component_state() {
 
 cleanup() {
   log "Cleaning up..."
-  kill "$AGENT_PID" 2>/dev/null || true
-  kill "$GATEWAY_PID" 2>/dev/null || true
-  kill "$BACKEND_PID" 2>/dev/null || true
+  [ "$AGENT_PID" -gt 0 ] && kill "$AGENT_PID" 2>/dev/null || true
+  [ "$GATEWAY_PID" -gt 0 ] && kill "$GATEWAY_PID" 2>/dev/null || true
+  [ "$BACKEND_PID" -gt 0 ] && kill "$BACKEND_PID" 2>/dev/null || true
   # Kill any test processes we started
   pkill -f "sleep 99999.*e2e-marker" 2>/dev/null || true
   if [ "$FAIL" -gt 0 ]; then
