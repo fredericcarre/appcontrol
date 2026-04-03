@@ -1,14 +1,9 @@
 use tokio::sync::watch;
 use uuid::Uuid;
 
+use crate::repository::core_queries;
+
 /// Persistent operation locks backed by PostgreSQL.
-///
-/// Features:
-/// - Locks persist across backend restarts
-/// - Heartbeat mechanism detects stuck operations (no heartbeat > 30s = stale)
-/// - Cancel requests are stored in DB, checked by running operations
-/// - Manual force-unlock available as last resort
-/// - Works in HA mode (multiple backend instances)
 #[derive(Debug, Clone)]
 pub struct OperationLock {
     pool: crate::db::DbPool,
@@ -40,16 +35,14 @@ pub enum LockError {
     Database(String),
 }
 
-/// Stale lock threshold - if no heartbeat for this duration, lock is considered abandoned
+/// Stale lock threshold
 const STALE_THRESHOLD_SECONDS: i64 = 30;
 
-/// Heartbeat interval - how often running operations update their heartbeat
+/// Heartbeat interval
 const HEARTBEAT_INTERVAL_SECONDS: u64 = 5;
 
 impl OperationLock {
-    /// Create with a database pool.
     pub fn new(pool: crate::db::DbPool) -> Self {
-        // Generate a unique instance ID for this backend process
         let instance_id = format!(
             "{}-{}",
             hostname::get()
@@ -60,10 +53,6 @@ impl OperationLock {
         Self { pool, instance_id }
     }
 
-    /// Try to acquire the lock for an operation on an application.
-    /// Returns Ok(guard) if acquired, Err(LockError::Conflict) if another operation is active.
-    ///
-    /// Before attempting to acquire, this will clean up any stale locks (heartbeat > 30s old).
     pub async fn try_lock(
         &self,
         app_id: impl Into<Uuid>,
@@ -75,25 +64,13 @@ impl OperationLock {
         // First, clean up any stale lock for this app
         self.cleanup_stale_lock(app_id).await?;
 
-        // Try to insert a new lock (will fail if one exists due to PRIMARY KEY constraint)
-        let result = sqlx::query(
-            r#"
-            INSERT INTO operation_locks (app_id, operation, user_id, backend_instance)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (app_id) DO NOTHING
-            RETURNING app_id
-            "#,
-        )
-        .bind(crate::db::bind_id(app_id))
-        .bind(operation)
-        .bind(crate::db::bind_id(user_id))
-        .bind(&self.instance_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| LockError::Database(e.to_string()))?;
+        // Try to insert a new lock
+        let acquired =
+            core_queries::try_insert_operation_lock(&self.pool, app_id, operation, user_id, &self.instance_id)
+                .await
+                .map_err(|e| LockError::Database(e.to_string()))?;
 
-        if result.is_some() {
-            // Lock acquired successfully
+        if acquired {
             tracing::info!(
                 app_id = %app_id,
                 operation = %operation,
@@ -102,10 +79,8 @@ impl OperationLock {
                 "Operation lock acquired"
             );
 
-            // Create a shutdown channel for the heartbeat task
             let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-            // Spawn heartbeat task
             let pool = self.pool.clone();
             let app_id_clone = app_id;
             tokio::spawn(async move {
@@ -118,7 +93,6 @@ impl OperationLock {
                 shutdown_tx: Some(shutdown_tx),
             })
         } else {
-            // Lock already exists - fetch details for error message
             let existing = self.get_active(app_id).await?;
             if let Some(op) = existing {
                 Err(LockError::Conflict {
@@ -129,8 +103,6 @@ impl OperationLock {
                     user_id: op.user_id,
                 })
             } else {
-                // Race condition - lock was just released, try again
-                // This shouldn't happen often, but let's handle it gracefully
                 Err(LockError::Database(
                     "Lock acquisition race condition, please retry".to_string(),
                 ))
@@ -138,34 +110,15 @@ impl OperationLock {
         }
     }
 
-    /// Get information about an active operation on an application.
     pub async fn get_active(
         &self,
         app_id: impl Into<Uuid>,
     ) -> Result<Option<ActiveOperation>, LockError> {
         let app_id: Uuid = app_id.into();
 
-        let row = sqlx::query_as::<
-            _,
-            (
-                String,
-                chrono::DateTime<chrono::Utc>,
-                chrono::DateTime<chrono::Utc>,
-                Uuid,
-                String,
-                Option<String>,
-            ),
-        >(
-            r#"
-            SELECT operation, started_at, last_heartbeat, user_id, status, backend_instance
-            FROM operation_locks
-            WHERE app_id = $1
-            "#,
-        )
-        .bind(crate::db::bind_id(app_id))
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| LockError::Database(e.to_string()))?;
+        let row = core_queries::get_active_operation(&self.pool, app_id)
+            .await
+            .map_err(|e| LockError::Database(e.to_string()))?;
 
         Ok(row.map(
             |(operation, started_at, last_heartbeat, user_id, status, backend_instance)| {
@@ -181,66 +134,39 @@ impl OperationLock {
         ))
     }
 
-    /// Check if an operation on an application has been cancelled.
-    /// Returns true if status is 'cancelling' or 'cancelled'.
     pub fn is_cancelled(&self, app_id: impl Into<Uuid>) -> bool {
         let app_id: Uuid = app_id.into();
-
-        // We need to query the database synchronously, but we're in an async context
-        // Use a blocking task to avoid deadlocks
         let pool = self.pool.clone();
 
-        // Use try_send to avoid blocking - if we can't check, assume not cancelled
         let handle = tokio::task::spawn(async move {
-            sqlx::query_scalar::<_, String>("SELECT status FROM operation_locks WHERE app_id = $1")
-                .bind(crate::db::bind_id(app_id))
-                .fetch_optional(&pool)
+            core_queries::get_lock_status(&pool, app_id)
                 .await
-                .ok()
-                .flatten()
                 .map(|s| s == "cancelling" || s == "cancelled")
                 .unwrap_or(false)
         });
 
-        // Try to get result with a short timeout
         futures_util::FutureExt::now_or_never(handle)
             .and_then(|r| r.ok())
             .unwrap_or(false)
     }
 
-    /// Check if an operation has been cancelled (async version).
     pub async fn is_cancelled_async(&self, app_id: impl Into<Uuid>) -> bool {
         let app_id: Uuid = app_id.into();
 
-        sqlx::query_scalar::<_, String>("SELECT status FROM operation_locks WHERE app_id = $1")
-            .bind(crate::db::bind_id(app_id))
-            .fetch_optional(&self.pool)
+        core_queries::get_lock_status(&self.pool, app_id)
             .await
-            .ok()
-            .flatten()
             .map(|s| s == "cancelling" || s == "cancelled")
             .unwrap_or(false)
     }
 
-    /// Request cancellation of an operation.
-    /// Sets status to 'cancelling'. The running operation should check this and exit.
-    /// Returns true if cancellation was requested, false if no operation was running.
     pub async fn request_cancel(&self, app_id: impl Into<Uuid>) -> Result<bool, LockError> {
         let app_id: Uuid = app_id.into();
 
-        let result = sqlx::query(
-            r#"
-            UPDATE operation_locks
-            SET status = 'cancelling'
-            WHERE app_id = $1 AND status = 'running'
-            "#,
-        )
-        .bind(crate::db::bind_id(app_id))
-        .execute(&self.pool)
-        .await
-        .map_err(|e| LockError::Database(e.to_string()))?;
+        let rows = core_queries::request_cancel_operation(&self.pool, app_id)
+            .await
+            .map_err(|e| LockError::Database(e.to_string()))?;
 
-        if result.rows_affected() > 0 {
+        if rows > 0 {
             tracing::info!(app_id = %app_id, "Operation cancellation requested");
             Ok(true)
         } else {
@@ -248,22 +174,16 @@ impl OperationLock {
         }
     }
 
-    /// Force-release a lock. Use as last resort when normal cancellation doesn't work.
-    /// This immediately deletes the lock, potentially leaving the operation orphaned.
     pub async fn force_unlock(&self, app_id: impl Into<Uuid>) -> Result<bool, LockError> {
         let app_id: Uuid = app_id.into();
 
-        // First try to request cancellation
         let _ = self.request_cancel(app_id).await;
 
-        // Then force delete the lock
-        let result = sqlx::query("DELETE FROM operation_locks WHERE app_id = $1")
-            .bind(crate::db::bind_id(app_id))
-            .execute(&self.pool)
+        let rows = core_queries::delete_operation_lock(&self.pool, app_id)
             .await
             .map_err(|e| LockError::Database(e.to_string()))?;
 
-        if result.rows_affected() > 0 {
+        if rows > 0 {
             tracing::warn!(app_id = %app_id, "Operation lock force-released");
             Ok(true)
         } else {
@@ -272,37 +192,12 @@ impl OperationLock {
         }
     }
 
-    /// Clean up a stale lock (heartbeat older than threshold).
     async fn cleanup_stale_lock(&self, app_id: Uuid) -> Result<(), LockError> {
-        #[cfg(feature = "postgres")]
-        let result = sqlx::query(
-            r#"
-            DELETE FROM operation_locks
-            WHERE app_id = $1
-              AND last_heartbeat < NOW() - INTERVAL '1 second' * $2
-            "#,
-        )
-        .bind(crate::db::bind_id(app_id))
-        .bind(STALE_THRESHOLD_SECONDS)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| LockError::Database(e.to_string()))?;
+        let rows = core_queries::cleanup_stale_lock(&self.pool, app_id, STALE_THRESHOLD_SECONDS)
+            .await
+            .map_err(|e| LockError::Database(e.to_string()))?;
 
-        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        let result = sqlx::query(
-            r#"
-            DELETE FROM operation_locks
-            WHERE app_id = $1
-              AND last_heartbeat < datetime('now', '-' || $2 || ' seconds')
-            "#,
-        )
-        .bind(crate::db::bind_id(app_id))
-        .bind(STALE_THRESHOLD_SECONDS)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| LockError::Database(e.to_string()))?;
-
-        if result.rows_affected() > 0 {
+        if rows > 0 {
             tracing::warn!(
                 app_id = %app_id,
                 threshold_seconds = STALE_THRESHOLD_SECONDS,
@@ -313,34 +208,11 @@ impl OperationLock {
         Ok(())
     }
 
-    /// Clean up all stale locks across all applications.
-    /// Call this periodically (e.g., on backend startup and every minute).
     pub async fn cleanup_all_stale_locks(&self) -> Result<u64, LockError> {
-        #[cfg(feature = "postgres")]
-        let result = sqlx::query(
-            r#"
-            DELETE FROM operation_locks
-            WHERE last_heartbeat < NOW() - INTERVAL '1 second' * $1
-            "#,
-        )
-        .bind(STALE_THRESHOLD_SECONDS)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| LockError::Database(e.to_string()))?;
+        let count = core_queries::cleanup_all_stale_locks(&self.pool, STALE_THRESHOLD_SECONDS)
+            .await
+            .map_err(|e| LockError::Database(e.to_string()))?;
 
-        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        let result = sqlx::query(
-            r#"
-            DELETE FROM operation_locks
-            WHERE last_heartbeat < datetime('now', '-' || $1 || ' seconds')
-            "#,
-        )
-        .bind(STALE_THRESHOLD_SECONDS)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| LockError::Database(e.to_string()))?;
-
-        let count = result.rows_affected();
         if count > 0 {
             tracing::warn!(
                 count = count,
@@ -352,29 +224,10 @@ impl OperationLock {
         Ok(count)
     }
 
-    /// List all active operation locks (for admin UI / debugging).
     pub async fn list_all(&self) -> Result<Vec<(Uuid, ActiveOperation)>, LockError> {
-        let rows = sqlx::query_as::<
-            _,
-            (
-                Uuid,
-                String,
-                chrono::DateTime<chrono::Utc>,
-                chrono::DateTime<chrono::Utc>,
-                Uuid,
-                String,
-                Option<String>,
-            ),
-        >(
-            r#"
-            SELECT app_id, operation, started_at, last_heartbeat, user_id, status, backend_instance
-            FROM operation_locks
-            ORDER BY started_at DESC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| LockError::Database(e.to_string()))?;
+        let rows = core_queries::list_all_operation_locks(&self.pool)
+            .await
+            .map_err(|e| LockError::Database(e.to_string()))?;
 
         Ok(rows
             .into_iter()
@@ -416,18 +269,8 @@ async fn heartbeat_loop(
     loop {
         tokio::select! {
             _ = tokio::time::sleep(interval) => {
-                // Update heartbeat
-                #[cfg(feature = "postgres")]
-                let hb_sql = "UPDATE operation_locks SET last_heartbeat = NOW() WHERE app_id = $1";
-                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                let hb_sql = "UPDATE operation_locks SET last_heartbeat = datetime('now') WHERE app_id = $1";
-                if let Err(e) = sqlx::query(hb_sql)
-                .bind(crate::db::bind_id(app_id))
-                .execute(&pool)
-                .await
-                {
+                if let Err(e) = core_queries::update_heartbeat(&pool, app_id).await {
                     tracing::warn!(app_id = %app_id, error = %e, "Failed to update operation heartbeat");
-                    // If we can't update heartbeat, the lock will become stale and be cleaned up
                     break;
                 }
                 tracing::trace!(app_id = %app_id, "Operation heartbeat updated");
@@ -459,21 +302,15 @@ impl std::fmt::Debug for OperationGuard {
 
 impl Drop for OperationGuard {
     fn drop(&mut self) {
-        // Signal heartbeat task to stop
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(true);
         }
 
-        // Release the lock
         let pool = self.pool.clone();
         let app_id = self.app_id;
 
         tokio::spawn(async move {
-            match sqlx::query("DELETE FROM operation_locks WHERE app_id = $1")
-                .bind(crate::db::bind_id(app_id))
-                .execute(&pool)
-                .await
-            {
+            match core_queries::delete_operation_lock(&pool, app_id).await {
                 Ok(_) => {
                     tracing::info!(app_id = %app_id, "Operation lock released");
                 }
@@ -488,9 +325,6 @@ impl Drop for OperationGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Note: These tests require a running PostgreSQL database
-    // They are integration tests and should be run with `cargo test -- --ignored`
 
     #[test]
     fn test_stale_threshold_reasonable() {
