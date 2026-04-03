@@ -14,6 +14,7 @@
 #   BACKEND_BIN   - path to backend binary (required)
 #   GATEWAY_BIN   - path to gateway binary (required)
 #   AGENT_BIN     - path to agent binary (required)
+#   DATABASE_URL  - database URL (default: sqlite in temp dir)
 #   BACKEND_PORT  - backend listen port (default: 3210)
 #   GATEWAY_PORT  - gateway listen port (default: 4453)
 
@@ -98,9 +99,12 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 # 1. Start backend
 # ---------------------------------------------------------------------------
-log "Starting backend (SQLite) on port $BACKEND_PORT..."
+DB_URL="${DATABASE_URL:-sqlite:$DATA/appcontrol.db}"
+DB_TYPE="SQLite"
+if echo "$DB_URL" | grep -q "^postgres"; then DB_TYPE="PostgreSQL"; fi
+log "Starting backend ($DB_TYPE) on port $BACKEND_PORT..."
 
-DATABASE_URL="sqlite:$DATA/appcontrol.db" \
+DATABASE_URL="$DB_URL" \
 JWT_SECRET="e2e-full-stack-test-secret-key-32chars!" \
 LOCAL_AUTH_ENABLED=true \
 SEED_ENABLED=true \

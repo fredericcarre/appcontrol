@@ -388,6 +388,56 @@ jobs:
           bash tests/full-stack-e2e.sh
 
   # ---------------------------------------------------------------------------
+  # Full-Stack E2E (PostgreSQL) — same test, real PostgreSQL backend
+  # ---------------------------------------------------------------------------
+  full-stack-e2e-pg:
+    name: Full-Stack E2E (PostgreSQL)
+    runs-on: ubuntu-latest
+    needs: [rust-check]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: appcontrol_e2e
+          POSTGRES_USER: appcontrol
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build backend, gateway, agent
+        run: cargo build --release -p appcontrol-backend -p appcontrol-gateway -p appcontrol-agent
+
+      - name: Run full-stack E2E test (PostgreSQL)
+        run: |
+          BACKEND_BIN=./target/release/appcontrol-backend \
+          GATEWAY_BIN=./target/release/appcontrol-gateway \
+          AGENT_BIN=./target/release/appcontrol-agent \
+          DATABASE_URL=postgres://appcontrol:test@localhost:5432/appcontrol_e2e \
+          bash tests/full-stack-e2e.sh
+
+  # ---------------------------------------------------------------------------
   # E2E Integration Tests — in-process backend + real PostgreSQL
   # ---------------------------------------------------------------------------
   e2e-tests:
