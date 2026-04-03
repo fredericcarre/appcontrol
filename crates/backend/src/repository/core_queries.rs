@@ -1259,8 +1259,7 @@ pub async fn record_command_dispatch(
     .execute(pool)
     .await;
 
-    if let Err(e) = result
-    {
+    if let Err(e) = result {
         tracing::warn!(
             request_id = %request_id,
             "Failed to record command dispatch: {}", e
