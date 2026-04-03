@@ -1951,3 +1951,293 @@ pub async fn get_first_org_with_ca(
     .fetch_optional(pool)
     .await
 }
+
+// ============================================================================
+// Log source queries (api/logs.rs)
+// ============================================================================
+
+/// Row type for log sources.
+#[derive(Debug, sqlx::FromRow)]
+pub struct LogSourceRow {
+    pub id: DbUuid,
+    pub component_id: DbUuid,
+    pub organization_id: DbUuid,
+    pub name: String,
+    pub source_type: String,
+    pub description: Option<String>,
+    pub file_path: Option<String>,
+    pub event_log_name: Option<String>,
+    pub event_log_source: Option<String>,
+    pub event_log_level: Option<String>,
+    pub command: Option<String>,
+    pub command_timeout_seconds: i32,
+    pub max_lines: i32,
+    pub max_age_hours: i32,
+    pub is_sensitive: bool,
+    pub display_order: i32,
+    pub created_by: Option<DbUuid>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Component row for permission checks in logs.
+#[derive(Debug, sqlx::FromRow)]
+pub struct LogComponentRow {
+    pub id: DbUuid,
+    pub application_id: DbUuid,
+    pub organization_id: DbUuid,
+    pub name: String,
+    pub agent_id: Option<DbUuid>,
+}
+
+/// Get component by ID for permission checks.
+pub async fn get_component_for_logs(
+    pool: &DbPool,
+    component_id: DbUuid,
+) -> Result<Option<LogComponentRow>, sqlx::Error> {
+    sqlx::query_as::<_, LogComponentRow>(
+        "SELECT id, application_id, organization_id, name, agent_id FROM components WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(component_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// List log sources for a component.
+pub async fn list_log_sources(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<Vec<LogSourceRow>, sqlx::Error> {
+    sqlx::query_as::<_, LogSourceRow>(
+        r#"
+        SELECT id, component_id, organization_id, name, source_type, description,
+               file_path, event_log_name, event_log_source, event_log_level,
+               command, command_timeout_seconds,
+               max_lines, max_age_hours, is_sensitive, display_order, created_by, created_at, updated_at
+        FROM component_log_sources
+        WHERE component_id = $1
+        ORDER BY display_order, name
+        "#,
+    )
+    .bind(crate::db::bind_id(component_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Create a log source.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_log_source(
+    pool: &DbPool,
+    id: Uuid,
+    component_id: Uuid,
+    organization_id: DbUuid,
+    name: &str,
+    source_type: &str,
+    description: &Option<String>,
+    file_path: &Option<String>,
+    event_log_name: &Option<String>,
+    event_log_source: &Option<String>,
+    event_log_level: &Option<String>,
+    command: &Option<String>,
+    command_timeout_seconds: i32,
+    max_lines: i32,
+    max_age_hours: i32,
+    is_sensitive: bool,
+    display_order: i32,
+    created_by: DbUuid,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO component_log_sources (
+            id, component_id, organization_id, name, source_type, description,
+            file_path, event_log_name, event_log_source, event_log_level,
+            command, command_timeout_seconds,
+            max_lines, max_age_hours, is_sensitive, display_order,
+            created_by, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $18)
+        "#,
+    )
+    .bind(crate::db::bind_id(id))
+    .bind(crate::db::bind_id(component_id))
+    .bind(organization_id)
+    .bind(name)
+    .bind(source_type)
+    .bind(description)
+    .bind(file_path)
+    .bind(event_log_name)
+    .bind(event_log_source)
+    .bind(event_log_level)
+    .bind(command)
+    .bind(command_timeout_seconds)
+    .bind(max_lines)
+    .bind(max_age_hours)
+    .bind(is_sensitive)
+    .bind(display_order)
+    .bind(crate::db::bind_id(created_by))
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get a log source by ID.
+pub async fn get_log_source_by_id(
+    pool: &DbPool,
+    source_id: Uuid,
+) -> Result<Option<LogSourceRow>, sqlx::Error> {
+    sqlx::query_as::<_, LogSourceRow>(
+        "SELECT id, component_id, organization_id, name, source_type, description, \
+         file_path, event_log_name, event_log_source, event_log_level, \
+         command, command_timeout_seconds, max_lines, max_age_hours, is_sensitive, display_order, \
+         created_by, created_at, updated_at \
+         FROM component_log_sources WHERE id = $1",
+    )
+    .bind(source_id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Update a log source.
+#[allow(clippy::too_many_arguments)]
+pub async fn update_log_source(
+    pool: &DbPool,
+    source_id: Uuid,
+    name: &str,
+    description: &Option<String>,
+    file_path: &Option<String>,
+    event_log_name: &Option<String>,
+    event_log_source: &Option<String>,
+    event_log_level: &Option<String>,
+    command: &Option<String>,
+    command_timeout_seconds: i32,
+    max_lines: i32,
+    max_age_hours: i32,
+    is_sensitive: bool,
+    display_order: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
+        "UPDATE component_log_sources SET
+                name = $2, description = $3, file_path = $4,
+                event_log_name = $5, event_log_source = $6, event_log_level = $7,
+                command = $8, command_timeout_seconds = $9,
+                max_lines = $10, max_age_hours = $11, is_sensitive = $12, display_order = $13,
+                updated_at = {}
+            WHERE id = $1",
+        db::sql::now()
+    ))
+    .bind(source_id)
+    .bind(name)
+    .bind(description)
+    .bind(file_path)
+    .bind(event_log_name)
+    .bind(event_log_source)
+    .bind(event_log_level)
+    .bind(command)
+    .bind(command_timeout_seconds)
+    .bind(max_lines)
+    .bind(max_age_hours)
+    .bind(is_sensitive)
+    .bind(display_order)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Delete a log source.
+pub async fn delete_log_source(pool: &DbPool, source_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM component_log_sources WHERE id = $1")
+        .bind(source_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Get a log source by ID and component_id.
+pub async fn get_log_source_by_id_and_component(
+    pool: &DbPool,
+    source_id: Uuid,
+    component_id: Uuid,
+) -> Result<Option<LogSourceRow>, sqlx::Error> {
+    sqlx::query_as::<_, LogSourceRow>(
+        "SELECT id, component_id, organization_id, name, source_type, description, \
+         file_path, event_log_name, event_log_source, event_log_level, \
+         command, command_timeout_seconds, max_lines, max_age_hours, is_sensitive, display_order, \
+         created_by, created_at, updated_at \
+         FROM component_log_sources WHERE id = $1 AND component_id = $2",
+    )
+    .bind(source_id)
+    .bind(crate::db::bind_id(component_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get a log source by component_id, type, and name.
+pub async fn get_log_source_by_component_type_name(
+    pool: &DbPool,
+    component_id: Uuid,
+    name: &str,
+) -> Result<Option<LogSourceRow>, sqlx::Error> {
+    sqlx::query_as::<_, LogSourceRow>(
+        r#"
+        SELECT id, component_id, organization_id, name, source_type, description,
+               file_path, event_log_name, event_log_source, event_log_level,
+               command, command_timeout_seconds, max_lines, max_age_hours, is_sensitive, display_order,
+               created_by, created_at, updated_at
+        FROM component_log_sources
+        WHERE component_id = $1 AND source_type = 'command' AND name = $2
+        "#,
+    )
+    .bind(crate::db::bind_id(component_id))
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get organization_id for a component.
+pub async fn get_component_org_id(
+    pool: &DbPool,
+    component_id: DbUuid,
+) -> Result<DbUuid, sqlx::Error> {
+    sqlx::query_scalar::<_, DbUuid>("SELECT organization_id FROM components WHERE id = $1")
+        .bind(crate::db::bind_id(component_id))
+        .fetch_one(pool)
+        .await
+}
+
+/// Insert a log access audit record.
+pub async fn insert_log_access_audit(
+    pool: &DbPool,
+    id: Uuid,
+    organization_id: DbUuid,
+    user_id: DbUuid,
+    component_id: DbUuid,
+    log_source_id: Option<DbUuid>,
+    source_type: &str,
+    source_name: &str,
+    lines_requested: Option<i32>,
+    filter_applied: &Option<String>,
+    time_range_hours: Option<i32>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO log_access_audit (
+            id, organization_id, user_id, component_id, log_source_id,
+            source_type, source_name, lines_requested, filter_applied, time_range_hours
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        "#,
+    )
+    .bind(id)
+    .bind(organization_id)
+    .bind(crate::db::bind_id(user_id))
+    .bind(crate::db::bind_id(component_id))
+    .bind(log_source_id)
+    .bind(source_type)
+    .bind(source_name)
+    .bind(lines_requested)
+    .bind(filter_applied)
+    .bind(time_range_hours)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
