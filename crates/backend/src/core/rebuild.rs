@@ -78,14 +78,7 @@ pub async fn build_rebuild_plan(
     }))
 }
 
-type RebuildTarget = (
-    crate::db::DbUuid,
-    String,
-    bool,
-    Option<String>,
-    Option<String>,
-    Option<crate::db::DbUuid>,
-);
+type RebuildTarget = crate::repository::core_queries::RebuildTarget;
 
 /// Fetch rebuild target components with effective rebuild commands.
 async fn fetch_rebuild_targets(
@@ -96,45 +89,18 @@ async fn fetch_rebuild_targets(
     if let Some(ids) = component_ids {
         let mut targets = Vec::new();
         for &id in ids {
-            let row = sqlx::query_as::<_, RebuildTarget>(
-                r#"
-                SELECT id, name, rebuild_protected,
-                       COALESCE(
-                           (SELECT so.rebuild_cmd_override FROM site_overrides so WHERE so.component_id = c.id LIMIT 1),
-                           rebuild_cmd
-                       ) as effective_rebuild_cmd,
-                       rebuild_infra_cmd,
-                       rebuild_agent_id
-                FROM components c WHERE id = $1
-                "#,
-            )
-            .bind(crate::db::bind_id(id))
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| RebuildError::Database(e.to_string()))?;
-
+            let row = crate::repository::core_queries::fetch_rebuild_target_by_id(pool, id)
+                .await
+                .map_err(|e| RebuildError::Database(e.to_string()))?;
             if let Some(r) = row {
                 targets.push(r);
             }
         }
         Ok(targets)
     } else {
-        sqlx::query_as::<_, RebuildTarget>(
-            r#"
-            SELECT id, name, rebuild_protected,
-                   COALESCE(
-                       (SELECT so.rebuild_cmd_override FROM site_overrides so WHERE so.component_id = c.id LIMIT 1),
-                       rebuild_cmd
-                   ) as effective_rebuild_cmd,
-                   rebuild_infra_cmd,
-                   rebuild_agent_id
-            FROM components c WHERE application_id = $1
-            "#,
-        )
-        .bind(crate::db::bind_id(app_id))
-        .fetch_all(pool)
-        .await
-        .map_err(|e| RebuildError::Database(e.to_string()))
+        crate::repository::core_queries::fetch_rebuild_targets_for_app(pool, app_id)
+            .await
+            .map_err(|e| RebuildError::Database(e.to_string()))
     }
 }
 
@@ -167,26 +133,9 @@ pub async fn execute_rebuild(
     }
 
     // Log action BEFORE execution (Critical Rule #3: log before execute)
-    #[cfg(feature = "postgres")]
-    let _ = sqlx::query(
-        "INSERT INTO action_log (user_id, action, resource_type, resource_id, details) VALUES ($1, 'rebuild_execute', 'application', $2, $3)",
-    )
-    .bind(initiated_by)
-    .bind(crate::db::bind_id(app_id))
-    .bind(serde_json::json!({"components": targets.len(), "status": "started"}))
-    .execute(&state.db)
-    .await;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let _ = sqlx::query(
-        "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details) VALUES ($1, $2, 'rebuild_execute', 'application', $3, $4)",
-    )
-    .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
-    .bind(initiated_by)
-    .bind(crate::db::bind_id(app_id))
-    .bind(serde_json::json!({"components": targets.len(), "status": "started"}).to_string())
-    .execute(&state.db)
-    .await;
+    let _ = crate::repository::core_queries::insert_rebuild_action_log(
+        &state.db, initiated_by, app_id, targets.len(),
+    ).await;
 
     // Build DAG order
     let dag = super::dag::build_dag(&state.db, app_id).await?;
@@ -410,14 +359,7 @@ pub async fn execute_rebuild(
 
 /// Get the agent_id assigned to a component.
 async fn get_component_agent(pool: &crate::db::DbPool, component_id: Uuid) -> Option<DbUuid> {
-    sqlx::query_scalar::<_, DbUuid>(
-        "SELECT agent_id FROM components WHERE id = $1 AND agent_id IS NOT NULL",
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
+    crate::repository::core_queries::get_component_agent_id(pool, component_id).await
 }
 
 /// Result of waiting for a command to complete.
@@ -436,12 +378,7 @@ async fn wait_for_command_completion(
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
 
     loop {
-        let result = sqlx::query_as::<_, (String, Option<i16>, Option<String>)>(
-            "SELECT status, exit_code, stderr FROM command_executions WHERE request_id = $1",
-        )
-        .bind(request_id)
-        .fetch_optional(pool)
-        .await;
+        let result = crate::repository::core_queries::get_command_execution_status(pool, request_id).await;
 
         match result {
             Ok(Some((status, exit_code, stderr))) => {

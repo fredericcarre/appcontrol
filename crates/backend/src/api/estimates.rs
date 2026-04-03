@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
+#[allow(unused_imports)]
 use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::AppState;
@@ -62,14 +63,7 @@ pub async fn get_estimates(
     };
 
     // Fetch historical stats for all components in this app
-    let stats = sqlx::query_as::<_, (DbUuid, String, i32, i32, i32, i32, i32)>(
-        "SELECT component_id, command_type, sample_count, avg_ms, p50_ms, p95_ms, max_ms
-         FROM component_operation_stats
-         WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_all(&state.db)
-    .await;
+    let stats = crate::repository::misc_queries::fetch_operation_stats(&state.db, app_id).await;
 
     // Build lookup: component_id -> (command_type -> stats)
     let mut stats_map: HashMap<DbUuid, HashMap<String, ComponentStats>> = HashMap::new();
@@ -111,12 +105,8 @@ pub async fn get_estimates(
         for &comp_id in level {
             total_components += 1;
 
-            let name = sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
-                .bind(crate::db::bind_id(comp_id))
-                .fetch_optional(&state.db)
+            let name = crate::repository::misc_queries::get_component_name(&state.db, comp_id)
                 .await
-                .ok()
-                .flatten()
                 .unwrap_or_else(|| comp_id.to_string());
 
             if let Some(type_map) = stats_map.get(&comp_id) {
@@ -139,16 +129,7 @@ pub async fn get_estimates(
             }
 
             // No historical data — use timeout as worst case
-            let timeout_ms = sqlx::query_scalar::<_, i32>(
-                "SELECT start_timeout_seconds FROM components WHERE id = $1",
-            )
-            .bind(crate::db::bind_id(comp_id))
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(120)
-                * 1000;
+            let timeout_ms = crate::repository::misc_queries::get_component_start_timeout(&state.db, comp_id).await * 1000;
 
             level_components.push(json!({
                 "component_id": comp_id,

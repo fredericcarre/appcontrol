@@ -80,3 +80,57 @@ pub async fn get_app_org_id(
         Ok(row.map(|v| v.into_inner()))
     }
 }
+
+// ============================================================================
+// Operation schedule queries (core/operation_scheduler.rs)
+// ============================================================================
+
+/// Row returned when querying for due operation schedules.
+#[derive(Debug, sqlx::FromRow)]
+pub struct DueOperationSchedule {
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
+    pub application_id: Option<DbUuid>,
+    pub component_id: Option<DbUuid>,
+    pub name: String,
+    pub operation: String,
+    pub cron_expression: String,
+    pub timezone: String,
+}
+
+/// Fetch due operation schedules (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn fetch_due_operation_schedules(pool: &DbPool) -> Result<Vec<DueOperationSchedule>, sqlx::Error> {
+    sqlx::query_as::<_, DueOperationSchedule>(
+        r#"
+        SELECT id, organization_id, application_id, component_id, name, operation, cron_expression, timezone
+        FROM operation_schedules
+        WHERE is_enabled = true
+          AND next_run_at IS NOT NULL
+          AND next_run_at <= now()
+        ORDER BY next_run_at ASC
+        LIMIT 10
+        FOR UPDATE SKIP LOCKED
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch due operation schedules (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn fetch_due_operation_schedules(pool: &DbPool) -> Result<Vec<DueOperationSchedule>, sqlx::Error> {
+    sqlx::query_as::<_, DueOperationSchedule>(
+        r#"
+        SELECT id, organization_id, application_id, component_id, name, operation, cron_expression, timezone
+        FROM operation_schedules
+        WHERE is_enabled = 1
+          AND next_run_at IS NOT NULL
+          AND next_run_at <= datetime('now')
+        ORDER BY next_run_at ASC
+        LIMIT 10
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}

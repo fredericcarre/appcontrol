@@ -2998,3 +2998,698 @@ pub async fn log_profile_activation(
     }
     Ok(())
 }
+
+// ============================================================================
+// Estimates queries (api/estimates.rs)
+// ============================================================================
+
+/// Fetch operation stats for all components in an application.
+pub async fn fetch_operation_stats(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String, i32, i32, i32, i32, i32)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, i32, i32, i32, i32, i32)>(
+        "SELECT component_id, command_type, sample_count, avg_ms, p50_ms, p95_ms, max_ms
+         FROM component_operation_stats
+         WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Get a component name by ID.
+pub async fn get_component_name(pool: &DbPool, comp_id: Uuid) -> Option<String> {
+    sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
+        .bind(crate::db::bind_id(comp_id))
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Get start_timeout_seconds for a component.
+pub async fn get_component_start_timeout(pool: &DbPool, comp_id: Uuid) -> i32 {
+    sqlx::query_scalar::<_, i32>(
+        "SELECT start_timeout_seconds FROM components WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(comp_id))
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(120)
+}
+
+// ============================================================================
+// Command params queries (api/command_params.rs)
+// ============================================================================
+
+/// Resolve the application_id for a command through the component chain.
+pub async fn get_app_id_for_command(
+    pool: &DbPool,
+    command_id: Uuid,
+) -> Result<Option<DbUuid>, sqlx::Error> {
+    sqlx::query_scalar::<_, DbUuid>(
+        "SELECT c.application_id FROM component_commands cc \
+         JOIN components c ON c.id = cc.component_id \
+         WHERE cc.id = $1",
+    )
+    .bind(crate::db::bind_id(command_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// List input params for a command (returns raw rows).
+pub async fn list_input_params_raw(
+    pool: &DbPool,
+    command_id: Uuid,
+) -> Result<Vec<crate::api::command_params::InputParamRow>, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::command_params::InputParamRow>(
+        "SELECT id, command_id, name, description, default_value, validation_regex, required, display_order, \
+         param_type, enum_values, created_at \
+         FROM command_input_params WHERE command_id = $1 ORDER BY display_order, name",
+    )
+    .bind(crate::db::bind_id(command_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Create a new input parameter, returning the row.
+pub async fn create_input_param(
+    pool: &DbPool,
+    param_id: Uuid,
+    command_id: Uuid,
+    name: &str,
+    description: Option<&str>,
+    default_value: Option<&str>,
+    validation_regex: Option<&str>,
+    required: bool,
+    display_order: i32,
+    param_type: &str,
+    enum_values: Option<&serde_json::Value>,
+) -> Result<crate::api::command_params::InputParamRow, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::command_params::InputParamRow>(
+        r#"
+        INSERT INTO command_input_params (id, command_id, name, description, default_value, validation_regex, required, display_order, param_type, enum_values)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING id, command_id, name, description, default_value, validation_regex, required, display_order, param_type, enum_values, created_at
+        "#,
+    )
+    .bind(crate::db::bind_id(param_id))
+    .bind(crate::db::bind_id(command_id))
+    .bind(name)
+    .bind(description)
+    .bind(default_value)
+    .bind(validation_regex)
+    .bind(required)
+    .bind(display_order)
+    .bind(param_type)
+    .bind(enum_values)
+    .fetch_one(pool)
+    .await
+}
+
+/// Delete an input parameter.
+pub async fn delete_input_param(
+    pool: &DbPool,
+    param_id: Uuid,
+    command_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM command_input_params WHERE id = $1 AND command_id = $2")
+        .bind(crate::db::bind_id(param_id))
+        .bind(crate::db::bind_id(command_id))
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+// ============================================================================
+// Notification/webhook queries (core/notifications.rs)
+// ============================================================================
+
+/// Fetch matching webhook endpoints for an event type on an application.
+#[cfg(feature = "postgres")]
+pub async fn fetch_matching_webhooks(
+    pool: &DbPool,
+    app_id: Uuid,
+    event_type_json: &serde_json::Value,
+) -> Result<Vec<(Uuid, String, Option<String>, Option<sqlx::types::Json<serde_json::Value>>)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid, String, Option<String>, Option<sqlx::types::Json<serde_json::Value>>)>(
+        r#"
+        SELECT w.id, w.url, w.secret, w.headers
+        FROM webhook_endpoints w
+        JOIN applications a ON a.organization_id = w.organization_id
+        WHERE a.id = $1
+          AND w.is_enabled = true
+          AND (w.application_id IS NULL OR w.application_id = $1)
+          AND w.event_types @> $2::jsonb
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .bind(event_type_json)
+    .fetch_all(pool)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn fetch_matching_webhooks(
+    pool: &DbPool,
+    app_id: Uuid,
+    event_type_json: &serde_json::Value,
+) -> Result<Vec<(Uuid, String, Option<String>, Option<sqlx::types::Json<serde_json::Value>>)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid, String, Option<String>, Option<sqlx::types::Json<serde_json::Value>>)>(
+        r#"
+        SELECT w.id, w.url, w.secret, w.headers
+        FROM webhook_endpoints w
+        JOIN applications a ON a.organization_id = w.organization_id
+        WHERE a.id = $1
+          AND w.is_enabled = 1
+          AND (w.application_id IS NULL OR w.application_id = $1)
+          AND EXISTS (
+              SELECT 1 FROM json_each(w.event_types)
+              WHERE json_each.value = $2
+          )
+        "#,
+    )
+    .bind(DbUuid::from(app_id))
+    .bind(event_type_json)
+    .fetch_all(pool)
+    .await
+}
+
+/// Record a webhook delivery attempt.
+pub async fn insert_webhook_delivery(
+    pool: &DbPool,
+    webhook_id: Uuid,
+    event_type: &str,
+    payload: &serde_json::Value,
+    status_code: Option<i32>,
+    response_body: &str,
+    attempt: i32,
+) -> Result<(), sqlx::Error> {
+    if let Some(sc) = status_code {
+        sqlx::query(
+            r#"
+            INSERT INTO webhook_deliveries (webhook_id, event_type, payload, status_code, response_body, attempt)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+        )
+        .bind(webhook_id)
+        .bind(event_type)
+        .bind(payload)
+        .bind(sc)
+        .bind(response_body)
+        .bind(attempt)
+        .execute(pool)
+        .await?;
+    } else {
+        sqlx::query(
+            r#"
+            INSERT INTO webhook_deliveries (webhook_id, event_type, payload, response_body, attempt)
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
+        )
+        .bind(webhook_id)
+        .bind(event_type)
+        .bind(payload)
+        .bind(response_body)
+        .bind(attempt)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Update webhook endpoint's last_triggered_at and last_status_code.
+pub async fn update_webhook_last_triggered(
+    pool: &DbPool,
+    webhook_id: Uuid,
+    status_code: i32,
+) -> Result<(), sqlx::Error> {
+    let sql = format!(
+        "UPDATE webhook_endpoints SET last_triggered_at = {}, last_status_code = $2 WHERE id = $1",
+        crate::db::sql::now()
+    );
+    sqlx::query(&sql)
+        .bind(webhook_id)
+        .bind(status_code)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// ============================================================================
+// API keys queries (api/api_keys.rs)
+// ============================================================================
+
+/// Create a new API key (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn create_api_key(
+    pool: &DbPool,
+    key_id: Uuid,
+    user_id: Uuid,
+    name: &str,
+    raw_key_bytes: &[u8],
+    key_prefix: &str,
+    scopes: &serde_json::Value,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, scopes, expires_at)
+        VALUES ($1, $2, $3, encode(sha256($4::bytea), 'hex'), $5, $6, $7)
+        "#,
+    )
+    .bind(crate::db::bind_id(key_id))
+    .bind(crate::db::bind_id(user_id))
+    .bind(name)
+    .bind(raw_key_bytes)
+    .bind(key_prefix)
+    .bind(scopes)
+    .bind(expires_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Create a new API key (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn create_api_key(
+    pool: &DbPool,
+    key_id: Uuid,
+    user_id: Uuid,
+    name: &str,
+    raw_key_bytes: &[u8],
+    key_prefix: &str,
+    scopes: &serde_json::Value,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<(), sqlx::Error> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(raw_key_bytes);
+    let key_hash = hex::encode(hasher.finalize());
+    sqlx::query(
+        r#"
+        INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, scopes, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "#,
+    )
+    .bind(DbUuid::from(key_id))
+    .bind(crate::db::bind_id(user_id))
+    .bind(name)
+    .bind(&key_hash)
+    .bind(key_prefix)
+    .bind(scopes)
+    .bind(expires_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// API key list row.
+#[derive(Debug, sqlx::FromRow)]
+pub struct ApiKeyListRow {
+    pub id: DbUuid,
+    pub name: String,
+    pub key_prefix: String,
+    pub scopes: String,
+    pub is_active: bool,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+}
+
+/// List all API keys for a user.
+pub async fn list_api_keys(pool: &DbPool, user_id: Uuid) -> Result<Vec<ApiKeyListRow>, sqlx::Error> {
+    sqlx::query_as::<_, ApiKeyListRow>(
+        r#"
+        SELECT id, name, key_prefix, scopes, is_active, expires_at, created_at
+        FROM api_keys
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        "#,
+    )
+    .bind(crate::db::bind_id(user_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Deactivate an API key (soft delete).
+#[cfg(feature = "postgres")]
+pub async fn deactivate_api_key(pool: &DbPool, key_id: Uuid, user_id: Uuid) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1 AND user_id = $2")
+        .bind(crate::db::bind_id(key_id))
+        .bind(crate::db::bind_id(user_id))
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn deactivate_api_key(pool: &DbPool, key_id: Uuid, user_id: Uuid) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("UPDATE api_keys SET is_active = 0 WHERE id = $1 AND user_id = $2")
+        .bind(DbUuid::from(key_id))
+        .bind(crate::db::bind_id(user_id))
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+// ============================================================================
+// Agent update queries (api/agent_update.rs)
+// ============================================================================
+
+/// Insert a new agent binary record.
+pub async fn insert_agent_binary(
+    pool: &DbPool,
+    id: Uuid,
+    version: &str,
+    platform: &str,
+    checksum: &str,
+    size: i64,
+    binary_data: &[u8],
+    uploaded_by: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO agent_binaries (id, version, platform, checksum_sha256, size_bytes, binary_data, uploaded_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(crate::db::bind_id(id))
+    .bind(version)
+    .bind(platform)
+    .bind(checksum)
+    .bind(size)
+    .bind(binary_data)
+    .bind(crate::db::bind_id(uploaded_by))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// List uploaded agent binaries.
+pub async fn list_agent_binaries(
+    pool: &DbPool,
+) -> Result<Vec<(Uuid, String, String, String, i64, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid, String, String, String, i64, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, version, platform, checksum_sha256, size_bytes, uploaded_at
+         FROM agent_binaries ORDER BY uploaded_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch agent binary data by version.
+pub async fn get_agent_binary_by_version(
+    pool: &DbPool,
+    version: &str,
+) -> Result<Option<(Vec<u8>, String, i64)>, sqlx::Error> {
+    sqlx::query_as::<_, (Vec<u8>, String, i64)>(
+        "SELECT binary_data, checksum_sha256, size_bytes FROM agent_binaries WHERE version = $1",
+    )
+    .bind(version)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Create an agent update task.
+pub async fn create_agent_update_task(
+    pool: &DbPool,
+    update_id: Uuid,
+    agent_id: Uuid,
+    version: &str,
+    total_chunks: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO agent_update_tasks (id, agent_id, target_version, status, total_chunks)
+         VALUES ($1, $2, $3, 'in_progress', $4)",
+    )
+    .bind(update_id)
+    .bind(crate::db::bind_id(agent_id))
+    .bind(version)
+    .bind(total_chunks)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Mark an agent update task as failed.
+pub async fn fail_agent_update_task(
+    pool: &DbPool,
+    update_id: Uuid,
+    error: &str,
+) -> Result<(), sqlx::Error> {
+    let sql = format!(
+        "UPDATE agent_update_tasks SET status = 'failed', error = $2, completed_at = {} WHERE id = $1",
+        crate::db::sql::now()
+    );
+    sqlx::query(&sql)
+        .bind(update_id)
+        .bind(error)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Update chunk progress for an agent update task.
+pub async fn update_agent_update_progress(
+    pool: &DbPool,
+    update_id: Uuid,
+    chunks_sent: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE agent_update_tasks SET chunks_sent = $2 WHERE id = $1")
+        .bind(update_id)
+        .bind(chunks_sent)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// List agent update tasks.
+pub async fn list_agent_update_tasks(
+    pool: &DbPool,
+) -> Result<Vec<(Uuid, Uuid, String, String, i32, i32, Option<String>, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
+    sqlx::query_as::<_, (Uuid, Uuid, String, String, i32, i32, Option<String>, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, agent_id, target_version, status, chunks_sent, total_chunks, error, started_at
+         FROM agent_update_tasks
+         ORDER BY started_at DESC
+         LIMIT 100",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+// ============================================================================
+// Export queries (api/export.rs)
+// ============================================================================
+
+/// Fetch application row for export.
+pub async fn get_app_for_export(pool: &DbPool, app_id: Uuid) -> Result<Option<(String, Option<String>, Option<Value>)>, sqlx::Error> {
+    sqlx::query_as::<_, (String, Option<String>, Option<Value>)>(
+        "SELECT name, description, tags FROM applications WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Fetch variables for export.
+pub async fn get_vars_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<(String, String, Option<String>, bool)>, sqlx::Error> {
+    sqlx::query_as::<_, (String, String, Option<String>, bool)>(
+        "SELECT name, value, description, is_secret FROM app_variables WHERE application_id = $1 ORDER BY name",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch groups for export.
+pub async fn get_groups_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<crate::api::export::GroupRow>, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::export::GroupRow>(
+        "SELECT id, name, description, color, display_order FROM component_groups WHERE application_id = $1 ORDER BY display_order",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch components for export.
+pub async fn get_components_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<crate::api::export::ComponentRow>, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::export::ComponentRow>(
+        r#"
+        SELECT id, name, display_name, description, component_type, icon, group_id, host,
+               check_cmd, start_cmd, stop_cmd, integrity_check_cmd, post_start_check_cmd,
+               infra_check_cmd, rebuild_cmd, rebuild_infra_cmd,
+               check_interval_seconds, start_timeout_seconds, stop_timeout_seconds,
+               is_optional, position_x, position_y
+        FROM components WHERE application_id = $1 ORDER BY name
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch custom commands for export.
+pub async fn get_custom_cmds_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<crate::api::export::CustomCmdRow>, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::export::CustomCmdRow>(
+        r#"
+        SELECT cc.id, cc.component_id, cc.name, cc.command, cc.description, cc.requires_confirmation
+        FROM component_commands cc
+        JOIN components c ON c.id = cc.component_id
+        WHERE c.application_id = $1
+        ORDER BY cc.name
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch command parameters for export.
+pub async fn get_cmd_params_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<crate::api::export::CmdParamRow>, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::export::CmdParamRow>(
+        r#"
+        SELECT cip.command_id, cip.name, cip.description, cip.default_value,
+               cip.validation_regex, cip.required, cip.param_type, cip.enum_values
+        FROM command_input_params cip
+        JOIN component_commands cc ON cc.id = cip.command_id
+        JOIN components c ON c.id = cc.component_id
+        WHERE c.application_id = $1
+        ORDER BY cip.display_order
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch component links for export.
+pub async fn get_links_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<crate::api::export::LinkRow>, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::export::LinkRow>(
+        r#"
+        SELECT cl.component_id, cl.label, cl.url, cl.link_type
+        FROM component_links cl
+        JOIN components c ON c.id = cl.component_id
+        WHERE c.application_id = $1
+        ORDER BY cl.display_order
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch dependencies for export.
+pub async fn get_deps_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<(DbUuid, DbUuid)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, DbUuid)>(
+        "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+// ============================================================================
+// Topology queries (api/topology.rs)
+// ============================================================================
+
+/// Fetch application name by ID.
+pub async fn get_app_name(pool: &DbPool, app_id: Uuid) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>("SELECT name FROM applications WHERE id = $1")
+        .bind(crate::db::bind_id(app_id))
+        .fetch_optional(pool)
+        .await
+}
+
+/// Fetch components with state for topology view.
+pub async fn get_components_for_topology(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String, String, Option<String>, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String, Option<String>, String)>(
+        r#"
+        SELECT c.id, c.name, c.component_type, c.host, c.current_state
+        FROM components c
+        WHERE c.application_id = $1
+        ORDER BY c.name
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch dependencies for topology view.
+pub async fn get_deps_for_topology(pool: &DbPool, app_id: Uuid) -> Result<Vec<(DbUuid, DbUuid)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, DbUuid)>(
+        "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch component detail for plan view.
+pub async fn get_component_plan_detail(
+    pool: &DbPool,
+    comp_id: Uuid,
+) -> Result<Option<(String, String, Option<String>, bool)>, sqlx::Error> {
+    sqlx::query_as::<_, (String, String, Option<String>, bool)>(
+        "SELECT name, current_state, host, is_optional FROM components WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(comp_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Fetch component IDs and names for an application.
+pub async fn get_component_ids_and_names(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String)>(
+        "SELECT id, name FROM components WHERE application_id = $1",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch config version history for dependency changes.
+pub async fn get_dependency_history(
+    pool: &DbPool,
+    app_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<(DbUuid, String, Value, Value, DbUuid, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, Value, Value, DbUuid, chrono::DateTime<chrono::Utc>)>(
+        r#"
+        SELECT cv.id, cv.change_type, cv.before_snapshot, cv.after_snapshot, cv.changed_by, cv.created_at
+        FROM config_versions cv
+        WHERE cv.entity_id = $1
+          AND cv.change_type IN ('create_dependency', 'delete_dependency', 'import_yaml', 'update_app')
+        ORDER BY cv.created_at DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
+/// Count dependency history entries.
+pub async fn count_dependency_history(pool: &DbPool, app_id: Uuid) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM config_versions cv
+        WHERE cv.entity_id = $1
+          AND cv.change_type IN ('create_dependency', 'delete_dependency', 'import_yaml', 'update_app')
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_one(pool)
+    .await
+}

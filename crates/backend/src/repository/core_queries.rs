@@ -1331,3 +1331,549 @@ pub async fn log_switchover_event(
     .await?;
     Ok(())
 }
+
+// ============================================================================
+// Diagnostic queries (core/diagnostic.rs)
+// ============================================================================
+
+/// Fetch component IDs and names for an application.
+pub async fn get_components_for_diagnostic(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String)>(
+        "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch latest check results for given component IDs (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn fetch_latest_checks(
+    pool: &DbPool,
+    comp_ids: &[Uuid],
+) -> Result<Vec<(DbUuid, String, i16)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, i16)>(
+        r#"
+        SELECT component_id, check_type, exit_code
+        FROM (
+            SELECT component_id, check_type, exit_code,
+                   ROW_NUMBER() OVER (PARTITION BY component_id, check_type ORDER BY created_at DESC) as rn
+            FROM check_events
+            WHERE component_id = ANY($1)
+              AND check_type IN ('health', 'integrity', 'infrastructure')
+        ) ranked
+        WHERE rn = 1
+        "#,
+    )
+    .bind(comp_ids)
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch latest check results for given component IDs (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn fetch_latest_checks(
+    pool: &DbPool,
+    comp_ids: &[Uuid],
+) -> Result<Vec<(DbUuid, String, i16)>, sqlx::Error> {
+    if comp_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (1..=comp_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        r#"
+        SELECT component_id, check_type, exit_code
+        FROM (
+            SELECT component_id, check_type, exit_code,
+                   ROW_NUMBER() OVER (PARTITION BY component_id, check_type ORDER BY created_at DESC) as rn
+            FROM check_events
+            WHERE component_id IN ({})
+              AND check_type IN ('health', 'integrity', 'infrastructure')
+        ) ranked
+        WHERE rn = 1
+        "#,
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, (String, String, i16)>(&query);
+    for id in comp_ids {
+        q = q.bind(id.to_string());
+    }
+    let rows: Vec<(String, String, i16)> = q.fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id_str, check_type, exit_code)| {
+            Uuid::parse_str(&id_str)
+                .ok()
+                .map(|id| (DbUuid::from(id), check_type, exit_code))
+        })
+        .collect())
+}
+
+// ============================================================================
+// Orchestration queries (api/orchestration.rs)
+// ============================================================================
+
+/// Fetch components with agent info for pre-flight check.
+pub async fn get_components_for_preflight(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String, Option<DbUuid>, Option<String>, Option<DbUuid>)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, Option<DbUuid>, Option<String>, Option<DbUuid>)>(
+        r#"
+        SELECT c.id, c.name, c.agent_id, a.hostname, a.gateway_id
+        FROM components c
+        LEFT JOIN agents a ON c.agent_id = a.id
+        WHERE c.application_id = $1 AND c.is_optional = false
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch gateway name.
+pub async fn get_gateway_name_by_id(pool: &DbPool, gateway_id: Uuid) -> Option<String> {
+    sqlx::query_scalar::<_, String>("SELECT name FROM gateways WHERE id = $1")
+        .bind(gateway_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Fetch component names and states for an application.
+pub async fn get_component_states(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String)>(
+        r#"
+        SELECT c.id, c.name, c.current_state
+        FROM components c
+        WHERE c.application_id = $1
+        ORDER BY c.name
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch non-optional component states for wait_running.
+pub async fn get_required_component_states(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String)>(
+        r#"
+        SELECT c.id, c.name, c.current_state
+        FROM components c
+        WHERE c.application_id = $1 AND c.is_optional = false
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch component states with agent_id for health check.
+pub async fn get_component_states_with_agent(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String, String, Option<DbUuid>)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String, Option<DbUuid>)>(
+        r#"
+        SELECT c.id, c.name, c.current_state, c.agent_id
+        FROM components c
+        WHERE c.application_id = $1 AND c.is_optional = false
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+// ============================================================================
+// Rebuild queries (core/rebuild.rs)
+// ============================================================================
+
+/// Rebuild target row type.
+pub type RebuildTarget = (DbUuid, String, bool, Option<String>, Option<String>, Option<DbUuid>);
+
+/// Fetch rebuild targets for specific component IDs.
+pub async fn fetch_rebuild_target_by_id(
+    pool: &DbPool,
+    id: Uuid,
+) -> Result<Option<RebuildTarget>, sqlx::Error> {
+    sqlx::query_as::<_, RebuildTarget>(
+        r#"
+        SELECT id, name, rebuild_protected,
+               COALESCE(
+                   (SELECT so.rebuild_cmd_override FROM site_overrides so WHERE so.component_id = c.id LIMIT 1),
+                   rebuild_cmd
+               ) as effective_rebuild_cmd,
+               rebuild_infra_cmd,
+               rebuild_agent_id
+        FROM components c WHERE id = $1
+        "#,
+    )
+    .bind(crate::db::bind_id(id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Fetch all rebuild targets for an application.
+pub async fn fetch_rebuild_targets_for_app(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<RebuildTarget>, sqlx::Error> {
+    sqlx::query_as::<_, RebuildTarget>(
+        r#"
+        SELECT id, name, rebuild_protected,
+               COALESCE(
+                   (SELECT so.rebuild_cmd_override FROM site_overrides so WHERE so.component_id = c.id LIMIT 1),
+                   rebuild_cmd
+               ) as effective_rebuild_cmd,
+               rebuild_infra_cmd,
+               rebuild_agent_id
+        FROM components c WHERE application_id = $1
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Insert rebuild action log (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn insert_rebuild_action_log(
+    pool: &DbPool,
+    initiated_by: Uuid,
+    app_id: Uuid,
+    component_count: usize,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO action_log (user_id, action, resource_type, resource_id, details) VALUES ($1, 'rebuild_execute', 'application', $2, $3)",
+    )
+    .bind(initiated_by)
+    .bind(crate::db::bind_id(app_id))
+    .bind(serde_json::json!({"components": component_count, "status": "started"}))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert rebuild action log (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn insert_rebuild_action_log(
+    pool: &DbPool,
+    initiated_by: Uuid,
+    app_id: Uuid,
+    component_count: usize,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details) VALUES ($1, $2, 'rebuild_execute', 'application', $3, $4)",
+    )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
+    .bind(initiated_by)
+    .bind(crate::db::bind_id(app_id))
+    .bind(serde_json::json!({"components": component_count, "status": "started"}).to_string())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get the agent_id assigned to a component.
+pub async fn get_component_agent_id(pool: &DbPool, component_id: Uuid) -> Option<DbUuid> {
+    sqlx::query_scalar::<_, DbUuid>(
+        "SELECT agent_id FROM components WHERE id = $1 AND agent_id IS NOT NULL",
+    )
+    .bind(crate::db::bind_id(component_id))
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Poll command execution status.
+pub async fn get_command_execution_status(
+    pool: &DbPool,
+    request_id: Uuid,
+) -> Result<Option<(String, Option<i16>, Option<String>)>, sqlx::Error> {
+    sqlx::query_as::<_, (String, Option<i16>, Option<String>)>(
+        "SELECT status, exit_code, stderr FROM command_executions WHERE request_id = $1",
+    )
+    .bind(request_id)
+    .fetch_optional(pool)
+    .await
+}
+
+// ============================================================================
+// Heartbeat monitor queries (core/heartbeat_monitor.rs)
+// ============================================================================
+
+/// Mark stale gateways as suspended (PostgreSQL only).
+#[cfg(feature = "postgres")]
+pub async fn mark_stale_gateways_suspended(
+    pool: &DbPool,
+    timeout_secs: i64,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE gateways
+        SET status = 'suspended'
+        WHERE status = 'active'
+          AND last_heartbeat_at IS NOT NULL
+          AND last_heartbeat_at < now() - ($1 || ' seconds')::interval
+        "#,
+    )
+    .bind(timeout_secs)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Reactivate gateways that have reconnected (PostgreSQL only).
+#[cfg(feature = "postgres")]
+pub async fn reactivate_reconnected_gateways(
+    pool: &DbPool,
+    timeout_secs: i64,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE gateways
+        SET status = 'active'
+        WHERE status = 'suspended'
+          AND last_heartbeat_at IS NOT NULL
+          AND last_heartbeat_at >= now() - ($1 || ' seconds')::interval
+        "#,
+    )
+    .bind(timeout_secs)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Insert state transition to UNREACHABLE (PostgreSQL only).
+#[cfg(feature = "postgres")]
+pub async fn insert_unreachable_transition(
+    pool: &DbPool,
+    component_id: DbUuid,
+    current_state: &str,
+    agent_id_str: &str,
+    trigger: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
+        VALUES ($1, $2, 'UNREACHABLE', $4,
+                jsonb_build_object('previous_state', $2, 'agent_id', $3::text))
+        "#,
+    )
+    .bind(component_id)
+    .bind(current_state)
+    .bind(agent_id_str)
+    .bind(trigger)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Update component current_state to UNREACHABLE (PostgreSQL only).
+#[cfg(feature = "postgres")]
+pub async fn set_component_unreachable(pool: &DbPool, component_id: DbUuid) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
+        .bind(component_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// ============================================================================
+// Operation scheduler queries (core/operation_scheduler.rs)
+// ============================================================================
+
+/// Get application name by ID (for scheduler).
+pub async fn get_application_name(pool: &DbPool, app_id: DbUuid) -> Option<String> {
+    sqlx::query_scalar::<_, String>("SELECT name FROM applications WHERE id = $1")
+        .bind(crate::db::bind_id(app_id))
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+}
+
+// get_component_display_name already exists above in sequencer queries section
+
+/// Insert operation schedule execution (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn insert_schedule_execution(
+    pool: &DbPool,
+    execution_id: Uuid,
+    schedule_id: DbUuid,
+    action_log_id: Uuid,
+    status: &str,
+    message: Option<&str>,
+    duration_ms: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO operation_schedule_executions (id, schedule_id, action_log_id, status, message, duration_ms)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        "#,
+    )
+    .bind(execution_id)
+    .bind(schedule_id)
+    .bind(action_log_id)
+    .bind(status)
+    .bind(message)
+    .bind(duration_ms)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert operation schedule execution (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn insert_schedule_execution(
+    pool: &DbPool,
+    execution_id: Uuid,
+    schedule_id: DbUuid,
+    action_log_id: Uuid,
+    status: &str,
+    message: Option<&str>,
+    duration_ms: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO operation_schedule_executions (id, schedule_id, action_log_id, status, message, duration_ms)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        "#,
+    )
+    .bind(execution_id.to_string())
+    .bind(schedule_id.to_string())
+    .bind(action_log_id.to_string())
+    .bind(status)
+    .bind(message)
+    .bind(duration_ms)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Update schedule after run (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn update_operation_schedule_after_run(
+    pool: &DbPool,
+    schedule_id: DbUuid,
+    status: &str,
+    message: Option<&str>,
+    next_run: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE operation_schedules
+        SET last_run_at = now(),
+            last_run_status = $2,
+            last_run_message = $3,
+            next_run_at = $4,
+            updated_at = now()
+        WHERE id = $1
+        "#,
+    )
+    .bind(schedule_id)
+    .bind(status)
+    .bind(message)
+    .bind(next_run)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Fetch stale components (whose agents have exceeded heartbeat timeout) — PostgreSQL only.
+#[cfg(feature = "postgres")]
+pub async fn fetch_stale_components<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        SELECT c.id AS component_id, c.name AS component_name, c.agent_id, c.application_id,
+               app.name AS app_name, NOT a.is_active AS agent_blocked
+        FROM components c
+        JOIN agents a ON a.id = c.agent_id
+        JOIN applications app ON app.id = c.application_id
+        JOIN organizations o ON o.id = a.organization_id
+        LEFT JOIN gateways g ON g.id = a.gateway_id
+        WHERE c.agent_id IS NOT NULL
+          AND (
+            (a.is_active = true
+             AND a.last_heartbeat_at IS NOT NULL
+             AND a.last_heartbeat_at < now() - (o.heartbeat_timeout_seconds || ' seconds')::interval)
+            OR
+            (a.is_active = false)
+            OR
+            (g.id IS NOT NULL AND g.is_active = false)
+          )
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch agents with UNREACHABLE components that have reconnected — PostgreSQL only.
+#[cfg(feature = "postgres")]
+pub async fn fetch_agents_to_resync<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+    pool: &DbPool,
+) -> Result<Vec<T>, sqlx::Error> {
+    sqlx::query_as::<_, T>(
+        r#"
+        SELECT a.id AS agent_id, COUNT(c.id) AS unreachable_count
+        FROM agents a
+        JOIN organizations o ON o.id = a.organization_id
+        JOIN components c ON c.agent_id = a.id
+        LEFT JOIN gateways g ON g.id = a.gateway_id
+        WHERE a.is_active = true
+          AND a.last_heartbeat_at IS NOT NULL
+          AND a.last_heartbeat_at >= now() - (o.heartbeat_timeout_seconds || ' seconds')::interval
+          AND c.current_state = 'UNREACHABLE'
+          AND (g.id IS NULL OR g.is_active = true)
+          AND (g.id IS NULL OR g.status = 'active')
+        GROUP BY a.id
+        HAVING COUNT(c.id) > 0
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Update schedule after run (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn update_operation_schedule_after_run(
+    pool: &DbPool,
+    schedule_id: DbUuid,
+    status: &str,
+    message: Option<&str>,
+    next_run: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE operation_schedules
+        SET last_run_at = datetime('now'),
+            last_run_status = $2,
+            last_run_message = $3,
+            next_run_at = $4,
+            updated_at = datetime('now')
+        WHERE id = $1
+        "#,
+    )
+    .bind(schedule_id.to_string())
+    .bind(status)
+    .bind(message)
+    .bind(next_run.map(|dt| dt.to_rfc3339()))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
