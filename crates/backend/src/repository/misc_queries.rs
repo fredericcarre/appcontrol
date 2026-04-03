@@ -1,7 +1,7 @@
-//! Query functions for misc domain (links, variables, groups, etc).
+//! Query functions for misc domain (links, variables, groups, audit, rate-limit, users, break-glass, etc).
 
 #![allow(unused_imports, dead_code)]
-use crate::db::{DbPool, DbUuid, DbJson};
+use crate::db::{self, DbPool, DbUuid, DbJson};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -512,4 +512,545 @@ pub async fn delete_component_group(
         .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+// ============================================================================
+// Audit / Action Log
+// ============================================================================
+
+/// Log an action to the action_log table BEFORE the action executes.
+/// Returns the action_log ID.
+pub async fn log_action(
+    pool: &DbPool,
+    user_id: impl Into<Uuid>,
+    action: &str,
+    resource_type: &str,
+    resource_id: impl Into<Uuid>,
+    details: Value,
+) -> Result<Uuid, sqlx::Error> {
+    let user_id: Uuid = user_id.into();
+    let resource_id: Uuid = resource_id.into();
+
+    #[cfg(feature = "postgres")]
+    let row = sqlx::query_scalar::<_, DbUuid>(
+        "INSERT INTO action_log (user_id, action, resource_type, resource_id, details, status) \
+         VALUES ($1, $2, $3, $4, $5, 'in_progress') RETURNING id",
+    )
+    .bind(crate::db::bind_id(user_id))
+    .bind(action)
+    .bind(resource_type)
+    .bind(crate::db::bind_id(resource_id))
+    .bind(&details)
+    .fetch_one(pool)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let row = {
+        let id = DbUuid::from(Uuid::new_v4());
+        sqlx::query(
+            "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details, status) \
+             VALUES ($1, $2, $3, $4, $5, $6, 'in_progress')",
+        )
+        .bind(crate::db::bind_id(id))
+        .bind(DbUuid::from(user_id))
+        .bind(action)
+        .bind(resource_type)
+        .bind(DbUuid::from(resource_id))
+        .bind(serde_json::to_string(&details).unwrap_or_else(|_| "{}".to_string()))
+        .execute(pool)
+        .await?;
+        id
+    };
+
+    Ok(row.into_inner())
+}
+
+/// Mark an action as successfully completed.
+pub async fn complete_action_success(
+    pool: &DbPool,
+    action_id: impl Into<Uuid>,
+) -> Result<(), sqlx::Error> {
+    let action_id: Uuid = action_id.into();
+    let sql = format!(
+        "UPDATE action_log SET status = 'success', completed_at = {} WHERE id = $1",
+        db::sql::now()
+    );
+    sqlx::query(&sql)
+        .bind(DbUuid::from(action_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Mark an action as failed with an error message.
+pub async fn complete_action_failed(
+    pool: &DbPool,
+    action_id: impl Into<Uuid>,
+    error_message: &str,
+) -> Result<(), sqlx::Error> {
+    let action_id: Uuid = action_id.into();
+    let sql = format!(
+        "UPDATE action_log SET status = 'failed', error_message = $2, completed_at = {} WHERE id = $1",
+        db::sql::now()
+    );
+    sqlx::query(&sql)
+        .bind(DbUuid::from(action_id))
+        .bind(error_message)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Mark an action as cancelled.
+pub async fn complete_action_cancelled(
+    pool: &DbPool,
+    action_id: impl Into<Uuid>,
+) -> Result<(), sqlx::Error> {
+    let action_id: Uuid = action_id.into();
+    let sql = format!(
+        "UPDATE action_log SET status = 'cancelled', completed_at = {} WHERE id = $1",
+        db::sql::now()
+    );
+    sqlx::query(&sql)
+        .bind(DbUuid::from(action_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// ============================================================================
+// Rate Limit (PostgreSQL HA mode)
+// ============================================================================
+
+/// PostgreSQL-backed rate limit check (UPSERT + window reset).
+/// Returns the current count after increment.
+pub async fn check_rate_limit_pg(
+    pool: &DbPool,
+    key: &str,
+    window_secs: i32,
+) -> Result<i32, sqlx::Error> {
+    sqlx::query_scalar::<_, i32>(
+        r#"
+        INSERT INTO rate_limit_counters (key, count, window_start)
+        VALUES ($1, 1, now())
+        ON CONFLICT (key) DO UPDATE SET
+            count = CASE
+                WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
+                THEN 1
+                ELSE rate_limit_counters.count + 1
+            END,
+            window_start = CASE
+                WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
+                THEN now()
+                ELSE rate_limit_counters.window_start
+            END
+        RETURNING count
+        "#,
+    )
+    .bind(key)
+    .bind(window_secs)
+    .fetch_one(pool)
+    .await
+}
+
+/// Cleanup expired rate limit counters (PostgreSQL).
+#[cfg(feature = "postgres")]
+pub async fn cleanup_rate_limit_counters(pool: &DbPool) {
+    let _ = sqlx::query(
+        "DELETE FROM rate_limit_counters WHERE window_start < now() - interval '2 minutes'",
+    )
+    .execute(pool)
+    .await;
+}
+
+/// Cleanup expired rate limit counters (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn cleanup_rate_limit_counters(pool: &DbPool) {
+    let _ = sqlx::query(
+        "DELETE FROM rate_limit_counters WHERE window_start < datetime('now', '-2 minutes')",
+    )
+    .execute(pool)
+    .await;
+}
+
+// ============================================================================
+// User Management
+// ============================================================================
+
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct UserRow {
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
+    pub email: String,
+    pub display_name: String,
+    pub role: String,
+    pub auth_provider: String,
+    pub is_active: bool,
+    pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// List users in an organization with optional filters.
+#[cfg(feature = "postgres")]
+pub async fn list_users(
+    pool: &DbPool,
+    org_id: impl Into<Uuid>,
+    role: Option<&str>,
+    is_active: Option<bool>,
+    search: Option<&str>,
+) -> Result<Vec<UserRow>, sqlx::Error> {
+    let org_id: Uuid = org_id.into();
+    sqlx::query_as::<_, UserRow>(
+        r#"SELECT id, organization_id, email, display_name, role, auth_provider,
+                  is_active, last_login_at, created_at
+           FROM users
+           WHERE organization_id = $1
+             AND ($2::text IS NULL OR role = $2)
+             AND ($3::bool IS NULL OR is_active = $3)
+             AND ($4::text IS NULL OR email ILIKE '%' || $4 || '%' OR display_name ILIKE '%' || $4 || '%')
+           ORDER BY display_name"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(role)
+    .bind(is_active)
+    .bind(search)
+    .fetch_all(pool)
+    .await
+}
+
+/// List users in an organization with optional filters (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn list_users(
+    pool: &DbPool,
+    org_id: impl Into<Uuid>,
+    role: Option<&str>,
+    is_active: Option<bool>,
+    search: Option<&str>,
+) -> Result<Vec<UserRow>, sqlx::Error> {
+    let org_id: Uuid = org_id.into();
+    sqlx::query_as::<_, UserRow>(
+        r#"SELECT id, organization_id, email, display_name, role, auth_provider,
+                  is_active, last_login_at, created_at
+           FROM users
+           WHERE organization_id = $1
+             AND ($2 IS NULL OR role = $2)
+             AND ($3 IS NULL OR is_active = $3)
+             AND ($4 IS NULL OR email LIKE '%' || $4 || '%' OR display_name LIKE '%' || $4 || '%')
+           ORDER BY display_name"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(role)
+    .bind(is_active)
+    .bind(search)
+    .fetch_all(pool)
+    .await
+}
+
+/// Get a single user by ID and org.
+pub async fn get_user_by_id(
+    pool: &DbPool,
+    user_id: impl Into<Uuid>,
+    org_id: impl Into<Uuid>,
+) -> Result<Option<UserRow>, sqlx::Error> {
+    let user_id: Uuid = user_id.into();
+    let org_id: Uuid = org_id.into();
+    sqlx::query_as::<_, UserRow>(
+        r#"SELECT id, organization_id, email, display_name, role, auth_provider,
+                  is_active, last_login_at, created_at
+           FROM users
+           WHERE id = $1 AND organization_id = $2"#,
+    )
+    .bind(crate::db::bind_id(user_id))
+    .bind(crate::db::bind_id(org_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Create a new local user.
+pub async fn create_user(
+    pool: &DbPool,
+    org_id: impl Into<Uuid>,
+    external_id: &str,
+    email: &str,
+    display_name: &str,
+    role: &str,
+    password_hash: Option<&str>,
+) -> Result<UserRow, sqlx::Error> {
+    let org_id: Uuid = org_id.into();
+    sqlx::query_as::<_, UserRow>(
+        r#"INSERT INTO users (organization_id, external_id, email, display_name, role, auth_provider, password_hash)
+           VALUES ($1, $2, $3, $4, $5, 'local', $6)
+           RETURNING id, organization_id, email, display_name, role, auth_provider,
+                     is_active, last_login_at, created_at"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(external_id)
+    .bind(email)
+    .bind(display_name)
+    .bind(role)
+    .bind(password_hash)
+    .fetch_one(pool)
+    .await
+}
+
+/// Update a user.
+pub async fn update_user(
+    pool: &DbPool,
+    user_id: impl Into<Uuid>,
+    org_id: impl Into<Uuid>,
+    display_name: Option<&str>,
+    role: Option<&str>,
+    is_active: Option<bool>,
+    password_hash: Option<&str>,
+) -> Result<Option<UserRow>, sqlx::Error> {
+    let user_id: Uuid = user_id.into();
+    let org_id: Uuid = org_id.into();
+    sqlx::query_as::<_, UserRow>(
+        r#"UPDATE users SET
+               display_name = COALESCE($3, display_name),
+               role = COALESCE($4, role),
+               is_active = COALESCE($5, is_active),
+               password_hash = COALESCE($6, password_hash)
+           WHERE id = $1 AND organization_id = $2
+           RETURNING id, organization_id, email, display_name, role, auth_provider,
+                     is_active, last_login_at, created_at"#,
+    )
+    .bind(crate::db::bind_id(user_id))
+    .bind(crate::db::bind_id(org_id))
+    .bind(display_name)
+    .bind(role)
+    .bind(is_active)
+    .bind(password_hash)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get a user by ID only (no org check).
+pub async fn get_user_by_id_only(
+    pool: &DbPool,
+    user_id: impl Into<Uuid>,
+) -> Result<Option<UserRow>, sqlx::Error> {
+    let user_id: Uuid = user_id.into();
+    sqlx::query_as::<_, UserRow>(
+        r#"SELECT id, organization_id, email, display_name, role, auth_provider,
+                  is_active, last_login_at, created_at
+           FROM users WHERE id = $1"#,
+    )
+    .bind(crate::db::bind_id(user_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get platform_role for a user.
+pub async fn get_user_platform_role(
+    pool: &DbPool,
+    user_id: impl Into<Uuid>,
+) -> Result<Option<Option<String>>, sqlx::Error> {
+    let user_id: Uuid = user_id.into();
+    sqlx::query_scalar("SELECT platform_role FROM users WHERE id = $1")
+        .bind(crate::db::bind_id(user_id))
+        .fetch_optional(pool)
+        .await
+}
+
+/// Get auth_provider and password_hash for a user.
+pub async fn get_user_auth_info(
+    pool: &DbPool,
+    user_id: impl Into<Uuid>,
+) -> Result<Option<(String, Option<String>)>, sqlx::Error> {
+    let user_id: Uuid = user_id.into();
+    sqlx::query_as("SELECT auth_provider, password_hash FROM users WHERE id = $1")
+        .bind(crate::db::bind_id(user_id))
+        .fetch_optional(pool)
+        .await
+}
+
+/// Update a user's password hash.
+pub async fn update_user_password(
+    pool: &DbPool,
+    user_id: impl Into<Uuid>,
+    password_hash: &str,
+) -> Result<(), sqlx::Error> {
+    let user_id: Uuid = user_id.into();
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(password_hash)
+        .bind(crate::db::bind_id(user_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// ============================================================================
+// Break-Glass
+// ============================================================================
+
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct BreakGlassSessionRow {
+    pub id: DbUuid,
+    pub account_id: DbUuid,
+    pub organization_id: DbUuid,
+    pub activated_by_ip: String,
+    pub reason: String,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub actions_taken: i32,
+}
+
+/// Create a break-glass account.
+pub async fn create_break_glass_account(
+    pool: &DbPool,
+    id: Uuid,
+    org_id: impl Into<Uuid>,
+    username: &str,
+    password_hash: &str,
+) -> Result<(), sqlx::Error> {
+    let org_id: Uuid = org_id.into();
+    sqlx::query(
+        "INSERT INTO break_glass_accounts (id, organization_id, username, password_hash) \
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(crate::db::bind_id(id))
+    .bind(crate::db::bind_id(org_id))
+    .bind(username)
+    .bind(password_hash)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// List break-glass accounts for an org.
+pub async fn list_break_glass_accounts(
+    pool: &DbPool,
+    org_id: impl Into<Uuid>,
+) -> Result<Vec<(DbUuid, String, bool, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
+    let org_id: Uuid = org_id.into();
+    sqlx::query_as::<_, (DbUuid, String, bool, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, username, is_active, last_rotated_at FROM break_glass_accounts \
+         WHERE organization_id = $1 ORDER BY username",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Validate break-glass credentials.
+#[cfg(feature = "postgres")]
+pub async fn find_break_glass_account(
+    pool: &DbPool,
+    username: &str,
+    password_hash: &str,
+) -> Result<Option<(DbUuid, DbUuid)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, DbUuid)>(
+        "SELECT id, organization_id FROM break_glass_accounts \
+         WHERE username = $1 AND password_hash = $2 AND is_active = true",
+    )
+    .bind(username)
+    .bind(password_hash)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Validate break-glass credentials (SQLite).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn find_break_glass_account(
+    pool: &DbPool,
+    username: &str,
+    password_hash: &str,
+) -> Result<Option<(DbUuid, DbUuid)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, DbUuid)>(
+        "SELECT id, organization_id FROM break_glass_accounts \
+         WHERE username = $1 AND password_hash = $2 AND is_active = 1",
+    )
+    .bind(username)
+    .bind(password_hash)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Create a break-glass session.
+pub async fn create_break_glass_session(
+    pool: &DbPool,
+    session_id: Uuid,
+    account_id: DbUuid,
+    organization_id: DbUuid,
+    ip: &str,
+    reason: &str,
+    duration_minutes: i32,
+) -> Result<BreakGlassSessionRow, sqlx::Error> {
+    sqlx::query_as::<_, BreakGlassSessionRow>(&format!(
+        "INSERT INTO break_glass_sessions (
+                id, account_id, organization_id, activated_by_ip, reason, expires_at
+            ) VALUES ($1, $2, $3, $4, $5, {} + make_interval(mins => $6))
+            RETURNING id, account_id, organization_id, activated_by_ip, reason,
+                      started_at, expires_at, ended_at, actions_taken",
+        crate::db::sql::now()
+    ))
+    .bind(session_id)
+    .bind(account_id)
+    .bind(organization_id)
+    .bind(ip)
+    .bind(reason)
+    .bind(duration_minutes)
+    .fetch_one(pool)
+    .await
+}
+
+/// Log a break-glass activation event in action_log.
+pub async fn log_break_glass_activation(
+    pool: &DbPool,
+    account_id: DbUuid,
+    organization_id: DbUuid,
+    details: Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        &format!(
+            "INSERT INTO action_log (id, user_id, action, resource_type, resource_id, details, created_at)
+             VALUES ($1, $2, 'break_glass_activated', 'organization', $3, $4, {})",
+            crate::db::sql::now()
+        ),
+    )
+    .bind(Uuid::new_v4())
+    .bind(account_id)
+    .bind(organization_id)
+    .bind(details)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// List break-glass sessions for an org.
+pub async fn list_break_glass_sessions(
+    pool: &DbPool,
+    org_id: impl Into<Uuid>,
+) -> Result<Vec<BreakGlassSessionRow>, sqlx::Error> {
+    let org_id: Uuid = org_id.into();
+    sqlx::query_as::<_, BreakGlassSessionRow>(
+        "SELECT id, account_id, organization_id, activated_by_ip, reason, \
+         started_at, expires_at, ended_at, actions_taken \
+         FROM break_glass_sessions WHERE organization_id = $1 \
+         ORDER BY started_at DESC LIMIT 50",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// End a break-glass session. Returns rows_affected.
+pub async fn end_break_glass_session(
+    pool: &DbPool,
+    session_id: Uuid,
+    org_id: impl Into<Uuid>,
+) -> Result<u64, sqlx::Error> {
+    let org_id: Uuid = org_id.into();
+    let result = sqlx::query(&format!(
+        "UPDATE break_glass_sessions SET ended_at = {} \
+         WHERE id = $1 AND organization_id = $2 AND ended_at IS NULL",
+        crate::db::sql::now()
+    ))
+    .bind(session_id)
+    .bind(crate::db::bind_id(org_id))
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
