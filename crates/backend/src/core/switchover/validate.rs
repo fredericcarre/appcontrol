@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::db::DbUuid;
+use crate::repository::switchover_queries as repo;
 use crate::AppState;
 
 use super::{SwitchoverError, get_switchover_details};
@@ -22,9 +22,8 @@ pub(crate) async fn execute_validate(
         .as_str().and_then(|s| s.parse().ok())
         .ok_or_else(|| SwitchoverError::ValidationFailed("Missing target_site_id".to_string()))?;
 
-    let site_info = sqlx::query_as::<_, (String, bool)>("SELECT name, is_active FROM sites WHERE id = $1")
-        .bind(DbUuid::from(target_site_id)).fetch_optional(&state.db).await
-        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+    let site_info = repo::get_site_info(&state.db, target_site_id)
+        .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     match site_info {
         None => issues.push("Target site does not exist".to_string()),
@@ -32,7 +31,7 @@ pub(crate) async fn execute_validate(
         _ => {}
     }
 
-    let target_profile = crate::repository::switchover_queries::find_profile_for_site(&state.db, app_id, target_site_id)
+    let target_profile = repo::find_profile_for_site(&state.db, app_id, target_site_id)
         .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     let (target_profile_id, target_profile_name) = match target_profile {
@@ -46,17 +45,13 @@ pub(crate) async fn execute_validate(
         }
     };
 
-    let components = sqlx::query_as::<_, (DbUuid, String)>(
-        "SELECT id, name FROM components WHERE application_id = $1",
-    ).bind(DbUuid::from(app_id)).fetch_all(&state.db).await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+    let components = repo::get_app_components(&state.db, app_id)
+        .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     let mut components_with_mapping = 0;
     for (_comp_id, comp_name) in &components {
-        let has_mapping = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM binding_profile_mappings WHERE profile_id = $1 AND component_name = $2)",
-        ).bind(target_profile_id).bind(comp_name).fetch_one(&state.db).await
-        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+        let has_mapping = repo::has_profile_mapping(&state.db, target_profile_id, comp_name)
+            .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
         if has_mapping { components_with_mapping += 1; }
         else {
@@ -67,17 +62,12 @@ pub(crate) async fn execute_validate(
 
     if components_with_mapping == 0 { issues.push("No components have mappings in the target profile".to_string()); }
 
-    let target_agents = sqlx::query_as::<_, (DbUuid, String)>(
-        r#"SELECT DISTINCT bpm.agent_id, a.hostname FROM binding_profile_mappings bpm
-        JOIN agents a ON a.id = bpm.agent_id WHERE bpm.profile_id = $1"#,
-    ).bind(target_profile_id).fetch_all(&state.db).await
-    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+    let target_agents = repo::get_target_agents_for_profile(&state.db, target_profile_id)
+        .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     for (agent_id, hostname) in &target_agents {
-        let last_heartbeat = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
-            "SELECT last_heartbeat_at FROM agents WHERE id = $1",
-        ).bind(crate::db::bind_id(**agent_id)).fetch_optional(&state.db).await
-        .map_err(|e| SwitchoverError::Database(e.to_string()))?;
+        let last_heartbeat = repo::get_agent_last_heartbeat(&state.db, *agent_id)
+            .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
         match last_heartbeat {
             Some(hb) if (chrono::Utc::now() - hb).num_seconds() > 120 =>

@@ -118,6 +118,75 @@ pub async fn get_active_profile(
         .await
 }
 
+/// Get site info (name, is_active) by id.
+pub async fn get_site_info(
+    pool: &DbPool,
+    site_id: Uuid,
+) -> Result<Option<(String, bool)>, sqlx::Error> {
+    sqlx::query_as::<_, (String, bool)>("SELECT name, is_active FROM sites WHERE id = $1")
+        .bind(DbUuid::from(site_id))
+        .fetch_optional(pool)
+        .await
+}
+
+/// Get all components for an app. Returns Vec<(id, name)>.
+pub async fn get_app_components(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String)>(
+        "SELECT id, name FROM components WHERE application_id = $1",
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Check if a binding profile mapping exists for a given profile and component name.
+pub async fn has_profile_mapping(
+    pool: &DbPool,
+    profile_id: impl Into<DbUuid>,
+    component_name: &str,
+) -> Result<bool, sqlx::Error> {
+    let profile_id = profile_id.into();
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM binding_profile_mappings WHERE profile_id = $1 AND component_name = $2)",
+    )
+    .bind(profile_id)
+    .bind(component_name)
+    .fetch_one(pool)
+    .await
+}
+
+/// Get distinct target agents for a profile. Returns Vec<(agent_id, hostname)>.
+pub async fn get_target_agents_for_profile(
+    pool: &DbPool,
+    profile_id: impl Into<DbUuid>,
+) -> Result<Vec<(DbUuid, String)>, sqlx::Error> {
+    let profile_id = profile_id.into();
+    sqlx::query_as::<_, (DbUuid, String)>(
+        r#"SELECT DISTINCT bpm.agent_id, a.hostname FROM binding_profile_mappings bpm
+        JOIN agents a ON a.id = bpm.agent_id WHERE bpm.profile_id = $1"#,
+    )
+    .bind(profile_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Get the last heartbeat timestamp for an agent.
+pub async fn get_agent_last_heartbeat(
+    pool: &DbPool,
+    agent_id: impl Into<DbUuid>,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, sqlx::Error> {
+    let agent_id = agent_id.into();
+    sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+        "SELECT last_heartbeat_at FROM agents WHERE id = $1",
+    )
+    .bind(agent_id)
+    .fetch_optional(pool)
+    .await
+}
+
 /// Get all gateways for a site with active status.
 pub async fn get_active_gateways_for_site(
     pool: &DbPool,
