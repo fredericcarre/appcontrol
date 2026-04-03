@@ -37,6 +37,9 @@ mkdir -p "$LOGS" "$DATA"
 PASS=0
 FAIL=0
 TOTAL=0
+BACKEND_PID=0
+GATEWAY_PID=0
+AGENT_PID=0
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -112,7 +115,7 @@ SEED_ADMIN_EMAIL=admin@e2e.test \
 SEED_ADMIN_PASSWORD=e2e-password \
 SEED_ORG_NAME=E2E-Org \
 SEED_ORG_SLUG=e2e \
-LISTEN_ADDR="0.0.0.0:$BACKEND_PORT" \
+PORT="$BACKEND_PORT" \
 RUST_LOG=info \
 "$BACKEND_BIN" > "$LOGS/backend.log" 2>&1 &
 BACKEND_PID=$!
