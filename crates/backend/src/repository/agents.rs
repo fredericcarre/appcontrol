@@ -501,9 +501,7 @@ pub async fn get_agent_in_org(
 }
 
 /// Get components for an agent (for transitioning to UNREACHABLE).
-pub async fn get_agent_components<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
->(
+pub async fn get_agent_components<T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin>(
     pool: &DbPool,
     agent_id: Uuid,
 ) -> Result<Vec<T>, sqlx::Error> {
@@ -522,9 +520,7 @@ pub async fn get_agent_components<
 
 /// Fetch agent metrics (PostgreSQL).
 #[cfg(feature = "postgres")]
-pub async fn fetch_agent_metrics<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
->(
+pub async fn fetch_agent_metrics<T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin>(
     pool: &DbPool,
     agent_id: Uuid,
     minutes: i32,
@@ -609,7 +605,7 @@ pub async fn verify_agents_in_org(
 /// Delete all agent-related records in a transaction (PostgreSQL).
 #[cfg(feature = "postgres")]
 pub async fn bulk_delete_agent_records<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     agent_ids: &[Uuid],
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = ANY($1)")

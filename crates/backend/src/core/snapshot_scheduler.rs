@@ -5,8 +5,11 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(feature = "postgres")]
+#[cfg(feature = "postgres")]
 use uuid::Uuid;
 
+#[cfg(feature = "postgres")]
 use crate::db::DbUuid;
 #[cfg(feature = "postgres")]
 use crate::db::UuidArray;

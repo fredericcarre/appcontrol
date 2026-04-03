@@ -1222,3 +1222,77 @@ pub async fn insert_gateway_cert_event_tx<'a>(
     .await?;
     Ok(())
 }
+
+// SQLite versions of transaction functions
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn update_gateway_returning(
+    pool: &DbPool,
+    id: Uuid,
+    org_id: Uuid,
+    name: &Option<String>,
+    site_id: Option<Uuid>,
+    is_active: Option<bool>,
+    is_primary: Option<bool>,
+    priority: Option<i32>,
+) -> Result<Option<crate::api::gateways::GatewayRow>, sqlx::Error> {
+    use crate::db::{bind_id, DbUuid};
+    sqlx::query(
+        "UPDATE gateways SET name = COALESCE($3, name), site_id = COALESCE($4, site_id), \
+         is_active = COALESCE($5, is_active), is_primary = COALESCE($6, is_primary), \
+         priority = COALESCE($7, priority) WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(bind_id(id))
+    .bind(bind_id(org_id))
+    .bind(name)
+    .bind(site_id.map(DbUuid::from))
+    .bind(is_active.map(|b| if b { 1i32 } else { 0 }))
+    .bind(is_primary.map(|b| if b { 1i32 } else { 0 }))
+    .bind(priority)
+    .execute(pool)
+    .await?;
+    sqlx::query_as::<_, crate::api::gateways::GatewayRow>(
+        "SELECT id, organization_id, name, zone, hostname, port, site_id, \
+         certificate_fingerprint, is_active, COALESCE(is_primary, 0) as is_primary, \
+         COALESCE(priority, 0) as priority, version, last_heartbeat_at, created_at \
+         FROM gateways WHERE id = $1",
+    )
+    .bind(bind_id(id))
+    .fetch_optional(pool)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn deactivate_gateway_tx<'a>(
+    tx: &mut crate::db::DbTransaction<'a>,
+    id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE gateways SET is_active = 0 WHERE id = $1")
+        .bind(crate::db::DbUuid::from(id))
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn deactivate_gateway_for_revocation_tx<'a>(
+    tx: &mut crate::db::DbTransaction<'a>,
+    id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE gateways SET is_active = 0, certificate_fingerprint = NULL WHERE id = $1")
+        .bind(crate::db::DbUuid::from(id))
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn deactivate_agent_clear_identity_tx<'a>(
+    tx: &mut crate::db::DbTransaction<'a>,
+    agent_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE agents SET is_active = 0, identity_verified = 0 WHERE id = $1")
+        .bind(crate::db::DbUuid::from(agent_id))
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}

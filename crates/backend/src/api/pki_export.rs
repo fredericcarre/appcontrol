@@ -401,7 +401,8 @@ pub async fn export_certs_to_volume_if_configured(
         );
 
         // Log certificate event
-        let _gw_expires = (chrono::Utc::now() + chrono::Duration::days(365)).to_rfc3339();
+        #[allow(unused_variables)]
+        let gw_expires = (chrono::Utc::now() + chrono::Duration::days(365)).to_rfc3339();
         #[cfg(feature = "postgres")]
         misc_queries::log_certificate_event_fixed_interval(
             pool,

@@ -283,7 +283,7 @@ pub async fn get_component_states_bulk(
 /// Fetch component for state transition with row lock (PostgreSQL).
 #[cfg(feature = "postgres")]
 pub async fn fetch_component_for_transition<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     component_id: Uuid,
 ) -> Result<Option<(String, DbUuid, String, String)>, sqlx::Error> {
     sqlx::query_as::<_, (String, DbUuid, String, String)>(
@@ -329,7 +329,7 @@ pub async fn fetch_component_for_transition<'a>(
 /// Insert state transition record (PostgreSQL).
 #[cfg(feature = "postgres")]
 pub async fn insert_state_transition<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     component_id: Uuid,
     from_state: &str,
     to_state: &str,
@@ -378,7 +378,7 @@ pub async fn insert_state_transition<'a>(
 /// Update component state with timestamp (PostgreSQL).
 #[cfg(feature = "postgres")]
 pub async fn update_component_state<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'a>,
     component_id: Uuid,
     new_state: &str,
 ) -> Result<(), sqlx::Error> {
@@ -1802,7 +1802,7 @@ pub async fn update_operation_schedule_after_run(
 /// Fetch stale components (whose agents have exceeded heartbeat timeout) — PostgreSQL only.
 #[cfg(feature = "postgres")]
 pub async fn fetch_stale_components<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
 >(
     pool: &DbPool,
 ) -> Result<Vec<T>, sqlx::Error> {
@@ -1834,7 +1834,7 @@ pub async fn fetch_stale_components<
 /// Fetch agents with UNREACHABLE components that have reconnected — PostgreSQL only.
 #[cfg(feature = "postgres")]
 pub async fn fetch_agents_to_resync<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
 >(
     pool: &DbPool,
 ) -> Result<Vec<T>, sqlx::Error> {

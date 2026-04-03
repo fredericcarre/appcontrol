@@ -115,7 +115,7 @@ pub async fn fetch_due_operation_schedules(
 /// Fetch due snapshot schedules (PostgreSQL).
 #[cfg(feature = "postgres")]
 pub async fn fetch_due_snapshot_schedules<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
 >(
     pool: &DbPool,
 ) -> Result<Vec<T>, sqlx::Error> {

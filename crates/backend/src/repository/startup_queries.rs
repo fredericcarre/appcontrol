@@ -242,7 +242,7 @@ pub async fn get_applied_migrations(pool: &DbPool) -> Result<Vec<i32>, sqlx::Err
 /// Execute a single migration statement within a transaction (PostgreSQL).
 #[cfg(feature = "postgres")]
 pub async fn execute_migration_statement(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'_>,
     statement: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(statement).execute(&mut **tx).await?;
@@ -262,7 +262,7 @@ pub async fn execute_migration_statement(
 /// Record that a migration version was applied (PostgreSQL).
 #[cfg(feature = "postgres")]
 pub async fn record_migration(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut crate::db::DbTransaction<'_>,
     version: i32,
     name: &str,
 ) -> Result<(), sqlx::Error> {

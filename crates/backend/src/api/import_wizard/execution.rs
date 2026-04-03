@@ -349,29 +349,28 @@ pub async fn execute_import(
                 }
             };
 
-            let agent_id_override: Option<Uuid> = if let Some(ref host) =
-                override_data.host_override
-            {
-                let agent_row = repo::find_agent_at_site_by_host(
-                    &state.db,
-                    *user.organization_id,
-                    override_site_id,
-                    host,
-                )
-                .await?;
-                match agent_row {
-                    Some((id,)) => Some(id),
-                    None => {
-                        warnings.push(format!(
+            let agent_id_override: Option<Uuid> =
+                if let Some(ref host) = override_data.host_override {
+                    let agent_row = repo::find_agent_at_site_by_host(
+                        &state.db,
+                        *user.organization_id,
+                        override_site_id,
+                        host,
+                    )
+                    .await?;
+                    match agent_row {
+                        Some((id,)) => Some(id),
+                        None => {
+                            warnings.push(format!(
                             "Component '{}': site '{}' host_override '{}' could not be resolved",
                             comp_name, override_data.site_code, host
                         ));
-                        None
+                            None
+                        }
                     }
-                }
-            } else {
-                None
-            };
+                } else {
+                    None
+                };
 
             repo::upsert_site_override(
                 &state.db,

@@ -3960,7 +3960,7 @@ pub async fn get_dependency_history(
 
 /// List profiles with mapping count.
 pub async fn list_profiles_with_count<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
 >(
     pool: &DbPool,
     app_id: Uuid,
@@ -3984,9 +3984,7 @@ pub async fn list_profiles_with_count<
 }
 
 /// Get a profile by app_id and name.
-pub async fn get_profile_by_name<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
->(
+pub async fn get_profile_by_name<T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin>(
     pool: &DbPool,
     app_id: Uuid,
     name: &str,
@@ -4006,9 +4004,7 @@ pub async fn get_profile_by_name<
 }
 
 /// Get profile mappings for a profile.
-pub async fn get_profile_mappings<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
->(
+pub async fn get_profile_mappings<T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin>(
     pool: &DbPool,
     profile_id: DbUuid,
 ) -> Result<Vec<T>, sqlx::Error> {
@@ -4042,7 +4038,7 @@ pub async fn profile_name_exists(
 
 /// Create a binding profile (RETURNING).
 pub async fn create_binding_profile<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
 >(
     pool: &DbPool,
     profile_id: Uuid,
@@ -4130,7 +4126,7 @@ pub async fn delete_binding_profile(pool: &DbPool, profile_id: DbUuid) -> Result
 
 /// List DR pattern rules for an organization.
 pub async fn list_dr_pattern_rules<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
 >(
     pool: &DbPool,
     org_id: Uuid,
@@ -4150,7 +4146,7 @@ pub async fn list_dr_pattern_rules<
 
 /// Create a DR pattern rule (RETURNING).
 pub async fn create_dr_pattern_rule<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
 >(
     pool: &DbPool,
     rule_id: Uuid,
@@ -4181,7 +4177,7 @@ pub async fn create_dr_pattern_rule<
 
 /// Update a DR pattern rule (RETURNING).
 pub async fn update_dr_pattern_rule<
-    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+    T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
 >(
     pool: &DbPool,
     rule_id: Uuid,
