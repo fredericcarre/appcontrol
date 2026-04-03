@@ -187,6 +187,49 @@ pub async fn get_agent_last_heartbeat(
     .await
 }
 
+/// Get the latest switchover entry for an app (any status). Returns (switchover_id, phase).
+pub async fn get_latest_switchover(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Option<(DbUuid, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String)>(
+        r#"SELECT switchover_id, phase FROM switchover_log
+        WHERE application_id = $1 ORDER BY created_at DESC LIMIT 1"#,
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get the latest in-progress switchover entry for an app. Returns (switchover_id, phase).
+pub async fn get_active_switchover_for_commit(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Option<(DbUuid, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String)>(
+        r#"SELECT switchover_id, phase FROM switchover_log
+        WHERE application_id = $1 AND status = 'in_progress'
+        ORDER BY created_at DESC LIMIT 1"#,
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get recent switchover log entries for status. Returns Vec<(switchover_id, phase, status, created_at)>.
+pub async fn get_switchover_history(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String, String, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
+        r#"SELECT switchover_id, phase, status, created_at FROM switchover_log
+        WHERE application_id = $1 ORDER BY created_at DESC LIMIT 20"#,
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_all(pool)
+    .await
+}
+
 /// Get all gateways for a site with active status.
 pub async fn get_active_gateways_for_site(
     pool: &DbPool,
