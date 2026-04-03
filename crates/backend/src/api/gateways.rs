@@ -270,25 +270,9 @@ pub async fn update_gateway(
 
         if let Some((site_id, zone)) = gw_info {
             if let Some(sid) = site_id {
-                // Unset primary within same site
-                sqlx::query(
-                    "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND site_id = $2 AND id != $3",
-                )
-                .bind(crate::db::bind_id(user.organization_id))
-                .bind(sid)
-                .bind(crate::db::bind_id(id))
-                .execute(&state.db)
-                .await?;
+                gw_repo::unset_primary_in_site(&state.db, *user.organization_id, sid, id).await?;
             } else {
-                // Fallback: use zone for gateways without site assignment
-                sqlx::query(
-                    "UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND site_id IS NULL AND id != $3",
-                )
-                .bind(crate::db::bind_id(user.organization_id))
-                .bind(&zone)
-                .bind(crate::db::bind_id(id))
-                .execute(&state.db)
-                .await?;
+                gw_repo::unset_primary_in_zone(&state.db, *user.organization_id, &zone, id).await?;
             }
         }
     }
@@ -309,28 +293,9 @@ pub async fn update_gateway(
     .await
     .ok();
 
-    let gw = sqlx::query_as::<_, GatewayRow>(
-        r#"UPDATE gateways SET
-               name = COALESCE($3, name),
-               site_id = COALESCE($4, site_id),
-               is_active = COALESCE($5, is_active),
-               is_primary = COALESCE($6, is_primary),
-               priority = COALESCE($7, priority)
-           WHERE id = $1 AND organization_id = $2
-           RETURNING id, organization_id, name, zone, hostname, port, site_id,
-                     certificate_fingerprint, is_active,
-                     COALESCE(is_primary, false) as is_primary,
-                     COALESCE(priority, 0) as priority,
-                     version, last_heartbeat_at, created_at"#,
+    let gw = gw_repo::update_gateway_returning(
+        &state.db, id, *user.organization_id, &req.name, req.site_id, req.is_active, req.is_primary, req.priority,
     )
-    .bind(crate::db::bind_id(id))
-    .bind(crate::db::bind_id(user.organization_id))
-    .bind(&req.name)
-    .bind(req.site_id)
-    .bind(req.is_active)
-    .bind(req.is_primary)
-    .bind(req.priority)
-    .fetch_optional(&state.db)
     .await?
     .ok_or_not_found()?;
 
@@ -546,18 +511,11 @@ pub async fn delete_gateway(
     .ok();
 
     // First disconnect all agents from this gateway
-    sqlx::query("UPDATE agents SET gateway_id = NULL WHERE gateway_id = $1")
-        .bind(gateway_id)
-        .execute(&state.db)
-        .await?;
+    gw_repo::disconnect_agents_from_gateway(&state.db, gateway_id).await?;
 
-    let result = sqlx::query("DELETE FROM gateways WHERE id = $1 AND organization_id = $2")
-        .bind(gateway_id)
-        .bind(crate::db::bind_id(user.organization_id))
-        .execute(&state.db)
-        .await?;
+    let rows = gw_repo::delete_gateway(&state.db, gateway_id, *user.organization_id).await?;
 
-    if result.rows_affected() == 0 {
+    if rows == 0 {
         return Err(ApiError::NotFound);
     }
 

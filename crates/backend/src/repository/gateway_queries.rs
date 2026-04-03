@@ -608,3 +608,190 @@ pub async fn deactivate_gateway(
         .await?;
     Ok(())
 }
+
+// ============================================================================
+// Gateway update queries (api/gateways.rs)
+// ============================================================================
+
+/// Unset primary for gateways in a site (except the given gateway).
+pub async fn unset_primary_in_site(
+    pool: &DbPool,
+    org_id: Uuid,
+    site_id: Uuid,
+    except_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND site_id = $2 AND id != $3")
+        .bind(crate::db::bind_id(org_id))
+        .bind(crate::db::bind_id(site_id))
+        .bind(crate::db::bind_id(except_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Unset primary for gateways in a zone without site (except the given gateway).
+pub async fn unset_primary_in_zone(
+    pool: &DbPool,
+    org_id: Uuid,
+    zone: &str,
+    except_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE gateways SET is_primary = false WHERE organization_id = $1 AND zone = $2 AND site_id IS NULL AND id != $3")
+        .bind(crate::db::bind_id(org_id))
+        .bind(zone)
+        .bind(crate::db::bind_id(except_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Update a gateway and return its updated state. PostgreSQL only (uses RETURNING).
+#[cfg(feature = "postgres")]
+pub async fn update_gateway_returning(
+    pool: &DbPool,
+    id: Uuid,
+    org_id: Uuid,
+    name: &Option<String>,
+    site_id: Option<Uuid>,
+    is_active: Option<bool>,
+    is_primary: Option<bool>,
+    priority: Option<i32>,
+) -> Result<Option<crate::api::gateways::GatewayRow>, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::gateways::GatewayRow>(
+        r#"UPDATE gateways SET
+               name = COALESCE($3, name),
+               site_id = COALESCE($4, site_id),
+               is_active = COALESCE($5, is_active),
+               is_primary = COALESCE($6, is_primary),
+               priority = COALESCE($7, priority)
+           WHERE id = $1 AND organization_id = $2
+           RETURNING id, organization_id, name, zone, hostname, port, site_id,
+                     certificate_fingerprint, is_active,
+                     COALESCE(is_primary, false) as is_primary,
+                     COALESCE(priority, 0) as priority,
+                     version, last_heartbeat_at, created_at"#,
+    )
+    .bind(id)
+    .bind(org_id)
+    .bind(name)
+    .bind(site_id)
+    .bind(is_active)
+    .bind(is_primary)
+    .bind(priority)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Disconnect all agents from a gateway (set gateway_id = NULL).
+pub async fn disconnect_agents_from_gateway(
+    pool: &DbPool,
+    gateway_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE agents SET gateway_id = NULL WHERE gateway_id = $1")
+        .bind(crate::db::bind_id(gateway_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Delete a gateway. Returns rows affected.
+pub async fn delete_gateway(
+    pool: &DbPool,
+    gateway_id: Uuid,
+    org_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM gateways WHERE id = $1 AND organization_id = $2")
+        .bind(crate::db::bind_id(gateway_id))
+        .bind(crate::db::bind_id(org_id))
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// Insert a revoked certificate record.
+pub async fn insert_revoked_agent_cert(
+    pool: &DbPool,
+    org_id: Uuid,
+    fingerprint: &str,
+    cn: &str,
+    agent_id: Uuid,
+    reason: &str,
+    revoked_by: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, agent_id, reason, revoked_by)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(crate::db::bind_id(agent_id))
+    .bind(reason)
+    .bind(crate::db::bind_id(revoked_by))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert a certificate revocation event (agent).
+pub async fn insert_agent_cert_revoked_event(
+    pool: &DbPool,
+    agent_id: Uuid,
+    fingerprint: &str,
+    cn: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
+           VALUES ($1, 'revoked', $2, $3)"#,
+    )
+    .bind(crate::db::bind_id(agent_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert a revoked gateway certificate record.
+pub async fn insert_revoked_gateway_cert(
+    pool: &DbPool,
+    org_id: Uuid,
+    fingerprint: &str,
+    cn: &str,
+    gateway_id: Uuid,
+    reason: &str,
+    revoked_by: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, gateway_id, reason, revoked_by)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(crate::db::bind_id(gateway_id))
+    .bind(reason)
+    .bind(crate::db::bind_id(revoked_by))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert a certificate revocation event (gateway).
+pub async fn insert_gateway_cert_revoked_event(
+    pool: &DbPool,
+    gateway_id: Uuid,
+    fingerprint: &str,
+    cn: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn)
+           VALUES ($1, 'revoked', $2, $3)"#,
+    )
+    .bind(crate::db::bind_id(gateway_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
