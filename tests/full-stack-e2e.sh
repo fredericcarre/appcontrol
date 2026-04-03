@@ -209,18 +209,32 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Start agent
+# 5. Enroll and start agent
 # ---------------------------------------------------------------------------
+log "Enrolling agent via gateway..."
+
+ENROLL_DIR="$WORKDIR/agent-data"
+mkdir -p "$ENROLL_DIR/tls"
+
+# Enroll agent: POST to gateway /enroll, get certs + config YAML
+"$AGENT_BIN" --enroll "https://localhost:$GATEWAY_PORT" \
+  --token "$AGENT_TOKEN" \
+  --enroll-dir "$ENROLL_DIR" \
+  > "$LOGS/agent-enroll.log" 2>&1
+ENROLL_EXIT=$?
+
+if [ "$ENROLL_EXIT" -eq 0 ] && [ -f "$ENROLL_DIR/agent.yaml" ]; then
+  ok "Agent enrolled (config at $ENROLL_DIR/agent.yaml)"
+else
+  fail "Agent enrollment failed (exit=$ENROLL_EXIT)"
+  cat "$LOGS/agent-enroll.log" 2>/dev/null || true
+  exit 1
+fi
+
 log "Starting agent..."
 
-mkdir -p "$WORKDIR/agent-data/tls"
-
-GATEWAY_URL="wss://localhost:$GATEWAY_PORT" \
-AGENT_ENROLLMENT_TOKEN="$AGENT_TOKEN" \
-TLS_INSECURE=true \
-DATA_DIR="$WORKDIR/agent-data" \
 RUST_LOG=info \
-"$AGENT_BIN" > "$LOGS/agent.log" 2>&1 &
+"$AGENT_BIN" --config "$ENROLL_DIR/agent.yaml" > "$LOGS/agent.log" 2>&1 &
 AGENT_PID=$!
 
 sleep 5
@@ -239,6 +253,7 @@ fi
 log "Checking agent registration..."
 
 AGENT_REGISTERED=false
+AGENT_ID=""
 for i in $(seq 1 30); do
   AGENTS_RESP=$(api GET "/agents")
   AGENT_COUNT=$(echo "$AGENTS_RESP" | jq '[.agents // . | if type == "array" then .[] else empty end] | length' 2>/dev/null || echo "0")
@@ -289,6 +304,12 @@ if [ -z "$APP_ID" ] || [ "$APP_ID" = "null" ]; then
   exit 1
 fi
 ok "App created (id=${APP_ID:0:8}...)"
+
+# Skip remaining tests if agent didn't register
+if [ -z "$AGENT_ID" ] || [ "$AGENT_ID" = "null" ]; then
+  fail "Cannot create component without a registered agent"
+  exit 1
+fi
 
 # Create a component with real start/stop/check commands
 COMP_RESP=$(api POST "/apps/$APP_ID/components" -d "{
