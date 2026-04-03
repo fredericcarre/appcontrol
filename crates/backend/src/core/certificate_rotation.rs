@@ -101,37 +101,10 @@ pub async fn start_rotation(
     let gateway_count = repo::count_certified_gateways(pool, org_id).await?;
 
     // Start transaction to update org and create progress record
-    let mut tx = pool.begin().await?;
-
-    // Store pending CA
-    sqlx::query(&format!(
-        "UPDATE organizations \
-             SET pending_ca_cert_pem = $2, pending_ca_key_pem = $3, rotation_started_at = {} \
-             WHERE id = $1",
-        crate::db::sql::now()
-    ))
-    .bind(org_id)
-    .bind(new_ca_cert_pem)
-    .bind(new_ca_key_pem)
-    .execute(&mut *tx)
-    .await?;
-
-    // Create progress tracking record
-    sqlx::query(
-        r#"INSERT INTO rotation_progress
-           (organization_id, rotation_id, total_agents, total_gateways, initiated_by, grace_period_secs)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
-    )
-    .bind(org_id)
-    .bind(rotation_id)
-    .bind(agent_count.0 as i32)
-    .bind(gateway_count.0 as i32)
-    .bind(initiated_by)
-    .bind(grace_period_secs as i32)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
+    repo::start_rotation_tx(
+        pool, org_id, rotation_id, new_ca_cert_pem, new_ca_key_pem,
+        agent_count.0, gateway_count.0, initiated_by, grace_period_secs as i32,
+    ).await?;
 
     let new_fp = appcontrol_common::fingerprint_pem(new_ca_cert_pem).unwrap_or_default();
     tracing::info!(
@@ -302,35 +275,7 @@ pub async fn finalize_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiErr
     };
 
     // Start transaction to swap CAs
-    let mut tx = pool.begin().await?;
-
-    // Move pending CA to primary, clear pending
-    sqlx::query(
-        r#"UPDATE organizations
-           SET ca_cert_pem = pending_ca_cert_pem,
-               ca_key_pem = pending_ca_key_pem,
-               pending_ca_cert_pem = NULL,
-               pending_ca_key_pem = NULL,
-               rotation_started_at = NULL
-           WHERE id = $1"#,
-    )
-    .bind(org_id)
-    .execute(&mut *tx)
-    .await?;
-
-    // Mark rotation as finalized
-    sqlx::query(&format!(
-        "UPDATE rotation_progress \
-             SET status = 'completed', finalized_at = {} \
-             WHERE organization_id = $1 AND rotation_id = $2",
-        crate::db::sql::now()
-    ))
-    .bind(org_id)
-    .bind(rotation_id)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
+    repo::finalize_rotation_tx(pool, org_id, rotation_id).await?;
 
     tracing::info!(
         org_id = %org_id,
@@ -355,32 +300,8 @@ pub async fn cancel_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiError
         None => { return Err(ApiError::NotFound); }
     };
 
-    let mut tx = pool.begin().await?;
-
-    // Clear pending CA
-    sqlx::query(
-        r#"UPDATE organizations
-           SET pending_ca_cert_pem = NULL,
-               pending_ca_key_pem = NULL,
-               rotation_started_at = NULL
-           WHERE id = $1"#,
-    )
-    .bind(org_id)
-    .execute(&mut *tx)
-    .await?;
-
-    // Mark rotation as cancelled
-    sqlx::query(
-        r#"UPDATE rotation_progress
-           SET status = 'cancelled'
-           WHERE organization_id = $1 AND rotation_id = $2"#,
-    )
-    .bind(org_id)
-    .bind(rotation_id)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
+    use crate::repository::core_queries as repo_core;
+    repo_core::cancel_rotation_tx(pool, org_id, rotation_id).await?;
 
     tracing::info!(
         org_id = %org_id,

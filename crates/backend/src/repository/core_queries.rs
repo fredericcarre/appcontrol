@@ -2136,3 +2136,120 @@ pub async fn fetch_pattern_rules(pool: &DbPool, org_id: DbUuid) -> Result<Vec<Pa
     let rules_sql: &str = "SELECT search_pattern, replace_pattern FROM dr_pattern_rules WHERE organization_id = $1 AND is_active = 1 ORDER BY priority DESC";
     sqlx::query_as(rules_sql).bind(org_id).fetch_all(pool).await
 }
+
+// ============================================================================
+// Certificate rotation transactional queries
+// ============================================================================
+
+/// Store pending CA and create rotation progress in a transaction.
+pub async fn start_rotation_tx(
+    pool: &DbPool,
+    org_id: Uuid,
+    rotation_id: Uuid,
+    new_ca_cert_pem: &str,
+    new_ca_key_pem: &str,
+    agent_count: i64,
+    gateway_count: i64,
+    initiated_by: Uuid,
+    grace_period_secs: i32,
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query(&format!(
+        "UPDATE organizations \
+             SET pending_ca_cert_pem = $2, pending_ca_key_pem = $3, rotation_started_at = {} \
+             WHERE id = $1",
+        db::sql::now()
+    ))
+    .bind(org_id)
+    .bind(new_ca_cert_pem)
+    .bind(new_ca_key_pem)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"INSERT INTO rotation_progress
+           (organization_id, rotation_id, total_agents, total_gateways, initiated_by, grace_period_secs)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    )
+    .bind(org_id)
+    .bind(rotation_id)
+    .bind(agent_count as i32)
+    .bind(gateway_count as i32)
+    .bind(initiated_by)
+    .bind(grace_period_secs)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Finalize rotation: swap pending CA to primary and mark completed.
+pub async fn finalize_rotation_tx(
+    pool: &DbPool,
+    org_id: Uuid,
+    rotation_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query(
+        r#"UPDATE organizations
+           SET ca_cert_pem = pending_ca_cert_pem,
+               ca_key_pem = pending_ca_key_pem,
+               pending_ca_cert_pem = NULL,
+               pending_ca_key_pem = NULL,
+               rotation_started_at = NULL
+           WHERE id = $1"#,
+    )
+    .bind(org_id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(&format!(
+        "UPDATE rotation_progress \
+             SET status = 'completed', finalized_at = {} \
+             WHERE organization_id = $1 AND rotation_id = $2",
+        db::sql::now()
+    ))
+    .bind(org_id)
+    .bind(rotation_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Cancel rotation: clear pending CA and mark cancelled.
+pub async fn cancel_rotation_tx(
+    pool: &DbPool,
+    org_id: Uuid,
+    rotation_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query(
+        r#"UPDATE organizations
+           SET pending_ca_cert_pem = NULL,
+               pending_ca_key_pem = NULL,
+               rotation_started_at = NULL
+           WHERE id = $1"#,
+    )
+    .bind(org_id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"UPDATE rotation_progress
+           SET status = 'cancelled'
+           WHERE organization_id = $1 AND rotation_id = $2"#,
+    )
+    .bind(org_id)
+    .bind(rotation_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
