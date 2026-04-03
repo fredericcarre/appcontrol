@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[allow(unused_imports)]
 use crate::db::{DbPool, DbUuid};
 use appcontrol_common::{CheckStatus, DiagnosticRecommendation};
 

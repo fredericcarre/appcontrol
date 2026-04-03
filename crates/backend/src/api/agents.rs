@@ -8,6 +8,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
+#[allow(unused_imports)]
 use crate::db::{DbPool, DbUuid};
 use crate::error::{ApiError, OptionExt};
 use crate::AppState;

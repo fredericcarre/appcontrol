@@ -4,7 +4,7 @@
 //! (which handles list/get/create). Many of these involve transactions or
 //! security-related operations.
 
-#![allow(unused_imports, dead_code)]
+#![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 use crate::db::{DbPool, DbUuid, DbJson};
 use serde_json::Value;
 use uuid::Uuid;

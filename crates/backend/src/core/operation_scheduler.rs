@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use cron::Schedule as CronSchedule;
 use uuid::Uuid;
 
+#[allow(unused_imports)]
 use crate::db::{DbPool, DbUuid};
 use crate::middleware::audit;
 use crate::AppState;

@@ -1,6 +1,6 @@
 //! Query functions for misc domain (links, variables, groups, audit, rate-limit, users, break-glass, etc).
 
-#![allow(unused_imports, dead_code)]
+#![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 use crate::db::{self, DbPool, DbUuid, DbJson};
 use serde_json::Value;
 use uuid::Uuid;

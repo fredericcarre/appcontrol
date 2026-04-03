@@ -1,6 +1,6 @@
 //! Query functions for schedule domain. All sqlx queries live here.
 
-#![allow(unused_imports, dead_code)]
+#![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 use crate::db::{DbPool, DbUuid, DbJson};
 use serde_json::Value;
 use uuid::Uuid;
