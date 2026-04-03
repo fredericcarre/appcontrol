@@ -467,21 +467,7 @@ pub async fn execute_import(
         Some(id) => id,
         None => {
             // Find default site for organization (prefer 'primary' type)
-            #[cfg(feature = "postgres")]
-            let site: Option<(Uuid,)> = sqlx::query_as(
-                "SELECT id FROM sites WHERE organization_id = $1 AND is_active = true ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
-            )
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
-
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            let site: Option<(Uuid,)> = sqlx::query_as(
-                "SELECT id FROM sites WHERE organization_id = $1 AND is_active = 1 ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
-            )
-            .bind(crate::db::bind_id(user.organization_id))
-            .fetch_optional(&state.db)
-            .await?;
+            let site = crate::repository::import_queries::find_default_site(&state.db, *user.organization_id).await?;
 
             match site {
                 Some((id,)) => id,
@@ -899,41 +885,9 @@ pub async fn execute_import(
                 override_data.host_override
             {
                 // Look up agent by hostname or IP at this site's gateway
-                #[cfg(feature = "postgres")]
-                let agent_row: Option<(Uuid,)> = sqlx::query_as(
-                    r#"SELECT a.id FROM agents a
-                       JOIN gateways g ON a.gateway_id = g.id
-                       WHERE a.organization_id = $1
-                         AND g.site_id = $2
-                         AND (a.hostname ILIKE $3 OR EXISTS (
-                           SELECT 1 FROM jsonb_array_elements_text(a.ip_addresses) ip
-                           WHERE ip = $3
-                         ))
-                       LIMIT 1"#,
-                )
-                .bind(crate::db::bind_id(user.organization_id))
-                .bind(override_site_id)
-                .bind(host)
-                .fetch_optional(&state.db)
-                .await?;
-
-                #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-                let agent_row: Option<(Uuid,)> = sqlx::query_as(
-                    r#"SELECT a.id FROM agents a
-                       JOIN gateways g ON a.gateway_id = g.id
-                       WHERE a.organization_id = $1
-                         AND g.site_id = $2
-                         AND (a.hostname LIKE $3 OR EXISTS (
-                           SELECT 1 FROM json_each(a.ip_addresses)
-                           WHERE value = $3
-                         ))
-                       LIMIT 1"#,
-                )
-                .bind(crate::db::bind_id(user.organization_id))
-                .bind(override_site_id)
-                .bind(host)
-                .fetch_optional(&state.db)
-                .await?;
+                let agent_row = crate::repository::import_queries::find_agent_at_site_by_host(
+                    &state.db, *user.organization_id, override_site_id, host,
+                ).await?;
 
                 match agent_row {
                     Some((id,)) => Some(id),

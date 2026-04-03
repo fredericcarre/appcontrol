@@ -448,3 +448,75 @@ pub async fn create_dependency_typed(
     .await?;
     Ok(())
 }
+
+// ============================================================================
+// Import Wizard queries (api/import_wizard.rs)
+// ============================================================================
+
+/// Find an agent by hostname or IP at a specific site.
+pub async fn find_agent_at_site_by_host(
+    pool: &DbPool,
+    org_id: Uuid,
+    site_id: Uuid,
+    host: &str,
+) -> Result<Option<(Uuid,)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as::<_, (Uuid,)>(
+            r#"SELECT a.id FROM agents a
+               JOIN gateways g ON a.gateway_id = g.id
+               WHERE a.organization_id = $1 AND g.site_id = $2
+               AND (a.hostname ILIKE $3 OR EXISTS (
+                 SELECT 1 FROM jsonb_array_elements_text(a.ip_addresses) ip WHERE ip = $3
+               ))
+               LIMIT 1"#,
+        )
+        .bind(org_id)
+        .bind(site_id)
+        .bind(host)
+        .fetch_optional(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query_as::<_, (Uuid,)>(
+            r#"SELECT a.id FROM agents a
+               JOIN gateways g ON a.gateway_id = g.id
+               WHERE a.organization_id = $1 AND g.site_id = $2
+               AND (a.hostname LIKE $3 OR EXISTS (
+                 SELECT 1 FROM json_each(a.ip_addresses) WHERE value = $3
+               ))
+               LIMIT 1"#,
+        )
+        .bind(DbUuid::from(org_id))
+        .bind(DbUuid::from(site_id))
+        .bind(host)
+        .fetch_optional(pool)
+        .await
+    }
+}
+
+/// Find the default site for an organization (prefer 'primary' type).
+pub async fn find_default_site(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<Option<(Uuid,)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as::<_, (Uuid,)>(
+            "SELECT id FROM sites WHERE organization_id = $1 AND is_active = true ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
+        )
+        .bind(org_id)
+        .fetch_optional(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query_as::<_, (Uuid,)>(
+            "SELECT id FROM sites WHERE organization_id = $1 AND is_active = 1 ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
+        )
+        .bind(DbUuid::from(org_id))
+        .fetch_optional(pool)
+        .await
+    }
+}
