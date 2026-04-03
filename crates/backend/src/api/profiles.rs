@@ -371,21 +371,7 @@ pub async fn activate_profile(
     }
 
     // Get currently active profile name for logging
-    #[cfg(feature = "postgres")]
-    let current_active: Option<(String,)> = sqlx::query_as(
-        "SELECT name FROM binding_profiles WHERE application_id = $1 AND is_active = true",
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_optional(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let current_active: Option<(String,)> = sqlx::query_as(
-        "SELECT name FROM binding_profiles WHERE application_id = $1 AND is_active = 1",
-    )
-    .bind(DbUuid::from(app_id))
-    .fetch_optional(&state.db)
-    .await?;
+    let current_active = crate::repository::misc_queries::get_active_profile_name(&state.db, app_id).await?;
 
     // Log switchover action
     log_action(
@@ -402,88 +388,18 @@ pub async fn activate_profile(
     )
     .await?;
 
-    // Deactivate all profiles
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE binding_profiles SET is_active = false WHERE application_id = $1")
-        .bind(crate::db::bind_id(app_id))
-        .execute(&state.db)
-        .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE binding_profiles SET is_active = 0 WHERE application_id = $1")
-        .bind(DbUuid::from(app_id))
-        .execute(&state.db)
-        .await?;
-
-    // Activate the selected profile
-    #[cfg(feature = "postgres")]
-    sqlx::query("UPDATE binding_profiles SET is_active = true WHERE id = $1")
-        .bind(profile.id)
-        .execute(&state.db)
-        .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query("UPDATE binding_profiles SET is_active = 1 WHERE id = $1")
-        .bind(profile.id)
-        .execute(&state.db)
-        .await?;
+    // Deactivate all profiles and activate the selected one
+    crate::repository::misc_queries::deactivate_all_profiles(&state.db, app_id).await?;
+    crate::repository::misc_queries::activate_profile(&state.db, *profile.id).await?;
 
     // Update component agent_ids based on profile mappings
-    sqlx::query(
-        r#"
-        UPDATE components c
-        SET agent_id = m.agent_id
-        FROM binding_profile_mappings m
-        JOIN binding_profiles p ON m.profile_id = p.id
-        WHERE c.application_id = $1
-          AND p.id = $2
-          AND c.name = m.component_name
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(profile.id)
-    .execute(&state.db)
-    .await?;
+    crate::repository::misc_queries::apply_profile_mappings(&state.db, app_id, *profile.id).await?;
 
     // Log to switchover_log
     let switchover_id = Uuid::new_v4();
-    #[cfg(feature = "postgres")]
-    sqlx::query(
-        r#"
-        INSERT INTO switchover_log (switchover_id, application_id, phase, status, details)
-        VALUES ($1, $2, 'COMMIT', 'completed', $3)
-        "#,
-    )
-    .bind(crate::db::bind_id(switchover_id))
-    .bind(crate::db::bind_id(app_id))
-    .bind(json!({
-        "type": "profile_activation",
-        "profile_name": &name,
-        "profile_id": profile.id
-    }))
-    .execute(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query(
-        r#"
-        INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
-        VALUES ($1, $2, $3, 'COMMIT', 'completed', $4)
-        "#,
-    )
-    .bind(crate::db::bind_id(Uuid::new_v4()))
-    .bind(crate::db::bind_id(switchover_id))
-    .bind(crate::db::bind_id(app_id))
-    .bind(
-        json!({
-            "type": "profile_activation",
-            "profile_name": &name,
-            "profile_id": profile.id
-        })
-        .to_string(),
-    )
-    .execute(&state.db)
-    .await?;
+    crate::repository::misc_queries::log_profile_activation(
+        &state.db, switchover_id, app_id, &name, *profile.id,
+    ).await?;
 
     Ok(Json(json!({
         "message": "Profile activated successfully",

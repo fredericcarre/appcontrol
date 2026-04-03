@@ -2867,3 +2867,134 @@ pub async fn list_enrollment_events(
         }).collect())
     }
 }
+
+// ============================================================================
+// Profile queries (api/profiles.rs)
+// ============================================================================
+
+/// Get the currently active profile name for an application.
+pub async fn get_active_profile_name(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Option<(String,)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as::<_, (String,)>(
+            "SELECT name FROM binding_profiles WHERE application_id = $1 AND is_active = true",
+        )
+        .bind(app_id)
+        .fetch_optional(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query_as::<_, (String,)>(
+            "SELECT name FROM binding_profiles WHERE application_id = $1 AND is_active = 1",
+        )
+        .bind(DbUuid::from(app_id))
+        .fetch_optional(pool)
+        .await
+    }
+}
+
+/// Deactivate all profiles for an application.
+pub async fn deactivate_all_profiles(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    sqlx::query("UPDATE binding_profiles SET is_active = false WHERE application_id = $1")
+        .bind(app_id)
+        .execute(pool)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE binding_profiles SET is_active = 0 WHERE application_id = $1")
+        .bind(DbUuid::from(app_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Activate a single profile by ID.
+pub async fn activate_profile(
+    pool: &DbPool,
+    profile_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    sqlx::query("UPDATE binding_profiles SET is_active = true WHERE id = $1")
+        .bind(profile_id)
+        .execute(pool)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE binding_profiles SET is_active = 1 WHERE id = $1")
+        .bind(DbUuid::from(profile_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Apply profile mappings to components (update agent_id based on profile).
+pub async fn apply_profile_mappings(
+    pool: &DbPool,
+    app_id: Uuid,
+    profile_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"UPDATE components c
+           SET agent_id = m.agent_id
+           FROM binding_profile_mappings m
+           JOIN binding_profiles p ON m.profile_id = p.id
+           WHERE c.application_id = $1
+             AND p.id = $2
+             AND c.name = m.component_name"#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .bind(crate::db::bind_id(profile_id))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Log profile activation to switchover_log.
+pub async fn log_profile_activation(
+    pool: &DbPool,
+    switchover_id: Uuid,
+    app_id: Uuid,
+    profile_name: &str,
+    profile_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query(
+            r#"INSERT INTO switchover_log (switchover_id, application_id, phase, status, details)
+               VALUES ($1, $2, 'COMMIT', 'completed', $3)"#,
+        )
+        .bind(switchover_id)
+        .bind(app_id)
+        .bind(serde_json::json!({
+            "type": "profile_activation",
+            "profile_name": profile_name,
+            "profile_id": profile_id
+        }))
+        .execute(pool)
+        .await?;
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query(
+            r#"INSERT INTO switchover_log (id, switchover_id, application_id, phase, status, details)
+               VALUES ($1, $2, $3, 'COMMIT', 'completed', $4)"#,
+        )
+        .bind(DbUuid::new_v4())
+        .bind(DbUuid::from(switchover_id))
+        .bind(DbUuid::from(app_id))
+        .bind(serde_json::json!({
+            "type": "profile_activation",
+            "profile_name": profile_name,
+            "profile_id": profile_id
+        }).to_string())
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
