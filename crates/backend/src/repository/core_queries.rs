@@ -791,10 +791,10 @@ pub async fn upsert_failover_health(
     let is_reachable_int: i32 = if is_reachable { 1 } else { 0 };
     sqlx::query(
         r#"
-        INSERT INTO failover_health_status (profile_id, agent_id, is_reachable, last_check_at, unreachable_since)
-        VALUES ($1, $2, $3, $4, CASE WHEN $3 THEN NULL ELSE COALESCE(
-            (SELECT unreachable_since FROM failover_health_status WHERE profile_id = $1 AND agent_id = $2),
-            $4
+        INSERT INTO failover_health_status (id, profile_id, agent_id, is_reachable, last_check_at, unreachable_since)
+        VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN NULL ELSE COALESCE(
+            (SELECT unreachable_since FROM failover_health_status WHERE profile_id = $2 AND agent_id = $3),
+            $5
         ) END)
         ON CONFLICT (profile_id, agent_id) DO UPDATE SET
             is_reachable = EXCLUDED.is_reachable,
@@ -802,6 +802,7 @@ pub async fn upsert_failover_health(
             unreachable_since = CASE WHEN EXCLUDED.is_reachable THEN NULL ELSE COALESCE(failover_health_status.unreachable_since, EXCLUDED.last_check_at) END
         "#
     )
+    .bind(DbUuid::new_v4())
     .bind(DbUuid::from(*profile_id))
     .bind(agent_id)
     .bind(is_reachable_int)
@@ -1231,7 +1232,8 @@ pub async fn record_command_dispatch(
     agent_id: Uuid,
     command_type: &str,
 ) {
-    if let Err(e) = sqlx::query(
+    #[cfg(feature = "postgres")]
+    let result = sqlx::query(
         "INSERT INTO command_executions (request_id, component_id, agent_id, command_type, status)
          VALUES ($1, $2, $3, $4, 'dispatched')
          ON CONFLICT (request_id) DO NOTHING",
@@ -1241,7 +1243,23 @@ pub async fn record_command_dispatch(
     .bind(crate::db::bind_id(agent_id))
     .bind(command_type)
     .execute(pool)
-    .await
+    .await;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let result = sqlx::query(
+        "INSERT INTO command_executions (id, request_id, component_id, agent_id, command_type, status)
+         VALUES ($1, $2, $3, $4, $5, 'dispatched')
+         ON CONFLICT (request_id) DO NOTHING",
+    )
+    .bind(DbUuid::new_v4())
+    .bind(request_id)
+    .bind(crate::db::bind_id(component_id))
+    .bind(crate::db::bind_id(agent_id))
+    .bind(command_type)
+    .execute(pool)
+    .await;
+
+    if let Err(e) = result
     {
         tracing::warn!(
             request_id = %request_id,
@@ -2080,11 +2098,20 @@ pub async fn insert_cert_migration(
     new_fp: &str,
     hostname: &str,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO certificate_rotations
            (organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, new_fingerprint, status, hostname)
            VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7) ON CONFLICT DO NOTHING"#,
     ).bind(org_id).bind(rotation_id).bind(agent_id).bind(gateway_id)
+    .bind(old_fp).bind(new_fp).bind(hostname).execute(pool).await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO certificate_rotations
+           (id, organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, new_fingerprint, status, hostname)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed', $8) ON CONFLICT DO NOTHING"#,
+    ).bind(DbUuid::new_v4()).bind(org_id).bind(rotation_id).bind(agent_id).bind(gateway_id)
     .bind(old_fp).bind(new_fp).bind(hostname).execute(pool).await?;
     Ok(())
 }
@@ -2100,11 +2127,20 @@ pub async fn insert_cert_migration_failure(
     hostname: &str,
     error_message: &str,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO certificate_rotations
            (organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, status, hostname, error_message)
            VALUES ($1, $2, $3, $4, $5, 'failed', $6, $7) ON CONFLICT DO NOTHING"#,
     ).bind(org_id).bind(rotation_id).bind(agent_id).bind(gateway_id)
+    .bind(old_fp).bind(hostname).bind(error_message).execute(pool).await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO certificate_rotations
+           (id, organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, status, hostname, error_message)
+           VALUES ($1, $2, $3, $4, $5, $6, 'failed', $7, $8) ON CONFLICT DO NOTHING"#,
+    ).bind(DbUuid::new_v4()).bind(org_id).bind(rotation_id).bind(agent_id).bind(gateway_id)
     .bind(old_fp).bind(hostname).bind(error_message).execute(pool).await?;
     Ok(())
 }

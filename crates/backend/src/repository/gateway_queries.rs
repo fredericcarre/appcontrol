@@ -838,6 +838,7 @@ pub async fn insert_revoked_agent_cert(
     reason: &str,
     revoked_by: Uuid,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, agent_id, reason, revoked_by)
            VALUES ($1, $2, $3, $4, $5, $6)"#,
@@ -850,6 +851,22 @@ pub async fn insert_revoked_agent_cert(
     .bind(crate::db::bind_id(revoked_by))
     .execute(pool)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO revoked_certificates (id, organization_id, fingerprint, cn, agent_id, reason, revoked_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(crate::db::bind_id(org_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(crate::db::bind_id(agent_id))
+    .bind(reason)
+    .bind(crate::db::bind_id(revoked_by))
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -860,6 +877,7 @@ pub async fn insert_agent_cert_revoked_event(
     fingerprint: &str,
     cn: &str,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
            VALUES ($1, 'revoked', $2, $3)"#,
@@ -869,6 +887,19 @@ pub async fn insert_agent_cert_revoked_event(
     .bind(cn)
     .execute(pool)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO certificate_events (id, agent_id, event_type, fingerprint, cn)
+           VALUES ($1, $2, 'revoked', $3, $4)"#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(crate::db::bind_id(agent_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -882,6 +913,7 @@ pub async fn insert_revoked_gateway_cert(
     reason: &str,
     revoked_by: Uuid,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, gateway_id, reason, revoked_by)
            VALUES ($1, $2, $3, $4, $5, $6)"#,
@@ -894,6 +926,22 @@ pub async fn insert_revoked_gateway_cert(
     .bind(crate::db::bind_id(revoked_by))
     .execute(pool)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO revoked_certificates (id, organization_id, fingerprint, cn, gateway_id, reason, revoked_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(crate::db::bind_id(org_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(crate::db::bind_id(gateway_id))
+    .bind(reason)
+    .bind(crate::db::bind_id(revoked_by))
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -971,6 +1019,7 @@ pub async fn insert_gateway_status_event_tx<'a>(
     gateway_id: Uuid,
     event_type: &str,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO gateway_status_events (organization_id, gateway_id, event_type, triggered_by)
            VALUES ($1, $2, $3, 'manual')"#,
@@ -981,6 +1030,20 @@ pub async fn insert_gateway_status_event_tx<'a>(
     .execute(&mut **tx)
     .await
     .ok();
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO gateway_status_events (id, organization_id, gateway_id, event_type, triggered_by)
+           VALUES ($1, $2, $3, $4, 'manual')"#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(crate::db::bind_id(org_id))
+    .bind(gateway_id)
+    .bind(event_type)
+    .execute(&mut **tx)
+    .await
+    .ok();
+
     Ok(())
 }
 
@@ -1080,6 +1143,7 @@ pub async fn insert_agent_status_event_tx<'a>(
     agent_id: Uuid,
     event_type: &str,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO gateway_status_events (organization_id, gateway_id, agent_id, event_type, triggered_by)
            VALUES ($1, $2, $3, $4, 'manual')"#,
@@ -1090,6 +1154,20 @@ pub async fn insert_agent_status_event_tx<'a>(
     .bind(event_type)
     .execute(&mut **tx)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO gateway_status_events (id, organization_id, gateway_id, agent_id, event_type, triggered_by)
+           VALUES ($1, $2, $3, $4, $5, 'manual')"#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(crate::db::bind_id(org_id))
+    .bind(gateway_id)
+    .bind(agent_id)
+    .bind(event_type)
+    .execute(&mut **tx)
+    .await?;
+
     Ok(())
 }
 
@@ -1105,6 +1183,7 @@ pub async fn insert_revoked_cert_tx<'a>(
     cn: &str,
     reason: &str,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, reason)
            VALUES ($1, $2, $3, $4) ON CONFLICT (fingerprint) DO NOTHING"#,
@@ -1115,6 +1194,20 @@ pub async fn insert_revoked_cert_tx<'a>(
     .bind(reason)
     .execute(&mut **tx)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO revoked_certificates (id, organization_id, fingerprint, cn, reason)
+           VALUES ($1, $2, $3, $4, $5) ON CONFLICT (fingerprint) DO NOTHING"#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(crate::db::bind_id(org_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(reason)
+    .execute(&mut **tx)
+    .await?;
+
     Ok(())
 }
 
@@ -1141,6 +1234,7 @@ pub async fn insert_revoked_agent_cert_tx<'a>(
     reason: &str,
     revoked_by: Uuid,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, agent_id, reason, revoked_by)
            VALUES ($1, $2, $3, $4, $5, $6)"#,
@@ -1153,6 +1247,22 @@ pub async fn insert_revoked_agent_cert_tx<'a>(
     .bind(crate::db::bind_id(revoked_by))
     .execute(&mut **tx)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO revoked_certificates (id, organization_id, fingerprint, cn, agent_id, reason, revoked_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(crate::db::bind_id(org_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(crate::db::bind_id(agent_id))
+    .bind(reason)
+    .bind(crate::db::bind_id(revoked_by))
+    .execute(&mut **tx)
+    .await?;
+
     Ok(())
 }
 
@@ -1164,6 +1274,7 @@ pub async fn insert_agent_cert_event_tx<'a>(
     fingerprint: &str,
     cn: &str,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
            VALUES ($1, $2, $3, $4)"#,
@@ -1174,6 +1285,20 @@ pub async fn insert_agent_cert_event_tx<'a>(
     .bind(cn)
     .execute(&mut **tx)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO certificate_events (id, agent_id, event_type, fingerprint, cn)
+           VALUES ($1, $2, $3, $4, $5)"#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(crate::db::bind_id(agent_id))
+    .bind(event_type)
+    .bind(fingerprint)
+    .bind(cn)
+    .execute(&mut **tx)
+    .await?;
+
     Ok(())
 }
 
@@ -1200,6 +1325,7 @@ pub async fn insert_revoked_gateway_cert_tx<'a>(
     reason: &str,
     revoked_by: Uuid,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO revoked_certificates (organization_id, fingerprint, cn, gateway_id, reason, revoked_by)
            VALUES ($1, $2, $3, $4, $5, $6)"#,
@@ -1212,6 +1338,22 @@ pub async fn insert_revoked_gateway_cert_tx<'a>(
     .bind(crate::db::bind_id(revoked_by))
     .execute(&mut **tx)
     .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO revoked_certificates (id, organization_id, fingerprint, cn, gateway_id, reason, revoked_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+    )
+    .bind(DbUuid::new_v4())
+    .bind(crate::db::bind_id(org_id))
+    .bind(fingerprint)
+    .bind(cn)
+    .bind(gateway_id)
+    .bind(reason)
+    .bind(crate::db::bind_id(revoked_by))
+    .execute(&mut **tx)
+    .await?;
+
     Ok(())
 }
 
@@ -1223,10 +1365,24 @@ pub async fn insert_gateway_cert_event_tx<'a>(
     fingerprint: &str,
     cn: &str,
 ) -> Result<(), sqlx::Error> {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn)
            VALUES ($1, $2, $3, $4)"#,
     )
+    .bind(gateway_id)
+    .bind(event_type)
+    .bind(fingerprint)
+    .bind(cn)
+    .execute(&mut **tx)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO certificate_events (id, gateway_id, event_type, fingerprint, cn)
+           VALUES ($1, $2, $3, $4, $5)"#,
+    )
+    .bind(DbUuid::new_v4())
     .bind(gateway_id)
     .bind(event_type)
     .bind(fingerprint)

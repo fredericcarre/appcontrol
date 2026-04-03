@@ -436,11 +436,24 @@ pub async fn insert_unreachable_transition(
 
 /// Log a block event in certificate_events.
 pub async fn log_agent_block_event(pool: &DbPool, agent_id: Uuid) {
+    #[cfg(feature = "postgres")]
     sqlx::query(
         r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
            SELECT $1, 'blocked', certificate_fingerprint, certificate_cn
            FROM agents WHERE id = $1"#,
     )
+    .bind(crate::db::bind_id(agent_id))
+    .execute(pool)
+    .await
+    .ok();
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query(
+        r#"INSERT INTO certificate_events (id, agent_id, event_type, fingerprint, cn)
+           SELECT $1, $2, 'blocked', certificate_fingerprint, certificate_cn
+           FROM agents WHERE id = $2"#,
+    )
+    .bind(DbUuid::new_v4())
     .bind(crate::db::bind_id(agent_id))
     .execute(pool)
     .await
