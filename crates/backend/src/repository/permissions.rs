@@ -656,3 +656,390 @@ pub fn create_permission_repository(pool: DbPool) -> Box<dyn PermissionRepositor
         Box::new(SqlitePermissionRepository::new(pool))
     }
 }
+
+// ============================================================================
+// Free functions (api/permissions.rs queries)
+// ============================================================================
+
+/// Check if workspace feature is configured for an organization.
+pub async fn has_workspace_sites(pool: &DbPool, org_id: Uuid) -> bool {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM workspace_sites ws JOIN workspaces w ON w.id = ws.workspace_id WHERE w.organization_id = $1)",
+        )
+        .bind(org_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let count: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM workspace_sites ws JOIN workspaces w ON w.id = ws.workspace_id WHERE w.organization_id = $1",
+        )
+        .bind(DbUuid::from(org_id))
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+        count > 0
+    }
+}
+
+/// Check if a team has workspace access to a site.
+pub async fn team_has_site_access(pool: &DbPool, site_id: Uuid, team_id: Uuid) -> bool {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM workspace_sites ws
+                JOIN workspace_members wm ON wm.workspace_id = ws.workspace_id
+                WHERE ws.site_id = $1 AND wm.team_id = $2
+            )
+            "#,
+        )
+        .bind(site_id)
+        .bind(team_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let count: i32 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) FROM workspace_sites ws
+            JOIN workspace_members wm ON wm.workspace_id = ws.workspace_id
+            WHERE ws.site_id = $1 AND wm.team_id = $2
+            "#,
+        )
+        .bind(DbUuid::from(site_id))
+        .bind(DbUuid::from(team_id))
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+        count > 0
+    }
+}
+
+/// List active share links for an application.
+pub async fn list_active_share_links(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, String, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as::<_, (DbUuid, String, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>(
+            "SELECT id, token, permission_level, expires_at, max_uses, use_count FROM app_share_links WHERE application_id = $1 AND is_active = true",
+        )
+        .bind(app_id)
+        .fetch_all(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query_as::<_, (DbUuid, String, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>(
+            "SELECT id, token, permission_level, expires_at, max_uses, use_count FROM app_share_links WHERE application_id = $1 AND is_active = 1",
+        )
+        .bind(DbUuid::from(app_id))
+        .fetch_all(pool)
+        .await
+    }
+}
+
+/// Create a share link. Returns the new ID.
+pub async fn insert_share_link(
+    pool: &DbPool,
+    app_id: Uuid,
+    token: &str,
+    permission_level: &str,
+    created_by: Uuid,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    max_uses: Option<i32>,
+) -> Result<DbUuid, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_scalar::<_, DbUuid>(
+            "INSERT INTO app_share_links (application_id, token, permission_level, created_by, expires_at, max_uses)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+        )
+        .bind(app_id)
+        .bind(token)
+        .bind(permission_level)
+        .bind(created_by)
+        .bind(expires_at)
+        .bind(max_uses)
+        .fetch_one(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let new_id = DbUuid::new_v4();
+        sqlx::query(
+            "INSERT INTO app_share_links (id, application_id, token, permission_level, created_by, expires_at, max_uses)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(new_id)
+        .bind(DbUuid::from(app_id))
+        .bind(token)
+        .bind(permission_level)
+        .bind(DbUuid::from(created_by))
+        .bind(expires_at)
+        .bind(max_uses)
+        .execute(pool)
+        .await?;
+        Ok(new_id)
+    }
+}
+
+/// Delete a user permission entry. Returns rows affected.
+pub async fn delete_user_permission(
+    pool: &DbPool,
+    perm_id: Uuid,
+    app_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM app_permissions_users WHERE id = $1 AND application_id = $2")
+        .bind(crate::db::bind_id(perm_id))
+        .bind(crate::db::bind_id(app_id))
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// Delete a team permission entry. Returns rows affected.
+pub async fn delete_team_permission(
+    pool: &DbPool,
+    perm_id: Uuid,
+    app_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM app_permissions_teams WHERE id = $1 AND application_id = $2")
+        .bind(crate::db::bind_id(perm_id))
+        .bind(crate::db::bind_id(app_id))
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// Search users in an organization (empty query returns all).
+pub async fn list_org_users(
+    pool: &DbPool,
+    org_id: Uuid,
+    limit: i64,
+) -> Result<Vec<(DbUuid, String, Option<String>, String)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as::<_, (DbUuid, String, Option<String>, String)>(
+            "SELECT id, email, display_name, role FROM users WHERE organization_id = $1 AND is_active = true ORDER BY display_name, email LIMIT $2",
+        )
+        .bind(org_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query_as::<_, (DbUuid, String, Option<String>, String)>(
+            "SELECT id, email, display_name, role FROM users WHERE organization_id = $1 AND is_active = 1 ORDER BY display_name, email LIMIT $2",
+        )
+        .bind(DbUuid::from(org_id))
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+    }
+}
+
+/// Search users by pattern (ILIKE for postgres, LIKE for sqlite).
+pub async fn search_users_by_pattern(
+    pool: &DbPool,
+    org_id: Uuid,
+    pattern: &str,
+    limit: i64,
+) -> Result<Vec<(DbUuid, String, Option<String>, String)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as::<_, (DbUuid, String, Option<String>, String)>(
+            r#"SELECT id, email, display_name, role FROM users
+               WHERE organization_id = $1 AND is_active = true
+               AND (email ILIKE $2 OR display_name ILIKE $2)
+               ORDER BY display_name, email LIMIT $3"#,
+        )
+        .bind(org_id)
+        .bind(pattern)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query_as::<_, (DbUuid, String, Option<String>, String)>(
+            r#"SELECT id, email, display_name, role FROM users
+               WHERE organization_id = $1 AND is_active = 1
+               AND (email LIKE $2 OR display_name LIKE $2)
+               ORDER BY display_name, email LIMIT $3"#,
+        )
+        .bind(DbUuid::from(org_id))
+        .bind(pattern)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+    }
+}
+
+/// Look up a share link by token (for consuming).
+pub async fn get_share_link_for_consume(
+    pool: &DbPool,
+    token: &str,
+) -> Result<Option<(DbUuid, DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as::<_, (DbUuid, DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>(
+            "SELECT id, application_id, permission_level, expires_at, max_uses, use_count FROM app_share_links WHERE token = $1 AND is_active = true",
+        )
+        .bind(token)
+        .fetch_optional(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query_as::<_, (DbUuid, DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>(
+            "SELECT id, application_id, permission_level, expires_at, max_uses, use_count FROM app_share_links WHERE token = $1 AND is_active = 1",
+        )
+        .bind(token)
+        .fetch_optional(pool)
+        .await
+    }
+}
+
+/// Grant permission to user via share link (upsert).
+pub async fn grant_permission_via_share_link(
+    pool: &DbPool,
+    app_id: Uuid,
+    user_id: Uuid,
+    permission_level: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        &format!(
+            "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
+             VALUES ($1, $2, $3, $4, NULL)
+             ON CONFLICT (application_id, user_id) DO UPDATE SET
+                 permission_level = CASE
+                     WHEN EXCLUDED.permission_level > app_permissions_users.permission_level
+                     THEN EXCLUDED.permission_level
+                     ELSE app_permissions_users.permission_level
+                 END,
+                 updated_at = {}",
+            crate::db::sql::now()
+        ),
+    )
+    .bind(crate::db::bind_id(app_id))
+    .bind(crate::db::bind_id(user_id))
+    .bind(permission_level)
+    .bind(crate::db::bind_id(user_id))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Increment share link use count.
+pub async fn increment_share_link_use_count(
+    pool: &DbPool,
+    link_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE app_share_links SET use_count = use_count + 1 WHERE id = $1")
+        .bind(crate::db::bind_id(link_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Revoke a share link (set is_active = false). Returns rows affected.
+pub async fn revoke_share_link_by_id(
+    pool: &DbPool,
+    link_id: Uuid,
+    app_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        let result = sqlx::query(
+            "UPDATE app_share_links SET is_active = false WHERE id = $1 AND application_id = $2",
+        )
+        .bind(link_id)
+        .bind(app_id)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let result = sqlx::query(
+            "UPDATE app_share_links SET is_active = 0 WHERE id = $1 AND application_id = $2",
+        )
+        .bind(DbUuid::from(link_id))
+        .bind(DbUuid::from(app_id))
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+}
+
+/// List all permissions (users + teams) for an application.
+pub async fn list_all_user_permissions(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, DbUuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, DbUuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+        r#"SELECT apu.id, apu.user_id, apu.permission_level, u.email, apu.expires_at
+           FROM app_permissions_users apu
+           LEFT JOIN users u ON u.id = apu.user_id
+           WHERE apu.application_id = $1"#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// List all team permissions for an application (with team names).
+pub async fn list_all_team_permissions(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, DbUuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, DbUuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+        r#"SELECT apt.id, apt.team_id, apt.permission_level, t.name, apt.expires_at
+           FROM app_permissions_teams apt
+           LEFT JOIN teams t ON t.id = apt.team_id
+           WHERE apt.application_id = $1"#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Get share link info (public preview).
+pub async fn get_share_link_info(
+    pool: &DbPool,
+    token: &str,
+) -> Result<Option<(DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32, String)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as::<_, (DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32, String)>(
+            r#"SELECT sl.application_id, sl.permission_level, sl.expires_at, sl.max_uses, sl.use_count, a.name
+               FROM app_share_links sl JOIN applications a ON a.id = sl.application_id
+               WHERE sl.token = $1 AND sl.is_active = true"#,
+        )
+        .bind(token)
+        .fetch_optional(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query_as::<_, (DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32, String)>(
+            r#"SELECT sl.application_id, sl.permission_level, sl.expires_at, sl.max_uses, sl.use_count, a.name
+               FROM app_share_links sl JOIN applications a ON a.id = sl.application_id
+               WHERE sl.token = $1 AND sl.is_active = 1"#,
+        )
+        .bind(token)
+        .fetch_optional(pool)
+        .await
+    }
+}
