@@ -1054,3 +1054,496 @@ pub async fn end_break_glass_session(
     .await?;
     Ok(result.rows_affected())
 }
+
+// ============================================================================
+// History (timeline) queries
+// ============================================================================
+
+/// Component id+name pair for history.
+#[derive(Debug, Clone)]
+pub struct HistoryComponentRow {
+    pub id: Uuid,
+    pub name: String,
+}
+
+/// State transition row for history timeline.
+#[derive(Debug, Clone)]
+pub struct HistoryTransitionRow {
+    pub component_id: Uuid,
+    pub from_state: String,
+    pub to_state: String,
+    pub trigger: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Fetch components for an app (id + name only).
+pub async fn history_list_components(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<HistoryComponentRow>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: Uuid, name: String }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
+        )
+        .bind(app_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| HistoryComponentRow { id: r.id, name: r.name }).collect())
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        #[derive(sqlx::FromRow)]
+        struct Row { id: DbUuid, name: String }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
+        )
+        .bind(DbUuid::from(app_id))
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| HistoryComponentRow { id: r.id.into_inner(), name: r.name }).collect())
+    }
+}
+
+/// Get initial state of components at a given time.
+pub async fn history_initial_states(
+    pool: &DbPool,
+    component_ids: &[Uuid],
+    at: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    if component_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    #[cfg(feature = "postgres")]
+    {
+        let rows = sqlx::query_as::<_, (Uuid, String)>(
+            r#"
+            SELECT c.id, COALESCE(
+                (SELECT st.to_state
+                 FROM state_transitions st
+                 WHERE st.component_id = c.id AND st.created_at < $2
+                 ORDER BY st.created_at DESC
+                 LIMIT 1),
+                c.current_state
+            ) as state
+            FROM components c
+            WHERE c.id = ANY($1)
+            "#,
+        )
+        .bind(component_ids)
+        .bind(at)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let placeholders: Vec<String> = (2..=1 + component_ids.len())
+            .map(|i| format!("${}", i))
+            .collect();
+        let query = format!(
+            r#"
+            SELECT c.id, COALESCE(
+                (SELECT st.to_state
+                 FROM state_transitions st
+                 WHERE st.component_id = c.id AND st.created_at < $1
+                 ORDER BY st.created_at DESC
+                 LIMIT 1),
+                c.current_state
+            ) as state
+            FROM components c
+            WHERE c.id IN ({})
+            "#,
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query_as::<_, (String, String)>(&query).bind(at.to_rfc3339());
+        for id in component_ids {
+            q = q.bind(id.to_string());
+        }
+        let rows: Vec<(String, String)> = q.fetch_all(pool).await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id_str, state)| {
+                Uuid::parse_str(&id_str).ok().map(|id| (id, state))
+            })
+            .collect())
+    }
+}
+
+/// Get state transition rows for components in a time range.
+pub async fn history_transition_rows(
+    pool: &DbPool,
+    component_ids: &[Uuid],
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<HistoryTransitionRow>, sqlx::Error> {
+    if component_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    #[cfg(feature = "postgres")]
+    {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            component_id: Uuid,
+            from_state: String,
+            to_state: String,
+            trigger: String,
+            created_at: chrono::DateTime<chrono::Utc>,
+        }
+        let rows = sqlx::query_as::<_, Row>(
+            r#"
+            SELECT component_id, from_state, to_state, trigger, created_at
+            FROM state_transitions
+            WHERE component_id = ANY($1) AND created_at >= $2 AND created_at <= $3
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(component_ids)
+        .bind(from)
+        .bind(to)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| HistoryTransitionRow {
+            component_id: r.component_id,
+            from_state: r.from_state,
+            to_state: r.to_state,
+            trigger: r.trigger,
+            created_at: r.created_at,
+        }).collect())
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let placeholders: Vec<String> = (3..=2 + component_ids.len())
+            .map(|i| format!("${}", i))
+            .collect();
+        let query = format!(
+            r#"
+            SELECT component_id, from_state, to_state, trigger, created_at
+            FROM state_transitions
+            WHERE component_id IN ({}) AND created_at >= $1 AND created_at <= $2
+            ORDER BY created_at ASC
+            "#,
+            placeholders.join(", ")
+        );
+        #[derive(sqlx::FromRow)]
+        struct SqliteRow {
+            component_id: String,
+            from_state: String,
+            to_state: String,
+            trigger: String,
+            created_at: String,
+        }
+        let mut q = sqlx::query_as::<_, SqliteRow>(&query)
+            .bind(from.to_rfc3339())
+            .bind(to.to_rfc3339());
+        for id in component_ids {
+            q = q.bind(id.to_string());
+        }
+        let rows = q.fetch_all(pool).await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                let id = Uuid::parse_str(&r.component_id).ok()?;
+                let at = chrono::DateTime::parse_from_rfc3339(&r.created_at)
+                    .ok()?
+                    .with_timezone(&chrono::Utc);
+                Some(HistoryTransitionRow {
+                    component_id: id,
+                    from_state: r.from_state,
+                    to_state: r.to_state,
+                    trigger: r.trigger,
+                    created_at: at,
+                })
+            })
+            .collect())
+    }
+}
+
+/// Fetch state transitions with limit for event building.
+pub async fn history_state_transitions(
+    pool: &DbPool,
+    component_ids: &[Uuid],
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    limit: i64,
+) -> Result<Vec<(Uuid, String, String, String, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
+    if component_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    #[cfg(feature = "postgres")]
+    {
+        let rows = sqlx::query_as::<_, (Uuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
+            r#"
+            SELECT component_id, from_state, to_state, trigger, created_at
+            FROM state_transitions
+            WHERE component_id = ANY($1) AND created_at >= $2 AND created_at <= $3
+            ORDER BY created_at ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(component_ids)
+        .bind(from)
+        .bind(to)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let placeholders: Vec<String> = (4..=3 + component_ids.len())
+            .map(|i| format!("${}", i))
+            .collect();
+        let query = format!(
+            r#"
+            SELECT component_id, from_state, to_state, trigger, created_at
+            FROM state_transitions
+            WHERE component_id IN ({}) AND created_at >= $1 AND created_at <= $2
+            ORDER BY created_at ASC
+            LIMIT $3
+            "#,
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query_as::<_, (String, String, String, String, String)>(&query)
+            .bind(from.to_rfc3339())
+            .bind(to.to_rfc3339())
+            .bind(limit);
+        for id in component_ids {
+            q = q.bind(id.to_string());
+        }
+        let rows: Vec<(String, String, String, String, String)> = q.fetch_all(pool).await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(comp_id, from_state, to_state, trigger, created_at)| {
+                let id = Uuid::parse_str(&comp_id).ok()?;
+                let at = chrono::DateTime::parse_from_rfc3339(&created_at)
+                    .ok()?
+                    .with_timezone(&chrono::Utc);
+                Some((id, from_state, to_state, trigger, at))
+            })
+            .collect())
+    }
+}
+
+/// Fetch app-level actions for history.
+pub async fn history_app_actions(
+    pool: &DbPool,
+    app_id: Uuid,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    limit: i64,
+) -> Result<Vec<(String, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        let rows = sqlx::query_as::<_, (String, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>(
+            r#"
+            SELECT COALESCE(u.email, CAST(al.user_id AS TEXT)), al.action, al.details, al.created_at,
+                   al.status, al.error_message
+            FROM action_log al
+            LEFT JOIN users u ON u.id = al.user_id
+            WHERE al.resource_id = $1 AND al.created_at >= $2 AND al.created_at <= $3
+            ORDER BY al.created_at ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(app_id)
+        .bind(from)
+        .bind(to)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            user_email: String,
+            action: String,
+            details: String,
+            created_at: String,
+            status: Option<String>,
+            error_message: Option<String>,
+        }
+        let rows = sqlx::query_as::<_, Row>(
+            r#"
+            SELECT COALESCE(u.email, CAST(al.user_id AS TEXT)) as user_email, al.action,
+                   al.details, al.created_at, al.status, al.error_message
+            FROM action_log al
+            LEFT JOIN users u ON u.id = al.user_id
+            WHERE al.resource_id = $1 AND al.created_at >= $2 AND al.created_at <= $3
+            ORDER BY al.created_at ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(DbUuid::from(app_id))
+        .bind(from.to_rfc3339())
+        .bind(to.to_rfc3339())
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                let at = chrono::DateTime::parse_from_rfc3339(&r.created_at)
+                    .ok()?
+                    .with_timezone(&chrono::Utc);
+                let details: Value = serde_json::from_str(&r.details).unwrap_or(Value::Null);
+                Some((r.user_email, r.action, details, at, r.status, r.error_message))
+            })
+            .collect())
+    }
+}
+
+/// Fetch component-level actions for history.
+pub async fn history_component_actions(
+    pool: &DbPool,
+    component_ids: &[Uuid],
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    limit: i64,
+) -> Result<Vec<(String, String, Uuid, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>, sqlx::Error> {
+    if component_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    #[cfg(feature = "postgres")]
+    {
+        let rows = sqlx::query_as::<_, (String, String, Uuid, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>(
+            r#"
+            SELECT COALESCE(u.email, al.user_id::text), al.action, al.resource_id,
+                   COALESCE(c.name, al.resource_id::text), al.details, al.created_at,
+                   al.status, al.error_message
+            FROM action_log al
+            LEFT JOIN users u ON u.id = al.user_id
+            LEFT JOIN components c ON c.id = al.resource_id
+            WHERE al.resource_type = 'component'
+              AND al.resource_id = ANY($1)
+              AND al.created_at >= $2 AND al.created_at <= $3
+            ORDER BY al.created_at ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(component_ids)
+        .bind(from)
+        .bind(to)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let placeholders: Vec<String> = (4..=3 + component_ids.len())
+            .map(|i| format!("${}", i))
+            .collect();
+        let query = format!(
+            r#"
+            SELECT COALESCE(u.email, CAST(al.user_id AS TEXT)), al.action, al.resource_id,
+                   COALESCE(c.name, CAST(al.resource_id AS TEXT)), al.details, al.created_at,
+                   al.status, al.error_message
+            FROM action_log al
+            LEFT JOIN users u ON u.id = al.user_id
+            LEFT JOIN components c ON c.id = al.resource_id
+            WHERE al.resource_type = 'component'
+              AND al.resource_id IN ({})
+              AND al.created_at >= $1 AND al.created_at <= $2
+            ORDER BY al.created_at ASC
+            LIMIT $3
+            "#,
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>)>(&query)
+            .bind(from.to_rfc3339())
+            .bind(to.to_rfc3339())
+            .bind(limit);
+        for id in component_ids {
+            q = q.bind(id.to_string());
+        }
+        let rows = q.fetch_all(pool).await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(user, action, resource_id, comp_name, details, created_at, status, error)| {
+                let id = Uuid::parse_str(&resource_id).ok()?;
+                let at = chrono::DateTime::parse_from_rfc3339(&created_at)
+                    .ok()?
+                    .with_timezone(&chrono::Utc);
+                let details_val: Value = serde_json::from_str(&details).unwrap_or(Value::Null);
+                Some((user, action, id, comp_name, details_val, at, status, error))
+            })
+            .collect())
+    }
+}
+
+/// Fetch command execution events for history.
+pub async fn history_command_executions(
+    pool: &DbPool,
+    component_ids: &[Uuid],
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    limit: i64,
+) -> Result<Vec<(Uuid, Uuid, String, Option<i16>, Option<i32>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>, sqlx::Error> {
+    if component_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    #[cfg(feature = "postgres")]
+    {
+        let rows = sqlx::query_as::<_, (Uuid, Uuid, String, Option<i16>, Option<i32>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+            r#"
+            SELECT ce.request_id, ce.component_id, ce.command_type,
+                   ce.exit_code, ce.duration_ms, ce.dispatched_at, ce.completed_at
+            FROM command_executions ce
+            WHERE ce.component_id = ANY($1) AND ce.dispatched_at >= $2 AND ce.dispatched_at <= $3
+            ORDER BY ce.dispatched_at ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(component_ids)
+        .bind(from)
+        .bind(to)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let placeholders: Vec<String> = (4..=3 + component_ids.len())
+            .map(|i| format!("${}", i))
+            .collect();
+        let query = format!(
+            r#"
+            SELECT ce.request_id, ce.component_id, ce.command_type,
+                   ce.exit_code, ce.duration_ms, ce.dispatched_at, ce.completed_at
+            FROM command_executions ce
+            WHERE ce.component_id IN ({}) AND ce.dispatched_at >= $1 AND ce.dispatched_at <= $2
+            ORDER BY ce.dispatched_at ASC
+            LIMIT $3
+            "#,
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query_as::<_, (String, String, String, Option<i16>, Option<i32>, String, Option<String>)>(&query)
+            .bind(from.to_rfc3339())
+            .bind(to.to_rfc3339())
+            .bind(limit);
+        for id in component_ids {
+            q = q.bind(id.to_string());
+        }
+        let rows = q.fetch_all(pool).await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(request_id, comp_id, cmd_type, exit_code, duration_ms, dispatched_at, completed_at)| {
+                let req_id = Uuid::parse_str(&request_id).ok()?;
+                let cid = Uuid::parse_str(&comp_id).ok()?;
+                let dispatched = chrono::DateTime::parse_from_rfc3339(&dispatched_at)
+                    .ok()?
+                    .with_timezone(&chrono::Utc);
+                let completed = completed_at
+                    .and_then(|c| chrono::DateTime::parse_from_rfc3339(&c).ok())
+                    .map(|c| c.with_timezone(&chrono::Utc));
+                Some((req_id, cid, cmd_type, exit_code, duration_ms, dispatched, completed))
+            })
+            .collect())
+    }
+}
