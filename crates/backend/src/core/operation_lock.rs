@@ -65,10 +65,15 @@ impl OperationLock {
         self.cleanup_stale_lock(app_id).await?;
 
         // Try to insert a new lock
-        let acquired =
-            core_queries::try_insert_operation_lock(&self.pool, app_id, operation, user_id, &self.instance_id)
-                .await
-                .map_err(|e| LockError::Database(e.to_string()))?;
+        let acquired = core_queries::try_insert_operation_lock(
+            &self.pool,
+            app_id,
+            operation,
+            user_id,
+            &self.instance_id,
+        )
+        .await
+        .map_err(|e| LockError::Database(e.to_string()))?;
 
         if acquired {
             tracing::info!(

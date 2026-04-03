@@ -71,7 +71,9 @@ pub async fn create_schedule(
     }
 
     if body.agent_ids.is_empty() {
-        return Err(ApiError::Validation("At least one agent_id is required".to_string()));
+        return Err(ApiError::Validation(
+            "At least one agent_id is required".to_string(),
+        ));
     }
 
     let valid_frequencies = ["hourly", "daily", "weekly", "monthly"];
@@ -83,18 +85,30 @@ pub async fn create_schedule(
     }
 
     log_action(
-        &state.db, user.user_id, "discovery_create_schedule", "snapshot_schedule", Uuid::nil(),
+        &state.db,
+        user.user_id,
+        "discovery_create_schedule",
+        "snapshot_schedule",
+        Uuid::nil(),
         json!({ "name": &body.name, "frequency": &body.frequency, "agents": body.agent_ids.len() }),
-    ).await?;
+    )
+    .await?;
 
     let schedule_id = Uuid::new_v4();
     let next_run = calculate_next_run(&body.frequency);
 
     repo::insert_snapshot_schedule(
-        &state.db, schedule_id, *user.organization_id, &body.name,
-        UuidArray::from(body.agent_ids.clone()), &body.frequency,
-        body.retention_days, next_run, *user.user_id,
-    ).await?;
+        &state.db,
+        schedule_id,
+        *user.organization_id,
+        &body.name,
+        UuidArray::from(body.agent_ids.clone()),
+        &body.frequency,
+        body.retention_days,
+        next_run,
+        *user.user_id,
+    )
+    .await?;
 
     Ok(Json(json!({
         "id": schedule_id, "name": body.name, "agent_ids": body.agent_ids,
@@ -138,15 +152,21 @@ pub async fn update_schedule(
     }
 
     log_action(
-        &state.db, user.user_id, "discovery_update_schedule", "snapshot_schedule",
-        schedule_id, json!({ "updates": &body }),
-    ).await?;
+        &state.db,
+        user.user_id,
+        "discovery_update_schedule",
+        "snapshot_schedule",
+        schedule_id,
+        json!({ "updates": &body }),
+    )
+    .await?;
 
     if let Some(ref name) = body.name {
         repo::update_schedule_name(&state.db, schedule_id, name).await?;
     }
     if let Some(ref agent_ids) = body.agent_ids {
-        repo::update_schedule_agent_ids(&state.db, schedule_id, UuidArray::from(agent_ids.clone())).await?;
+        repo::update_schedule_agent_ids(&state.db, schedule_id, UuidArray::from(agent_ids.clone()))
+            .await?;
     }
     if let Some(ref frequency) = body.frequency {
         let next_run = calculate_next_run(frequency);
@@ -179,11 +199,17 @@ pub async fn delete_schedule(
     }
 
     log_action(
-        &state.db, user.user_id, "discovery_delete_schedule", "snapshot_schedule",
-        schedule_id, json!({}),
-    ).await?;
+        &state.db,
+        user.user_id,
+        "discovery_delete_schedule",
+        "snapshot_schedule",
+        schedule_id,
+        json!({}),
+    )
+    .await?;
 
-    let rows = repo::delete_snapshot_schedule(&state.db, schedule_id, *user.organization_id).await?;
+    let rows =
+        repo::delete_snapshot_schedule(&state.db, schedule_id, *user.organization_id).await?;
     if rows == 0 {
         return Err(ApiError::NotFound);
     }
@@ -242,21 +268,41 @@ pub async fn compare_snapshots(
         return Err(ApiError::Forbidden);
     }
 
-    let snap1 = repo::get_snapshot_correlation(&state.db, body.snapshot_id_1, *user.organization_id).await?;
-    let snap2 = repo::get_snapshot_correlation(&state.db, body.snapshot_id_2, *user.organization_id).await?;
+    let snap1 =
+        repo::get_snapshot_correlation(&state.db, body.snapshot_id_1, *user.organization_id)
+            .await?;
+    let snap2 =
+        repo::get_snapshot_correlation(&state.db, body.snapshot_id_2, *user.organization_id)
+            .await?;
 
     let (corr1,) = snap1.ok_or(ApiError::NotFound)?;
     let (corr2,) = snap2.ok_or(ApiError::NotFound)?;
 
-    let services1 = corr1.get("services").and_then(|s| s.as_array()).cloned().unwrap_or_default();
-    let services2 = corr2.get("services").and_then(|s| s.as_array()).cloned().unwrap_or_default();
+    let services1 = corr1
+        .get("services")
+        .and_then(|s| s.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let services2 = corr2
+        .get("services")
+        .and_then(|s| s.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     fn service_key(svc: &Value) -> String {
         let host = svc.get("hostname").and_then(|h| h.as_str()).unwrap_or("");
-        let proc = svc.get("process_name").and_then(|p| p.as_str()).unwrap_or("");
+        let proc = svc
+            .get("process_name")
+            .and_then(|p| p.as_str())
+            .unwrap_or("");
         let ports: Vec<String> = svc
-            .get("ports").and_then(|p| p.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n.to_string())).collect())
+            .get("ports")
+            .and_then(|p| p.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_u64().map(|n| n.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
         format!("{}:{}:{}", host, proc, ports.join(","))
     }
@@ -264,18 +310,32 @@ pub async fn compare_snapshots(
     let keys1: std::collections::HashSet<String> = services1.iter().map(service_key).collect();
     let keys2: std::collections::HashSet<String> = services2.iter().map(service_key).collect();
 
-    let added: Vec<Value> = services2.iter().filter(|s| !keys1.contains(&service_key(s))).cloned().collect();
-    let removed: Vec<Value> = services1.iter().filter(|s| !keys2.contains(&service_key(s))).cloned().collect();
+    let added: Vec<Value> = services2
+        .iter()
+        .filter(|s| !keys1.contains(&service_key(s)))
+        .cloned()
+        .collect();
+    let removed: Vec<Value> = services1
+        .iter()
+        .filter(|s| !keys2.contains(&service_key(s)))
+        .cloned()
+        .collect();
 
     let mut modified: Vec<Value> = Vec::new();
     for svc1 in &services1 {
         let key = service_key(svc1);
         if keys2.contains(&key) {
             if let Some(svc2) = services2.iter().find(|s| service_key(s) == key) {
-                let ports1: Vec<u64> = svc1.get("ports").and_then(|p| p.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect()).unwrap_or_default();
-                let ports2: Vec<u64> = svc2.get("ports").and_then(|p| p.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect()).unwrap_or_default();
+                let ports1: Vec<u64> = svc1
+                    .get("ports")
+                    .and_then(|p| p.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
+                    .unwrap_or_default();
+                let ports2: Vec<u64> = svc2
+                    .get("ports")
+                    .and_then(|p| p.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
+                    .unwrap_or_default();
 
                 if ports1 != ports2 {
                     modified.push(json!({
@@ -319,7 +379,8 @@ pub async fn read_file_content(
         return Err(ApiError::Forbidden);
     }
 
-    let agent_exists = repo::agent_exists_in_org(&state.db, body.agent_id, *user.organization_id).await?;
+    let agent_exists =
+        repo::agent_exists_in_org(&state.db, body.agent_id, *user.organization_id).await?;
     if !agent_exists {
         return Err(ApiError::NotFound);
     }
@@ -327,14 +388,20 @@ pub async fn read_file_content(
     let request_id = Uuid::new_v4();
 
     log_action(
-        &state.db, user.user_id, "discovery_read_file", "agent", body.agent_id,
+        &state.db,
+        user.user_id,
+        "discovery_read_file",
+        "agent",
+        body.agent_id,
         json!({ "path": &body.path, "tail_lines": body.tail_lines }),
-    ).await?;
+    )
+    .await?;
 
     let command = if let Some(tail_lines) = body.tail_lines {
         format!(
             r#"powershell -Command "Get-Content -Path '{}' -Tail {} -ErrorAction Stop""#,
-            body.path.replace('\'', "''"), tail_lines
+            body.path.replace('\'', "''"),
+            tail_lines
         )
     } else {
         format!(
@@ -373,14 +440,27 @@ fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
     let now = Utc::now();
 
     match frequency {
-        "hourly" => now.with_minute(0).and_then(|t| t.with_second(0))
-            .map(|t| t + Duration::hours(1)).unwrap_or(now + Duration::hours(1)),
-        "daily" => now.with_hour(0).and_then(|t| t.with_minute(0)).and_then(|t| t.with_second(0))
-            .map(|t| t + Duration::days(1)).unwrap_or(now + Duration::days(1)),
+        "hourly" => now
+            .with_minute(0)
+            .and_then(|t| t.with_second(0))
+            .map(|t| t + Duration::hours(1))
+            .unwrap_or(now + Duration::hours(1)),
+        "daily" => now
+            .with_hour(0)
+            .and_then(|t| t.with_minute(0))
+            .and_then(|t| t.with_second(0))
+            .map(|t| t + Duration::days(1))
+            .unwrap_or(now + Duration::days(1)),
         "weekly" => {
             let days_until_sunday = (7 - now.weekday().num_days_from_sunday()) % 7;
-            let days_until_sunday = if days_until_sunday == 0 { 7 } else { days_until_sunday };
-            now.with_hour(0).and_then(|t| t.with_minute(0)).and_then(|t| t.with_second(0))
+            let days_until_sunday = if days_until_sunday == 0 {
+                7
+            } else {
+                days_until_sunday
+            };
+            now.with_hour(0)
+                .and_then(|t| t.with_minute(0))
+                .and_then(|t| t.with_second(0))
                 .map(|t| t + Duration::days(days_until_sunday as i64))
                 .unwrap_or(now + Duration::days(7))
         }
@@ -390,8 +470,11 @@ fn calculate_next_run(frequency: &str) -> chrono::DateTime<chrono::Utc> {
             } else {
                 now.with_month(now.month() + 1)
             };
-            next_month.and_then(|t| t.with_day(1)).and_then(|t| t.with_hour(0))
-                .and_then(|t| t.with_minute(0)).and_then(|t| t.with_second(0))
+            next_month
+                .and_then(|t| t.with_day(1))
+                .and_then(|t| t.with_hour(0))
+                .and_then(|t| t.with_minute(0))
+                .and_then(|t| t.with_second(0))
                 .unwrap_or(now + Duration::days(30))
         }
         _ => now + Duration::days(1),

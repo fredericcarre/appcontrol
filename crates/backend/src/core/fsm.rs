@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::db::DbUuid;
 use crate::repository::core_queries;
 use crate::AppState;
 use appcontrol_common::{is_valid_transition, ComponentState};

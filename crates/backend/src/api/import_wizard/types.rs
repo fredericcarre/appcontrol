@@ -59,7 +59,9 @@ pub enum ComponentResolutionStatus {
         gateway_name: Option<String>,
         resolved_via: String,
     },
-    Multiple { candidates: Vec<AgentCandidateDto> },
+    Multiple {
+        candidates: Vec<AgentCandidateDto>,
+    },
     Unresolved,
     NoHost,
 }
@@ -164,23 +166,34 @@ pub(crate) struct ApplicationData {
 }
 
 fn deserialize_tags<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where D: serde::Deserializer<'de>,
+where
+    D: serde::Deserializer<'de>,
 {
     use serde::de;
     use serde_json::Value;
     let value = Value::deserialize(deserializer)?;
     match value {
-        Value::Array(arr) => arr.into_iter()
-            .filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>().pipe(Ok),
-        Value::Object(obj) => Ok(obj.into_iter()
-            .map(|(k, v)| format!("{}:{}", k, v.as_str().unwrap_or(&v.to_string()))).collect()),
+        Value::Array(arr) => arr
+            .into_iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect::<Vec<_>>()
+            .pipe(Ok),
+        Value::Object(obj) => Ok(obj
+            .into_iter()
+            .map(|(k, v)| format!("{}:{}", k, v.as_str().unwrap_or(&v.to_string())))
+            .collect()),
         Value::Null => Ok(Vec::new()),
         _ => Err(de::Error::custom("tags must be array or object")),
     }
 }
 
 trait Pipe: Sized {
-    fn pipe<F, R>(self, f: F) -> R where F: FnOnce(Self) -> R { f(self) }
+    fn pipe<F, R>(self, f: F) -> R
+    where
+        F: FnOnce(Self) -> R,
+    {
+        f(self)
+    }
 }
 impl<T> Pipe for T {}
 
@@ -261,9 +274,15 @@ pub(crate) struct PositionData {
     pub y: f32,
 }
 
-fn default_check_interval() -> i32 { 30 }
-fn default_start_timeout() -> i32 { 300 }
-fn default_stop_timeout() -> i32 { 120 }
+fn default_check_interval() -> i32 {
+    30
+}
+fn default_start_timeout() -> i32 {
+    300
+}
+fn default_stop_timeout() -> i32 {
+    120
+}
 
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct CommandsData {
@@ -308,8 +327,12 @@ pub(crate) struct CommandParamData {
     pub enum_values: Option<Vec<String>>,
 }
 
-fn default_true() -> bool { true }
-fn default_param_type() -> String { "string".to_string() }
+fn default_true() -> bool {
+    true
+}
+fn default_param_type() -> String {
+    "string".to_string()
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct LinkData {
@@ -319,7 +342,9 @@ pub(crate) struct LinkData {
     pub link_type: String,
 }
 
-fn default_link_type() -> String { "other".to_string() }
+fn default_link_type() -> String {
+    "other".to_string()
+}
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -339,18 +364,37 @@ use crate::error::ApiError;
 pub(crate) fn parse_import_content(content: &str, format: &str) -> Result<ImportData, ApiError> {
     match format.to_lowercase().as_str() {
         "json" => {
-            if let Ok(data) = serde_json::from_str::<ImportData>(content) { return Ok(data); }
+            if let Ok(data) = serde_json::from_str::<ImportData>(content) {
+                return Ok(data);
+            }
             serde_json::from_str::<ApplicationData>(content)
-                .map(|app| ImportData { format_version: None, application: app })
-                .map_err(|e| { tracing::warn!("JSON parse error: {}", e); ApiError::Validation(format!("Invalid JSON: {}", e)) })
+                .map(|app| ImportData {
+                    format_version: None,
+                    application: app,
+                })
+                .map_err(|e| {
+                    tracing::warn!("JSON parse error: {}", e);
+                    ApiError::Validation(format!("Invalid JSON: {}", e))
+                })
         }
         "yaml" | "yml" => {
-            if let Ok(data) = serde_yaml::from_str::<ImportData>(content) { return Ok(data); }
+            if let Ok(data) = serde_yaml::from_str::<ImportData>(content) {
+                return Ok(data);
+            }
             serde_yaml::from_str::<ApplicationData>(content)
-                .map(|app| ImportData { format_version: None, application: app })
-                .map_err(|e| { tracing::warn!("YAML parse error: {}", e); ApiError::Validation(format!("Invalid YAML: {}", e)) })
+                .map(|app| ImportData {
+                    format_version: None,
+                    application: app,
+                })
+                .map_err(|e| {
+                    tracing::warn!("YAML parse error: {}", e);
+                    ApiError::Validation(format!("Invalid YAML: {}", e))
+                })
         }
-        _ => Err(ApiError::Validation(format!("Unsupported format '{}'. Use 'json' or 'yaml'", format))),
+        _ => Err(ApiError::Validation(format!(
+            "Unsupported format '{}'. Use 'json' or 'yaml'",
+            format
+        ))),
     }
 }
 

@@ -205,7 +205,8 @@ pub async fn init_pki(
     validate_length("org_name", &req.org_name, 1, 200)?;
 
     // Check if CA already exists
-    let existing = crate::repository::misc_queries::get_org_ca_cert(&state.db, *user.organization_id).await?;
+    let existing =
+        crate::repository::misc_queries::get_org_ca_cert(&state.db, *user.organization_id).await?;
 
     if let Some((Some(ref _cert),)) = existing {
         return Err(ApiError::Conflict(
@@ -229,7 +230,13 @@ pub async fn init_pki(
     .await
     .ok();
 
-    crate::repository::misc_queries::update_org_ca(&state.db, *user.organization_id, &ca.cert_pem, &ca.key_pem).await?;
+    crate::repository::misc_queries::update_org_ca(
+        &state.db,
+        *user.organization_id,
+        &ca.cert_pem,
+        &ca.key_pem,
+    )
+    .await?;
 
     let fingerprint = appcontrol_common::fingerprint_pem(&ca.cert_pem).unwrap_or_default();
 
@@ -245,7 +252,8 @@ pub async fn get_ca_cert(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let row = crate::repository::misc_queries::get_org_ca_cert(&state.db, *user.organization_id).await?;
+    let row =
+        crate::repository::misc_queries::get_org_ca_cert(&state.db, *user.organization_id).await?;
 
     match row {
         Some((Some(cert_pem),)) => {
@@ -300,7 +308,8 @@ pub async fn import_pki(
         .map_err(|e| ApiError::Validation(format!("Invalid CA keypair: {}", e)))?;
 
     // Check if CA already exists
-    let existing = crate::repository::misc_queries::get_org_ca_cert(&state.db, *user.organization_id).await?;
+    let existing =
+        crate::repository::misc_queries::get_org_ca_cert(&state.db, *user.organization_id).await?;
 
     if let Some((Some(_),)) = existing {
         if !req.force {
@@ -324,7 +333,13 @@ pub async fn import_pki(
     .await
     .ok();
 
-    crate::repository::misc_queries::update_org_ca(&state.db, *user.organization_id, &req.ca_cert_pem, &req.ca_key_pem).await?;
+    crate::repository::misc_queries::update_org_ca(
+        &state.db,
+        *user.organization_id,
+        &req.ca_cert_pem,
+        &req.ca_key_pem,
+    )
+    .await?;
 
     tracing::info!(
         org_id = %user.organization_id,
@@ -399,7 +414,9 @@ pub async fn enroll(
     // Hash the token and look it up
     let token_hash = hex::encode(sha2::Sha256::digest(req.token.as_bytes()));
 
-    let token_row = crate::repository::misc_queries::lookup_enrollment_token_by_hash(&state.db, &token_hash).await?;
+    let token_row =
+        crate::repository::misc_queries::lookup_enrollment_token_by_hash(&state.db, &token_hash)
+            .await?;
 
     let (token_id, org_id, scope, max_uses, current_uses, expires_at, token_zone) = match token_row
     {
@@ -531,7 +548,8 @@ pub async fn enroll(
     let entity_id = Uuid::new_v5(&Uuid::NAMESPACE_DNS, req.hostname.as_bytes());
 
     // Check if this fingerprint is already revoked (re-enrollment with a compromised host)
-    let is_revoked = crate::repository::misc_queries::is_cn_revoked(&state.db, org_id, &req.hostname).await;
+    let is_revoked =
+        crate::repository::misc_queries::is_cn_revoked(&state.db, org_id, &req.hostname).await;
 
     if is_revoked {
         crate::repository::misc_queries::log_enrollment_event(
@@ -553,25 +571,48 @@ pub async fn enroll(
     match scope.as_str() {
         "gateway" => {
             crate::repository::misc_queries::upsert_gateway_enrollment(
-                &state.db, entity_id, org_id, &req.hostname, &fingerprint,
-            ).await?;
+                &state.db,
+                entity_id,
+                org_id,
+                &req.hostname,
+                &fingerprint,
+            )
+            .await?;
         }
         _ => {
             crate::repository::misc_queries::upsert_agent_enrollment(
-                &state.db, entity_id, org_id, &req.hostname, &fingerprint,
-            ).await?;
+                &state.db,
+                entity_id,
+                org_id,
+                &req.hostname,
+                &fingerprint,
+            )
+            .await?;
         }
     }
 
     // Log enrollment event (APPEND-ONLY)
     crate::repository::misc_queries::log_enrollment_success(
-        &state.db, org_id, token_id, &req.hostname, &client_ip, entity_id, &fingerprint,
-    ).await;
+        &state.db,
+        org_id,
+        token_id,
+        &req.hostname,
+        &client_ip,
+        entity_id,
+        &fingerprint,
+    )
+    .await;
 
     // Log certificate event
     crate::repository::misc_queries::insert_certificate_event(
-        &state.db, entity_id, &scope, &fingerprint, &req.hostname, validity_days,
-    ).await;
+        &state.db,
+        entity_id,
+        &scope,
+        &fingerprint,
+        &req.hostname,
+        validity_days,
+    )
+    .await;
 
     // Response field is "agent_id" for backward compat even for gateways
     Ok(Json(json!({
@@ -593,7 +634,9 @@ pub async fn list_enrollment_events(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let events = crate::repository::misc_queries::list_enrollment_events(&state.db, *user.organization_id).await?;
+    let events =
+        crate::repository::misc_queries::list_enrollment_events(&state.db, *user.organization_id)
+            .await?;
 
     let events_json: Vec<Value> = events
         .into_iter()

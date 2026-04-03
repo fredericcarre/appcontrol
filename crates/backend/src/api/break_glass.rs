@@ -199,8 +199,7 @@ pub async fn list_break_glass_sessions(
         return Err(ApiError::Forbidden);
     }
 
-    let sessions =
-        misc_queries::list_break_glass_sessions(&state.db, user.organization_id).await?;
+    let sessions = misc_queries::list_break_glass_sessions(&state.db, user.organization_id).await?;
 
     Ok(Json(json!({ "sessions": sessions })))
 }

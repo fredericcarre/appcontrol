@@ -12,7 +12,15 @@ pub async fn log_action(
     resource_id: impl Into<Uuid>,
     details: serde_json::Value,
 ) -> Result<Uuid, sqlx::Error> {
-    crate::repository::misc_queries::log_action(pool, user_id, action, resource_type, resource_id, details).await
+    crate::repository::misc_queries::log_action(
+        pool,
+        user_id,
+        action,
+        resource_type,
+        resource_id,
+        details,
+    )
+    .await
 }
 
 /// Mark an action as successfully completed.

@@ -435,10 +435,7 @@ pub async fn insert_unreachable_transition(
 }
 
 /// Log a block event in certificate_events.
-pub async fn log_agent_block_event(
-    pool: &DbPool,
-    agent_id: Uuid,
-) {
+pub async fn log_agent_block_event(pool: &DbPool, agent_id: Uuid) {
     sqlx::query(
         r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
            SELECT $1, 'blocked', certificate_fingerprint, certificate_cn
@@ -451,10 +448,7 @@ pub async fn log_agent_block_event(
 }
 
 /// Delete an agent and its related records.
-pub async fn delete_agent_cascade(
-    pool: &DbPool,
-    agent_id: Uuid,
-) -> Result<(), sqlx::Error> {
+pub async fn delete_agent_cascade(pool: &DbPool, agent_id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE components SET agent_id = NULL WHERE agent_id = $1")
         .bind(crate::db::bind_id(agent_id))
         .execute(pool)
@@ -479,7 +473,11 @@ pub async fn delete_agent_cascade(
 }
 
 /// Check if an agent exists in a given organization.
-pub async fn agent_exists_in_org(pool: &DbPool, agent_id: Uuid, org_id: Uuid) -> Result<bool, sqlx::Error> {
+pub async fn agent_exists_in_org(
+    pool: &DbPool,
+    agent_id: Uuid,
+    org_id: Uuid,
+) -> Result<bool, sqlx::Error> {
     let row: Option<(DbUuid,)> =
         sqlx::query_as("SELECT id FROM agents WHERE id = $1 AND organization_id = $2")
             .bind(crate::db::bind_id(agent_id))
@@ -490,7 +488,11 @@ pub async fn agent_exists_in_org(pool: &DbPool, agent_id: Uuid, org_id: Uuid) ->
 }
 
 /// Get agent with hostname, checking org membership.
-pub async fn get_agent_in_org(pool: &DbPool, agent_id: Uuid, org_id: Uuid) -> Result<Option<(DbUuid, String)>, sqlx::Error> {
+pub async fn get_agent_in_org(
+    pool: &DbPool,
+    agent_id: Uuid,
+    org_id: Uuid,
+) -> Result<Option<(DbUuid, String)>, sqlx::Error> {
     sqlx::query_as("SELECT id, hostname FROM agents WHERE id = $1 AND organization_id = $2")
         .bind(crate::db::bind_id(agent_id))
         .bind(crate::db::bind_id(org_id))
@@ -499,7 +501,9 @@ pub async fn get_agent_in_org(pool: &DbPool, agent_id: Uuid, org_id: Uuid) -> Re
 }
 
 /// Get components for an agent (for transitioning to UNREACHABLE).
-pub async fn get_agent_components<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+pub async fn get_agent_components<
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+>(
     pool: &DbPool,
     agent_id: Uuid,
 ) -> Result<Vec<T>, sqlx::Error> {
@@ -518,7 +522,9 @@ pub async fn get_agent_components<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::P
 
 /// Fetch agent metrics (PostgreSQL).
 #[cfg(feature = "postgres")]
-pub async fn fetch_agent_metrics<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+pub async fn fetch_agent_metrics<
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+>(
     pool: &DbPool,
     agent_id: Uuid,
     minutes: i32,
@@ -538,7 +544,9 @@ pub async fn fetch_agent_metrics<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::Pg
 
 /// Fetch agent metrics (SQLite).
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn fetch_agent_metrics<T: for<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> + Send + Unpin>(
+pub async fn fetch_agent_metrics<
+    T: for<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> + Send + Unpin,
+>(
     pool: &DbPool,
     agent_id: Uuid,
     minutes: i32,

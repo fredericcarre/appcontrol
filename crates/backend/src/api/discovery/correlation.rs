@@ -42,11 +42,9 @@ pub async fn correlate(
     // Fetch latest report per agent
     let mut reports: Vec<(DbUuid, String, serde_json::Value)> = Vec::new();
     for agent_id in &body.agent_ids {
-        let row = crate::repository::discovery_queries::get_latest_report_for_agent(
-            &state.db,
-            *agent_id,
-        )
-        .await?;
+        let row =
+            crate::repository::discovery_queries::get_latest_report_for_agent(&state.db, *agent_id)
+                .await?;
         if let Some(r) = row {
             reports.push(r);
         }
@@ -666,13 +664,27 @@ fn layer_to_component_type(layer: &str) -> Option<&'static str> {
 fn guess_component_type(process_name: &str, ports: &[u16]) -> &'static str {
     let name = process_name.to_lowercase();
 
-    if name.contains("postgres") || name.contains("pgbouncer") { return "database"; }
-    if name.contains("mysql") || name.contains("mariadb") || name.contains("mysqld") { return "database"; }
-    if name.contains("mongo") { return "database"; }
-    if name.contains("oracle") || name.contains("tnslsnr") { return "database"; }
-    if name.contains("sqlservr") || name.contains("mssql") { return "database"; }
-    if name.contains("redis") || name.contains("memcache") { return "cache"; }
-    if name.contains("elasticsearch") || name.contains("solr") { return "search"; }
+    if name.contains("postgres") || name.contains("pgbouncer") {
+        return "database";
+    }
+    if name.contains("mysql") || name.contains("mariadb") || name.contains("mysqld") {
+        return "database";
+    }
+    if name.contains("mongo") {
+        return "database";
+    }
+    if name.contains("oracle") || name.contains("tnslsnr") {
+        return "database";
+    }
+    if name.contains("sqlservr") || name.contains("mssql") {
+        return "database";
+    }
+    if name.contains("redis") || name.contains("memcache") {
+        return "cache";
+    }
+    if name.contains("elasticsearch") || name.contains("solr") {
+        return "search";
+    }
 
     if name.contains("kafka")
         || name.contains("rabbit")
@@ -713,8 +725,12 @@ fn guess_component_type(process_name: &str, ports: &[u16]) -> &'static str {
         return "appserver";
     }
 
-    if name.contains("xcruntime") || name.contains("xcomponent") { return "service"; }
-    if name.contains("dotnet") || name.ends_with(".dll") { return "service"; }
+    if name.contains("xcruntime") || name.contains("xcomponent") {
+        return "service";
+    }
+    if name.contains("dotnet") || name.ends_with(".dll") {
+        return "service";
+    }
 
     for port in ports {
         match port {

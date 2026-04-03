@@ -158,7 +158,8 @@ pub async fn app_history(
         components.iter().map(|c| (c.id, c.name.clone())).collect();
 
     // 4. Get initial state at 'from' for each component
-    let initial_states_vec = misc_queries::history_initial_states(&state.db, &component_ids, from).await?;
+    let initial_states_vec =
+        misc_queries::history_initial_states(&state.db, &component_ids, from).await?;
     let initial_states: HashMap<Uuid, String> = initial_states_vec.into_iter().collect();
 
     // 5. Get all state transitions in the time range
@@ -286,8 +287,7 @@ async fn get_events(
     }
 
     // User actions on the app
-    let app_actions =
-        misc_queries::history_app_actions(db, app_id, from, to, limit).await?;
+    let app_actions = misc_queries::history_app_actions(db, app_id, from, to, limit).await?;
 
     for (user, action, details, at, status, error_message) in app_actions {
         events.push(HistoryEvent {

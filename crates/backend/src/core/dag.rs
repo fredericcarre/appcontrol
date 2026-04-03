@@ -202,10 +202,12 @@ pub async fn build_dag(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Res
     let app_id: Uuid = app_id.into();
 
     let repo = crate::repository::components::create_component_repository(pool.clone());
-    let components = repo.list_components(app_id)
+    let components = repo
+        .list_components(app_id)
         .await
         .map_err(|e| DagError::Database(e.to_string()))?;
-    let deps = repo.list_dependencies(app_id)
+    let deps = repo
+        .list_dependencies(app_id)
         .await
         .map_err(|e| DagError::Database(e.to_string()))?;
 

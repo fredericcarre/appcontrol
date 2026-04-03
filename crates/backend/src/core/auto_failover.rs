@@ -129,8 +129,14 @@ async fn check_profile_health_and_failover(
         let is_reachable =
             agent.is_active && agent.last_heartbeat_at.is_some_and(|hb| hb >= threshold);
 
-        core_queries::upsert_failover_health(pool, active_profile_id, agent.agent_id, is_reachable, now)
-            .await?;
+        core_queries::upsert_failover_health(
+            pool,
+            active_profile_id,
+            agent.agent_id,
+            is_reachable,
+            now,
+        )
+        .await?;
     }
 
     // Check if failover should be triggered

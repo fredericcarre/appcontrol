@@ -51,9 +51,16 @@ pub async fn create_api_key(
     .await?;
 
     crate::repository::misc_queries::create_api_key(
-        &state.db, key_id, *user.user_id, &body.name,
-        raw_key.as_bytes(), key_prefix, &scopes, body.expires_at,
-    ).await?;
+        &state.db,
+        key_id,
+        *user.user_id,
+        &body.name,
+        raw_key.as_bytes(),
+        key_prefix,
+        &scopes,
+        body.expires_at,
+    )
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -97,7 +104,8 @@ pub async fn delete_api_key(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let rows_affected = crate::repository::misc_queries::deactivate_api_key(&state.db, id, *user.user_id).await?;
+    let rows_affected =
+        crate::repository::misc_queries::deactivate_api_key(&state.db, id, *user.user_id).await?;
 
     if rows_affected == 0 {
         return Err(ApiError::NotFound);

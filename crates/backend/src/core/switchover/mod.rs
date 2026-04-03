@@ -1,14 +1,13 @@
 //! 6-phase DR switchover engine.
 
-pub mod validate;
 pub mod execute;
 pub mod rollback;
+pub mod validate;
 
 use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::db::{DbJson, DbUuid};
 use crate::repository::switchover_queries as repo;
 use crate::AppState;
 
@@ -46,8 +45,16 @@ pub async fn start_switchover(
         "target_site_id": target_site_id, "mode": mode,
         "component_ids": component_ids, "initiated_by": initiated_by,
     });
-    repo::insert_switchover_log(pool, switchover_id, app_id, "PREPARE", "in_progress", details_json)
-        .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
+    repo::insert_switchover_log(
+        pool,
+        switchover_id,
+        app_id,
+        "PREPARE",
+        "in_progress",
+        details_json,
+    )
+    .await
+    .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
     Ok(switchover_id)
 }
@@ -61,7 +68,8 @@ pub async fn advance_phase(
     let pool = &state.db;
 
     let current = repo::get_active_switchover(pool, app_id)
-        .await.map_err(|e| SwitchoverError::Database(e.to_string()))?
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?
         .ok_or(SwitchoverError::NoActiveSwitchover)?;
 
     let (switchover_id, active_phase, _status) = current;
@@ -88,22 +96,48 @@ pub async fn advance_phase(
 
     match phase_result {
         Ok(details) => {
-            repo::insert_switchover_log(pool, *switchover_id, app_id, &active_phase, "completed", details.clone())
-                .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
+            repo::insert_switchover_log(
+                pool,
+                *switchover_id,
+                app_id,
+                &active_phase,
+                "completed",
+                details.clone(),
+            )
+            .await
+            .map_err(|e| SwitchoverError::Database(e.to_string()))?;
 
             if let Some(next) = next_phase {
-                repo::insert_switchover_log(pool, *switchover_id, app_id, next, "in_progress", serde_json::json!({}))
-                    .await.map_err(|e| SwitchoverError::Database(e.to_string()))?;
+                repo::insert_switchover_log(
+                    pool,
+                    *switchover_id,
+                    app_id,
+                    next,
+                    "in_progress",
+                    serde_json::json!({}),
+                )
+                .await
+                .map_err(|e| SwitchoverError::Database(e.to_string()))?;
             }
 
             let db = state.db.clone();
-            let notification_phase = next_phase.map(|s| s.to_string()).unwrap_or_else(|| "DONE".to_string());
-            let notification_status = if next_phase.is_some() { "in_progress" } else { "completed" };
-            let event = super::notifications::NotificationEvent::Switchover {
-                app_id, switchover_id: *switchover_id,
-                phase: notification_phase, status: notification_status.to_string(),
+            let notification_phase = next_phase
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "DONE".to_string());
+            let notification_status = if next_phase.is_some() {
+                "in_progress"
+            } else {
+                "completed"
             };
-            tokio::spawn(async move { let _ = super::notifications::dispatch_event(&db, app_id, event).await; });
+            let event = super::notifications::NotificationEvent::Switchover {
+                app_id,
+                switchover_id: *switchover_id,
+                phase: notification_phase,
+                status: notification_status.to_string(),
+            };
+            tokio::spawn(async move {
+                let _ = super::notifications::dispatch_event(&db, app_id, event).await;
+            });
 
             Ok(serde_json::json!({
                 "switchover_id": switchover_id, "completed_phase": active_phase,
@@ -112,13 +146,21 @@ pub async fn advance_phase(
         }
         Err(e) => {
             let error_details = serde_json::json!({"error": e.to_string()});
-            let _ = repo::insert_switchover_log(pool, *switchover_id, app_id, &active_phase, "failed", error_details).await;
+            let _ = repo::insert_switchover_log(
+                pool,
+                *switchover_id,
+                app_id,
+                &active_phase,
+                "failed",
+                error_details,
+            )
+            .await;
             Err(e)
         }
     }
 }
 
-pub use rollback::{rollback, commit, get_status};
+pub use rollback::{commit, get_status, rollback};
 
 /// Retrieve the details JSON from the PREPARE phase entry for a switchover.
 pub(crate) async fn get_switchover_details(
@@ -126,7 +168,8 @@ pub(crate) async fn get_switchover_details(
     switchover_id: Uuid,
 ) -> Result<Value, SwitchoverError> {
     repo::get_switchover_details_from_prepare(pool, switchover_id)
-        .await.map_err(|e| SwitchoverError::Database(e.to_string()))?
+        .await
+        .map_err(|e| SwitchoverError::Database(e.to_string()))?
         .map(|dj| dj.0)
         .ok_or(SwitchoverError::NoActiveSwitchover)
 }

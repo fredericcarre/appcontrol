@@ -148,9 +148,11 @@ async fn execute_start_internal(
         let mut regular_components = Vec::new();
 
         for comp_id in to_start {
-            let ref_app_id = crate::repository::core_queries::get_component_referenced_app_id(&state.db, comp_id)
-                .await
-                .map_err(|e| SequencerError::Database(e.to_string()))?;
+            let ref_app_id = crate::repository::core_queries::get_component_referenced_app_id(
+                &state.db, comp_id,
+            )
+            .await
+            .map_err(|e| SequencerError::Database(e.to_string()))?;
 
             if let Some(id) = ref_app_id {
                 app_type_components.push((comp_id, id));
@@ -171,7 +173,9 @@ async fn execute_start_internal(
             Box::pin(execute_start_internal(state, ref_app_id, visited)).await?;
 
             // Wait for the referenced app to be fully started
-            let timeout_secs = crate::repository::core_queries::get_app_start_timeout_sum(&state.db, ref_app_id).await;
+            let timeout_secs =
+                crate::repository::core_queries::get_app_start_timeout_sum(&state.db, ref_app_id)
+                    .await;
 
             tracing::debug!(
                 component_id = %comp_id,
@@ -184,7 +188,9 @@ async fn execute_start_internal(
                 std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
             loop {
                 // Check aggregate state of referenced app's components
-                let counts = crate::repository::core_queries::get_app_state_counts(&state.db, ref_app_id).await;
+                let counts =
+                    crate::repository::core_queries::get_app_state_counts(&state.db, ref_app_id)
+                        .await;
 
                 // Aggregate state logic:
                 // - FAILED if any component is FAILED
@@ -332,13 +338,19 @@ async fn execute_stop_internal(
 
         for &comp_id in level {
             // Check if this is an application-type component
-            let ref_app_id = crate::repository::core_queries::get_component_referenced_app_id(&state.db, comp_id)
-                .await
-                .map_err(|e| SequencerError::Database(e.to_string()))?;
+            let ref_app_id = crate::repository::core_queries::get_component_referenced_app_id(
+                &state.db, comp_id,
+            )
+            .await
+            .map_err(|e| SequencerError::Database(e.to_string()))?;
 
             if let Some(ref_id) = ref_app_id {
                 // For app-type components, check if the REFERENCED APP has running components
-                let running_count = crate::repository::core_queries::count_running_components_in_app(&state.db, ref_id).await;
+                let running_count =
+                    crate::repository::core_queries::count_running_components_in_app(
+                        &state.db, ref_id,
+                    )
+                    .await;
 
                 tracing::warn!(
                     component_id = %comp_id,
@@ -415,7 +427,9 @@ async fn execute_stop_internal(
             // Wait for the referenced app to be fully stopped
             // Use the SUM of all stop_timeout_seconds from the referenced app's components
             // (since they stop in DAG order, worst case is sequential stopping)
-            let timeout_secs = crate::repository::core_queries::get_app_stop_timeout_sum(&state.db, ref_app_id).await;
+            let timeout_secs =
+                crate::repository::core_queries::get_app_stop_timeout_sum(&state.db, ref_app_id)
+                    .await;
 
             tracing::debug!(
                 component_id = %comp_id,
@@ -429,7 +443,11 @@ async fn execute_stop_internal(
             loop {
                 // Check aggregate state of referenced app's components
                 // Exclude components without stop_cmd since they can't be stopped
-                let running_count = crate::repository::core_queries::count_running_components_in_app(&state.db, ref_app_id).await;
+                let running_count =
+                    crate::repository::core_queries::count_running_components_in_app(
+                        &state.db, ref_app_id,
+                    )
+                    .await;
 
                 if running_count == 0 {
                     tracing::info!(
@@ -521,17 +539,21 @@ pub async fn start_single_component(
     };
 
     // Record dispatch in command_executions for audit trail
-    crate::repository::core_queries::record_command_dispatch(&state.db, request_id, component_id, agent_id, "start").await;
+    crate::repository::core_queries::record_command_dispatch(
+        &state.db,
+        request_id,
+        component_id,
+        agent_id,
+        "start",
+    )
+    .await;
 
     // Send command to agent - fail explicitly if gateway unavailable
     if !state.ws_hub.send_to_agent(agent_id, message) {
         // Revert to previous state since command couldn't be sent
         let _ = super::fsm::transition_component(state, component_id, ComponentState::Failed).await;
         let name = get_component_name(&state.db, component_id).await;
-        return Err(SequencerError::GatewayUnavailable {
-            agent_id,
-            name,
-        });
+        return Err(SequencerError::GatewayUnavailable { agent_id, name });
     }
 
     tracing::info!(
@@ -556,9 +578,10 @@ pub async fn start_single_component(
     );
 
     // Get the app_id for checking cancellation
-    let app_id: Option<Uuid> = crate::repository::core_queries::get_component_app_id_uuid(&state.db, component_id)
-        .await
-        .ok();
+    let app_id: Option<Uuid> =
+        crate::repository::core_queries::get_component_app_id_uuid(&state.db, component_id)
+            .await
+            .ok();
 
     // Wait for component to reach Running state (agent's health check will confirm)
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
@@ -684,17 +707,21 @@ pub async fn stop_single_component(
     };
 
     // Record dispatch in command_executions for audit trail
-    crate::repository::core_queries::record_command_dispatch(&state.db, request_id, component_id, agent_id, "stop").await;
+    crate::repository::core_queries::record_command_dispatch(
+        &state.db,
+        request_id,
+        component_id,
+        agent_id,
+        "stop",
+    )
+    .await;
 
     // Send command to agent - fail explicitly if gateway unavailable
     if !state.ws_hub.send_to_agent(agent_id, message) {
         // Revert to previous state since command couldn't be sent
         let _ = super::fsm::transition_component(state, component_id, ComponentState::Failed).await;
         let name = get_component_name(&state.db, component_id).await;
-        return Err(SequencerError::GatewayUnavailable {
-            agent_id,
-            name,
-        });
+        return Err(SequencerError::GatewayUnavailable { agent_id, name });
     }
 
     tracing::info!(
@@ -772,7 +799,14 @@ pub async fn record_command_dispatch_public(
     agent_id: Uuid,
     command_type: &str,
 ) {
-    crate::repository::core_queries::record_command_dispatch(pool, request_id, component_id, agent_id, command_type).await;
+    crate::repository::core_queries::record_command_dispatch(
+        pool,
+        request_id,
+        component_id,
+        agent_id,
+        command_type,
+    )
+    .await;
 }
 
 /// Record a command result in the command_executions table.
@@ -784,7 +818,10 @@ pub async fn record_command_result(
     stderr: &str,
 ) {
     let request_id: Uuid = request_id.into();
-    crate::repository::core_queries::record_command_result(pool, request_id, exit_code, stdout, stderr).await;
+    crate::repository::core_queries::record_command_result(
+        pool, request_id, exit_code, stdout, stderr,
+    )
+    .await;
 }
 
 /// Execute a stop sequence on a subset of components within an application's DAG.
@@ -980,7 +1017,14 @@ async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), 
             exec_mode: "detached".to_string(),
         };
 
-        crate::repository::core_queries::record_command_dispatch(&state.db, request_id, component_id, agent_id, "stop").await;
+        crate::repository::core_queries::record_command_dispatch(
+            &state.db,
+            request_id,
+            component_id,
+            agent_id,
+            "stop",
+        )
+        .await;
 
         if !state.ws_hub.send_to_agent(agent_id, message) {
             let name = get_component_name(&state.db, component_id).await;
@@ -1047,9 +1091,10 @@ pub async fn stop_with_dependents(
     component_id: Uuid,
 ) -> Result<(), SequencerError> {
     // Get the application ID for this component
-    let app_id: Uuid = crate::repository::core_queries::get_component_app_id_uuid(&state.db, component_id)
-        .await
-        .map_err(|e| SequencerError::Database(e.to_string()))?;
+    let app_id: Uuid =
+        crate::repository::core_queries::get_component_app_id_uuid(&state.db, component_id)
+            .await
+            .map_err(|e| SequencerError::Database(e.to_string()))?;
 
     // Build the DAG for the application
     let dag = super::dag::build_dag(&state.db, app_id)
@@ -1192,7 +1237,14 @@ pub async fn force_stop_single_component(
             exec_mode: "detached".to_string(),
         };
 
-        crate::repository::core_queries::record_command_dispatch(&state.db, request_id, component_id, agent_id, "force_stop").await;
+        crate::repository::core_queries::record_command_dispatch(
+            &state.db,
+            request_id,
+            component_id,
+            agent_id,
+            "force_stop",
+        )
+        .await;
 
         if !state.ws_hub.send_to_agent(agent_id, message) {
             let name = get_component_name(&state.db, component_id).await;

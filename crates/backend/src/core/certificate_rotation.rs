@@ -85,13 +85,17 @@ pub async fn start_rotation(
     // Check if there's already a rotation in progress
     let existing = repo::find_active_rotation(pool, org_id).await?;
     if existing.is_some() {
-        return Err(ApiError::Conflict("A certificate rotation is already in progress".to_string()));
+        return Err(ApiError::Conflict(
+            "A certificate rotation is already in progress".to_string(),
+        ));
     }
 
     // Check that the organization has an existing CA
     let current_ca = repo::get_current_ca(pool, org_id).await?;
     if current_ca.is_none() || current_ca.as_ref().and_then(|c| c.0.as_ref()).is_none() {
-        return Err(ApiError::Validation("No existing CA to rotate from. Use PKI init instead.".to_string()));
+        return Err(ApiError::Validation(
+            "No existing CA to rotate from. Use PKI init instead.".to_string(),
+        ));
     }
 
     let rotation_id = Uuid::new_v4();
@@ -102,9 +106,17 @@ pub async fn start_rotation(
 
     // Start transaction to update org and create progress record
     repo::start_rotation_tx(
-        pool, org_id, rotation_id, new_ca_cert_pem, new_ca_key_pem,
-        agent_count.0, gateway_count.0, initiated_by, grace_period_secs as i32,
-    ).await?;
+        pool,
+        org_id,
+        rotation_id,
+        new_ca_cert_pem,
+        new_ca_key_pem,
+        agent_count.0,
+        gateway_count.0,
+        initiated_by,
+        grace_period_secs as i32,
+    )
+    .await?;
 
     let new_fp = appcontrol_common::fingerprint_pem(new_ca_cert_pem).unwrap_or_default();
     tracing::info!(
@@ -133,7 +145,17 @@ pub async fn record_migration(
 ) -> Result<(), ApiError> {
     use crate::repository::core_queries as repo;
 
-    repo::insert_cert_migration(pool, org_id, rotation_id, agent_id, gateway_id, old_fingerprint, new_fingerprint, hostname).await?;
+    repo::insert_cert_migration(
+        pool,
+        org_id,
+        rotation_id,
+        agent_id,
+        gateway_id,
+        old_fingerprint,
+        new_fingerprint,
+        hostname,
+    )
+    .await?;
 
     if agent_id.is_some() {
         repo::increment_migrated_agents(pool, org_id, rotation_id).await?;
@@ -161,7 +183,17 @@ pub async fn record_migration_failure(
 ) -> Result<(), ApiError> {
     use crate::repository::core_queries as repo;
 
-    repo::insert_cert_migration_failure(pool, org_id, rotation_id, agent_id, gateway_id, old_fingerprint, hostname, error_message).await?;
+    repo::insert_cert_migration_failure(
+        pool,
+        org_id,
+        rotation_id,
+        agent_id,
+        gateway_id,
+        old_fingerprint,
+        hostname,
+        error_message,
+    )
+    .await?;
 
     if agent_id.is_some() {
         repo::increment_failed_agents(pool, org_id, rotation_id).await?;
@@ -269,9 +301,14 @@ pub async fn finalize_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiErr
     let rotation_id = match progress {
         Some((rid, status)) if status == "ready" => rid,
         Some((_, status)) => {
-            return Err(ApiError::Validation(format!("Cannot finalize rotation in status '{}'. Must be 'ready'.", status)));
+            return Err(ApiError::Validation(format!(
+                "Cannot finalize rotation in status '{}'. Must be 'ready'.",
+                status
+            )));
         }
-        None => { return Err(ApiError::NotFound); }
+        None => {
+            return Err(ApiError::NotFound);
+        }
     };
 
     // Start transaction to swap CAs
@@ -296,8 +333,15 @@ pub async fn cancel_rotation(pool: &DbPool, org_id: Uuid) -> Result<(), ApiError
     let progress = repo::get_rotation_status(pool, org_id).await?;
     let rotation_id = match progress {
         Some((rid, status)) if status == "in_progress" => rid,
-        Some((_, status)) => { return Err(ApiError::Validation(format!("Cannot cancel rotation in status '{}'", status))); }
-        None => { return Err(ApiError::NotFound); }
+        Some((_, status)) => {
+            return Err(ApiError::Validation(format!(
+                "Cannot cancel rotation in status '{}'",
+                status
+            )));
+        }
+        None => {
+            return Err(ApiError::NotFound);
+        }
     };
 
     repo::cancel_rotation_tx(pool, org_id, rotation_id).await?;

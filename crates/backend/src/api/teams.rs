@@ -35,10 +35,7 @@ pub async fn list_teams(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let teams = state
-        .team_repo
-        .list_teams(*user.organization_id)
-        .await?;
+    let teams = state.team_repo.list_teams(*user.organization_id).await?;
 
     let result: Vec<Value> = teams
         .into_iter()
@@ -243,10 +240,7 @@ pub async fn remove_member(
 ) -> Result<StatusCode, ApiError> {
     // Only admins and team leads can remove members
     if !user.is_admin() {
-        let is_lead = state
-            .team_repo
-            .is_team_lead(team_id, *user.user_id)
-            .await?;
+        let is_lead = state.team_repo.is_team_lead(team_id, *user.user_id).await?;
         if !is_lead {
             return Err(ApiError::Forbidden);
         }

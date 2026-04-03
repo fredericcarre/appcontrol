@@ -1,7 +1,7 @@
 //! Query functions for auth domain. All sqlx queries live here.
 
 #![allow(unused_imports, dead_code)]
-use crate::db::{self, DbPool, DbUuid, DbJson};
+use crate::db::{self, DbJson, DbPool, DbUuid};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -10,6 +10,7 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Find a user by role for dev login (admin, operator, viewer).
+#[allow(clippy::too_many_arguments)]
 pub async fn find_user_by_role(
     pool: &DbPool,
     role: &str,
@@ -19,10 +20,7 @@ pub async fn find_user_by_role(
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let q = "SELECT u.id, u.organization_id, u.email, u.role FROM users u WHERE u.role = $1 AND u.is_active = 1 LIMIT 1";
 
-    sqlx::query_as(q)
-        .bind(role)
-        .fetch_optional(pool)
-        .await
+    sqlx::query_as(q).bind(role).fetch_optional(pool).await
 }
 
 /// Find a user by email with org name for dev email login.
@@ -39,10 +37,7 @@ pub async fn find_user_by_email_with_org(
            FROM users u JOIN organizations o ON o.id = u.organization_id \
            WHERE u.email = $1 AND u.is_active = 1";
 
-    sqlx::query_as(q)
-        .bind(email)
-        .fetch_optional(pool)
-        .await
+    sqlx::query_as(q).bind(email).fetch_optional(pool).await
 }
 
 // ============================================================================
@@ -103,10 +98,7 @@ pub struct ApiKeyRow {
 
 /// Validate an API key (PostgreSQL).
 #[cfg(feature = "postgres")]
-pub async fn find_api_key(
-    pool: &DbPool,
-    key: &str,
-) -> Result<Option<ApiKeyRow>, sqlx::Error> {
+pub async fn find_api_key(pool: &DbPool, key: &str) -> Result<Option<ApiKeyRow>, sqlx::Error> {
     sqlx::query_as::<_, ApiKeyRow>(
         r#"
         SELECT ak.id, ak.user_id, u.organization_id, u.email, u.role
@@ -124,10 +116,7 @@ pub async fn find_api_key(
 
 /// Validate an API key (SQLite).
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn find_api_key(
-    pool: &DbPool,
-    key: &str,
-) -> Result<Option<ApiKeyRow>, sqlx::Error> {
+pub async fn find_api_key(pool: &DbPool, key: &str) -> Result<Option<ApiKeyRow>, sqlx::Error> {
     use sha2::{Digest, Sha256};
     let hash = hex::encode(Sha256::digest(key.as_bytes()));
     sqlx::query_as::<_, ApiKeyRow>(&format!(
@@ -369,13 +358,12 @@ pub async fn is_team_member(
     team_id: DbUuid,
     user_id: Uuid,
 ) -> Result<bool, sqlx::Error> {
-    let count: i32 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2",
-    )
-    .bind(team_id)
-    .bind(crate::db::bind_id(user_id))
-    .fetch_one(pool)
-    .await?;
+    let count: i32 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2")
+            .bind(team_id)
+            .bind(crate::db::bind_id(user_id))
+            .fetch_one(pool)
+            .await?;
     Ok(count > 0)
 }
 
@@ -426,15 +414,13 @@ pub async fn update_saml_user(
     role: &str,
     display_name: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE users SET saml_name_id = $1, role = $2, display_name = $3 WHERE id = $4",
-    )
-    .bind(name_id)
-    .bind(role)
-    .bind(display_name)
-    .bind(user_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE users SET saml_name_id = $1, role = $2, display_name = $3 WHERE id = $4")
+        .bind(name_id)
+        .bind(role)
+        .bind(display_name)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

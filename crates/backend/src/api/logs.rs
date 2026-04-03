@@ -438,11 +438,14 @@ pub async fn get_component_logs(
             let source_id = Uuid::parse_str(source_id_str)
                 .map_err(|_| ApiError::Validation("Invalid source ID".into()))?;
 
-            let source =
-                misc_queries::get_log_source_by_id_and_component(&state.db, source_id, component_id)
-                    .await
-                    .map_err(|e| ApiError::Internal(e.to_string()))?
-                    .ok_or(ApiError::NotFound)?;
+            let source = misc_queries::get_log_source_by_id_and_component(
+                &state.db,
+                source_id,
+                component_id,
+            )
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or(ApiError::NotFound)?;
 
             // Check sensitive access
             if source.is_sensitive {

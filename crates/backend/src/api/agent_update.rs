@@ -77,9 +77,16 @@ pub async fn upload_binary(
     .await?;
 
     crate::repository::misc_queries::insert_agent_binary(
-        &state.db, id, &body.version, &platform, &body.checksum_sha256,
-        binary.len() as i64, &binary, *user.user_id,
-    ).await?;
+        &state.db,
+        id,
+        &body.version,
+        &platform,
+        &body.checksum_sha256,
+        binary.len() as i64,
+        &binary,
+        *user.user_id,
+    )
+    .await?;
 
     Ok(Json(json!({
         "id": id,
@@ -134,7 +141,9 @@ pub async fn push_update_to_agent(
     }
 
     // Get the binary
-    let binary_row = crate::repository::misc_queries::get_agent_binary_by_version(&state.db, &body.version).await?;
+    let binary_row =
+        crate::repository::misc_queries::get_agent_binary_by_version(&state.db, &body.version)
+            .await?;
 
     let (binary_data, checksum, size) = binary_row.ok_or(ApiError::NotFound)?;
 
@@ -157,8 +166,13 @@ pub async fn push_update_to_agent(
 
     // Create tracking task
     crate::repository::misc_queries::create_agent_update_task(
-        &state.db, update_id, agent_id, &body.version, total_chunks as i32,
-    ).await?;
+        &state.db,
+        update_id,
+        agent_id,
+        &body.version,
+        total_chunks as i32,
+    )
+    .await?;
 
     // Send chunks via WebSocket in background
     let state_clone = state.clone();
@@ -187,15 +201,21 @@ pub async fn push_update_to_agent(
                     "Failed to send binary chunk — agent unreachable"
                 );
                 let _ = crate::repository::misc_queries::fail_agent_update_task(
-                    &state_clone.db, update_id, "Agent unreachable",
-                ).await;
+                    &state_clone.db,
+                    update_id,
+                    "Agent unreachable",
+                )
+                .await;
                 return;
             }
 
             // Update progress
             let _ = crate::repository::misc_queries::update_agent_update_progress(
-                &state_clone.db, update_id, (i + 1) as i32,
-            ).await;
+                &state_clone.db,
+                update_id,
+                (i + 1) as i32,
+            )
+            .await;
 
             // Small delay between chunks to avoid overwhelming the WebSocket
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;

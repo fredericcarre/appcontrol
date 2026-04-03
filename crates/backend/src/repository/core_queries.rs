@@ -1,7 +1,7 @@
 //! Query functions for core domain. All sqlx queries live here.
 
 #![allow(unused_imports, dead_code)]
-use crate::db::{self, DbPool, DbUuid, DbJson};
+use crate::db::{self, DbJson, DbPool, DbUuid};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -10,6 +10,7 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Get direct user permission level on an application.
+#[allow(clippy::too_many_arguments)]
 pub async fn get_direct_user_permission(
     pool: &DbPool,
     app_id: Uuid,
@@ -42,11 +43,7 @@ pub async fn get_direct_user_permission(
 }
 
 /// Get all team permission levels for a user on an application.
-pub async fn get_team_permissions(
-    pool: &DbPool,
-    app_id: Uuid,
-    user_id: Uuid,
-) -> Vec<(String,)> {
+pub async fn get_team_permissions(pool: &DbPool, app_id: Uuid, user_id: Uuid) -> Vec<(String,)> {
     let sql = format!(
         "SELECT apt.permission_level \
          FROM app_permissions_teams apt \
@@ -226,20 +223,16 @@ pub async fn get_component_current_state(
     component_id: Uuid,
 ) -> Result<Option<String>, sqlx::Error> {
     #[cfg(feature = "postgres")]
-    return sqlx::query_scalar::<_, String>(
-        "SELECT current_state FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_optional(pool)
-    .await;
+    return sqlx::query_scalar::<_, String>("SELECT current_state FROM components WHERE id = $1")
+        .bind(crate::db::bind_id(component_id))
+        .fetch_optional(pool)
+        .await;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    return sqlx::query_scalar::<_, String>(
-        "SELECT current_state FROM components WHERE id = $1",
-    )
-    .bind(DbUuid::from(component_id))
-    .fetch_optional(pool)
-    .await;
+    return sqlx::query_scalar::<_, String>("SELECT current_state FROM components WHERE id = $1")
+        .bind(DbUuid::from(component_id))
+        .fetch_optional(pool)
+        .await;
 }
 
 /// Get current states for multiple components (PostgreSQL).
@@ -517,10 +510,7 @@ pub async fn get_lock_status(pool: &DbPool, app_id: Uuid) -> Option<String> {
 }
 
 /// Request cancellation of an operation.
-pub async fn request_cancel_operation(
-    pool: &DbPool,
-    app_id: Uuid,
-) -> Result<u64, sqlx::Error> {
+pub async fn request_cancel_operation(pool: &DbPool, app_id: Uuid) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
         r#"
         UPDATE operation_locks
@@ -980,10 +970,7 @@ pub async fn apply_profile_mappings(
 // ============================================================================
 
 /// Get a component's display name (display_name or name fallback).
-pub async fn get_component_display_name(
-    pool: &DbPool,
-    component_id: Uuid,
-) -> String {
+pub async fn get_component_display_name(pool: &DbPool, component_id: Uuid) -> String {
     sqlx::query_scalar::<_, String>(
         "SELECT COALESCE(display_name, name) FROM components WHERE id = $1",
     )
@@ -1000,12 +987,10 @@ pub async fn get_component_name_by_id(
     pool: &DbPool,
     component_id: Uuid,
 ) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar::<_, String>(
-        "SELECT name FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_optional(pool)
-    .await
+    sqlx::query_scalar::<_, String>("SELECT name FROM components WHERE id = $1")
+        .bind(crate::db::bind_id(component_id))
+        .fetch_optional(pool)
+        .await
 }
 
 /// Get referenced_app_id for a component (None if not an application-type component).
@@ -1015,12 +1000,10 @@ pub async fn get_component_referenced_app_id(
 ) -> Result<Option<Uuid>, sqlx::Error> {
     #[cfg(feature = "postgres")]
     {
-        sqlx::query_scalar::<_, Uuid>(
-            "SELECT referenced_app_id FROM components WHERE id = $1",
-        )
-        .bind(component_id)
-        .fetch_optional(pool)
-        .await
+        sqlx::query_scalar::<_, Uuid>("SELECT referenced_app_id FROM components WHERE id = $1")
+            .bind(component_id)
+            .fetch_optional(pool)
+            .await
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
@@ -1035,10 +1018,7 @@ pub async fn get_component_referenced_app_id(
 }
 
 /// Get the sum of start_timeout_seconds for components with start_cmd in an app.
-pub async fn get_app_start_timeout_sum(
-    pool: &DbPool,
-    app_id: Uuid,
-) -> i64 {
+pub async fn get_app_start_timeout_sum(pool: &DbPool, app_id: Uuid) -> i64 {
     sqlx::query_scalar::<_, i64>(
         "SELECT COALESCE(SUM(start_timeout_seconds), 120) FROM components
          WHERE application_id = $1 AND start_cmd IS NOT NULL",
@@ -1050,10 +1030,7 @@ pub async fn get_app_start_timeout_sum(
 }
 
 /// Get the sum of stop_timeout_seconds for components with stop_cmd in an app.
-pub async fn get_app_stop_timeout_sum(
-    pool: &DbPool,
-    app_id: Uuid,
-) -> i64 {
+pub async fn get_app_stop_timeout_sum(pool: &DbPool, app_id: Uuid) -> i64 {
     sqlx::query_scalar::<_, i64>(
         "SELECT COALESCE(SUM(stop_timeout_seconds), 60) FROM components
          WHERE application_id = $1 AND stop_cmd IS NOT NULL",
@@ -1072,10 +1049,7 @@ pub struct AppStateCount {
     pub failed: i64,
 }
 
-pub async fn get_app_state_counts(
-    pool: &DbPool,
-    app_id: Uuid,
-) -> AppStateCount {
+pub async fn get_app_state_counts(pool: &DbPool, app_id: Uuid) -> AppStateCount {
     #[derive(sqlx::FromRow)]
     struct Row {
         total: i64,
@@ -1103,7 +1077,12 @@ pub async fn get_app_state_counts(
         .bind(crate::db::bind_id(app_id))
         .fetch_one(pool)
         .await
-        .unwrap_or(Row { total: 0, running: 0, degraded: 0, failed: 0 });
+        .unwrap_or(Row {
+            total: 0,
+            running: 0,
+            degraded: 0,
+            failed: 0,
+        });
 
     AppStateCount {
         total: row.total,
@@ -1114,10 +1093,7 @@ pub async fn get_app_state_counts(
 }
 
 /// Count running/active components in a referenced app (for stop decisions).
-pub async fn count_running_components_in_app(
-    pool: &DbPool,
-    app_id: Uuid,
-) -> i64 {
+pub async fn count_running_components_in_app(pool: &DbPool, app_id: Uuid) -> i64 {
     sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM components
          WHERE application_id = $1
@@ -1240,12 +1216,10 @@ pub async fn get_component_app_id_uuid(
     pool: &DbPool,
     component_id: Uuid,
 ) -> Result<Uuid, sqlx::Error> {
-    let id = sqlx::query_scalar::<_, DbUuid>(
-        "SELECT application_id FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(component_id))
-    .fetch_one(pool)
-    .await?;
+    let id = sqlx::query_scalar::<_, DbUuid>("SELECT application_id FROM components WHERE id = $1")
+        .bind(crate::db::bind_id(component_id))
+        .fetch_one(pool)
+        .await?;
     Ok(id.into_inner())
 }
 
@@ -1284,7 +1258,11 @@ pub async fn record_command_result(
     stdout: &str,
     stderr: &str,
 ) {
-    let status = if exit_code == 0 { "completed" } else { "failed" };
+    let status = if exit_code == 0 {
+        "completed"
+    } else {
+        "failed"
+    };
     if let Err(e) = sqlx::query(&format!(
         "UPDATE command_executions \
              SET exit_code = $2, stdout = $3, stderr = $4, status = $5, completed_at = {} \
@@ -1420,8 +1398,26 @@ pub async fn fetch_latest_checks(
 pub async fn get_components_for_preflight(
     pool: &DbPool,
     app_id: Uuid,
-) -> Result<Vec<(DbUuid, String, Option<DbUuid>, Option<String>, Option<DbUuid>)>, sqlx::Error> {
-    sqlx::query_as::<_, (DbUuid, String, Option<DbUuid>, Option<String>, Option<DbUuid>)>(
+) -> Result<
+    Vec<(
+        DbUuid,
+        String,
+        Option<DbUuid>,
+        Option<String>,
+        Option<DbUuid>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            String,
+            Option<DbUuid>,
+            Option<String>,
+            Option<DbUuid>,
+        ),
+    >(
         r#"
         SELECT c.id, c.name, c.agent_id, a.hostname, a.gateway_id
         FROM components c
@@ -1501,7 +1497,14 @@ pub async fn get_component_states_with_agent(
 // ============================================================================
 
 /// Rebuild target row type.
-pub type RebuildTarget = (DbUuid, String, bool, Option<String>, Option<String>, Option<DbUuid>);
+pub type RebuildTarget = (
+    DbUuid,
+    String,
+    bool,
+    Option<String>,
+    Option<String>,
+    Option<DbUuid>,
+);
 
 /// Fetch rebuild targets for specific component IDs.
 pub async fn fetch_rebuild_target_by_id(
@@ -1684,7 +1687,10 @@ pub async fn insert_unreachable_transition(
 
 /// Update component current_state to UNREACHABLE (PostgreSQL only).
 #[cfg(feature = "postgres")]
-pub async fn set_component_unreachable(pool: &DbPool, component_id: DbUuid) -> Result<(), sqlx::Error> {
+pub async fn set_component_unreachable(
+    pool: &DbPool,
+    component_id: DbUuid,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
         .bind(component_id)
         .execute(pool)
@@ -1795,7 +1801,9 @@ pub async fn update_operation_schedule_after_run(
 
 /// Fetch stale components (whose agents have exceeded heartbeat timeout) — PostgreSQL only.
 #[cfg(feature = "postgres")]
-pub async fn fetch_stale_components<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+pub async fn fetch_stale_components<
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+>(
     pool: &DbPool,
 ) -> Result<Vec<T>, sqlx::Error> {
     sqlx::query_as::<_, T>(
@@ -1825,7 +1833,9 @@ pub async fn fetch_stale_components<T: for<'r> sqlx::FromRow<'r, sqlx::postgres:
 
 /// Fetch agents with UNREACHABLE components that have reconnected — PostgreSQL only.
 #[cfg(feature = "postgres")]
-pub async fn fetch_agents_to_resync<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+pub async fn fetch_agents_to_resync<
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+>(
     pool: &DbPool,
 ) -> Result<Vec<T>, sqlx::Error> {
     sqlx::query_as::<_, T>(
@@ -1883,16 +1893,24 @@ pub async fn update_operation_schedule_after_run(
 // ============================================================================
 
 /// Check if a rotation is already in progress for an organization.
-pub async fn find_active_rotation(pool: &DbPool, org_id: Uuid) -> Result<Option<(Uuid,)>, sqlx::Error> {
+pub async fn find_active_rotation(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<Option<(Uuid,)>, sqlx::Error> {
     sqlx::query_as(
         r#"SELECT rotation_id FROM rotation_progress WHERE organization_id = $1 AND status = 'in_progress'"#,
     ).bind(org_id).fetch_optional(pool).await
 }
 
 /// Get current CA cert from an organization.
-pub async fn get_current_ca(pool: &DbPool, org_id: Uuid) -> Result<Option<(Option<String>,)>, sqlx::Error> {
+pub async fn get_current_ca(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<Option<(Option<String>,)>, sqlx::Error> {
     sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
-        .bind(org_id).fetch_optional(pool).await
+        .bind(org_id)
+        .fetch_optional(pool)
+        .await
 }
 
 /// Count agents with certificates.
@@ -1908,11 +1926,15 @@ pub async fn count_certified_gateways(pool: &DbPool, org_id: Uuid) -> Result<(i6
 }
 
 /// Insert a certificate migration record.
-#[allow(clippy::too_many_arguments)]
 pub async fn insert_cert_migration(
-    pool: &DbPool, org_id: Uuid, rotation_id: Uuid,
-    agent_id: Option<Uuid>, gateway_id: Option<Uuid>,
-    old_fp: &str, new_fp: &str, hostname: &str,
+    pool: &DbPool,
+    org_id: Uuid,
+    rotation_id: Uuid,
+    agent_id: Option<Uuid>,
+    gateway_id: Option<Uuid>,
+    old_fp: &str,
+    new_fp: &str,
+    hostname: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"INSERT INTO certificate_rotations
@@ -1924,11 +1946,15 @@ pub async fn insert_cert_migration(
 }
 
 /// Insert a certificate migration failure record.
-#[allow(clippy::too_many_arguments)]
 pub async fn insert_cert_migration_failure(
-    pool: &DbPool, org_id: Uuid, rotation_id: Uuid,
-    agent_id: Option<Uuid>, gateway_id: Option<Uuid>,
-    old_fp: &str, hostname: &str, error_message: &str,
+    pool: &DbPool,
+    org_id: Uuid,
+    rotation_id: Uuid,
+    agent_id: Option<Uuid>,
+    gateway_id: Option<Uuid>,
+    old_fp: &str,
+    hostname: &str,
+    error_message: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"INSERT INTO certificate_rotations
@@ -1940,43 +1966,71 @@ pub async fn insert_cert_migration_failure(
 }
 
 /// Increment migrated agents counter.
-pub async fn increment_migrated_agents(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn increment_migrated_agents(
+    pool: &DbPool,
+    org_id: Uuid,
+    rotation_id: Uuid,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE rotation_progress SET migrated_agents = migrated_agents + 1 WHERE organization_id = $1 AND rotation_id = $2")
         .bind(org_id).bind(rotation_id).execute(pool).await?;
     Ok(())
 }
 
 /// Increment migrated gateways counter.
-pub async fn increment_migrated_gateways(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn increment_migrated_gateways(
+    pool: &DbPool,
+    org_id: Uuid,
+    rotation_id: Uuid,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE rotation_progress SET migrated_gateways = migrated_gateways + 1 WHERE organization_id = $1 AND rotation_id = $2")
         .bind(org_id).bind(rotation_id).execute(pool).await?;
     Ok(())
 }
 
 /// Increment failed agents counter.
-pub async fn increment_failed_agents(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn increment_failed_agents(
+    pool: &DbPool,
+    org_id: Uuid,
+    rotation_id: Uuid,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE rotation_progress SET failed_agents = failed_agents + 1 WHERE organization_id = $1 AND rotation_id = $2")
         .bind(org_id).bind(rotation_id).execute(pool).await?;
     Ok(())
 }
 
 /// Increment failed gateways counter.
-pub async fn increment_failed_gateways(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn increment_failed_gateways(
+    pool: &DbPool,
+    org_id: Uuid,
+    rotation_id: Uuid,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE rotation_progress SET failed_gateways = failed_gateways + 1 WHERE organization_id = $1 AND rotation_id = $2")
         .bind(org_id).bind(rotation_id).execute(pool).await?;
     Ok(())
 }
 
 /// Get rotation progress counts.
-pub async fn get_rotation_counts(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<Option<(i32, i32, i32, i32)>, sqlx::Error> {
+pub async fn get_rotation_counts(
+    pool: &DbPool,
+    org_id: Uuid,
+    rotation_id: Uuid,
+) -> Result<Option<(i32, i32, i32, i32)>, sqlx::Error> {
     sqlx::query_as(
         r#"SELECT total_agents, total_gateways, migrated_agents, migrated_gateways
            FROM rotation_progress WHERE organization_id = $1 AND rotation_id = $2"#,
-    ).bind(org_id).bind(rotation_id).fetch_optional(pool).await
+    )
+    .bind(org_id)
+    .bind(rotation_id)
+    .fetch_optional(pool)
+    .await
 }
 
 /// Mark rotation as ready.
-pub async fn mark_rotation_ready(pool: &DbPool, org_id: Uuid, rotation_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn mark_rotation_ready(
+    pool: &DbPool,
+    org_id: Uuid,
+    rotation_id: Uuid,
+) -> Result<(), sqlx::Error> {
     sqlx::query(&format!(
         "UPDATE rotation_progress SET status = 'ready', completed_at = {} WHERE organization_id = $1 AND rotation_id = $2 AND status = 'in_progress'",
         crate::db::sql::now()
@@ -1986,32 +2040,61 @@ pub async fn mark_rotation_ready(pool: &DbPool, org_id: Uuid, rotation_id: Uuid)
 
 /// Get rotation progress details.
 #[allow(clippy::type_complexity)]
-pub async fn get_rotation_progress_details(pool: &DbPool, org_id: Uuid) -> Result<Option<(
-    Uuid, String, i32, i32, i32, i32, i32, i32,
-    chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
-    Option<chrono::DateTime<chrono::Utc>>, i32,
-)>, sqlx::Error> {
+pub async fn get_rotation_progress_details(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<
+    Option<(
+        Uuid,
+        String,
+        i32,
+        i32,
+        i32,
+        i32,
+        i32,
+        i32,
+        chrono::DateTime<chrono::Utc>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        i32,
+    )>,
+    sqlx::Error,
+> {
     sqlx::query_as(
         r#"SELECT rotation_id, status, total_agents, total_gateways,
                   migrated_agents, migrated_gateways, failed_agents, failed_gateways,
                   started_at, completed_at, finalized_at, grace_period_secs
            FROM rotation_progress WHERE organization_id = $1
            ORDER BY started_at DESC LIMIT 1"#,
-    ).bind(org_id).fetch_optional(pool).await
+    )
+    .bind(org_id)
+    .fetch_optional(pool)
+    .await
 }
 
 /// Get CA certs for fingerprinting.
-pub async fn get_ca_certs(pool: &DbPool, org_id: Uuid) -> Result<Option<(Option<String>, Option<String>)>, sqlx::Error> {
+pub async fn get_ca_certs(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<Option<(Option<String>, Option<String>)>, sqlx::Error> {
     sqlx::query_as("SELECT ca_cert_pem, pending_ca_cert_pem FROM organizations WHERE id = $1")
-        .bind(org_id).fetch_optional(pool).await
+        .bind(org_id)
+        .fetch_optional(pool)
+        .await
 }
 
 /// Get rotation status for finalize/cancel.
-pub async fn get_rotation_status(pool: &DbPool, org_id: Uuid) -> Result<Option<(Uuid, String)>, sqlx::Error> {
+pub async fn get_rotation_status(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<Option<(Uuid, String)>, sqlx::Error> {
     sqlx::query_as(
         r#"SELECT rotation_id, status FROM rotation_progress
            WHERE organization_id = $1 ORDER BY started_at DESC LIMIT 1"#,
-    ).bind(org_id).fetch_optional(pool).await
+    )
+    .bind(org_id)
+    .fetch_optional(pool)
+    .await
 }
 
 // ============================================================================
@@ -2036,7 +2119,12 @@ pub struct PatternRuleRow {
 }
 
 #[cfg(feature = "postgres")]
-pub async fn query_agents_exact_hostname(pool: &DbPool, org_id: DbUuid, host_lower: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+pub async fn query_agents_exact_hostname(
+    pool: &DbPool,
+    org_id: DbUuid,
+    host_lower: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
     sqlx::query_as::<_, ResolutionAgentRow>(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
@@ -2045,21 +2133,40 @@ pub async fn query_agents_exact_hostname(pool: &DbPool, org_id: DbUuid, host_low
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn query_agents_exact_hostname(pool: &DbPool, org_id: DbUuid, host_lower: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
-    if gateway_ids.is_empty() { return Ok(Vec::new()); }
-    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+pub async fn query_agents_exact_hostname(
+    pool: &DbPool,
+    org_id: DbUuid,
+    host_lower: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
-        WHERE a.organization_id = $1 AND LOWER(a.hostname) = $2 AND a.gateway_id IN ({})"#, placeholders.join(", ")
+        WHERE a.organization_id = $1 AND LOWER(a.hostname) = $2 AND a.gateway_id IN ({})"#,
+        placeholders.join(", ")
     );
-    let mut q = sqlx::query_as::<_, ResolutionAgentRow>(&query).bind(org_id.to_string()).bind(host_lower);
-    for gid in gateway_ids { q = q.bind(gid.to_string()); }
+    let mut q = sqlx::query_as::<_, ResolutionAgentRow>(&query)
+        .bind(org_id.to_string())
+        .bind(host_lower);
+    for gid in gateway_ids {
+        q = q.bind(gid.to_string());
+    }
     q.fetch_all(pool).await
 }
 
 #[cfg(feature = "postgres")]
-pub async fn query_agents_fqdn_match(pool: &DbPool, org_id: DbUuid, fqdn_pattern: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+pub async fn query_agents_fqdn_match(
+    pool: &DbPool,
+    org_id: DbUuid,
+    fqdn_pattern: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
     sqlx::query_as::<_, ResolutionAgentRow>(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
@@ -2068,21 +2175,40 @@ pub async fn query_agents_fqdn_match(pool: &DbPool, org_id: DbUuid, fqdn_pattern
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn query_agents_fqdn_match(pool: &DbPool, org_id: DbUuid, fqdn_pattern: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
-    if gateway_ids.is_empty() { return Ok(Vec::new()); }
-    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+pub async fn query_agents_fqdn_match(
+    pool: &DbPool,
+    org_id: DbUuid,
+    fqdn_pattern: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
-        WHERE a.organization_id = $1 AND LOWER(a.hostname) LIKE $2 || '%' AND a.gateway_id IN ({})"#, placeholders.join(", ")
+        WHERE a.organization_id = $1 AND LOWER(a.hostname) LIKE $2 || '%' AND a.gateway_id IN ({})"#,
+        placeholders.join(", ")
     );
-    let mut q = sqlx::query_as::<_, ResolutionAgentRow>(&query).bind(org_id.to_string()).bind(fqdn_pattern);
-    for gid in gateway_ids { q = q.bind(gid.to_string()); }
+    let mut q = sqlx::query_as::<_, ResolutionAgentRow>(&query)
+        .bind(org_id.to_string())
+        .bind(fqdn_pattern);
+    for gid in gateway_ids {
+        q = q.bind(gid.to_string());
+    }
     q.fetch_all(pool).await
 }
 
 #[cfg(feature = "postgres")]
-pub async fn query_agents_ip_match(pool: &DbPool, org_id: DbUuid, ip: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+pub async fn query_agents_ip_match(
+    pool: &DbPool,
+    org_id: DbUuid,
+    ip: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
     sqlx::query_as::<_, ResolutionAgentRow>(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
@@ -2091,22 +2217,40 @@ pub async fn query_agents_ip_match(pool: &DbPool, org_id: DbUuid, ip: &str, gate
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn query_agents_ip_match(pool: &DbPool, org_id: DbUuid, ip: &str, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
-    if gateway_ids.is_empty() { return Ok(Vec::new()); }
-    let placeholders: Vec<String> = (4..=3 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+pub async fn query_agents_ip_match(
+    pool: &DbPool,
+    org_id: DbUuid,
+    ip: &str,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (4..=3 + gateway_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
         WHERE a.organization_id = $1 AND EXISTS (SELECT 1 FROM json_each(a.ip_addresses) WHERE json_each.value = $2)
-          AND a.gateway_id IN ({})"#, placeholders.join(", ")
+          AND a.gateway_id IN ({})"#,
+        placeholders.join(", ")
     );
-    let mut q = sqlx::query_as::<_, ResolutionAgentRow>(&query).bind(org_id.to_string()).bind(ip);
-    for gid in gateway_ids { q = q.bind(gid.to_string()); }
+    let mut q = sqlx::query_as::<_, ResolutionAgentRow>(&query)
+        .bind(org_id.to_string())
+        .bind(ip);
+    for gid in gateway_ids {
+        q = q.bind(gid.to_string());
+    }
     q.fetch_all(pool).await
 }
 
 #[cfg(feature = "postgres")]
-pub async fn query_agents_list(pool: &DbPool, org_id: DbUuid, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+pub async fn query_agents_list(
+    pool: &DbPool,
+    org_id: DbUuid,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
     sqlx::query_as::<_, ResolutionAgentRow>(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
@@ -2115,21 +2259,35 @@ pub async fn query_agents_list(pool: &DbPool, org_id: DbUuid, gateway_ids: &[Uui
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn query_agents_list(pool: &DbPool, org_id: DbUuid, gateway_ids: &[Uuid]) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
-    if gateway_ids.is_empty() { return Ok(Vec::new()); }
-    let placeholders: Vec<String> = (2..=1 + gateway_ids.len()).map(|i| format!("${}", i)).collect();
+pub async fn query_agents_list(
+    pool: &DbPool,
+    org_id: DbUuid,
+    gateway_ids: &[Uuid],
+) -> Result<Vec<ResolutionAgentRow>, sqlx::Error> {
+    if gateway_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (2..=1 + gateway_ids.len())
+        .map(|i| format!("${}", i))
+        .collect();
     let query = format!(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
-        WHERE a.organization_id = $1 AND a.gateway_id IN ({}) ORDER BY a.hostname"#, placeholders.join(", ")
+        WHERE a.organization_id = $1 AND a.gateway_id IN ({}) ORDER BY a.hostname"#,
+        placeholders.join(", ")
     );
     let mut q = sqlx::query_as::<_, ResolutionAgentRow>(&query).bind(org_id.to_string());
-    for gid in gateway_ids { q = q.bind(gid.to_string()); }
+    for gid in gateway_ids {
+        q = q.bind(gid.to_string());
+    }
     q.fetch_all(pool).await
 }
 
 /// Fetch DR pattern rules for hostname suggestion.
-pub async fn fetch_pattern_rules(pool: &DbPool, org_id: DbUuid) -> Result<Vec<PatternRuleRow>, sqlx::Error> {
+pub async fn fetch_pattern_rules(
+    pool: &DbPool,
+    org_id: DbUuid,
+) -> Result<Vec<PatternRuleRow>, sqlx::Error> {
     #[cfg(feature = "postgres")]
     let rules_sql: &str = "SELECT search_pattern, replace_pattern FROM dr_pattern_rules WHERE organization_id = $1 AND is_active = true ORDER BY priority DESC";
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]

@@ -52,7 +52,8 @@ pub async fn detect_error_branch(
     let mut branch_components = Vec::new();
     let app_repo = crate::repository::apps::create_app_repository(pool.clone());
     for &comp_id in &affected {
-        let name = app_repo.get_component_name(comp_id)
+        let name = app_repo
+            .get_component_name(comp_id)
             .await
             .map_err(|e| BranchError::Database(e.to_string()))?
             .unwrap_or_default();

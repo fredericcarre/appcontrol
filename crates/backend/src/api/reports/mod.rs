@@ -2,16 +2,16 @@
 
 pub mod audit;
 pub mod availability;
-pub mod incidents;
 pub mod dora;
 pub mod export;
+pub mod incidents;
 
 // Re-export all handler functions
-pub use audit::{global_audit, audit, activity_feed, GlobalAuditQuery, ActivityQuery};
+pub use audit::{activity_feed, audit, global_audit, ActivityQuery, GlobalAuditQuery};
 pub use availability::{availability, health_summary};
-pub use incidents::{incidents, switchovers, drp_report};
-pub use dora::{compliance, rto, mttr};
+pub use dora::{compliance, mttr, rto};
 pub use export::export_pdf;
+pub use incidents::{drp_report, incidents, switchovers};
 
 // Shared types
 use serde::Deserialize;

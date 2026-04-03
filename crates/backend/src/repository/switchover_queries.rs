@@ -1,7 +1,7 @@
 //! Query functions for switchover domain. All sqlx queries live here.
 
 #![allow(unused_imports, dead_code)]
-use crate::db::{DbPool, DbUuid, DbJson};
+use crate::db::{DbJson, DbPool, DbUuid};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -109,7 +109,8 @@ pub async fn get_active_profile(
     app_id: Uuid,
 ) -> Result<Option<(DbUuid, String)>, sqlx::Error> {
     #[cfg(feature = "postgres")]
-    let sql = "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = true";
+    let sql =
+        "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = true";
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let sql = "SELECT id, name FROM binding_profiles WHERE application_id = $1 AND is_active = 1";
     sqlx::query_as::<_, (DbUuid, String)>(sql)
@@ -305,19 +306,18 @@ pub async fn update_switchover_prepare_details(
     switchover_id: Uuid,
     details: serde_json::Value,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE switchover_log SET details = $2 WHERE switchover_id = $1 AND phase = 'PREPARE'")
-        .bind(DbUuid::from(switchover_id))
-        .bind(DbJson::from(details))
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE switchover_log SET details = $2 WHERE switchover_id = $1 AND phase = 'PREPARE'",
+    )
+    .bind(DbUuid::from(switchover_id))
+    .bind(DbJson::from(details))
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
 /// Count non-optional components still running (not STOPPED/UNKNOWN).
-pub async fn count_running_non_optional(
-    pool: &DbPool,
-    app_id: Uuid,
-) -> Result<i64, sqlx::Error> {
+pub async fn count_running_non_optional(pool: &DbPool, app_id: Uuid) -> Result<i64, sqlx::Error> {
     #[cfg(feature = "postgres")]
     let sql: &str = "SELECT COUNT(*) FROM components WHERE application_id = $1 AND is_optional = false AND current_state NOT IN ('STOPPED', 'UNKNOWN')";
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -350,15 +350,15 @@ pub async fn find_target_profile(
 }
 
 /// Deactivate all binding profiles for an app.
-pub async fn deactivate_all_profiles(
-    pool: &DbPool,
-    app_id: Uuid,
-) -> Result<(), sqlx::Error> {
+pub async fn deactivate_all_profiles(pool: &DbPool, app_id: Uuid) -> Result<(), sqlx::Error> {
     #[cfg(feature = "postgres")]
     let sql: &str = "UPDATE binding_profiles SET is_active = false WHERE application_id = $1";
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let sql: &str = "UPDATE binding_profiles SET is_active = 0 WHERE application_id = $1";
-    sqlx::query(sql).bind(DbUuid::from(app_id)).execute(pool).await?;
+    sqlx::query(sql)
+        .bind(DbUuid::from(app_id))
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -412,7 +412,16 @@ pub async fn get_component_for_switchover(
     pool: &DbPool,
     app_id: Uuid,
     comp_name: &str,
-) -> Result<Option<(DbUuid, Option<DbUuid>, Option<String>, Option<String>, Option<String>)>, sqlx::Error> {
+) -> Result<
+    Option<(
+        DbUuid,
+        Option<DbUuid>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )>,
+    sqlx::Error,
+> {
     sqlx::query_as::<_, (DbUuid, Option<DbUuid>, Option<String>, Option<String>, Option<String>)>(
         "SELECT id, agent_id, check_cmd, start_cmd, stop_cmd FROM components WHERE application_id = $1 AND name = $2",
     )

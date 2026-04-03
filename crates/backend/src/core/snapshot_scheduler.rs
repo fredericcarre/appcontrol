@@ -115,7 +115,9 @@ pub async fn run_snapshot_scheduler(_state: Arc<AppState>, check_interval: Durat
 #[cfg(feature = "postgres")]
 async fn execute_due_schedules(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // Find schedules where next_run_at <= now() and enabled = true
-    let due_schedules = crate::repository::schedule_queries::fetch_due_snapshot_schedules::<DueSchedule>(&state.db).await?;
+    let due_schedules =
+        crate::repository::schedule_queries::fetch_due_snapshot_schedules::<DueSchedule>(&state.db)
+            .await?;
 
     for schedule in due_schedules {
         tracing::info!(
@@ -158,12 +160,18 @@ async fn execute_single_schedule(
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // Collect the report IDs for agents that were scanned
-    let report_ids = crate::repository::schedule_queries::fetch_recent_report_ids(&state.db, &successful_agents).await?;
+    let report_ids =
+        crate::repository::schedule_queries::fetch_recent_report_ids(&state.db, &successful_agents)
+            .await?;
 
     // Create correlation result for comparison
     let correlation_result = if !report_ids.is_empty() {
         // Simplified correlation - just get the services as a single JSON array
-        let services = crate::repository::schedule_queries::fetch_services_for_correlation(&state.db, &report_ids).await?;
+        let services = crate::repository::schedule_queries::fetch_services_for_correlation(
+            &state.db,
+            &report_ids,
+        )
+        .await?;
 
         serde_json::json!({
             "services": services,
@@ -182,15 +190,25 @@ async fn execute_single_schedule(
     // Create the scheduled snapshot record
     let snapshot_id = Uuid::new_v4();
     crate::repository::schedule_queries::insert_scheduled_snapshot(
-        &state.db, snapshot_id, schedule.id, schedule.organization_id,
+        &state.db,
+        snapshot_id,
+        schedule.id,
+        schedule.organization_id,
         &UuidArray::from(successful_agents.clone()),
         &UuidArray::from(report_ids.clone()),
-        &correlation_result, expires_at,
-    ).await?;
+        &correlation_result,
+        expires_at,
+    )
+    .await?;
 
     // Update the schedule: set last_run_at and calculate next_run_at
     let next_run = calculate_next_run(&schedule.frequency);
-    crate::repository::schedule_queries::update_snapshot_schedule_after_run(&state.db, schedule.id, next_run).await?;
+    crate::repository::schedule_queries::update_snapshot_schedule_after_run(
+        &state.db,
+        schedule.id,
+        next_run,
+    )
+    .await?;
 
     tracing::info!(
         schedule_id = %schedule.id,

@@ -1,4 +1,3 @@
-use crate::db::DbUuid;
 use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
@@ -99,7 +98,13 @@ pub async fn grant_user_permission(
     }
 
     // Validate target user has workspace access to the app's site
-    validate_workspace_access(&state.db, state.permission_repo.as_ref(), body.user_id, app_id).await?;
+    validate_workspace_access(
+        &state.db,
+        state.permission_repo.as_ref(),
+        body.user_id,
+        app_id,
+    )
+    .await?;
 
     log_action(
         &state.db,
@@ -138,10 +143,7 @@ pub async fn list_team_permissions(
         return Err(ApiError::Forbidden);
     }
 
-    let perms = state
-        .permission_repo
-        .list_team_permissions(app_id)
-        .await?;
+    let perms = state.permission_repo.list_team_permissions(app_id).await?;
 
     let permissions: Vec<Value> = perms
         .iter()
@@ -172,7 +174,12 @@ pub async fn grant_team_permission(
 
         if has_ws {
             // Verify team is in a workspace that includes this site
-            let team_has_access = crate::repository::permissions::team_has_site_access(&state.db, site_id, body.team_id).await;
+            let team_has_access = crate::repository::permissions::team_has_site_access(
+                &state.db,
+                site_id,
+                body.team_id,
+            )
+            .await;
 
             if !team_has_access {
                 return Err(ApiError::Validation(
@@ -255,8 +262,15 @@ pub async fn create_share_link(
     .await?;
 
     let id = crate::repository::permissions::insert_share_link(
-        &state.db, app_id, &token, &body.permission_level, *user.user_id, body.expires_at, body.max_uses,
-    ).await?;
+        &state.db,
+        app_id,
+        &token,
+        &body.permission_level,
+        *user.user_id,
+        body.expires_at,
+        body.max_uses,
+    )
+    .await?;
 
     Ok((StatusCode::CREATED, Json(json!({"id": id, "token": token}))))
 }
@@ -287,10 +301,13 @@ pub async fn delete_permission(
     }
 
     // Try user permissions first, then team permissions
-    let deleted = crate::repository::permissions::delete_user_permission(&state.db, perm_id, app_id).await?;
+    let deleted =
+        crate::repository::permissions::delete_user_permission(&state.db, perm_id, app_id).await?;
 
     if deleted == 0 {
-        let deleted_team = crate::repository::permissions::delete_team_permission(&state.db, perm_id, app_id).await?;
+        let deleted_team =
+            crate::repository::permissions::delete_team_permission(&state.db, perm_id, app_id)
+                .await?;
 
         if deleted_team == 0 {
             return Err(ApiError::NotFound);
@@ -319,10 +336,17 @@ pub async fn search_users(
     let query = params.q.unwrap_or_default();
 
     let users = if query.is_empty() {
-        crate::repository::permissions::list_org_users(&state.db, *user.organization_id, limit).await?
+        crate::repository::permissions::list_org_users(&state.db, *user.organization_id, limit)
+            .await?
     } else {
         let pattern = format!("%{}%", query);
-        crate::repository::permissions::search_users_by_pattern(&state.db, *user.organization_id, &pattern, limit).await?
+        crate::repository::permissions::search_users_by_pattern(
+            &state.db,
+            *user.organization_id,
+            &pattern,
+            limit,
+        )
+        .await?
     };
 
     let data: Vec<Value> = users
@@ -379,12 +403,22 @@ pub async fn consume_share_link(
     }
 
     // Validate workspace access for the consuming user
-    validate_workspace_access(&state.db, state.permission_repo.as_ref(), *user.user_id, app_id).await?;
+    validate_workspace_access(
+        &state.db,
+        state.permission_repo.as_ref(),
+        *user.user_id,
+        app_id,
+    )
+    .await?;
 
     // Grant permission to the user
     crate::repository::permissions::grant_permission_via_share_link(
-        &state.db, app_id, *user.user_id, &permission_level,
-    ).await?;
+        &state.db,
+        app_id,
+        *user.user_id,
+        &permission_level,
+    )
+    .await?;
 
     // Increment use count
     crate::repository::permissions::increment_share_link_use_count(&state.db, *link_id).await?;
@@ -420,7 +454,8 @@ pub async fn revoke_share_link(
         return Err(ApiError::Forbidden);
     }
 
-    let rows = crate::repository::permissions::revoke_share_link_by_id(&state.db, link_id, app_id).await?;
+    let rows =
+        crate::repository::permissions::revoke_share_link_by_id(&state.db, link_id, app_id).await?;
 
     if rows == 0 {
         return Err(ApiError::NotFound);
@@ -443,9 +478,11 @@ pub async fn list_all_permissions(
         return Err(ApiError::Forbidden);
     }
 
-    let user_perms = crate::repository::permissions::list_all_user_permissions(&state.db, app_id).await?;
+    let user_perms =
+        crate::repository::permissions::list_all_user_permissions(&state.db, app_id).await?;
 
-    let team_perms = crate::repository::permissions::list_all_team_permissions(&state.db, app_id).await?;
+    let team_perms =
+        crate::repository::permissions::list_all_team_permissions(&state.db, app_id).await?;
 
     let mut permissions: Vec<Value> = Vec::new();
 
@@ -501,4 +538,3 @@ pub async fn get_share_link_info(
         "valid": !expired && !exhausted,
     })))
 }
-

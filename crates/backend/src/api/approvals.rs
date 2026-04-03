@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -188,10 +188,9 @@ pub async fn decide_approval(
     Json(body): Json<ApprovalDecisionRequest>,
 ) -> Result<Json<Value>, ApiError> {
     // Fetch the request
-    let request =
-        misc_queries::get_approval_request(&state.db, request_id, user.organization_id)
-            .await?
-            .ok_or_not_found()?;
+    let request = misc_queries::get_approval_request(&state.db, request_id, user.organization_id)
+        .await?
+        .ok_or_not_found()?;
 
     // 4-eyes: requester cannot approve their own request
     if request.requested_by == user.user_id {
@@ -286,8 +285,7 @@ pub async fn list_approval_policies(
         return Err(ApiError::Forbidden);
     }
 
-    let policies =
-        misc_queries::list_approval_policies(&state.db, user.organization_id).await?;
+    let policies = misc_queries::list_approval_policies(&state.db, user.organization_id).await?;
 
     let result: Vec<Value> = policies
         .into_iter()

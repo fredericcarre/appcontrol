@@ -115,9 +115,10 @@ pub async fn dispatch_event(
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let event_bind = serde_json::json!(&event_type);
 
-    let webhooks = crate::repository::misc_queries::fetch_matching_webhooks(pool, app_id, &event_bind)
-        .await
-        .map_err(|e| NotificationError::Database(e.to_string()))?;
+    let webhooks =
+        crate::repository::misc_queries::fetch_matching_webhooks(pool, app_id, &event_bind)
+            .await
+            .map_err(|e| NotificationError::Database(e.to_string()))?;
 
     if webhooks.is_empty() {
         return Ok(());
@@ -231,13 +232,23 @@ async fn deliver_webhook(
 
                 // Record delivery attempt
                 let _ = crate::repository::misc_queries::insert_webhook_delivery(
-                    pool, webhook_id, event_type, payload, Some(status_code), &response_body, attempt,
-                ).await;
+                    pool,
+                    webhook_id,
+                    event_type,
+                    payload,
+                    Some(status_code),
+                    &response_body,
+                    attempt,
+                )
+                .await;
 
                 // Update last triggered timestamp
                 let _ = crate::repository::misc_queries::update_webhook_last_triggered(
-                    pool, webhook_id, status_code,
-                ).await;
+                    pool,
+                    webhook_id,
+                    status_code,
+                )
+                .await;
 
                 if (200..300).contains(&(status_code as u16 as i32)) {
                     record_success(webhook_id);
@@ -267,8 +278,15 @@ async fn deliver_webhook(
 
                 // Record failed attempt
                 let _ = crate::repository::misc_queries::insert_webhook_delivery(
-                    pool, webhook_id, event_type, payload, None, &format!("Error: {}", e), attempt,
-                ).await;
+                    pool,
+                    webhook_id,
+                    event_type,
+                    payload,
+                    None,
+                    &format!("Error: {}", e),
+                    attempt,
+                )
+                .await;
             }
         }
 

@@ -266,7 +266,8 @@ pub async fn update_gateway(
 
     // If setting as primary, first unset any existing primary in the same site
     if req.is_primary == Some(true) {
-        let gw_info = gw_repo::get_gateway_site_and_zone(&state.db, id, *user.organization_id).await?;
+        let gw_info =
+            gw_repo::get_gateway_site_and_zone(&state.db, id, *user.organization_id).await?;
 
         if let Some((site_id, zone)) = gw_info {
             if let Some(sid) = site_id {
@@ -294,7 +295,14 @@ pub async fn update_gateway(
     .ok();
 
     let gw = gw_repo::update_gateway_returning(
-        &state.db, id, *user.organization_id, &req.name, req.site_id, req.is_active, req.is_primary, req.priority,
+        &state.db,
+        id,
+        *user.organization_id,
+        &req.name,
+        req.site_id,
+        req.is_active,
+        req.is_primary,
+        req.priority,
     )
     .await?
     .ok_or_not_found()?;
@@ -313,9 +321,10 @@ pub async fn set_gateway_primary(
     }
 
     // Get the gateway's site_id
-    let (site_id, zone) = gw_repo::get_gateway_site_and_zone(&state.db, gateway_id, *user.organization_id)
-        .await?
-        .ok_or(ApiError::NotFound)?;
+    let (site_id, zone) =
+        gw_repo::get_gateway_site_and_zone(&state.db, gateway_id, *user.organization_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
 
     crate::middleware::audit::log_action(
         &state.db,
@@ -334,14 +343,21 @@ pub async fn set_gateway_primary(
     if let Some(sid) = site_id {
         gw_repo::unset_primary_in_site_tx(&mut tx, *user.organization_id, sid, gateway_id).await?;
     } else {
-        gw_repo::unset_primary_in_zone_tx(&mut tx, *user.organization_id, &zone, gateway_id).await?;
+        gw_repo::unset_primary_in_zone_tx(&mut tx, *user.organization_id, &zone, gateway_id)
+            .await?;
     }
 
     // Set this gateway as primary
     gw_repo::set_primary_tx(&mut tx, gateway_id).await?;
 
     // Log status event
-    gw_repo::insert_gateway_status_event_tx(&mut tx, *user.organization_id, gateway_id, "promoted_to_primary").await?;
+    gw_repo::insert_gateway_status_event_tx(
+        &mut tx,
+        *user.organization_id,
+        gateway_id,
+        "promoted_to_primary",
+    )
+    .await?;
 
     tx.commit().await?;
 
@@ -514,9 +530,10 @@ pub async fn block_gateway(
     }
 
     // Get the gateway to verify it exists and get agent count
-    let (name, zone) = gw_repo::get_gateway_name_and_zone(&state.db, gateway_id, *user.organization_id)
-        .await?
-        .ok_or(ApiError::NotFound)?;
+    let (name, zone) =
+        gw_repo::get_gateway_name_and_zone(&state.db, gateway_id, *user.organization_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
 
     // Log before execute
     crate::middleware::audit::log_action(
@@ -536,14 +553,16 @@ pub async fn block_gateway(
     gw_repo::deactivate_gateway_tx(&mut tx, gateway_id).await?;
 
     // 2. Get all agents connected to this gateway
-    let agent_ids: Vec<Uuid> = gw_repo::get_gateway_agent_ids_tx(&mut tx, gateway_id, *user.organization_id).await?;
+    let agent_ids: Vec<Uuid> =
+        gw_repo::get_gateway_agent_ids_tx(&mut tx, gateway_id, *user.organization_id).await?;
     let agent_count = agent_ids.len();
 
     // 3. Disconnect all agents (set gateway_id = NULL)
     gw_repo::disconnect_agents_tx(&mut tx, gateway_id).await?;
 
     // 4. Log gateway status event
-    gw_repo::insert_gateway_status_event_tx(&mut tx, *user.organization_id, gateway_id, "blocked").await?;
+    gw_repo::insert_gateway_status_event_tx(&mut tx, *user.organization_id, gateway_id, "blocked")
+        .await?;
 
     // 5. Transition all components of affected agents to UNREACHABLE
     let mut components_affected = 0;
@@ -627,7 +646,16 @@ pub async fn revoke_agent_cert(
 
     // Insert into revoked_certificates (APPEND-ONLY)
     let cn_str = cn.as_deref().unwrap_or("");
-    gw_repo::insert_revoked_agent_cert_tx(&mut tx, *user.organization_id, &fingerprint, cn_str, agent_id, &req.reason, *user.user_id).await?;
+    gw_repo::insert_revoked_agent_cert_tx(
+        &mut tx,
+        *user.organization_id,
+        &fingerprint,
+        cn_str,
+        agent_id,
+        &req.reason,
+        *user.user_id,
+    )
+    .await?;
 
     // Log certificate event
     gw_repo::insert_agent_cert_event_tx(&mut tx, agent_id, "revoked", &fingerprint, cn_str).await?;
@@ -681,9 +709,19 @@ pub async fn revoke_gateway_cert(
     let mut tx = state.db.begin().await?;
 
     let gw_cn_str = cn.as_deref().unwrap_or("");
-    gw_repo::insert_revoked_gateway_cert_tx(&mut tx, *user.organization_id, &fingerprint, gw_cn_str, gateway_id, &req.reason, *user.user_id).await?;
+    gw_repo::insert_revoked_gateway_cert_tx(
+        &mut tx,
+        *user.organization_id,
+        &fingerprint,
+        gw_cn_str,
+        gateway_id,
+        &req.reason,
+        *user.user_id,
+    )
+    .await?;
 
-    gw_repo::insert_gateway_cert_event_tx(&mut tx, gateway_id, "revoked", &fingerprint, gw_cn_str).await?;
+    gw_repo::insert_gateway_cert_event_tx(&mut tx, gateway_id, "revoked", &fingerprint, gw_cn_str)
+        .await?;
 
     gw_repo::deactivate_gateway_for_revocation_tx(&mut tx, gateway_id).await?;
 
@@ -750,7 +788,8 @@ async fn transition_gateway_agent_components_to_unreachable(
 ) -> i32 {
     use appcontrol_common::ComponentState;
 
-    let components = match gw_repo::get_agent_components_for_unreachable(&state.db, *agent_id).await {
+    let components = match gw_repo::get_agent_components_for_unreachable(&state.db, *agent_id).await
+    {
         Ok(c) => c,
         Err(_) => return 0,
     };
@@ -758,10 +797,12 @@ async fn transition_gateway_agent_components_to_unreachable(
     let mut affected = 0;
 
     for comp in &components {
-        let current_state = match crate::core::fsm::get_current_state(&state.db, crate::db::bind_id(comp.id)).await {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
+        let current_state =
+            match crate::core::fsm::get_current_state(&state.db, crate::db::bind_id(comp.id)).await
+            {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
 
         // Skip if already UNREACHABLE, STOPPED, or STOPPING
         match current_state {

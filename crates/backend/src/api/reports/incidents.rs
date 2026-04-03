@@ -23,9 +23,13 @@ pub async fn incidents(
     Query(params): Query<super::ReportQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
-    if perm < PermissionLevel::View { return Err(ApiError::Forbidden); }
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
 
-    let from = params.from.unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+    let from = params
+        .from
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
     let incidents_data = repo::fetch_incidents(&state.db, app_id, from, to).await?;
@@ -44,7 +48,9 @@ pub async fn switchovers(
     Query(_params): Query<super::ReportQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
-    if perm < PermissionLevel::View { return Err(ApiError::Forbidden); }
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
 
     let logs = repo::fetch_switchover_logs(&state.db, app_id).await?;
 
@@ -62,20 +68,27 @@ pub async fn drp_report(
     Path(app_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
-    if perm < PermissionLevel::View { return Err(ApiError::Forbidden); }
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
 
     let app_info = repo::get_app_info_for_report(&state.db, app_id).await?;
     let (app_name, _site_id, site_name) = app_info.unwrap_or(("Unknown".to_string(), None, None));
 
     let logs = repo::get_switchover_log_entries(&state.db, app_id).await?;
-    let sites: std::collections::HashMap<DbUuid, String> = repo::get_all_sites(&state.db).await?.into_iter().collect();
+    let sites: std::collections::HashMap<DbUuid, String> =
+        repo::get_all_sites(&state.db).await?.into_iter().collect();
 
     // Group by switchover_id
     type PhaseEntry = (String, String, Value, chrono::DateTime<chrono::Utc>);
-    let mut switchovers_map: std::collections::HashMap<DbUuid, Vec<PhaseEntry>> = std::collections::HashMap::new();
+    let mut switchovers_map: std::collections::HashMap<DbUuid, Vec<PhaseEntry>> =
+        std::collections::HashMap::new();
 
     for (switchover_id, phase, status, details, created_at) in logs {
-        switchovers_map.entry(switchover_id).or_default().push((phase, status, details, created_at));
+        switchovers_map
+            .entry(switchover_id)
+            .or_default()
+            .push((phase, status, details, created_at));
     }
 
     let mut switchover_list: Vec<Value> = Vec::new();
@@ -93,10 +106,15 @@ pub async fn drp_report(
         let mut initiated_by_user_id: Option<String> = None;
 
         for (phase, status, details, at) in &phases {
-            if started_at.is_none() { started_at = Some(*at); }
+            if started_at.is_none() {
+                started_at = Some(*at);
+            }
 
             if phase == "PREPARE" && status == "in_progress" {
-                if let Some(tid) = details["target_site_id"].as_str().and_then(|s| s.parse::<Uuid>().ok()) {
+                if let Some(tid) = details["target_site_id"]
+                    .as_str()
+                    .and_then(|s| s.parse::<Uuid>().ok())
+                {
                     target_site_id = Some(tid);
                     target_site = sites.get(&tid).cloned();
                 }
@@ -106,15 +124,24 @@ pub async fn drp_report(
             }
 
             if phase == "START_TARGET" && status == "completed" {
-                if source_site.is_none() { source_site = details["source_profile"].as_str().map(String::from); }
-                if target_site.is_none() { target_site = details["target_profile"].as_str().map(String::from); }
+                if source_site.is_none() {
+                    source_site = details["source_profile"].as_str().map(String::from);
+                }
+                if target_site.is_none() {
+                    target_site = details["target_profile"].as_str().map(String::from);
+                }
             }
 
-            if let Some(count) = details["components_impacted"].as_i64() { components_count = Some(count); }
-            if let Some(count) = details["components_swapped"].as_i64() { components_count = Some(count); }
+            if let Some(count) = details["components_impacted"].as_i64() {
+                components_count = Some(count);
+            }
+            if let Some(count) = details["components_swapped"].as_i64() {
+                components_count = Some(count);
+            }
 
-            if status == "in_progress" { current_phase_start = Some(*at); }
-            else if status == "completed" || status == "failed" {
+            if status == "in_progress" {
+                current_phase_start = Some(*at);
+            } else if status == "completed" || status == "failed" {
                 let phase_started = current_phase_start.unwrap_or(*at);
                 let duration_ms = (*at - phase_started).num_milliseconds();
                 phase_details.push(json!({
@@ -124,9 +151,16 @@ pub async fn drp_report(
                 current_phase_start = None;
             }
 
-            if phase == "COMMIT" && status == "completed" { final_status = "completed".to_string(); completed_at = Some(*at); }
-            else if phase == "ROLLBACK" && status == "completed" { final_status = "rolled_back".to_string(); completed_at = Some(*at); }
-            else if status == "failed" { final_status = "failed".to_string(); completed_at = Some(*at); }
+            if phase == "COMMIT" && status == "completed" {
+                final_status = "completed".to_string();
+                completed_at = Some(*at);
+            } else if phase == "ROLLBACK" && status == "completed" {
+                final_status = "rolled_back".to_string();
+                completed_at = Some(*at);
+            } else if status == "failed" {
+                final_status = "failed".to_string();
+                completed_at = Some(*at);
+            }
         }
 
         let rto_seconds = match (started_at, completed_at) {
@@ -135,21 +169,38 @@ pub async fn drp_report(
         };
 
         let component_sequence = if let (Some(start), Some(end)) = (started_at, completed_at) {
-            let transitions = repo::get_transitions_in_range(&state.db, app_id, start, end, &["STOPPED", "RUNNING"]).await.unwrap_or_default();
+            let transitions = repo::get_transitions_in_range(
+                &state.db,
+                app_id,
+                start,
+                end,
+                &["STOPPED", "RUNNING"],
+            )
+            .await
+            .unwrap_or_default();
             let seq: Vec<Value> = transitions.into_iter()
                 .map(|(name, from, to, at)| json!({"component": name, "from_state": from, "to_state": to, "at": at}))
                 .collect();
             Some(seq)
-        } else { None };
+        } else {
+            None
+        };
 
-        let initiated_by_email: Option<String> = if let Some(ref user_id_str) = initiated_by_user_id {
+        let initiated_by_email: Option<String> = if let Some(ref user_id_str) = initiated_by_user_id
+        {
             if let Ok(user_id) = uuid::Uuid::parse_str(user_id_str) {
                 repo::get_user_email(&state.db, user_id).await
-            } else { None }
-        } else { None };
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         let commands_executed = if let (Some(start), Some(end)) = (started_at, completed_at) {
-            let cmds = repo::get_commands_in_range(&state.db, app_id, start, end).await.unwrap_or_default();
+            let cmds = repo::get_commands_in_range(&state.db, app_id, start, end)
+                .await
+                .unwrap_or_default();
             let cmd_list: Vec<Value> = cmds.into_iter()
                 .map(|(to_state, comp_name, start_cmd, stop_cmd, agent, gateway, at)| {
                     let (action, command) = match to_state.as_str() {
@@ -160,7 +211,9 @@ pub async fn drp_report(
                     json!({"action": action, "component": comp_name, "command": command, "agent": agent, "gateway": gateway, "at": at})
                 }).collect();
             Some(cmd_list)
-        } else { None };
+        } else {
+            None
+        };
 
         switchover_list.push(json!({
             "switchover_id": switchover_id, "started_at": started_at, "completed_at": completed_at,
@@ -177,14 +230,20 @@ pub async fn drp_report(
         b_time.cmp(a_time)
     });
 
-    let components = repo::fetch_topology_components(&state.db, app_id).await.unwrap_or_default();
+    let components = repo::fetch_topology_components(&state.db, app_id)
+        .await
+        .unwrap_or_default();
     let component_list: Vec<Value> = components.into_iter()
         .map(|(id, name, comp_type, x, y)| json!({"id": id, "name": name, "type": comp_type, "position": {"x": x, "y": y}}))
         .collect();
 
-    let dependencies = repo::get_app_dependencies(&state.db, app_id).await.unwrap_or_default();
-    let edge_list: Vec<Value> = dependencies.into_iter()
-        .map(|(source, target)| json!({"source": source, "target": target})).collect();
+    let dependencies = repo::get_app_dependencies(&state.db, app_id)
+        .await
+        .unwrap_or_default();
+    let edge_list: Vec<Value> = dependencies
+        .into_iter()
+        .map(|(source, target)| json!({"source": source, "target": target}))
+        .collect();
 
     Ok(Json(json!({
         "report": "drp_exercises",

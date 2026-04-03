@@ -10,7 +10,6 @@
 
 use crate::db::{DbPool, DbUuid};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 use uuid::Uuid;
 
 /// Resolution status for a single host
@@ -162,7 +161,8 @@ pub async fn resolve_host_with_options(
     }
 
     // 3. Try IP address match
-    let ip_matches: Vec<AgentRow> = repo::query_agents_ip_match(pool, org_id, host, gateway_ids).await?;
+    let ip_matches: Vec<AgentRow> =
+        repo::query_agents_ip_match(pool, org_id, host, gateway_ids).await?;
 
     if ip_matches.len() == 1 {
         let m = &ip_matches[0];

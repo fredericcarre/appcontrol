@@ -22,9 +22,13 @@ pub async fn availability(
     Query(params): Query<super::ReportQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
-    if perm < PermissionLevel::View { return Err(ApiError::Forbidden); }
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
 
-    let from = params.from.unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+    let from = params
+        .from
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
     let stats = repo::fetch_availability_stats(&state.db, app_id, from, to).await?;
@@ -44,10 +48,15 @@ pub async fn health_summary(
     Path(app_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
-    if perm < PermissionLevel::View { return Err(ApiError::Forbidden); }
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
 
     let states = repo::get_state_breakdown(&state.db, app_id).await?;
-    let state_breakdown: Value = states.iter().map(|(s, c)| json!({"state": s, "count": c})).collect();
+    let state_breakdown: Value = states
+        .iter()
+        .map(|(s, c)| json!({"state": s, "count": c}))
+        .collect();
 
     let error_components = repo::get_error_components(&state.db, app_id).await?;
     let errors: Vec<Value> = error_components.iter()

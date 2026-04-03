@@ -1,7 +1,7 @@
 //! Query functions for import domain. All sqlx queries live here.
 
 #![allow(unused_imports, dead_code)]
-use crate::db::{DbPool, DbUuid, DbJson};
+use crate::db::{DbJson, DbPool, DbUuid};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -10,6 +10,7 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Create an application during YAML import.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_import_application(
     pool: &DbPool,
     app_id: Uuid,
@@ -161,7 +162,6 @@ pub async fn create_component_group_full(
 }
 
 /// Create a component during YAML import (basic fields).
-#[allow(clippy::too_many_arguments)]
 pub async fn create_import_component_yaml(
     pool: &DbPool,
     comp_id: Uuid,
@@ -205,7 +205,6 @@ pub async fn create_import_component_yaml(
 }
 
 /// Create a component during JSON import (full fields).
-#[allow(clippy::too_many_arguments)]
 pub async fn create_import_component_json(
     pool: &DbPool,
     comp_id: Uuid,
@@ -302,7 +301,6 @@ pub async fn create_component_command(
 }
 
 /// Create a command input parameter (basic).
-#[allow(clippy::too_many_arguments)]
 pub async fn create_command_input_param(
     pool: &DbPool,
     command_id: Uuid,
@@ -331,7 +329,6 @@ pub async fn create_command_input_param(
 }
 
 /// Create a command input parameter (full, with param_type and enum_values).
-#[allow(clippy::too_many_arguments)]
 pub async fn create_command_input_param_full(
     pool: &DbPool,
     command_id: Uuid,
@@ -519,11 +516,13 @@ pub async fn find_app_by_name(
     org_id: Uuid,
     name: &str,
 ) -> Result<Option<(Uuid,)>, sqlx::Error> {
-    sqlx::query_as::<_, (Uuid,)>("SELECT id FROM applications WHERE organization_id = $1 AND name = $2")
-        .bind(crate::db::bind_id(org_id))
-        .bind(name)
-        .fetch_optional(pool)
-        .await
+    sqlx::query_as::<_, (Uuid,)>(
+        "SELECT id FROM applications WHERE organization_id = $1 AND name = $2",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(name)
+    .fetch_optional(pool)
+    .await
 }
 
 /// Delete components, binding_profiles, app_variables, and component_groups for an update-style import.
@@ -594,7 +593,6 @@ pub async fn insert_application_for_import(
 }
 
 /// Insert an import component with agent_id and full fields.
-#[allow(clippy::too_many_arguments)]
 pub async fn insert_import_component_with_agent(
     pool: &DbPool,
     comp_id: Uuid,

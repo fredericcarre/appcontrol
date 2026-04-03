@@ -147,7 +147,8 @@ pub async fn list_profiles(
         mapping_count: Option<i64>,
     }
 
-    let profiles: Vec<ProfileRow> = crate::repository::misc_queries::list_profiles_with_count(&state.db, app_id).await?;
+    let profiles: Vec<ProfileRow> =
+        crate::repository::misc_queries::list_profiles_with_count(&state.db, app_id).await?;
 
     let summaries = profiles
         .into_iter()
@@ -181,10 +182,12 @@ pub async fn get_profile(
         return Err(ApiError::Forbidden);
     }
 
-    let profile: Option<BindingProfile> = crate::repository::misc_queries::get_profile_by_name(&state.db, app_id, &name).await?;
+    let profile: Option<BindingProfile> =
+        crate::repository::misc_queries::get_profile_by_name(&state.db, app_id, &name).await?;
     let profile = profile.ok_or(ApiError::NotFound)?;
 
-    let mappings: Vec<ProfileMapping> = crate::repository::misc_queries::get_profile_mappings(&state.db, profile.id).await?;
+    let mappings: Vec<ProfileMapping> =
+        crate::repository::misc_queries::get_profile_mappings(&state.db, profile.id).await?;
 
     Ok(Json(json!({
         "profile": profile,
@@ -241,20 +244,34 @@ pub async fn create_profile(
 
     // Create profile
     let profile: BindingProfile = crate::repository::misc_queries::create_binding_profile(
-        &state.db, profile_id, app_id, &body.name, body.description.as_deref(),
-        &body.profile_type, &UuidArray::from(body.gateway_ids.clone()),
-        body.auto_failover.unwrap_or(false), *user.user_id,
-    ).await?;
+        &state.db,
+        profile_id,
+        app_id,
+        &body.name,
+        body.description.as_deref(),
+        &body.profile_type,
+        &UuidArray::from(body.gateway_ids.clone()),
+        body.auto_failover.unwrap_or(false),
+        *user.user_id,
+    )
+    .await?;
 
     // Copy mappings from another profile if specified
     if let Some(copy_from_id) = body.copy_from_profile_id {
-        crate::repository::misc_queries::copy_profile_mappings(&state.db, profile_id, copy_from_id).await?;
+        crate::repository::misc_queries::copy_profile_mappings(&state.db, profile_id, copy_from_id)
+            .await?;
     } else if let Some(ref mappings) = body.mappings {
         // Create manual mappings
         for m in mappings {
             crate::repository::misc_queries::insert_profile_mapping(
-                &state.db, profile_id, &m.component_name, &m.host, m.agent_id, &m.resolved_via,
-            ).await?;
+                &state.db,
+                profile_id,
+                &m.component_name,
+                &m.host,
+                m.agent_id,
+                &m.resolved_via,
+            )
+            .await?;
         }
     }
 
@@ -276,7 +293,8 @@ pub async fn activate_profile(
     }
 
     // Get profile
-    let profile: Option<BindingProfile> = crate::repository::misc_queries::get_profile_by_name(&state.db, app_id, &name).await?;
+    let profile: Option<BindingProfile> =
+        crate::repository::misc_queries::get_profile_by_name(&state.db, app_id, &name).await?;
 
     let profile = profile.ok_or(ApiError::NotFound)?;
 
@@ -288,7 +306,8 @@ pub async fn activate_profile(
     }
 
     // Get currently active profile name for logging
-    let current_active = crate::repository::misc_queries::get_active_profile_name(&state.db, app_id).await?;
+    let current_active =
+        crate::repository::misc_queries::get_active_profile_name(&state.db, app_id).await?;
 
     // Log switchover action
     log_action(
@@ -315,8 +334,13 @@ pub async fn activate_profile(
     // Log to switchover_log
     let switchover_id = Uuid::new_v4();
     crate::repository::misc_queries::log_profile_activation(
-        &state.db, switchover_id, app_id, &name, *profile.id,
-    ).await?;
+        &state.db,
+        switchover_id,
+        app_id,
+        &name,
+        *profile.id,
+    )
+    .await?;
 
     Ok(Json(json!({
         "message": "Profile activated successfully",
@@ -340,7 +364,8 @@ pub async fn delete_profile(
     }
 
     // Get profile
-    let profile: Option<BindingProfile> = crate::repository::misc_queries::get_profile_by_name(&state.db, app_id, &name).await?;
+    let profile: Option<BindingProfile> =
+        crate::repository::misc_queries::get_profile_by_name(&state.db, app_id, &name).await?;
 
     let profile = profile.ok_or(ApiError::NotFound)?;
 
@@ -381,7 +406,9 @@ pub async fn list_dr_pattern_rules(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Vec<DrPatternRule>>, ApiError> {
-    let rules: Vec<DrPatternRule> = crate::repository::misc_queries::list_dr_pattern_rules(&state.db, *user.organization_id).await?;
+    let rules: Vec<DrPatternRule> =
+        crate::repository::misc_queries::list_dr_pattern_rules(&state.db, *user.organization_id)
+            .await?;
 
     Ok(Json(rules))
 }
@@ -424,10 +451,16 @@ pub async fn create_dr_pattern_rule(
     .await?;
 
     let rule: DrPatternRule = crate::repository::misc_queries::create_dr_pattern_rule(
-        &state.db, rule_id, *user.organization_id, &body.name,
-        &body.search_pattern, &body.replace_pattern,
-        body.priority.unwrap_or(0), body.is_active.unwrap_or(true),
-    ).await?;
+        &state.db,
+        rule_id,
+        *user.organization_id,
+        &body.name,
+        &body.search_pattern,
+        &body.replace_pattern,
+        body.priority.unwrap_or(0),
+        body.is_active.unwrap_or(true),
+    )
+    .await?;
 
     Ok((StatusCode::CREATED, Json(rule)))
 }
@@ -469,10 +502,16 @@ pub async fn update_dr_pattern_rule(
     .await?;
 
     let rule: DrPatternRule = crate::repository::misc_queries::update_dr_pattern_rule(
-        &state.db, rule_id, *user.organization_id, &body.name,
-        &body.search_pattern, &body.replace_pattern,
-        body.priority.unwrap_or(0), body.is_active.unwrap_or(true),
-    ).await
+        &state.db,
+        rule_id,
+        *user.organization_id,
+        &body.name,
+        &body.search_pattern,
+        &body.replace_pattern,
+        body.priority.unwrap_or(0),
+        body.is_active.unwrap_or(true),
+    )
+    .await
     .map_err(|_| ApiError::NotFound)?;
 
     Ok(Json(rule))
@@ -501,7 +540,12 @@ pub async fn delete_dr_pattern_rule(
     )
     .await?;
 
-    let rows_affected = crate::repository::misc_queries::delete_dr_pattern_rule(&state.db, rule_id, *user.organization_id).await?;
+    let rows_affected = crate::repository::misc_queries::delete_dr_pattern_rule(
+        &state.db,
+        rule_id,
+        *user.organization_id,
+    )
+    .await?;
 
     if rows_affected == 0 {
         return Err(ApiError::NotFound);

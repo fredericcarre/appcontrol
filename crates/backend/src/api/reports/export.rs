@@ -23,12 +23,18 @@ pub async fn export_pdf(
     Query(params): Query<super::ReportQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
-    if perm < PermissionLevel::View { return Err(ApiError::Forbidden); }
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
 
-    let from = params.from.unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+    let from = params
+        .from
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
-    let app_name = repo::get_app_name(&state.db, app_id).await.unwrap_or_else(|| "Unknown".to_string());
+    let app_name = repo::get_app_name(&state.db, app_id)
+        .await
+        .unwrap_or_else(|| "Unknown".to_string());
     let availability_stats = repo::fetch_availability_summary(&state.db, app_id, from, to).await;
     let overall_availability = (availability_stats.0 as f64 / availability_stats.1 as f64) * 100.0;
     let incident_count = repo::count_incidents(&state.db, app_id, from, to).await;
@@ -58,10 +64,14 @@ pub async fn export_pdf(
         Ok((
             [
                 (axum::http::header::CONTENT_TYPE, "application/json"),
-                (axum::http::header::CONTENT_DISPOSITION, "attachment; filename=\"report.json\""),
+                (
+                    axum::http::header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"report.json\"",
+                ),
             ],
             Json(report),
-        ).into_response())
+        )
+            .into_response())
     } else {
         Ok(Json(report).into_response())
     }

@@ -37,7 +37,8 @@ pub async fn run_operation_scheduler(state: Arc<AppState>, check_interval: Durat
 /// Find and execute all schedules that are due.
 async fn execute_due_schedules(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // Find schedules where next_run_at <= now() and enabled = true
-    let due_schedules = crate::repository::schedule_queries::fetch_due_operation_schedules(&state.db).await?;
+    let due_schedules =
+        crate::repository::schedule_queries::fetch_due_operation_schedules(&state.db).await?;
 
     for schedule in due_schedules {
         tracing::info!(
@@ -66,19 +67,17 @@ async fn execute_single_schedule(state: &Arc<AppState>, schedule: &DueSchedule) 
 
     // Determine the target (application or component)
     let (resource_type, resource_id, target_name) = if let Some(app_id) = schedule.application_id {
-        let app_name = crate::repository::core_queries::get_application_name(&state.db, app_id).await;
+        let app_name =
+            crate::repository::core_queries::get_application_name(&state.db, app_id).await;
         (
             "application",
             app_id,
             app_name.unwrap_or_else(|| app_id.to_string()),
         )
     } else if let Some(comp_id) = schedule.component_id {
-        let comp_name = crate::repository::core_queries::get_component_display_name(&state.db, *comp_id).await;
-        (
-            "component",
-            comp_id,
-            comp_name.to_string(),
-        )
+        let comp_name =
+            crate::repository::core_queries::get_component_display_name(&state.db, *comp_id).await;
+        ("component", comp_id, comp_name.to_string())
     } else {
         return Err("Schedule has no target (neither application_id nor component_id)".to_string());
     };
@@ -150,8 +149,15 @@ async fn execute_single_schedule(state: &Arc<AppState>, schedule: &DueSchedule) 
     };
 
     let _ = crate::repository::core_queries::insert_schedule_execution(
-        &state.db, execution_id, schedule.id, action_id, status, message, duration_ms,
-    ).await;
+        &state.db,
+        execution_id,
+        schedule.id,
+        action_id,
+        status,
+        message,
+        duration_ms,
+    )
+    .await;
 
     operation_result
 }
@@ -223,8 +229,13 @@ async fn update_schedule_after_run(
     );
 
     crate::repository::core_queries::update_operation_schedule_after_run(
-        db, schedule.id, status, message.as_deref(), next_run,
-    ).await?;
+        db,
+        schedule.id,
+        status,
+        message.as_deref(),
+        next_run,
+    )
+    .await?;
 
     Ok(())
 }

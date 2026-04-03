@@ -178,11 +178,18 @@ pub async fn import_yaml_map(
 
     // Create application
     crate::repository::import_queries::create_import_application(
-        &state.db, app_id, app_name, app_desc, *user.organization_id, body.site_id,
-    ).await?;
+        &state.db,
+        app_id,
+        app_name,
+        app_desc,
+        *user.organization_id,
+        body.site_id,
+    )
+    .await?;
 
     // Grant owner to importing user
-    crate::repository::import_queries::grant_owner_permission(&state.db, app_id, *user.user_id).await?;
+    crate::repository::import_queries::grant_owner_permission(&state.db, app_id, *user.user_id)
+        .await?;
 
     // ── Import variables ────────────────────────────────────────────
     let mut variables_created = 0;
@@ -197,8 +204,13 @@ pub async fn import_yaml_map(
         let value = var.value.as_deref().unwrap_or("");
 
         crate::repository::import_queries::create_app_variable(
-            &state.db, app_id, name, value, var.description.as_deref(),
-        ).await?;
+            &state.db,
+            app_id,
+            name,
+            value,
+            var.description.as_deref(),
+        )
+        .await?;
 
         variables_created += 1;
     }
@@ -213,8 +225,13 @@ pub async fn import_yaml_map(
             if !group_map.contains_key(group_name) {
                 let group_id = Uuid::new_v4();
                 crate::repository::import_queries::create_component_group(
-                    &state.db, group_id, app_id, group_name, groups_created as i32,
-                ).await?;
+                    &state.db,
+                    group_id,
+                    app_id,
+                    group_name,
+                    groups_created as i32,
+                )
+                .await?;
 
                 group_map.insert(group_name.clone(), group_id);
                 groups_created += 1;
@@ -258,10 +275,23 @@ pub async fn import_yaml_map(
         let pos_y = comp.position_y.unwrap_or((idx / 5) as f32 * 200.0);
 
         crate::repository::import_queries::create_import_component_yaml(
-            &state.db, comp_id, app_id, comp_name, comp.display_name.as_deref(),
-            comp.description.as_deref(), comp_type, icon, group_id,
-            &check_cmd, &start_cmd, &stop_cmd, &integrity_cmd, pos_x, pos_y,
-        ).await?;
+            &state.db,
+            comp_id,
+            app_id,
+            comp_name,
+            comp.display_name.as_deref(),
+            comp.description.as_deref(),
+            comp_type,
+            icon,
+            group_id,
+            &check_cmd,
+            &start_cmd,
+            &stop_cmd,
+            &integrity_cmd,
+            pos_x,
+            pos_y,
+        )
+        .await?;
 
         comp_name_to_id.insert(comp_name.clone(), comp_id);
         components_created += 1;
@@ -287,9 +317,15 @@ pub async fn import_yaml_map(
             let display = action.display_name.as_deref().unwrap_or(&action_name);
 
             crate::repository::import_queries::create_component_command(
-                &state.db, cmd_id, comp_id, display, cmd_text,
-                action.description.as_deref(), action.requires_confirmation.unwrap_or(false),
-            ).await?;
+                &state.db,
+                cmd_id,
+                comp_id,
+                display,
+                cmd_text,
+                action.description.as_deref(),
+                action.requires_confirmation.unwrap_or(false),
+            )
+            .await?;
 
             commands_created += 1;
 
@@ -301,10 +337,16 @@ pub async fn import_yaml_map(
                 };
 
                 crate::repository::import_queries::create_command_input_param(
-                    &state.db, cmd_id, param_name, param.description.as_deref(),
-                    param.default_value.as_deref(), param.validation_regex.as_deref(),
-                    param.required.unwrap_or(true), pidx as i32,
-                ).await?;
+                    &state.db,
+                    cmd_id,
+                    param_name,
+                    param.description.as_deref(),
+                    param.default_value.as_deref(),
+                    param.validation_regex.as_deref(),
+                    param.required.unwrap_or(true),
+                    pidx as i32,
+                )
+                .await?;
             }
         }
 
@@ -323,7 +365,8 @@ pub async fn import_yaml_map(
 
             crate::repository::import_queries::create_component_link(
                 &state.db, comp_id, label, url, link_type,
-            ).await?;
+            )
+            .await?;
 
             links_created += 1;
         }
@@ -353,9 +396,8 @@ pub async fn import_yaml_map(
                 }
             };
 
-            crate::repository::import_queries::create_dependency(
-                &state.db, app_id, from_id, to_id,
-            ).await?;
+            crate::repository::import_queries::create_dependency(&state.db, app_id, from_id, to_id)
+                .await?;
 
             dependencies_created += 1;
         }
@@ -673,19 +715,32 @@ pub async fn import_json_map(
     // Create application
     let tags_json = serde_json::to_value(&app_data.tags).unwrap_or(Value::Null);
     crate::repository::import_queries::create_import_application_with_tags(
-        &state.db, app_id, &app_data.name, app_data.description.as_deref(),
-        *user.organization_id, body.site_id, &tags_json,
-    ).await?;
+        &state.db,
+        app_id,
+        &app_data.name,
+        app_data.description.as_deref(),
+        *user.organization_id,
+        body.site_id,
+        &tags_json,
+    )
+    .await?;
 
     // Grant owner to importing user
-    crate::repository::import_queries::grant_owner_permission(&state.db, app_id, *user.user_id).await?;
+    crate::repository::import_queries::grant_owner_permission(&state.db, app_id, *user.user_id)
+        .await?;
 
     // ── Import variables ────────────────────────────────────────────
     let mut variables_created = 0;
     for var in &app_data.variables {
         crate::repository::import_queries::create_app_variable_with_secret(
-            &state.db, app_id, &var.name, &var.value, var.description.as_deref(), var.is_secret,
-        ).await?;
+            &state.db,
+            app_id,
+            &var.name,
+            &var.value,
+            var.description.as_deref(),
+            var.is_secret,
+        )
+        .await?;
 
         variables_created += 1;
     }
@@ -697,9 +752,15 @@ pub async fn import_json_map(
     for group in &app_data.groups {
         let group_id = Uuid::new_v4();
         crate::repository::import_queries::create_component_group_full(
-            &state.db, group_id, app_id, &group.name, group.description.as_deref(),
-            group.color.as_deref(), group.display_order,
-        ).await?;
+            &state.db,
+            group_id,
+            app_id,
+            &group.name,
+            group.description.as_deref(),
+            group.color.as_deref(),
+            group.display_order,
+        )
+        .await?;
 
         group_map.insert(group.name.clone(), group_id);
         groups_created += 1;
@@ -761,13 +822,34 @@ pub async fn import_json_map(
             .map(|nodes| serde_json::json!(nodes));
 
         crate::repository::import_queries::create_import_component_json(
-            &state.db, comp_id, app_id, &comp.name, comp.display_name.as_deref(),
-            comp.description.as_deref(), comp_type, icon, group_id, comp.host.as_deref(),
-            &check_cmd, &start_cmd, &stop_cmd, &integrity_cmd, &post_start_cmd,
-            &infra_cmd, &rebuild_cmd, &rebuild_infra_cmd,
-            comp.check_interval_seconds, comp.start_timeout_seconds, comp.stop_timeout_seconds,
-            comp.is_optional, pos_x, pos_y, comp.cluster_size, &cluster_nodes_json,
-        ).await?;
+            &state.db,
+            comp_id,
+            app_id,
+            &comp.name,
+            comp.display_name.as_deref(),
+            comp.description.as_deref(),
+            comp_type,
+            icon,
+            group_id,
+            comp.host.as_deref(),
+            &check_cmd,
+            &start_cmd,
+            &stop_cmd,
+            &integrity_cmd,
+            &post_start_cmd,
+            &infra_cmd,
+            &rebuild_cmd,
+            &rebuild_infra_cmd,
+            comp.check_interval_seconds,
+            comp.start_timeout_seconds,
+            comp.stop_timeout_seconds,
+            comp.is_optional,
+            pos_x,
+            pos_y,
+            comp.cluster_size,
+            &cluster_nodes_json,
+        )
+        .await?;
 
         comp_name_to_id.insert(comp.name.clone(), comp_id);
         components_created += 1;
@@ -777,9 +859,15 @@ pub async fn import_json_map(
             let cmd_id = Uuid::new_v4();
 
             crate::repository::import_queries::create_component_command(
-                &state.db, cmd_id, comp_id, &custom_cmd.name, &custom_cmd.command,
-                custom_cmd.description.as_deref(), custom_cmd.requires_confirmation,
-            ).await?;
+                &state.db,
+                cmd_id,
+                comp_id,
+                &custom_cmd.name,
+                &custom_cmd.command,
+                custom_cmd.description.as_deref(),
+                custom_cmd.requires_confirmation,
+            )
+            .await?;
 
             commands_created += 1;
 
@@ -791,18 +879,32 @@ pub async fn import_json_map(
                     .and_then(|v| serde_json::to_value(v).ok());
 
                 crate::repository::import_queries::create_command_input_param_full(
-                    &state.db, cmd_id, &param.name, param.description.as_deref(),
-                    param.default_value.as_deref(), param.validation_regex.as_deref(),
-                    param.required, &param.param_type, &enum_vals_json, pidx as i32,
-                ).await?;
+                    &state.db,
+                    cmd_id,
+                    &param.name,
+                    param.description.as_deref(),
+                    param.default_value.as_deref(),
+                    param.validation_regex.as_deref(),
+                    param.required,
+                    &param.param_type,
+                    &enum_vals_json,
+                    pidx as i32,
+                )
+                .await?;
             }
         }
 
         // ── Import links ───────────────────────────────────────────────
         for (lidx, link) in comp.links.iter().enumerate() {
             crate::repository::import_queries::create_component_link_ordered(
-                &state.db, comp_id, &link.label, &link.url, &link.link_type, lidx as i32,
-            ).await?;
+                &state.db,
+                comp_id,
+                &link.label,
+                &link.url,
+                &link.link_type,
+                lidx as i32,
+            )
+            .await?;
 
             links_created += 1;
         }
@@ -838,7 +940,8 @@ pub async fn import_json_map(
 
         crate::repository::import_queries::create_dependency_typed(
             &state.db, app_id, from_id, to_id, dep_type,
-        ).await?;
+        )
+        .await?;
 
         dependencies_created += 1;
     }

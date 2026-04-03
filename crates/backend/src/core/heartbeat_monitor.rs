@@ -86,8 +86,10 @@ async fn check_stale_gateways(state: &Arc<AppState>) -> Result<(), sqlx::Error> 
     // Find gateways with stale heartbeats that are still marked as 'active'
     // Mark them as 'suspended' (the valid status for unavailable gateways)
     let stale_count = crate::repository::core_queries::mark_stale_gateways_suspended(
-        &state.db, GATEWAY_HEARTBEAT_TIMEOUT_SECS,
-    ).await?;
+        &state.db,
+        GATEWAY_HEARTBEAT_TIMEOUT_SECS,
+    )
+    .await?;
 
     if stale_count > 0 {
         tracing::warn!(
@@ -99,8 +101,10 @@ async fn check_stale_gateways(state: &Arc<AppState>) -> Result<(), sqlx::Error> 
 
     // Also update gateways that reconnect (have recent heartbeat but are marked suspended)
     let reconnected_count = crate::repository::core_queries::reactivate_reconnected_gateways(
-        &state.db, GATEWAY_HEARTBEAT_TIMEOUT_SECS,
-    ).await?;
+        &state.db,
+        GATEWAY_HEARTBEAT_TIMEOUT_SECS,
+    )
+    .await?;
 
     if reconnected_count > 0 {
         tracing::info!(
@@ -118,7 +122,9 @@ async fn check_stale_gateways(state: &Arc<AppState>) -> Result<(), sqlx::Error> 
 async fn check_stale_agents(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // Find components whose agent has exceeded the org-level heartbeat timeout
     // and that are NOT already in UNREACHABLE, STOPPED, or STOPPING state.
-    let stale_components = crate::repository::core_queries::fetch_stale_components::<StaleComponent>(&state.db).await?;
+    let stale_components =
+        crate::repository::core_queries::fetch_stale_components::<StaleComponent>(&state.db)
+            .await?;
 
     if stale_components.is_empty() {
         return Ok(());
@@ -183,7 +189,11 @@ async fn transition_to_unreachable(
 ) -> Result<(), crate::core::fsm::FsmError> {
     // Insert state transition (append-only)
     crate::repository::core_queries::insert_unreachable_transition(
-        &state.db, comp.component_id, &current_state.to_string(), &comp.agent_id.to_string(), trigger,
+        &state.db,
+        comp.component_id,
+        &current_state.to_string(),
+        &comp.agent_id.to_string(),
+        trigger,
     )
     .await
     .map_err(|e| crate::core::fsm::FsmError::Database(e.to_string()))?;
@@ -242,7 +252,8 @@ async fn resync_unreachable_components(state: &Arc<AppState>) -> Result<(), sqlx
     // 1. Recent heartbeat (within timeout)
     // 2. At least one component in UNREACHABLE state
     // 3. Gateway is active
-    let agents_to_resync = crate::repository::core_queries::fetch_agents_to_resync::<AgentToResync>(&state.db).await?;
+    let agents_to_resync =
+        crate::repository::core_queries::fetch_agents_to_resync::<AgentToResync>(&state.db).await?;
 
     if agents_to_resync.is_empty() {
         return Ok(());

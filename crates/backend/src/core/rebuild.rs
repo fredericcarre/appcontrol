@@ -134,8 +134,12 @@ pub async fn execute_rebuild(
 
     // Log action BEFORE execution (Critical Rule #3: log before execute)
     let _ = crate::repository::core_queries::insert_rebuild_action_log(
-        &state.db, initiated_by, app_id, targets.len(),
-    ).await;
+        &state.db,
+        initiated_by,
+        app_id,
+        targets.len(),
+    )
+    .await;
 
     // Build DAG order
     let dag = super::dag::build_dag(&state.db, app_id).await?;
@@ -378,7 +382,8 @@ async fn wait_for_command_completion(
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
 
     loop {
-        let result = crate::repository::core_queries::get_command_execution_status(pool, request_id).await;
+        let result =
+            crate::repository::core_queries::get_command_execution_status(pool, request_id).await;
 
         match result {
             Ok(Some((status, exit_code, stderr))) => {

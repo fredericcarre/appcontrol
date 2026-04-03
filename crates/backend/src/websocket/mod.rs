@@ -745,10 +745,9 @@ async fn process_gateway_message(
                 // ── Certificate revocation check ──
                 // If the agent presents a cert fingerprint, check if it's been revoked.
                 if let Some(ref fp) = cert_fingerprint {
-                    let is_revoked: bool =
-                        ws_repo::is_certificate_revoked(&state.db, fp)
-                            .await
-                            .unwrap_or(false);
+                    let is_revoked: bool = ws_repo::is_certificate_revoked(&state.db, fp)
+                        .await
+                        .unwrap_or(false);
 
                     if is_revoked {
                         tracing::warn!(
@@ -996,8 +995,7 @@ async fn process_agent_message(
             .await;
 
             // Broadcast CommandResultEvent to subscribed frontend clients
-            if let Ok(Some(info)) =
-                ws_repo::get_command_component_info(&state.db, request_id).await
+            if let Ok(Some(info)) = ws_repo::get_command_component_info(&state.db, request_id).await
             {
                 state.ws_hub.broadcast(
                     info.application_id,
@@ -1060,9 +1058,7 @@ async fn process_agent_message(
                 ws_repo::get_command_execution_component_id(&state.db, request_id).await
             {
                 // Resolve app_id for broadcast routing
-                if let Ok(Some(app_id)) =
-                    repo::get_component_app_id(&state.db, comp_id).await
-                {
+                if let Ok(Some(app_id)) = repo::get_component_app_id(&state.db, comp_id).await {
                     state.ws_hub.broadcast(
                         app_id,
                         appcontrol_common::WsEvent::CommandOutputChunkEvent {
@@ -1128,7 +1124,9 @@ async fn process_agent_message(
             state.heartbeat_batcher.record(agent_id).await;
 
             // Store metrics for time-series graphing (sample every heartbeat)
-            if let Err(e) = ws_repo::insert_agent_metrics(&state.db, agent_id, cpu, memory, disk).await {
+            if let Err(e) =
+                ws_repo::insert_agent_metrics(&state.db, agent_id, cpu, memory, disk).await
+            {
                 // Don't fail on metrics insert - just log warning
                 tracing::warn!(agent_id = %agent_id, "Failed to insert agent metrics: {}", e);
             }
@@ -1837,4 +1835,3 @@ async fn validate_gateway_enrollment_token(
 
     Ok(info.organization_id)
 }
-

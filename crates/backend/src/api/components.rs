@@ -410,9 +410,10 @@ pub async fn update_component(
             .unwrap_or_else(|| "null".to_string());
         let after_json = after_snapshot.to_string();
 
-        state.component_repo.insert_config_version(
-            "component", id, *user.user_id, &before_json, &after_json,
-        ).await?;
+        state
+            .component_repo
+            .insert_config_version("component", id, *user.user_id, &before_json, &after_json)
+            .await?;
     }
 
     // Push config to affected agent so it picks up the changes
@@ -535,7 +536,9 @@ pub async fn update_positions_batch(
 
     // Get app_id from first component (all should be in same app)
     let first_id = *body.positions[0].id;
-    let app_id = state.component_repo.get_component_app_id(first_id)
+    let app_id = state
+        .component_repo
+        .get_component_app_id(first_id)
         .await?
         .ok_or_not_found()?;
 
@@ -545,8 +548,12 @@ pub async fn update_positions_batch(
     }
 
     // Update all positions in a transaction
-    let positions: Vec<(Uuid, f32, f32)> = body.positions.iter().map(|p| (*p.id, p.x, p.y)).collect();
-    state.component_repo.batch_update_positions(app_id, &positions).await?;
+    let positions: Vec<(Uuid, f32, f32)> =
+        body.positions.iter().map(|p| (*p.id, p.x, p.y)).collect();
+    state
+        .component_repo
+        .batch_update_positions(app_id, &positions)
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -557,17 +564,13 @@ pub async fn start_component(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     // Get component info including referenced_app_id
-    let (comp_app_id, comp_ref_app_id) = state.component_repo.get_component_refs(id)
+    let (comp_app_id, comp_ref_app_id) = state
+        .component_repo
+        .get_component_refs(id)
         .await?
         .ok_or_not_found()?;
 
-    let perm = effective_permission(
-        &state.db,
-        user.user_id,
-        comp_app_id,
-        user.is_admin(),
-    )
-    .await;
+    let perm = effective_permission(&state.db, user.user_id, comp_app_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
     }
@@ -620,17 +623,13 @@ pub async fn stop_component(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     // Get component info including referenced_app_id
-    let (comp_app_id, comp_ref_app_id) = state.component_repo.get_component_refs(id)
+    let (comp_app_id, comp_ref_app_id) = state
+        .component_repo
+        .get_component_refs(id)
         .await?
         .ok_or_not_found()?;
 
-    let perm = effective_permission(
-        &state.db,
-        user.user_id,
-        comp_app_id,
-        user.is_admin(),
-    )
-    .await;
+    let perm = effective_permission(&state.db, user.user_id, comp_app_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
     }
@@ -682,10 +681,11 @@ pub async fn force_stop_component(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        state.component_repo.get_component_app_id(id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
@@ -721,10 +721,11 @@ pub async fn start_with_deps(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        state.component_repo.get_component_app_id(id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
@@ -784,10 +785,11 @@ pub async fn restart_with_dependents(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        state.component_repo.get_component_app_id(id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
@@ -879,6 +881,7 @@ pub async fn execute_command(
 ) -> Result<Json<Value>, ApiError> {
     // Fetch component with all command columns
     #[derive(sqlx::FromRow)]
+    #[allow(dead_code)]
     struct ComponentCmd {
         application_id: DbUuid,
         agent_id: Option<DbUuid>,
@@ -889,7 +892,9 @@ pub async fn execute_command(
         infra_check_cmd: Option<String>,
     }
 
-    let comp = state.component_repo.get_component_commands(id)
+    let comp = state
+        .component_repo
+        .get_component_commands(id)
         .await?
         .ok_or_not_found()?;
 
@@ -921,7 +926,9 @@ pub async fn execute_command(
         (None, builtin)
     } else {
         // Look up the command definition from component_commands
-        let custom_cmd = state.component_repo.get_custom_command(id, &cmd)
+        let custom_cmd = state
+            .component_repo
+            .get_custom_command(id, &cmd)
             .await?
             .ok_or_not_found()?;
 
@@ -946,14 +953,21 @@ pub async fn execute_command(
     let params = if let Some(cid) = command_id {
         {
             let cp = state.component_repo.list_command_params(cid).await?;
-            cp.into_iter().map(|p| crate::api::command_params::InputParamRow {
-                id: crate::db::DbUuid::from(p.id),
-                command_id: crate::db::DbUuid::from(p.command_id),
-                name: p.name, description: p.description,
-                default_value: p.default_value, validation_regex: p.validation_regex,
-                required: p.required, display_order: p.display_order,
-                param_type: p.param_type, enum_values: p.enum_values, created_at: p.created_at,
-            }).collect::<Vec<_>>()
+            cp.into_iter()
+                .map(|p| crate::api::command_params::InputParamRow {
+                    id: crate::db::DbUuid::from(p.id),
+                    command_id: crate::db::DbUuid::from(p.command_id),
+                    name: p.name,
+                    description: p.description,
+                    default_value: p.default_value,
+                    validation_regex: p.validation_regex,
+                    required: p.required,
+                    display_order: p.display_order,
+                    param_type: p.param_type,
+                    enum_values: p.enum_values,
+                    created_at: p.created_at,
+                })
+                .collect::<Vec<_>>()
         }
     } else {
         vec![]
@@ -993,9 +1007,17 @@ pub async fn execute_command(
 
     // Record dispatch in command_executions for audit trail
     let command_type_label = if command_id.is_none() { &cmd } else { "custom" };
-    if let Err(e) = state.component_repo.insert_command_execution(
-        request_id, id, agent_id, command_type_label, *user.user_id, &final_command,
-    ).await
+    if let Err(e) = state
+        .component_repo
+        .insert_command_execution(
+            request_id,
+            id,
+            agent_id,
+            command_type_label,
+            *user.user_id,
+            &final_command,
+        )
+        .await
     {
         tracing::warn!(request_id = %request_id, "Failed to record command dispatch: {}", e);
     }
@@ -1062,13 +1084,21 @@ pub async fn create_dependency(
     }
 
     // Validate both components belong to this application
-    let from_app_id = state.component_repo.get_component_app_id(*body.from_component_id)
+    let from_app_id = state
+        .component_repo
+        .get_component_app_id(*body.from_component_id)
         .await?
-        .ok_or(ApiError::Validation("from_component_id not found".to_string()))?;
+        .ok_or(ApiError::Validation(
+            "from_component_id not found".to_string(),
+        ))?;
 
-    let to_app_id = state.component_repo.get_component_app_id(*body.to_component_id)
+    let to_app_id = state
+        .component_repo
+        .get_component_app_id(*body.to_component_id)
         .await?
-        .ok_or(ApiError::Validation("to_component_id not found".to_string()))?;
+        .ok_or(ApiError::Validation(
+            "to_component_id not found".to_string(),
+        ))?;
 
     if from_app_id != app_id || to_app_id != app_id {
         return Err(ApiError::Validation(
@@ -1102,9 +1132,17 @@ pub async fn create_dependency(
     )
     .await?;
 
-    let dep_domain = state.component_repo.create_dependency(app_id, *body.from_component_id, *body.to_component_id).await?;
+    let dep_domain = state
+        .component_repo
+        .create_dependency(app_id, *body.from_component_id, *body.to_component_id)
+        .await?;
 
-    Ok((StatusCode::CREATED, Json(json!({"id": dep_domain.id, "application_id": dep_domain.application_id, "from_component_id": dep_domain.from_component_id, "to_component_id": dep_domain.to_component_id, "created_at": dep_domain.created_at}))))
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            json!({"id": dep_domain.id, "application_id": dep_domain.application_id, "from_component_id": dep_domain.from_component_id, "to_component_id": dep_domain.to_component_id, "created_at": dep_domain.created_at}),
+        ),
+    ))
 }
 
 pub async fn delete_dependency(
@@ -1112,7 +1150,9 @@ pub async fn delete_dependency(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let app_id = state.component_repo.get_dependency_app_id(id)
+    let app_id = state
+        .component_repo
+        .get_dependency_app_id(id)
         .await?
         .ok_or_not_found()?;
 
@@ -1158,17 +1198,21 @@ pub async fn list_custom_commands(
     Extension(user): Extension<AuthUser>,
     Path(component_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        state.component_repo.get_component_app_id(component_id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(component_id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
         return Err(ApiError::Forbidden);
     }
 
-    let commands = state.component_repo.list_custom_commands_raw(component_id).await?;
+    let commands = state
+        .component_repo
+        .list_custom_commands_raw(component_id)
+        .await?;
 
     Ok(Json(json!({ "commands": commands })))
 }
@@ -1207,10 +1251,11 @@ pub async fn list_command_executions(
     Path(component_id): Path<Uuid>,
     axum::extract::Query(query): axum::extract::Query<ExecutionHistoryQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        state.component_repo.get_component_app_id(component_id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(component_id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
@@ -1220,9 +1265,10 @@ pub async fn list_command_executions(
     let limit = query.limit.unwrap_or(50).min(200);
     let offset = query.offset.unwrap_or(0);
 
-    let executions = state.component_repo.list_command_executions(
-        component_id, query.status.as_deref(), limit, offset,
-    ).await?;
+    let executions = state
+        .component_repo
+        .list_command_executions(component_id, query.status.as_deref(), limit, offset)
+        .await?;
 
     Ok(Json(json!({ "executions": executions })))
 }
@@ -1248,10 +1294,11 @@ pub async fn list_state_transitions(
     Path(component_id): Path<Uuid>,
     axum::extract::Query(query): axum::extract::Query<ExecutionHistoryQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        state.component_repo.get_component_app_id(component_id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(component_id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
@@ -1261,7 +1308,10 @@ pub async fn list_state_transitions(
     let limit = query.limit.unwrap_or(50).min(200);
     let offset = query.offset.unwrap_or(0);
 
-    let transitions = state.component_repo.list_state_transitions(component_id, limit, offset).await?;
+    let transitions = state
+        .component_repo
+        .list_state_transitions(component_id, limit, offset)
+        .await?;
 
     Ok(Json(json!({ "transitions": transitions })))
 }
@@ -1288,10 +1338,11 @@ pub async fn list_check_events(
     Path(component_id): Path<Uuid>,
     axum::extract::Query(query): axum::extract::Query<ExecutionHistoryQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        state.component_repo.get_component_app_id(component_id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(component_id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
@@ -1301,7 +1352,10 @@ pub async fn list_check_events(
     let limit = query.limit.unwrap_or(20).min(100);
     let offset = query.offset.unwrap_or(0);
 
-    let events = state.component_repo.list_check_events(component_id, limit, offset).await?;
+    let events = state
+        .component_repo
+        .list_check_events(component_id, limit, offset)
+        .await?;
 
     Ok(Json(json!({ "events": events })))
 }
@@ -1355,7 +1409,9 @@ pub async fn get_component_metrics(
     Extension(user): Extension<AuthUser>,
     Path(component_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id = state.component_repo.get_component_app_id(component_id)
+    let app_id = state
+        .component_repo
+        .get_component_app_id(component_id)
         .await?
         .ok_or_not_found()?;
 
@@ -1365,7 +1421,8 @@ pub async fn get_component_metrics(
     }
 
     // Get latest check event with metrics
-    let latest = crate::repository::queries::get_latest_check_metrics(&state.db, component_id).await?;
+    let latest =
+        crate::repository::queries::get_latest_check_metrics(&state.db, component_id).await?;
 
     match latest {
         Some((metrics, exit_code, at)) => Ok(Json(json!({
@@ -1388,10 +1445,11 @@ pub async fn get_component_metrics_history(
     Extension(user): Extension<AuthUser>,
     Path(component_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let app_id =
-        state.component_repo.get_component_app_id(component_id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(component_id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
@@ -1399,7 +1457,8 @@ pub async fn get_component_metrics_history(
     }
 
     // Get last 100 check events with metrics
-    let history = crate::repository::queries::get_metrics_history(&state.db, component_id, 100).await?;
+    let history =
+        crate::repository::queries::get_metrics_history(&state.db, component_id, 100).await?;
 
     let points: Vec<Value> = history
         .into_iter()
@@ -1431,10 +1490,11 @@ pub async fn list_site_overrides(
     Path(component_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     // First get the app_id to check permissions
-    let app_id =
-        state.component_repo.get_component_app_id(component_id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(component_id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::View {
@@ -1442,6 +1502,7 @@ pub async fn list_site_overrides(
     }
 
     #[derive(Debug, sqlx::FromRow)]
+    #[allow(dead_code)]
     struct SiteOverrideRow {
         id: DbUuid,
         component_id: DbUuid,
@@ -1460,7 +1521,8 @@ pub async fn list_site_overrides(
         agent_hostname: Option<String>,
     }
 
-    let overrides = crate::repository::queries::list_site_overrides(&state.db, component_id).await?;
+    let overrides =
+        crate::repository::queries::list_site_overrides(&state.db, component_id).await?;
 
     let data: Vec<Value> = overrides
         .into_iter()
@@ -1507,10 +1569,11 @@ pub async fn upsert_site_override(
     Json(req): Json<UpsertSiteOverrideRequest>,
 ) -> Result<Json<Value>, ApiError> {
     // First get the app_id to check permissions
-    let app_id =
-        state.component_repo.get_component_app_id(component_id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(component_id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {
@@ -1539,11 +1602,17 @@ pub async fn upsert_site_override(
 
     // Upsert via repository
     let id = crate::repository::queries::upsert_site_override(
-        &state.db, component_id, site_id,
-        req.check_cmd_override.as_deref(), req.start_cmd_override.as_deref(),
-        req.stop_cmd_override.as_deref(), req.rebuild_cmd_override.as_deref(),
-        req.env_vars_override.as_ref(), req.agent_id_override,
-    ).await?;
+        &state.db,
+        component_id,
+        site_id,
+        req.check_cmd_override.as_deref(),
+        req.start_cmd_override.as_deref(),
+        req.stop_cmd_override.as_deref(),
+        req.rebuild_cmd_override.as_deref(),
+        req.env_vars_override.as_ref(),
+        req.agent_id_override,
+    )
+    .await?;
 
     Ok(Json(json!({
         "id": id,
@@ -1561,10 +1630,11 @@ pub async fn delete_site_override(
     Path((component_id, site_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
     // First get the app_id to check permissions
-    let app_id =
-        state.component_repo.get_component_app_id(component_id)
-            .await?
-            .ok_or_not_found()?;
+    let app_id = state
+        .component_repo
+        .get_component_app_id(component_id)
+        .await?
+        .ok_or_not_found()?;
 
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Edit {

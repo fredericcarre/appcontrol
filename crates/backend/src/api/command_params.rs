@@ -79,7 +79,8 @@ pub async fn list_params(
         return Err(ApiError::Forbidden);
     }
 
-    let params = crate::repository::misc_queries::list_input_params_raw(&state.db, command_id).await?;
+    let params =
+        crate::repository::misc_queries::list_input_params_raw(&state.db, command_id).await?;
 
     Ok(Json(json!({ "params": params })))
 }
@@ -163,7 +164,9 @@ pub async fn delete_param(
     )
     .await?;
 
-    let rows_affected = crate::repository::misc_queries::delete_input_param(&state.db, param_id, command_id).await?;
+    let rows_affected =
+        crate::repository::misc_queries::delete_input_param(&state.db, param_id, command_id)
+            .await?;
 
     if rows_affected == 0 {
         return Err(ApiError::NotFound);

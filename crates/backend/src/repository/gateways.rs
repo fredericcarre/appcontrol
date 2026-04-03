@@ -186,7 +186,20 @@ impl GatewayRepository for PgGatewayRepository {
         Ok(rows
             .into_iter()
             .map(
-                |(id, name, zone, is_active, is_primary, priority, version, last_heartbeat, agent_count, site_id, site_name, site_code)| {
+                |(
+                    id,
+                    name,
+                    zone,
+                    is_active,
+                    is_primary,
+                    priority,
+                    version,
+                    last_heartbeat,
+                    agent_count,
+                    site_id,
+                    site_name,
+                    site_code,
+                )| {
                     GatewayListRow {
                         id,
                         name,
@@ -291,13 +304,11 @@ impl GatewayRepository for PgGatewayRepository {
         id: Uuid,
         org_id: Uuid,
     ) -> Result<Option<(Option<Uuid>, String)>, sqlx::Error> {
-        sqlx::query_as(
-            "SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2",
-        )
-        .bind(id)
-        .bind(org_id)
-        .fetch_optional(&self.pool)
-        .await
+        sqlx::query_as("SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2")
+            .bind(id)
+            .bind(org_id)
+            .fetch_optional(&self.pool)
+            .await
     }
 }
 
@@ -398,7 +409,20 @@ impl GatewayRepository for SqliteGatewayRepository {
         Ok(rows
             .into_iter()
             .map(
-                |(id, name, zone, is_active, is_primary, priority, version, last_heartbeat, agent_count, site_id, site_name, site_code)| {
+                |(
+                    id,
+                    name,
+                    zone,
+                    is_active,
+                    is_primary,
+                    priority,
+                    version,
+                    last_heartbeat,
+                    agent_count,
+                    site_id,
+                    site_name,
+                    site_code,
+                )| {
                     GatewayListRow {
                         id: id.into_inner(),
                         name,
@@ -471,13 +495,12 @@ impl GatewayRepository for SqliteGatewayRepository {
     }
 
     async fn site_exists(&self, site_id: Uuid, org_id: Uuid) -> Result<bool, sqlx::Error> {
-        let count: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sites WHERE id = $1 AND organization_id = $2",
-        )
-        .bind(DbUuid::from(site_id))
-        .bind(DbUuid::from(org_id))
-        .fetch_one(&self.pool)
-        .await?;
+        let count: i32 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sites WHERE id = $1 AND organization_id = $2")
+                .bind(DbUuid::from(site_id))
+                .bind(DbUuid::from(org_id))
+                .fetch_one(&self.pool)
+                .await?;
         Ok(count > 0)
     }
 

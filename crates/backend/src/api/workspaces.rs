@@ -79,7 +79,14 @@ pub async fn create_workspace(
     validate_optional_length("description", &body.description, 2000)?;
 
     let id = Uuid::new_v4();
-    misc_queries::create_workspace(&state.db, id, user.organization_id, &body.name, &body.description).await?;
+    misc_queries::create_workspace(
+        &state.db,
+        id,
+        user.organization_id,
+        &body.name,
+        &body.description,
+    )
+    .await?;
 
     // Audit log
     crate::middleware::audit::log_action(
@@ -132,7 +139,8 @@ pub async fn list_workspace_sites(
     Extension(user): Extension<AuthUser>,
     Path(workspace_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let exists = misc_queries::workspace_exists(&state.db, workspace_id, user.organization_id).await?;
+    let exists =
+        misc_queries::workspace_exists(&state.db, workspace_id, user.organization_id).await?;
 
     if !exists {
         return Err(ApiError::NotFound);
@@ -189,7 +197,8 @@ pub async fn list_workspace_members(
     Extension(user): Extension<AuthUser>,
     Path(workspace_id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let exists = misc_queries::workspace_exists(&state.db, workspace_id, user.organization_id).await?;
+    let exists =
+        misc_queries::workspace_exists(&state.db, workspace_id, user.organization_id).await?;
 
     if !exists {
         return Err(ApiError::NotFound);
@@ -273,7 +282,8 @@ pub async fn my_accessible_sites(
     }
 
     // Check if workspace-site feature is configured
-    let has_any = misc_queries::has_workspace_sites_configured(&state.db, user.organization_id).await?;
+    let has_any =
+        misc_queries::has_workspace_sites_configured(&state.db, user.organization_id).await?;
 
     if !has_any {
         let sites = misc_queries::list_org_sites(&state.db, user.organization_id).await?;
@@ -287,12 +297,9 @@ pub async fn my_accessible_sites(
     }
 
     // Return only sites from user's workspaces
-    let sites = misc_queries::list_user_accessible_sites(
-        &state.db,
-        user.organization_id,
-        user.user_id,
-    )
-    .await?;
+    let sites =
+        misc_queries::list_user_accessible_sites(&state.db, user.organization_id, user.user_id)
+            .await?;
 
     let sites_json: Vec<Value> = sites
         .iter()

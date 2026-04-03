@@ -263,7 +263,11 @@ pub async fn export_app_json(
     let app_row = crate::repository::misc_queries::get_app_for_export(&state.db, app_id)
         .await?
         .ok_or(ApiError::NotFound)?;
-    let app = AppRow { name: app_row.0, description: app_row.1, tags: app_row.2 };
+    let app = AppRow {
+        name: app_row.0,
+        description: app_row.1,
+        tags: app_row.2,
+    };
 
     // Parse tags
     let tags: Vec<String> = app
@@ -273,7 +277,15 @@ pub async fn export_app_json(
 
     // Fetch variables
     let var_raw = crate::repository::misc_queries::get_vars_for_export(&state.db, app_id).await?;
-    let var_rows: Vec<VarRow> = var_raw.into_iter().map(|(name, value, description, is_secret)| VarRow { name, value, description, is_secret }).collect();
+    let var_rows: Vec<VarRow> = var_raw
+        .into_iter()
+        .map(|(name, value, description, is_secret)| VarRow {
+            name,
+            value,
+            description,
+            is_secret,
+        })
+        .collect();
 
     let variables: Vec<VariableExport> = var_rows
         .into_iter()
@@ -290,7 +302,8 @@ pub async fn export_app_json(
         .collect();
 
     // Fetch groups and build ID → name map
-    let group_rows = crate::repository::misc_queries::get_groups_for_export(&state.db, app_id).await?;
+    let group_rows =
+        crate::repository::misc_queries::get_groups_for_export(&state.db, app_id).await?;
 
     let group_id_to_name: HashMap<DbUuid, String> =
         group_rows.iter().map(|g| (g.id, g.name.clone())).collect();
@@ -306,17 +319,20 @@ pub async fn export_app_json(
         .collect();
 
     // Fetch components
-    let comp_rows = crate::repository::misc_queries::get_components_for_export(&state.db, app_id).await?;
+    let comp_rows =
+        crate::repository::misc_queries::get_components_for_export(&state.db, app_id).await?;
 
     // Build component ID → name map for dependencies
     let comp_id_to_name: HashMap<DbUuid, String> =
         comp_rows.iter().map(|c| (c.id, c.name.clone())).collect();
 
     // Fetch all custom commands
-    let cmd_rows = crate::repository::misc_queries::get_custom_cmds_for_export(&state.db, app_id).await?;
+    let cmd_rows =
+        crate::repository::misc_queries::get_custom_cmds_for_export(&state.db, app_id).await?;
 
     // Fetch all command parameters
-    let param_rows = crate::repository::misc_queries::get_cmd_params_for_export(&state.db, app_id).await?;
+    let param_rows =
+        crate::repository::misc_queries::get_cmd_params_for_export(&state.db, app_id).await?;
 
     // Group parameters by command ID
     let mut params_by_cmd: HashMap<DbUuid, Vec<CommandParamExport>> = HashMap::new();
@@ -350,7 +366,8 @@ pub async fn export_app_json(
     }
 
     // Fetch all links
-    let link_rows = crate::repository::misc_queries::get_links_for_export(&state.db, app_id).await?;
+    let link_rows =
+        crate::repository::misc_queries::get_links_for_export(&state.db, app_id).await?;
 
     // Group links by component ID
     let mut links_by_comp: HashMap<DbUuid, Vec<LinkExport>> = HashMap::new();
@@ -435,7 +452,13 @@ pub async fn export_app_json(
 
     // Fetch dependencies
     let dep_raw = crate::repository::misc_queries::get_deps_for_export(&state.db, app_id).await?;
-    let dep_rows: Vec<DepRow> = dep_raw.into_iter().map(|(f, t)| DepRow { from_component_id: f, to_component_id: t }).collect();
+    let dep_rows: Vec<DepRow> = dep_raw
+        .into_iter()
+        .map(|(f, t)| DepRow {
+            from_component_id: f,
+            to_component_id: t,
+        })
+        .collect();
 
     let dependencies: Vec<DependencyExport> = dep_rows
         .into_iter()

@@ -1,8 +1,8 @@
 use crate::db::{DbPool, DbUuid};
 use uuid::Uuid;
 
-use appcontrol_common::PermissionLevel;
 use crate::repository::core_queries;
+use appcontrol_common::PermissionLevel;
 
 /// Compute the effective permission for a user on an application.
 ///

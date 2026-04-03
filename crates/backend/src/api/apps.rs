@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
-use crate::db::{DbJson, DbPool, DbUuid};
+use crate::db::{DbJson, DbUuid};
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
 use crate::middleware::audit::{complete_action_failed, complete_action_success, log_action};
 use crate::AppState;
@@ -268,12 +268,18 @@ pub async fn get_app(
         std::collections::HashMap::new();
 
     if !referenced_app_ids.is_empty() {
-        let status_rows = state.app_repo.get_referenced_app_statuses(&referenced_app_ids).await?;
+        let status_rows = state
+            .app_repo
+            .get_referenced_app_statuses(&referenced_app_ids)
+            .await?;
         for ref_status in status_rows {
             let (computed_state, _) = compute_app_status(
-                ref_status.running_count, ref_status.stopped_count,
-                ref_status.failed_count, ref_status.starting_count,
-                ref_status.stopping_count, ref_status.component_count,
+                ref_status.running_count,
+                ref_status.stopped_count,
+                ref_status.failed_count,
+                ref_status.starting_count,
+                ref_status.stopping_count,
+                ref_status.component_count,
             );
             referenced_app_names.insert(ref_status.app_id, ref_status.app_name);
             referenced_app_statuses.insert(ref_status.app_id, computed_state);
@@ -525,9 +531,10 @@ pub async fn update_app(
         .unwrap_or_else(|| "null".to_string());
     let after_json = after_snapshot.to_string();
 
-    state.app_repo.insert_config_version(
-        "application", id, *user.user_id, &before_json, &after_json,
-    ).await?;
+    state
+        .app_repo
+        .insert_config_version("application", id, *user.user_id, &before_json, &after_json)
+        .await?;
 
     Ok(Json(after_snapshot))
 }
@@ -552,10 +559,7 @@ pub async fn delete_app(
     )
     .await?;
 
-    let deleted = state
-        .app_repo
-        .delete_app(id, *user.organization_id)
-        .await?;
+    let deleted = state.app_repo.delete_app(id, *user.organization_id).await?;
 
     if !deleted {
         return Err(ApiError::NotFound);
@@ -571,7 +575,9 @@ pub async fn start_app(
     Json(body): Json<Option<StartAppRequest>>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify app belongs to user's org
-    state.app_repo.verify_app_org(id, *user.organization_id)
+    state
+        .app_repo
+        .verify_app_org(id, *user.organization_id)
         .await?
         .ok_or_not_found()?;
 
@@ -808,7 +814,10 @@ pub async fn start_branch(
     let target_component_ids: Vec<Uuid> = if let Some(cid) = body.component_id {
         vec![*cid]
     } else {
-        state.app_repo.get_failed_component_ids(id).await
+        state
+            .app_repo
+            .get_failed_component_ids(id)
+            .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
     };
 
@@ -884,7 +893,9 @@ pub async fn start_to(
     }
 
     // Verify the target component belongs to this application
-    let target_app_id = state.component_repo.get_component_app_id(*body.target_component_id)
+    let target_app_id = state
+        .component_repo
+        .get_component_app_id(*body.target_component_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or(ApiError::NotFound)?;
@@ -928,7 +939,9 @@ pub async fn start_to(
         for level in &levels {
             let mut level_info = Vec::new();
             for &comp_id in level {
-                let name = state.app_repo.get_component_name(comp_id)
+                let name = state
+                    .app_repo
+                    .get_component_name(comp_id)
                     .await
                     .map_err(|e| ApiError::Internal(e.to_string()))?
                     .unwrap_or_else(|| comp_id.to_string());
@@ -992,7 +1005,9 @@ pub async fn suspend_application(
     }
 
     // Check if already suspended
-    let is_suspended = state.app_repo.is_app_suspended(id)
+    let is_suspended = state
+        .app_repo
+        .is_app_suspended(id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -1003,7 +1018,9 @@ pub async fn suspend_application(
     }
 
     // Suspend the application
-    state.app_repo.suspend_app(id, *user.user_id)
+    state
+        .app_repo
+        .suspend_app(id, *user.user_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -1022,7 +1039,9 @@ pub async fn suspend_application(
     crate::websocket::push_config_to_affected_agents(&state, Some(id), None, None).await;
 
     // Get app name for response
-    let name: String = state.app_repo.get_app_name(id)
+    let name: String = state
+        .app_repo
+        .get_app_name(id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .unwrap_or_default();
@@ -1058,7 +1077,9 @@ pub async fn resume_application(
     }
 
     // Check if suspended
-    let is_suspended = state.app_repo.is_app_suspended(id)
+    let is_suspended = state
+        .app_repo
+        .is_app_suspended(id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -1069,7 +1090,9 @@ pub async fn resume_application(
     }
 
     // Resume the application
-    state.app_repo.resume_app(id)
+    state
+        .app_repo
+        .resume_app(id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -1088,7 +1111,9 @@ pub async fn resume_application(
     crate::websocket::push_config_to_affected_agents(&state, Some(id), None, None).await;
 
     // Get app name for response
-    let name: String = state.app_repo.get_app_name(id)
+    let name: String = state
+        .app_repo
+        .get_app_name(id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .unwrap_or_default();
@@ -1129,7 +1154,9 @@ pub async fn get_site_overrides(
     }
 
     // Verify app belongs to org
-    state.app_repo.verify_app_org(app_id, *user.organization_id)
+    state
+        .app_repo
+        .verify_app_org(app_id, *user.organization_id)
         .await?
         .ok_or_not_found()?;
 
@@ -1137,7 +1164,7 @@ pub async fn get_site_overrides(
     let primary_site = state.app_repo.get_app_site_info(app_id).await?;
 
     // Fetch all binding profile mappings with site info
-    use crate::repository::apps::{SiteBinding, CmdOverride};
+    use crate::repository::apps::CmdOverride;
 
     let bindings = state.app_repo.get_site_bindings(app_id).await?;
 
@@ -1145,11 +1172,10 @@ pub async fn get_site_overrides(
     let cmd_overrides = state.app_repo.get_cmd_overrides(app_id).await?;
 
     // Create a lookup map for command overrides
-    let cmd_override_map: std::collections::HashMap<(Uuid, Uuid), &CmdOverride> =
-        cmd_overrides
-            .iter()
-            .map(|o| ((o.component_id, o.site_id), o))
-            .collect();
+    let cmd_override_map: std::collections::HashMap<(Uuid, Uuid), &CmdOverride> = cmd_overrides
+        .iter()
+        .map(|o| ((o.component_id, o.site_id), o))
+        .collect();
 
     // Build the response - group bindings by component
     let mut component_map: std::collections::HashMap<Uuid, Vec<Value>> =

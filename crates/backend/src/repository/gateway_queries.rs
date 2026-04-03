@@ -5,7 +5,7 @@
 //! security-related operations.
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
-use crate::db::{DbPool, DbUuid, DbJson};
+use crate::db::{DbJson, DbPool, DbUuid};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -32,13 +32,12 @@ pub async fn site_exists_in_org(
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
-        let count: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sites WHERE id = $1 AND organization_id = $2",
-        )
-        .bind(DbUuid::from(site_id))
-        .bind(DbUuid::from(org_id))
-        .fetch_one(pool)
-        .await?;
+        let count: i32 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sites WHERE id = $1 AND organization_id = $2")
+                .bind(DbUuid::from(site_id))
+                .bind(DbUuid::from(org_id))
+                .fetch_one(pool)
+                .await?;
         Ok(count > 0)
     }
 }
@@ -132,46 +131,52 @@ pub async fn list_gateway_agents(
 ) -> Result<Vec<GatewayAgentInfo>, sqlx::Error> {
     #[cfg(feature = "postgres")]
     {
-        let rows = sqlx::query_as::<_, (Uuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
-            r#"SELECT id, hostname, is_active, last_heartbeat_at
+        let rows =
+            sqlx::query_as::<_, (Uuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
+                r#"SELECT id, hostname, is_active, last_heartbeat_at
                FROM agents
                WHERE gateway_id = $1 AND organization_id = $2
                ORDER BY hostname"#,
-        )
-        .bind(gateway_id)
-        .bind(org_id)
-        .fetch_all(pool)
-        .await?;
+            )
+            .bind(gateway_id)
+            .bind(org_id)
+            .fetch_all(pool)
+            .await?;
         Ok(rows
             .into_iter()
-            .map(|(id, hostname, is_active, last_heartbeat_at)| GatewayAgentInfo {
-                id,
-                hostname,
-                is_active,
-                last_heartbeat_at,
-            })
+            .map(
+                |(id, hostname, is_active, last_heartbeat_at)| GatewayAgentInfo {
+                    id,
+                    hostname,
+                    is_active,
+                    last_heartbeat_at,
+                },
+            )
             .collect())
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
-        let rows = sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
-            r#"SELECT id, hostname, is_active, last_heartbeat_at
+        let rows =
+            sqlx::query_as::<_, (DbUuid, String, bool, Option<chrono::DateTime<chrono::Utc>>)>(
+                r#"SELECT id, hostname, is_active, last_heartbeat_at
                FROM agents
                WHERE gateway_id = $1 AND organization_id = $2
                ORDER BY hostname"#,
-        )
-        .bind(DbUuid::from(gateway_id))
-        .bind(DbUuid::from(org_id))
-        .fetch_all(pool)
-        .await?;
+            )
+            .bind(DbUuid::from(gateway_id))
+            .bind(DbUuid::from(org_id))
+            .fetch_all(pool)
+            .await?;
         Ok(rows
             .into_iter()
-            .map(|(id, hostname, is_active, last_heartbeat_at)| GatewayAgentInfo {
-                id: id.into_inner(),
-                hostname,
-                is_active,
-                last_heartbeat_at,
-            })
+            .map(
+                |(id, hostname, is_active, last_heartbeat_at)| GatewayAgentInfo {
+                    id: id.into_inner(),
+                    hostname,
+                    is_active,
+                    last_heartbeat_at,
+                },
+            )
             .collect())
     }
 }
@@ -208,10 +213,18 @@ pub async fn suspend_gateway(
     {
         #[derive(sqlx::FromRow)]
         struct Row {
-            id: Uuid, organization_id: Uuid, name: String, zone: Option<String>,
-            hostname: Option<String>, port: Option<i32>, site_id: Option<Uuid>,
-            certificate_fingerprint: Option<String>, is_active: bool, is_primary: bool,
-            priority: i32, version: Option<String>,
+            id: Uuid,
+            organization_id: Uuid,
+            name: String,
+            zone: Option<String>,
+            hostname: Option<String>,
+            port: Option<i32>,
+            site_id: Option<Uuid>,
+            certificate_fingerprint: Option<String>,
+            is_active: bool,
+            is_primary: bool,
+            priority: i32,
+            version: Option<String>,
             last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
             created_at: chrono::DateTime<chrono::Utc>,
         }
@@ -229,21 +242,38 @@ pub async fn suspend_gateway(
         .fetch_optional(pool)
         .await?;
         Ok(row.map(|r| GatewayUpdateRow {
-            id: r.id, organization_id: r.organization_id, name: r.name, zone: r.zone,
-            hostname: r.hostname, port: r.port, site_id: r.site_id,
-            certificate_fingerprint: r.certificate_fingerprint, is_active: r.is_active,
-            is_primary: r.is_primary, priority: r.priority, version: r.version,
-            last_heartbeat_at: r.last_heartbeat_at, created_at: r.created_at,
+            id: r.id,
+            organization_id: r.organization_id,
+            name: r.name,
+            zone: r.zone,
+            hostname: r.hostname,
+            port: r.port,
+            site_id: r.site_id,
+            certificate_fingerprint: r.certificate_fingerprint,
+            is_active: r.is_active,
+            is_primary: r.is_primary,
+            priority: r.priority,
+            version: r.version,
+            last_heartbeat_at: r.last_heartbeat_at,
+            created_at: r.created_at,
         }))
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
         #[derive(sqlx::FromRow)]
         struct Row {
-            id: DbUuid, organization_id: DbUuid, name: String, zone: Option<String>,
-            hostname: Option<String>, port: Option<i32>, site_id: Option<DbUuid>,
-            certificate_fingerprint: Option<String>, is_active: bool, is_primary: bool,
-            priority: i32, version: Option<String>,
+            id: DbUuid,
+            organization_id: DbUuid,
+            name: String,
+            zone: Option<String>,
+            hostname: Option<String>,
+            port: Option<i32>,
+            site_id: Option<DbUuid>,
+            certificate_fingerprint: Option<String>,
+            is_active: bool,
+            is_primary: bool,
+            priority: i32,
+            version: Option<String>,
             last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
             created_at: chrono::DateTime<chrono::Utc>,
         }
@@ -261,12 +291,20 @@ pub async fn suspend_gateway(
         .fetch_optional(pool)
         .await?;
         Ok(row.map(|r| GatewayUpdateRow {
-            id: r.id.into_inner(), organization_id: r.organization_id.into_inner(),
-            name: r.name, zone: r.zone, hostname: r.hostname, port: r.port,
+            id: r.id.into_inner(),
+            organization_id: r.organization_id.into_inner(),
+            name: r.name,
+            zone: r.zone,
+            hostname: r.hostname,
+            port: r.port,
             site_id: r.site_id.map(|s| s.into_inner()),
-            certificate_fingerprint: r.certificate_fingerprint, is_active: r.is_active,
-            is_primary: r.is_primary, priority: r.priority, version: r.version,
-            last_heartbeat_at: r.last_heartbeat_at, created_at: r.created_at,
+            certificate_fingerprint: r.certificate_fingerprint,
+            is_active: r.is_active,
+            is_primary: r.is_primary,
+            priority: r.priority,
+            version: r.version,
+            last_heartbeat_at: r.last_heartbeat_at,
+            created_at: r.created_at,
         }))
     }
 }
@@ -281,10 +319,18 @@ pub async fn activate_gateway(
     {
         #[derive(sqlx::FromRow)]
         struct Row {
-            id: Uuid, organization_id: Uuid, name: String, zone: Option<String>,
-            hostname: Option<String>, port: Option<i32>, site_id: Option<Uuid>,
-            certificate_fingerprint: Option<String>, is_active: bool, is_primary: bool,
-            priority: i32, version: Option<String>,
+            id: Uuid,
+            organization_id: Uuid,
+            name: String,
+            zone: Option<String>,
+            hostname: Option<String>,
+            port: Option<i32>,
+            site_id: Option<Uuid>,
+            certificate_fingerprint: Option<String>,
+            is_active: bool,
+            is_primary: bool,
+            priority: i32,
+            version: Option<String>,
             last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
             created_at: chrono::DateTime<chrono::Utc>,
         }
@@ -302,21 +348,38 @@ pub async fn activate_gateway(
         .fetch_optional(pool)
         .await?;
         Ok(row.map(|r| GatewayUpdateRow {
-            id: r.id, organization_id: r.organization_id, name: r.name, zone: r.zone,
-            hostname: r.hostname, port: r.port, site_id: r.site_id,
-            certificate_fingerprint: r.certificate_fingerprint, is_active: r.is_active,
-            is_primary: r.is_primary, priority: r.priority, version: r.version,
-            last_heartbeat_at: r.last_heartbeat_at, created_at: r.created_at,
+            id: r.id,
+            organization_id: r.organization_id,
+            name: r.name,
+            zone: r.zone,
+            hostname: r.hostname,
+            port: r.port,
+            site_id: r.site_id,
+            certificate_fingerprint: r.certificate_fingerprint,
+            is_active: r.is_active,
+            is_primary: r.is_primary,
+            priority: r.priority,
+            version: r.version,
+            last_heartbeat_at: r.last_heartbeat_at,
+            created_at: r.created_at,
         }))
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
         #[derive(sqlx::FromRow)]
         struct Row {
-            id: DbUuid, organization_id: DbUuid, name: String, zone: Option<String>,
-            hostname: Option<String>, port: Option<i32>, site_id: Option<DbUuid>,
-            certificate_fingerprint: Option<String>, is_active: bool, is_primary: bool,
-            priority: i32, version: Option<String>,
+            id: DbUuid,
+            organization_id: DbUuid,
+            name: String,
+            zone: Option<String>,
+            hostname: Option<String>,
+            port: Option<i32>,
+            site_id: Option<DbUuid>,
+            certificate_fingerprint: Option<String>,
+            is_active: bool,
+            is_primary: bool,
+            priority: i32,
+            version: Option<String>,
             last_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
             created_at: chrono::DateTime<chrono::Utc>,
         }
@@ -334,12 +397,20 @@ pub async fn activate_gateway(
         .fetch_optional(pool)
         .await?;
         Ok(row.map(|r| GatewayUpdateRow {
-            id: r.id.into_inner(), organization_id: r.organization_id.into_inner(),
-            name: r.name, zone: r.zone, hostname: r.hostname, port: r.port,
+            id: r.id.into_inner(),
+            organization_id: r.organization_id.into_inner(),
+            name: r.name,
+            zone: r.zone,
+            hostname: r.hostname,
+            port: r.port,
             site_id: r.site_id.map(|s| s.into_inner()),
-            certificate_fingerprint: r.certificate_fingerprint, is_active: r.is_active,
-            is_primary: r.is_primary, priority: r.priority, version: r.version,
-            last_heartbeat_at: r.last_heartbeat_at, created_at: r.created_at,
+            certificate_fingerprint: r.certificate_fingerprint,
+            is_active: r.is_active,
+            is_primary: r.is_primary,
+            priority: r.priority,
+            version: r.version,
+            last_heartbeat_at: r.last_heartbeat_at,
+            created_at: r.created_at,
         }))
     }
 }
@@ -395,7 +466,18 @@ pub async fn list_revoked_certificates(
 ) -> Result<Vec<RevokedCertInfo>, sqlx::Error> {
     #[cfg(feature = "postgres")]
     {
-        let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>, Option<Uuid>, String, chrono::DateTime<chrono::Utc>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                String,
+                Option<String>,
+                Option<Uuid>,
+                Option<Uuid>,
+                String,
+                chrono::DateTime<chrono::Utc>,
+            ),
+        >(
             r#"SELECT id, fingerprint, cn, agent_id, gateway_id, reason, revoked_at
                FROM revoked_certificates
                WHERE organization_id = $1
@@ -405,13 +487,33 @@ pub async fn list_revoked_certificates(
         .bind(org_id)
         .fetch_all(pool)
         .await?;
-        Ok(rows.into_iter().map(|(id, fp, cn, aid, gid, reason, at)| RevokedCertInfo {
-            id, fingerprint: fp, cn, agent_id: aid, gateway_id: gid, reason, revoked_at: at,
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(id, fp, cn, aid, gid, reason, at)| RevokedCertInfo {
+                id,
+                fingerprint: fp,
+                cn,
+                agent_id: aid,
+                gateway_id: gid,
+                reason,
+                revoked_at: at,
+            })
+            .collect())
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
-        let rows = sqlx::query_as::<_, (DbUuid, String, Option<String>, Option<DbUuid>, Option<DbUuid>, String, chrono::DateTime<chrono::Utc>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                DbUuid,
+                String,
+                Option<String>,
+                Option<DbUuid>,
+                Option<DbUuid>,
+                String,
+                chrono::DateTime<chrono::Utc>,
+            ),
+        >(
             r#"SELECT id, fingerprint, cn, agent_id, gateway_id, reason, revoked_at
                FROM revoked_certificates
                WHERE organization_id = $1
@@ -421,12 +523,18 @@ pub async fn list_revoked_certificates(
         .bind(DbUuid::from(org_id))
         .fetch_all(pool)
         .await?;
-        Ok(rows.into_iter().map(|(id, fp, cn, aid, gid, reason, at)| RevokedCertInfo {
-            id: id.into_inner(), fingerprint: fp, cn,
-            agent_id: aid.map(|a| a.into_inner()),
-            gateway_id: gid.map(|g| g.into_inner()),
-            reason, revoked_at: at,
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(id, fp, cn, aid, gid, reason, at)| RevokedCertInfo {
+                id: id.into_inner(),
+                fingerprint: fp,
+                cn,
+                agent_id: aid.map(|a| a.into_inner()),
+                gateway_id: gid.map(|g| g.into_inner()),
+                reason,
+                revoked_at: at,
+            })
+            .collect())
     }
 }
 
@@ -462,11 +570,7 @@ pub async fn verify_agent_cert_pinning(
 }
 
 /// Check if a certificate fingerprint is revoked for an organization.
-pub async fn is_cert_revoked_in_org(
-    pool: &DbPool,
-    org_id: Uuid,
-    fingerprint: &str,
-) -> bool {
+pub async fn is_cert_revoked_in_org(pool: &DbPool, org_id: Uuid, fingerprint: &str) -> bool {
     #[cfg(feature = "postgres")]
     {
         sqlx::query_scalar::<_, bool>(
@@ -507,7 +611,12 @@ pub async fn get_agent_components_for_unreachable(
     #[cfg(feature = "postgres")]
     {
         #[derive(sqlx::FromRow)]
-        struct Row { id: Uuid, name: String, application_id: Uuid, app_name: String }
+        struct Row {
+            id: Uuid,
+            name: String,
+            application_id: Uuid,
+            app_name: String,
+        }
         let rows = sqlx::query_as::<_, Row>(
             r#"SELECT c.id, c.name, c.application_id, a.name AS app_name
                FROM components c
@@ -517,14 +626,25 @@ pub async fn get_agent_components_for_unreachable(
         .bind(agent_id)
         .fetch_all(pool)
         .await?;
-        Ok(rows.into_iter().map(|r| GatewayAgentComponent {
-            id: r.id, name: r.name, application_id: r.application_id, app_name: r.app_name,
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| GatewayAgentComponent {
+                id: r.id,
+                name: r.name,
+                application_id: r.application_id,
+                app_name: r.app_name,
+            })
+            .collect())
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
         #[derive(sqlx::FromRow)]
-        struct Row { id: DbUuid, name: String, application_id: DbUuid, app_name: String }
+        struct Row {
+            id: DbUuid,
+            name: String,
+            application_id: DbUuid,
+            app_name: String,
+        }
         let rows = sqlx::query_as::<_, Row>(
             r#"SELECT c.id, c.name, c.application_id, a.name AS app_name
                FROM components c
@@ -534,9 +654,15 @@ pub async fn get_agent_components_for_unreachable(
         .bind(DbUuid::from(agent_id))
         .fetch_all(pool)
         .await?;
-        Ok(rows.into_iter().map(|r| GatewayAgentComponent {
-            id: r.id.into_inner(), name: r.name, application_id: r.application_id.into_inner(), app_name: r.app_name,
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| GatewayAgentComponent {
+                id: r.id.into_inner(),
+                name: r.name,
+                application_id: r.application_id.into_inner(),
+                app_name: r.app_name,
+            })
+            .collect())
     }
 }
 
@@ -574,10 +700,7 @@ pub async fn insert_gateway_blocked_transition(
 }
 
 /// Deactivate agent and clear identity verification (for cert revocation).
-pub async fn deactivate_agent_identity(
-    pool: &DbPool,
-    agent_id: Uuid,
-) -> Result<(), sqlx::Error> {
+pub async fn deactivate_agent_identity(pool: &DbPool, agent_id: Uuid) -> Result<(), sqlx::Error> {
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE agents SET is_active = false, identity_verified = false WHERE id = $1")
         .bind(agent_id)
@@ -592,10 +715,7 @@ pub async fn deactivate_agent_identity(
 }
 
 /// Deactivate a gateway (set is_active = false).
-pub async fn deactivate_gateway(
-    pool: &DbPool,
-    gateway_id: Uuid,
-) -> Result<(), sqlx::Error> {
+pub async fn deactivate_gateway(pool: &DbPool, gateway_id: Uuid) -> Result<(), sqlx::Error> {
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE gateways SET is_active = false WHERE id = $1")
         .bind(gateway_id)

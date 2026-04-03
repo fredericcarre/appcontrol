@@ -1,7 +1,7 @@
 //! Query functions for misc domain (links, variables, groups, audit, rate-limit, users, break-glass, etc).
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
-use crate::db::{self, DbPool, DbUuid, DbJson};
+use crate::db::{self, DbJson, DbPool, DbUuid};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -1084,26 +1084,44 @@ pub async fn history_list_components(
     #[cfg(feature = "postgres")]
     {
         #[derive(sqlx::FromRow)]
-        struct Row { id: Uuid, name: String }
+        struct Row {
+            id: Uuid,
+            name: String,
+        }
         let rows = sqlx::query_as::<_, Row>(
             "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
         )
         .bind(app_id)
         .fetch_all(pool)
         .await?;
-        Ok(rows.into_iter().map(|r| HistoryComponentRow { id: r.id, name: r.name }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| HistoryComponentRow {
+                id: r.id,
+                name: r.name,
+            })
+            .collect())
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
         #[derive(sqlx::FromRow)]
-        struct Row { id: DbUuid, name: String }
+        struct Row {
+            id: DbUuid,
+            name: String,
+        }
         let rows = sqlx::query_as::<_, Row>(
             "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
         )
         .bind(DbUuid::from(app_id))
         .fetch_all(pool)
         .await?;
-        Ok(rows.into_iter().map(|r| HistoryComponentRow { id: r.id.into_inner(), name: r.name }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| HistoryComponentRow {
+                id: r.id.into_inner(),
+                name: r.name,
+            })
+            .collect())
     }
 }
 
@@ -1165,9 +1183,7 @@ pub async fn history_initial_states(
         let rows: Vec<(String, String)> = q.fetch_all(pool).await?;
         Ok(rows
             .into_iter()
-            .filter_map(|(id_str, state)| {
-                Uuid::parse_str(&id_str).ok().map(|id| (id, state))
-            })
+            .filter_map(|(id_str, state)| Uuid::parse_str(&id_str).ok().map(|id| (id, state)))
             .collect())
     }
 }
@@ -1205,13 +1221,16 @@ pub async fn history_transition_rows(
         .bind(to)
         .fetch_all(pool)
         .await?;
-        Ok(rows.into_iter().map(|r| HistoryTransitionRow {
-            component_id: r.component_id,
-            from_state: r.from_state,
-            to_state: r.to_state,
-            trigger: r.trigger,
-            created_at: r.created_at,
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| HistoryTransitionRow {
+                component_id: r.component_id,
+                from_state: r.from_state,
+                to_state: r.to_state,
+                trigger: r.trigger,
+                created_at: r.created_at,
+            })
+            .collect())
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
@@ -1274,21 +1293,22 @@ pub async fn history_state_transitions(
     }
     #[cfg(feature = "postgres")]
     {
-        let rows = sqlx::query_as::<_, (Uuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
-            r#"
+        let rows =
+            sqlx::query_as::<_, (Uuid, String, String, String, chrono::DateTime<chrono::Utc>)>(
+                r#"
             SELECT component_id, from_state, to_state, trigger, created_at
             FROM state_transitions
             WHERE component_id = ANY($1) AND created_at >= $2 AND created_at <= $3
             ORDER BY created_at ASC
             LIMIT $4
             "#,
-        )
-        .bind(component_ids)
-        .bind(from)
-        .bind(to)
-        .bind(limit)
-        .fetch_all(pool)
-        .await?;
+            )
+            .bind(component_ids)
+            .bind(from)
+            .bind(to)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?;
         Ok(rows)
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -1334,7 +1354,17 @@ pub async fn history_app_actions(
     from: chrono::DateTime<chrono::Utc>,
     to: chrono::DateTime<chrono::Utc>,
     limit: i64,
-) -> Result<Vec<(String, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        String,
+        String,
+        Value,
+        chrono::DateTime<chrono::Utc>,
+        Option<String>,
+        Option<String>,
+    )>,
+    sqlx::Error,
+> {
     #[cfg(feature = "postgres")]
     {
         let rows = sqlx::query_as::<_, (String, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>(
@@ -1391,7 +1421,14 @@ pub async fn history_app_actions(
                     .ok()?
                     .with_timezone(&chrono::Utc);
                 let details: Value = serde_json::from_str(&r.details).unwrap_or(Value::Null);
-                Some((r.user_email, r.action, details, at, r.status, r.error_message))
+                Some((
+                    r.user_email,
+                    r.action,
+                    details,
+                    at,
+                    r.status,
+                    r.error_message,
+                ))
             })
             .collect())
     }
@@ -1404,13 +1441,37 @@ pub async fn history_component_actions(
     from: chrono::DateTime<chrono::Utc>,
     to: chrono::DateTime<chrono::Utc>,
     limit: i64,
-) -> Result<Vec<(String, String, Uuid, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        String,
+        String,
+        Uuid,
+        String,
+        Value,
+        chrono::DateTime<chrono::Utc>,
+        Option<String>,
+        Option<String>,
+    )>,
+    sqlx::Error,
+> {
     if component_ids.is_empty() {
         return Ok(Vec::new());
     }
     #[cfg(feature = "postgres")]
     {
-        let rows = sqlx::query_as::<_, (String, String, Uuid, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                Uuid,
+                String,
+                Value,
+                chrono::DateTime<chrono::Utc>,
+                Option<String>,
+                Option<String>,
+            ),
+        >(
             r#"
             SELECT COALESCE(u.email, al.user_id::text), al.action, al.resource_id,
                    COALESCE(c.name, al.resource_id::text), al.details, al.created_at,
@@ -1454,24 +1515,38 @@ pub async fn history_component_actions(
             "#,
             placeholders.join(", ")
         );
-        let mut q = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>)>(&query)
-            .bind(from.to_rfc3339())
-            .bind(to.to_rfc3339())
-            .bind(limit);
+        let mut q = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+            ),
+        >(&query)
+        .bind(from.to_rfc3339())
+        .bind(to.to_rfc3339())
+        .bind(limit);
         for id in component_ids {
             q = q.bind(id.to_string());
         }
         let rows = q.fetch_all(pool).await?;
         Ok(rows
             .into_iter()
-            .filter_map(|(user, action, resource_id, comp_name, details, created_at, status, error)| {
-                let id = Uuid::parse_str(&resource_id).ok()?;
-                let at = chrono::DateTime::parse_from_rfc3339(&created_at)
-                    .ok()?
-                    .with_timezone(&chrono::Utc);
-                let details_val: Value = serde_json::from_str(&details).unwrap_or(Value::Null);
-                Some((user, action, id, comp_name, details_val, at, status, error))
-            })
+            .filter_map(
+                |(user, action, resource_id, comp_name, details, created_at, status, error)| {
+                    let id = Uuid::parse_str(&resource_id).ok()?;
+                    let at = chrono::DateTime::parse_from_rfc3339(&created_at)
+                        .ok()?
+                        .with_timezone(&chrono::Utc);
+                    let details_val: Value = serde_json::from_str(&details).unwrap_or(Value::Null);
+                    Some((user, action, id, comp_name, details_val, at, status, error))
+                },
+            )
             .collect())
     }
 }
@@ -1483,13 +1558,35 @@ pub async fn history_command_executions(
     from: chrono::DateTime<chrono::Utc>,
     to: chrono::DateTime<chrono::Utc>,
     limit: i64,
-) -> Result<Vec<(Uuid, Uuid, String, Option<i16>, Option<i32>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        Uuid,
+        Uuid,
+        String,
+        Option<i16>,
+        Option<i32>,
+        chrono::DateTime<chrono::Utc>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )>,
+    sqlx::Error,
+> {
     if component_ids.is_empty() {
         return Ok(Vec::new());
     }
     #[cfg(feature = "postgres")]
     {
-        let rows = sqlx::query_as::<_, (Uuid, Uuid, String, Option<i16>, Option<i32>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                Uuid,
+                String,
+                Option<i16>,
+                Option<i32>,
+                chrono::DateTime<chrono::Utc>,
+                Option<chrono::DateTime<chrono::Utc>>,
+            ),
+        >(
             r#"
             SELECT ce.request_id, ce.component_id, ce.command_type,
                    ce.exit_code, ce.duration_ms, ce.dispatched_at, ce.completed_at
@@ -1523,27 +1620,56 @@ pub async fn history_command_executions(
             "#,
             placeholders.join(", ")
         );
-        let mut q = sqlx::query_as::<_, (String, String, String, Option<i16>, Option<i32>, String, Option<String>)>(&query)
-            .bind(from.to_rfc3339())
-            .bind(to.to_rfc3339())
-            .bind(limit);
+        let mut q = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                Option<i16>,
+                Option<i32>,
+                String,
+                Option<String>,
+            ),
+        >(&query)
+        .bind(from.to_rfc3339())
+        .bind(to.to_rfc3339())
+        .bind(limit);
         for id in component_ids {
             q = q.bind(id.to_string());
         }
         let rows = q.fetch_all(pool).await?;
         Ok(rows
             .into_iter()
-            .filter_map(|(request_id, comp_id, cmd_type, exit_code, duration_ms, dispatched_at, completed_at)| {
-                let req_id = Uuid::parse_str(&request_id).ok()?;
-                let cid = Uuid::parse_str(&comp_id).ok()?;
-                let dispatched = chrono::DateTime::parse_from_rfc3339(&dispatched_at)
-                    .ok()?
-                    .with_timezone(&chrono::Utc);
-                let completed = completed_at
-                    .and_then(|c| chrono::DateTime::parse_from_rfc3339(&c).ok())
-                    .map(|c| c.with_timezone(&chrono::Utc));
-                Some((req_id, cid, cmd_type, exit_code, duration_ms, dispatched, completed))
-            })
+            .filter_map(
+                |(
+                    request_id,
+                    comp_id,
+                    cmd_type,
+                    exit_code,
+                    duration_ms,
+                    dispatched_at,
+                    completed_at,
+                )| {
+                    let req_id = Uuid::parse_str(&request_id).ok()?;
+                    let cid = Uuid::parse_str(&comp_id).ok()?;
+                    let dispatched = chrono::DateTime::parse_from_rfc3339(&dispatched_at)
+                        .ok()?
+                        .with_timezone(&chrono::Utc);
+                    let completed = completed_at
+                        .and_then(|c| chrono::DateTime::parse_from_rfc3339(&c).ok())
+                        .map(|c| c.with_timezone(&chrono::Utc));
+                    Some((
+                        req_id,
+                        cid,
+                        cmd_type,
+                        exit_code,
+                        duration_ms,
+                        dispatched,
+                        completed,
+                    ))
+                },
+            )
             .collect())
     }
 }
@@ -1666,10 +1792,7 @@ pub async fn get_approval_request(
 }
 
 /// Expire an approval request.
-pub async fn expire_approval_request(
-    pool: &DbPool,
-    request_id: Uuid,
-) -> Result<(), sqlx::Error> {
+pub async fn expire_approval_request(pool: &DbPool, request_id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query(&format!(
         "UPDATE approval_requests SET status = 'expired', resolved_at = {} WHERE id = $1",
         db::sql::now()
@@ -1703,10 +1826,7 @@ pub async fn insert_approval_decision(
 }
 
 /// Count approvals for a request.
-pub async fn count_approvals(
-    pool: &DbPool,
-    request_id: Uuid,
-) -> Result<i64, sqlx::Error> {
+pub async fn count_approvals(pool: &DbPool, request_id: Uuid) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM approval_decisions WHERE request_id = $1 AND decision = 'approved'",
     )
@@ -1916,10 +2036,7 @@ pub async fn get_org_ca_status(
 }
 
 /// Count enrolled agents with certificates.
-pub async fn count_enrolled_agents(
-    pool: &DbPool,
-    org_id: DbUuid,
-) -> Result<(i64,), sqlx::Error> {
+pub async fn count_enrolled_agents(pool: &DbPool, org_id: DbUuid) -> Result<(i64,), sqlx::Error> {
     sqlx::query_as(
         "SELECT COUNT(*) FROM agents WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
     )
@@ -1929,10 +2046,7 @@ pub async fn count_enrolled_agents(
 }
 
 /// Count enrolled gateways with certificates.
-pub async fn count_enrolled_gateways(
-    pool: &DbPool,
-    org_id: DbUuid,
-) -> Result<(i64,), sqlx::Error> {
+pub async fn count_enrolled_gateways(pool: &DbPool, org_id: DbUuid) -> Result<(i64,), sqlx::Error> {
     sqlx::query_as(
         "SELECT COUNT(*) FROM gateways WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL",
     )
@@ -2099,7 +2213,6 @@ pub async fn get_log_source_by_id(
 }
 
 /// Update a log source.
-#[allow(clippy::too_many_arguments)]
 pub async fn update_log_source(
     pool: &DbPool,
     source_id: Uuid,
@@ -2259,7 +2372,10 @@ pub struct WorkspaceRow {
 }
 
 /// List workspaces for an organization.
-pub async fn list_workspaces(pool: &DbPool, org_id: DbUuid) -> Result<Vec<WorkspaceRow>, sqlx::Error> {
+pub async fn list_workspaces(
+    pool: &DbPool,
+    org_id: DbUuid,
+) -> Result<Vec<WorkspaceRow>, sqlx::Error> {
     sqlx::query_as::<_, WorkspaceRow>(
         "SELECT id, organization_id, name, description, created_at
          FROM workspaces WHERE organization_id = $1 ORDER BY name",
@@ -2301,7 +2417,11 @@ pub async fn delete_workspace(pool: &DbPool, id: Uuid, org_id: DbUuid) -> Result
 
 /// Check if a workspace exists in an organization.
 #[cfg(feature = "postgres")]
-pub async fn workspace_exists(pool: &DbPool, id: Uuid, org_id: DbUuid) -> Result<bool, sqlx::Error> {
+pub async fn workspace_exists(
+    pool: &DbPool,
+    id: Uuid,
+    org_id: DbUuid,
+) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND organization_id = $2)",
     )
@@ -2312,7 +2432,11 @@ pub async fn workspace_exists(pool: &DbPool, id: Uuid, org_id: DbUuid) -> Result
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn workspace_exists(pool: &DbPool, id: Uuid, org_id: DbUuid) -> Result<bool, sqlx::Error> {
+pub async fn workspace_exists(
+    pool: &DbPool,
+    id: Uuid,
+    org_id: DbUuid,
+) -> Result<bool, sqlx::Error> {
     let count = sqlx::query_scalar::<_, i32>(
         "SELECT COUNT(*) FROM workspaces WHERE id = $1 AND organization_id = $2",
     )
@@ -2324,7 +2448,10 @@ pub async fn workspace_exists(pool: &DbPool, id: Uuid, org_id: DbUuid) -> Result
 }
 
 /// List sites in a workspace.
-pub async fn list_workspace_sites(pool: &DbPool, workspace_id: Uuid) -> Result<Vec<(DbUuid, String, String)>, sqlx::Error> {
+pub async fn list_workspace_sites(
+    pool: &DbPool,
+    workspace_id: Uuid,
+) -> Result<Vec<(DbUuid, String, String)>, sqlx::Error> {
     sqlx::query_as::<_, (DbUuid, String, String)>(
         r#"
         SELECT s.id, s.name, s.code
@@ -2340,7 +2467,11 @@ pub async fn list_workspace_sites(pool: &DbPool, workspace_id: Uuid) -> Result<V
 }
 
 /// Add a site to a workspace.
-pub async fn add_workspace_site(pool: &DbPool, workspace_id: Uuid, site_id: DbUuid) -> Result<(), sqlx::Error> {
+pub async fn add_workspace_site(
+    pool: &DbPool,
+    workspace_id: Uuid,
+    site_id: DbUuid,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO workspace_sites (workspace_id, site_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
     )
@@ -2352,7 +2483,11 @@ pub async fn add_workspace_site(pool: &DbPool, workspace_id: Uuid, site_id: DbUu
 }
 
 /// Remove a site from a workspace.
-pub async fn remove_workspace_site(pool: &DbPool, workspace_id: Uuid, site_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn remove_workspace_site(
+    pool: &DbPool,
+    workspace_id: Uuid,
+    site_id: Uuid,
+) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM workspace_sites WHERE workspace_id = $1 AND site_id = $2")
         .bind(crate::db::bind_id(workspace_id))
         .bind(crate::db::bind_id(site_id))
@@ -2362,7 +2497,10 @@ pub async fn remove_workspace_site(pool: &DbPool, workspace_id: Uuid, site_id: U
 }
 
 /// List members of a workspace.
-pub async fn list_workspace_members(pool: &DbPool, workspace_id: Uuid) -> Result<Vec<(DbUuid, Option<DbUuid>, Option<DbUuid>, String)>, sqlx::Error> {
+pub async fn list_workspace_members(
+    pool: &DbPool,
+    workspace_id: Uuid,
+) -> Result<Vec<(DbUuid, Option<DbUuid>, Option<DbUuid>, String)>, sqlx::Error> {
     sqlx::query_as::<_, (DbUuid, Option<DbUuid>, Option<DbUuid>, String)>(
         r#"
         SELECT wm.id, wm.user_id, wm.team_id, wm.role
@@ -2399,7 +2537,11 @@ pub async fn add_workspace_member(
 }
 
 /// Remove a member from a workspace.
-pub async fn remove_workspace_member(pool: &DbPool, member_id: Uuid, workspace_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn remove_workspace_member(
+    pool: &DbPool,
+    member_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM workspace_members WHERE id = $1 AND workspace_id = $2")
         .bind(member_id)
         .bind(crate::db::bind_id(workspace_id))
@@ -2409,7 +2551,10 @@ pub async fn remove_workspace_member(pool: &DbPool, member_id: Uuid, workspace_i
 }
 
 /// List all sites in an organization.
-pub async fn list_org_sites(pool: &DbPool, org_id: DbUuid) -> Result<Vec<(DbUuid, String, String)>, sqlx::Error> {
+pub async fn list_org_sites(
+    pool: &DbPool,
+    org_id: DbUuid,
+) -> Result<Vec<(DbUuid, String, String)>, sqlx::Error> {
     sqlx::query_as::<_, (DbUuid, String, String)>(
         "SELECT id, name, code FROM sites WHERE organization_id = $1 ORDER BY name",
     )
@@ -2420,7 +2565,10 @@ pub async fn list_org_sites(pool: &DbPool, org_id: DbUuid) -> Result<Vec<(DbUuid
 
 /// Check if workspace-site feature is configured for an org.
 #[cfg(feature = "postgres")]
-pub async fn has_workspace_sites_configured(pool: &DbPool, org_id: DbUuid) -> Result<bool, sqlx::Error> {
+pub async fn has_workspace_sites_configured(
+    pool: &DbPool,
+    org_id: DbUuid,
+) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM workspace_sites ws JOIN workspaces w ON w.id = ws.workspace_id WHERE w.organization_id = $1)",
     )
@@ -2430,7 +2578,10 @@ pub async fn has_workspace_sites_configured(pool: &DbPool, org_id: DbUuid) -> Re
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn has_workspace_sites_configured(pool: &DbPool, org_id: DbUuid) -> Result<bool, sqlx::Error> {
+pub async fn has_workspace_sites_configured(
+    pool: &DbPool,
+    org_id: DbUuid,
+) -> Result<bool, sqlx::Error> {
     let count = sqlx::query_scalar::<_, i32>(
         "SELECT COUNT(*) FROM workspace_sites ws JOIN workspaces w ON w.id = ws.workspace_id WHERE w.organization_id = $1",
     )
@@ -2475,12 +2626,10 @@ pub async fn get_org_ca_cert(
     pool: &DbPool,
     org_id: Uuid,
 ) -> Result<Option<(Option<String>,)>, sqlx::Error> {
-    sqlx::query_as::<_, (Option<String>,)>(
-        "SELECT ca_cert_pem FROM organizations WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(org_id))
-    .fetch_optional(pool)
-    .await
+    sqlx::query_as::<_, (Option<String>,)>("SELECT ca_cert_pem FROM organizations WHERE id = $1")
+        .bind(crate::db::bind_id(org_id))
+        .fetch_optional(pool)
+        .await
 }
 
 /// Update organization CA cert and key.
@@ -2572,24 +2721,22 @@ pub async fn lookup_enrollment_token_by_hash(
         .bind(token_hash)
         .fetch_optional(pool)
         .await?;
-        Ok(row.map(|r| (
-            r.id.into_inner(),
-            r.organization_id.into_inner(),
-            r.scope,
-            r.max_uses,
-            r.current_uses,
-            r.expires_at,
-            r.zone,
-        )))
+        Ok(row.map(|r| {
+            (
+                r.id.into_inner(),
+                r.organization_id.into_inner(),
+                r.scope,
+                r.max_uses,
+                r.current_uses,
+                r.expires_at,
+                r.zone,
+            )
+        }))
     }
 }
 
 /// Check if a CN is in the revoked certificates list.
-pub async fn is_cn_revoked(
-    pool: &DbPool,
-    org_id: Uuid,
-    cn: &str,
-) -> bool {
+pub async fn is_cn_revoked(pool: &DbPool, org_id: Uuid, cn: &str) -> bool {
     #[cfg(feature = "postgres")]
     {
         sqlx::query_scalar::<_, bool>(
@@ -2616,10 +2763,7 @@ pub async fn is_cn_revoked(
 }
 
 /// Increment enrollment token usage count.
-pub async fn increment_token_uses(
-    pool: &DbPool,
-    token_id: Uuid,
-) -> Result<(), sqlx::Error> {
+pub async fn increment_token_uses(pool: &DbPool, token_id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE enrollment_tokens SET current_uses = current_uses + 1 WHERE id = $1")
         .bind(crate::db::bind_id(token_id))
         .execute(pool)
@@ -2829,12 +2973,19 @@ pub async fn list_enrollment_events(
         .bind(org_id)
         .fetch_all(pool)
         .await?;
-        Ok(rows.into_iter().map(|r| EnrollmentEventRow {
-            id: r.id, token_id: r.token_id, event_type: r.event_type,
-            hostname: r.hostname, ip_address: r.ip_address,
-            agent_id: r.agent_id, cert_fingerprint: r.cert_fingerprint,
-            created_at: r.created_at,
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| EnrollmentEventRow {
+                id: r.id,
+                token_id: r.token_id,
+                event_type: r.event_type,
+                hostname: r.hostname,
+                ip_address: r.ip_address,
+                agent_id: r.agent_id,
+                cert_fingerprint: r.cert_fingerprint,
+                created_at: r.created_at,
+            })
+            .collect())
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
@@ -2859,12 +3010,19 @@ pub async fn list_enrollment_events(
         .bind(DbUuid::from(org_id))
         .fetch_all(pool)
         .await?;
-        Ok(rows.into_iter().map(|r| EnrollmentEventRow {
-            id: r.id.into_inner(), token_id: r.token_id.map(|v| v.into_inner()),
-            event_type: r.event_type, hostname: r.hostname, ip_address: r.ip_address,
-            agent_id: r.agent_id.map(|v| v.into_inner()),
-            cert_fingerprint: r.cert_fingerprint, created_at: r.created_at,
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| EnrollmentEventRow {
+                id: r.id.into_inner(),
+                token_id: r.token_id.map(|v| v.into_inner()),
+                event_type: r.event_type,
+                hostname: r.hostname,
+                ip_address: r.ip_address,
+                agent_id: r.agent_id.map(|v| v.into_inner()),
+                cert_fingerprint: r.cert_fingerprint,
+                created_at: r.created_at,
+            })
+            .collect())
     }
 }
 
@@ -2898,10 +3056,7 @@ pub async fn get_active_profile_name(
 }
 
 /// Deactivate all profiles for an application.
-pub async fn deactivate_all_profiles(
-    pool: &DbPool,
-    app_id: Uuid,
-) -> Result<(), sqlx::Error> {
+pub async fn deactivate_all_profiles(pool: &DbPool, app_id: Uuid) -> Result<(), sqlx::Error> {
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE binding_profiles SET is_active = false WHERE application_id = $1")
         .bind(app_id)
@@ -2916,10 +3071,7 @@ pub async fn deactivate_all_profiles(
 }
 
 /// Activate a single profile by ID.
-pub async fn activate_profile(
-    pool: &DbPool,
-    profile_id: Uuid,
-) -> Result<(), sqlx::Error> {
+pub async fn activate_profile(pool: &DbPool, profile_id: Uuid) -> Result<(), sqlx::Error> {
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE binding_profiles SET is_active = true WHERE id = $1")
         .bind(profile_id)
@@ -3030,15 +3182,13 @@ pub async fn get_component_name(pool: &DbPool, comp_id: Uuid) -> Option<String> 
 
 /// Get start_timeout_seconds for a component.
 pub async fn get_component_start_timeout(pool: &DbPool, comp_id: Uuid) -> i32 {
-    sqlx::query_scalar::<_, i32>(
-        "SELECT start_timeout_seconds FROM components WHERE id = $1",
-    )
-    .bind(crate::db::bind_id(comp_id))
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(120)
+    sqlx::query_scalar::<_, i32>("SELECT start_timeout_seconds FROM components WHERE id = $1")
+        .bind(crate::db::bind_id(comp_id))
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(120)
 }
 
 // ============================================================================
@@ -3134,8 +3284,24 @@ pub async fn fetch_matching_webhooks(
     pool: &DbPool,
     app_id: Uuid,
     event_type_json: &serde_json::Value,
-) -> Result<Vec<(Uuid, String, Option<String>, Option<sqlx::types::Json<serde_json::Value>>)>, sqlx::Error> {
-    sqlx::query_as::<_, (Uuid, String, Option<String>, Option<sqlx::types::Json<serde_json::Value>>)>(
+) -> Result<
+    Vec<(
+        Uuid,
+        String,
+        Option<String>,
+        Option<sqlx::types::Json<serde_json::Value>>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<sqlx::types::Json<serde_json::Value>>,
+        ),
+    >(
         r#"
         SELECT w.id, w.url, w.secret, w.headers
         FROM webhook_endpoints w
@@ -3157,8 +3323,24 @@ pub async fn fetch_matching_webhooks(
     pool: &DbPool,
     app_id: Uuid,
     event_type_json: &serde_json::Value,
-) -> Result<Vec<(Uuid, String, Option<String>, Option<sqlx::types::Json<serde_json::Value>>)>, sqlx::Error> {
-    sqlx::query_as::<_, (Uuid, String, Option<String>, Option<sqlx::types::Json<serde_json::Value>>)>(
+) -> Result<
+    Vec<(
+        Uuid,
+        String,
+        Option<String>,
+        Option<sqlx::types::Json<serde_json::Value>>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<sqlx::types::Json<serde_json::Value>>,
+        ),
+    >(
         r#"
         SELECT w.id, w.url, w.secret, w.headers
         FROM webhook_endpoints w
@@ -3320,7 +3502,10 @@ pub struct ApiKeyListRow {
 }
 
 /// List all API keys for a user.
-pub async fn list_api_keys(pool: &DbPool, user_id: Uuid) -> Result<Vec<ApiKeyListRow>, sqlx::Error> {
+pub async fn list_api_keys(
+    pool: &DbPool,
+    user_id: Uuid,
+) -> Result<Vec<ApiKeyListRow>, sqlx::Error> {
     sqlx::query_as::<_, ApiKeyListRow>(
         r#"
         SELECT id, name, key_prefix, scopes, is_active, expires_at, created_at
@@ -3336,17 +3521,26 @@ pub async fn list_api_keys(pool: &DbPool, user_id: Uuid) -> Result<Vec<ApiKeyLis
 
 /// Deactivate an API key (soft delete).
 #[cfg(feature = "postgres")]
-pub async fn deactivate_api_key(pool: &DbPool, key_id: Uuid, user_id: Uuid) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1 AND user_id = $2")
-        .bind(crate::db::bind_id(key_id))
-        .bind(crate::db::bind_id(user_id))
-        .execute(pool)
-        .await?;
+pub async fn deactivate_api_key(
+    pool: &DbPool,
+    key_id: Uuid,
+    user_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let result =
+        sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1 AND user_id = $2")
+            .bind(crate::db::bind_id(key_id))
+            .bind(crate::db::bind_id(user_id))
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected())
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-pub async fn deactivate_api_key(pool: &DbPool, key_id: Uuid, user_id: Uuid) -> Result<u64, sqlx::Error> {
+pub async fn deactivate_api_key(
+    pool: &DbPool,
+    key_id: Uuid,
+    user_id: Uuid,
+) -> Result<u64, sqlx::Error> {
     let result = sqlx::query("UPDATE api_keys SET is_active = 0 WHERE id = $1 AND user_id = $2")
         .bind(DbUuid::from(key_id))
         .bind(crate::db::bind_id(user_id))
@@ -3389,8 +3583,28 @@ pub async fn insert_agent_binary(
 /// List uploaded agent binaries.
 pub async fn list_agent_binaries(
     pool: &DbPool,
-) -> Result<Vec<(Uuid, String, String, String, i64, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
-    sqlx::query_as::<_, (Uuid, String, String, String, i64, chrono::DateTime<chrono::Utc>)>(
+) -> Result<
+    Vec<(
+        Uuid,
+        String,
+        String,
+        String,
+        i64,
+        chrono::DateTime<chrono::Utc>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            String,
+            i64,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         "SELECT id, version, platform, checksum_sha256, size_bytes, uploaded_at
          FROM agent_binaries ORDER BY uploaded_at DESC",
     )
@@ -3467,8 +3681,32 @@ pub async fn update_agent_update_progress(
 /// List agent update tasks.
 pub async fn list_agent_update_tasks(
     pool: &DbPool,
-) -> Result<Vec<(Uuid, Uuid, String, String, i32, i32, Option<String>, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
-    sqlx::query_as::<_, (Uuid, Uuid, String, String, i32, i32, Option<String>, chrono::DateTime<chrono::Utc>)>(
+) -> Result<
+    Vec<(
+        Uuid,
+        Uuid,
+        String,
+        String,
+        i32,
+        i32,
+        Option<String>,
+        chrono::DateTime<chrono::Utc>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            String,
+            i32,
+            i32,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         "SELECT id, agent_id, target_version, status, chunks_sent, total_chunks, error, started_at
          FROM agent_update_tasks
          ORDER BY started_at DESC
@@ -3483,7 +3721,10 @@ pub async fn list_agent_update_tasks(
 // ============================================================================
 
 /// Fetch application row for export.
-pub async fn get_app_for_export(pool: &DbPool, app_id: Uuid) -> Result<Option<(String, Option<String>, Option<Value>)>, sqlx::Error> {
+pub async fn get_app_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Option<(String, Option<String>, Option<Value>)>, sqlx::Error> {
     sqlx::query_as::<_, (String, Option<String>, Option<Value>)>(
         "SELECT name, description, tags FROM applications WHERE id = $1",
     )
@@ -3493,7 +3734,10 @@ pub async fn get_app_for_export(pool: &DbPool, app_id: Uuid) -> Result<Option<(S
 }
 
 /// Fetch variables for export.
-pub async fn get_vars_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<(String, String, Option<String>, bool)>, sqlx::Error> {
+pub async fn get_vars_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(String, String, Option<String>, bool)>, sqlx::Error> {
     sqlx::query_as::<_, (String, String, Option<String>, bool)>(
         "SELECT name, value, description, is_secret FROM app_variables WHERE application_id = $1 ORDER BY name",
     )
@@ -3503,7 +3747,10 @@ pub async fn get_vars_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<(Str
 }
 
 /// Fetch groups for export.
-pub async fn get_groups_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<crate::api::export::GroupRow>, sqlx::Error> {
+pub async fn get_groups_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<crate::api::export::GroupRow>, sqlx::Error> {
     sqlx::query_as::<_, crate::api::export::GroupRow>(
         "SELECT id, name, description, color, display_order FROM component_groups WHERE application_id = $1 ORDER BY display_order",
     )
@@ -3513,7 +3760,10 @@ pub async fn get_groups_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<cr
 }
 
 /// Fetch components for export.
-pub async fn get_components_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<crate::api::export::ComponentRow>, sqlx::Error> {
+pub async fn get_components_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<crate::api::export::ComponentRow>, sqlx::Error> {
     sqlx::query_as::<_, crate::api::export::ComponentRow>(
         r#"
         SELECT id, name, display_name, description, component_type, icon, group_id, host,
@@ -3530,7 +3780,10 @@ pub async fn get_components_for_export(pool: &DbPool, app_id: Uuid) -> Result<Ve
 }
 
 /// Fetch custom commands for export.
-pub async fn get_custom_cmds_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<crate::api::export::CustomCmdRow>, sqlx::Error> {
+pub async fn get_custom_cmds_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<crate::api::export::CustomCmdRow>, sqlx::Error> {
     sqlx::query_as::<_, crate::api::export::CustomCmdRow>(
         r#"
         SELECT cc.id, cc.component_id, cc.name, cc.command, cc.description, cc.requires_confirmation
@@ -3546,7 +3799,10 @@ pub async fn get_custom_cmds_for_export(pool: &DbPool, app_id: Uuid) -> Result<V
 }
 
 /// Fetch command parameters for export.
-pub async fn get_cmd_params_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<crate::api::export::CmdParamRow>, sqlx::Error> {
+pub async fn get_cmd_params_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<crate::api::export::CmdParamRow>, sqlx::Error> {
     sqlx::query_as::<_, crate::api::export::CmdParamRow>(
         r#"
         SELECT cip.command_id, cip.name, cip.description, cip.default_value,
@@ -3564,7 +3820,10 @@ pub async fn get_cmd_params_for_export(pool: &DbPool, app_id: Uuid) -> Result<Ve
 }
 
 /// Fetch component links for export.
-pub async fn get_links_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<crate::api::export::LinkRow>, sqlx::Error> {
+pub async fn get_links_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<crate::api::export::LinkRow>, sqlx::Error> {
     sqlx::query_as::<_, crate::api::export::LinkRow>(
         r#"
         SELECT cl.component_id, cl.label, cl.url, cl.link_type
@@ -3580,7 +3839,10 @@ pub async fn get_links_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<cra
 }
 
 /// Fetch dependencies for export.
-pub async fn get_deps_for_export(pool: &DbPool, app_id: Uuid) -> Result<Vec<(DbUuid, DbUuid)>, sqlx::Error> {
+pub async fn get_deps_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, DbUuid)>, sqlx::Error> {
     sqlx::query_as::<_, (DbUuid, DbUuid)>(
         "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
     )
@@ -3620,7 +3882,10 @@ pub async fn get_components_for_topology(
 }
 
 /// Fetch dependencies for topology view.
-pub async fn get_deps_for_topology(pool: &DbPool, app_id: Uuid) -> Result<Vec<(DbUuid, DbUuid)>, sqlx::Error> {
+pub async fn get_deps_for_topology(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(DbUuid, DbUuid)>, sqlx::Error> {
     sqlx::query_as::<_, (DbUuid, DbUuid)>(
         "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
     )
@@ -3661,7 +3926,17 @@ pub async fn get_dependency_history(
     app_id: Uuid,
     limit: i64,
     offset: i64,
-) -> Result<Vec<(DbUuid, String, Value, Value, DbUuid, chrono::DateTime<chrono::Utc>)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        DbUuid,
+        String,
+        Value,
+        Value,
+        DbUuid,
+        chrono::DateTime<chrono::Utc>,
+    )>,
+    sqlx::Error,
+> {
     sqlx::query_as::<_, (DbUuid, String, Value, Value, DbUuid, chrono::DateTime<chrono::Utc>)>(
         r#"
         SELECT cv.id, cv.change_type, cv.before_snapshot, cv.after_snapshot, cv.changed_by, cv.created_at
@@ -3684,7 +3959,9 @@ pub async fn get_dependency_history(
 // ============================================================================
 
 /// List profiles with mapping count.
-pub async fn list_profiles_with_count<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+pub async fn list_profiles_with_count<
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+>(
     pool: &DbPool,
     app_id: Uuid,
 ) -> Result<Vec<T>, sqlx::Error> {
@@ -3707,7 +3984,9 @@ pub async fn list_profiles_with_count<T: for<'r> sqlx::FromRow<'r, sqlx::postgre
 }
 
 /// Get a profile by app_id and name.
-pub async fn get_profile_by_name<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+pub async fn get_profile_by_name<
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+>(
     pool: &DbPool,
     app_id: Uuid,
     name: &str,
@@ -3727,7 +4006,9 @@ pub async fn get_profile_by_name<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::Pg
 }
 
 /// Get profile mappings for a profile.
-pub async fn get_profile_mappings<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+pub async fn get_profile_mappings<
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+>(
     pool: &DbPool,
     profile_id: DbUuid,
 ) -> Result<Vec<T>, sqlx::Error> {
@@ -3745,7 +4026,11 @@ pub async fn get_profile_mappings<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::P
 }
 
 /// Check if a profile name exists for an application.
-pub async fn profile_name_exists(pool: &DbPool, app_id: Uuid, name: &str) -> Result<bool, sqlx::Error> {
+pub async fn profile_name_exists(
+    pool: &DbPool,
+    app_id: Uuid,
+    name: &str,
+) -> Result<bool, sqlx::Error> {
     let exists: Option<(Uuid,)> =
         sqlx::query_as("SELECT id FROM binding_profiles WHERE application_id = $1 AND name = $2")
             .bind(crate::db::bind_id(app_id))
@@ -3756,7 +4041,9 @@ pub async fn profile_name_exists(pool: &DbPool, app_id: Uuid, name: &str) -> Res
 }
 
 /// Create a binding profile (RETURNING).
-pub async fn create_binding_profile<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+pub async fn create_binding_profile<
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+>(
     pool: &DbPool,
     profile_id: Uuid,
     app_id: Uuid,
@@ -3787,7 +4074,11 @@ pub async fn create_binding_profile<T: for<'r> sqlx::FromRow<'r, sqlx::postgres:
 }
 
 /// Copy profile mappings from one profile to another.
-pub async fn copy_profile_mappings(pool: &DbPool, to_profile_id: Uuid, from_profile_id: DbUuid) -> Result<(), sqlx::Error> {
+pub async fn copy_profile_mappings(
+    pool: &DbPool,
+    to_profile_id: Uuid,
+    from_profile_id: DbUuid,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
         INSERT INTO binding_profile_mappings (profile_id, component_name, host, agent_id, resolved_via)
@@ -3838,7 +4129,9 @@ pub async fn delete_binding_profile(pool: &DbPool, profile_id: DbUuid) -> Result
 }
 
 /// List DR pattern rules for an organization.
-pub async fn list_dr_pattern_rules<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+pub async fn list_dr_pattern_rules<
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+>(
     pool: &DbPool,
     org_id: Uuid,
 ) -> Result<Vec<T>, sqlx::Error> {
@@ -3856,7 +4149,9 @@ pub async fn list_dr_pattern_rules<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::
 }
 
 /// Create a DR pattern rule (RETURNING).
-pub async fn create_dr_pattern_rule<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+pub async fn create_dr_pattern_rule<
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+>(
     pool: &DbPool,
     rule_id: Uuid,
     org_id: Uuid,
@@ -3885,7 +4180,9 @@ pub async fn create_dr_pattern_rule<T: for<'r> sqlx::FromRow<'r, sqlx::postgres:
 }
 
 /// Update a DR pattern rule (RETURNING).
-pub async fn update_dr_pattern_rule<T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin>(
+pub async fn update_dr_pattern_rule<
+    T: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+>(
     pool: &DbPool,
     rule_id: Uuid,
     org_id: Uuid,
@@ -3915,7 +4212,11 @@ pub async fn update_dr_pattern_rule<T: for<'r> sqlx::FromRow<'r, sqlx::postgres:
 }
 
 /// Delete a DR pattern rule.
-pub async fn delete_dr_pattern_rule(pool: &DbPool, rule_id: Uuid, org_id: Uuid) -> Result<u64, sqlx::Error> {
+pub async fn delete_dr_pattern_rule(
+    pool: &DbPool,
+    rule_id: Uuid,
+    org_id: Uuid,
+) -> Result<u64, sqlx::Error> {
     let result = sqlx::query("DELETE FROM dr_pattern_rules WHERE id = $1 AND organization_id = $2")
         .bind(rule_id)
         .bind(crate::db::bind_id(org_id))

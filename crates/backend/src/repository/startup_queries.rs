@@ -107,10 +107,7 @@ pub async fn ensure_action_log_archive_pg(pool: &DbPool) {
 
 /// Archive old action_log entries (PostgreSQL). Returns count of archived rows.
 #[cfg(feature = "postgres")]
-pub async fn archive_action_log_pg(
-    pool: &DbPool,
-    interval: &str,
-) -> Result<i64, sqlx::Error> {
+pub async fn archive_action_log_pg(pool: &DbPool, interval: &str) -> Result<i64, sqlx::Error> {
     let row = sqlx::query(
         r#"
         WITH archived AS (

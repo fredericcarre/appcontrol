@@ -129,7 +129,10 @@ pub async fn get_estimates(
             }
 
             // No historical data — use timeout as worst case
-            let timeout_ms = crate::repository::misc_queries::get_component_start_timeout(&state.db, comp_id).await * 1000;
+            let timeout_ms =
+                crate::repository::misc_queries::get_component_start_timeout(&state.db, comp_id)
+                    .await
+                    * 1000;
 
             level_components.push(json!({
                 "component_id": comp_id,

@@ -5,7 +5,7 @@
 //! PG/SQLite differences internally via `#[cfg]` attributes.
 
 #![allow(unused_imports, dead_code)]
-use crate::db::{DbPool, DbUuid, DbJson};
+use crate::db::{DbJson, DbPool, DbUuid};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -14,6 +14,7 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Look up a site by organization_id and code (for backward-compat zone lookup).
+#[allow(clippy::too_many_arguments)]
 pub async fn lookup_site_by_code(
     pool: &DbPool,
     org_id: Uuid,
@@ -123,12 +124,11 @@ pub async fn is_certificate_revoked(pool: &DbPool, fingerprint: &str) -> Result<
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
-        let count: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM revoked_certificates WHERE fingerprint = $1",
-        )
-        .bind(fingerprint)
-        .fetch_one(pool)
-        .await?;
+        let count: i32 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM revoked_certificates WHERE fingerprint = $1")
+                .bind(fingerprint)
+                .fetch_one(pool)
+                .await?;
         Ok(count > 0)
     }
 }
@@ -212,22 +212,20 @@ pub async fn restore_agent_gateway_if_null(
     gateway_id: Uuid,
 ) -> Result<bool, sqlx::Error> {
     #[cfg(feature = "postgres")]
-    let result = sqlx::query(
-        "UPDATE agents SET gateway_id = $2 WHERE id = $1 AND gateway_id IS NULL",
-    )
-    .bind(agent_id)
-    .bind(gateway_id)
-    .execute(pool)
-    .await?;
+    let result =
+        sqlx::query("UPDATE agents SET gateway_id = $2 WHERE id = $1 AND gateway_id IS NULL")
+            .bind(agent_id)
+            .bind(gateway_id)
+            .execute(pool)
+            .await?;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let result = sqlx::query(
-        "UPDATE agents SET gateway_id = $2 WHERE id = $1 AND gateway_id IS NULL",
-    )
-    .bind(DbUuid::from(agent_id))
-    .bind(DbUuid::from(gateway_id))
-    .execute(pool)
-    .await?;
+    let result =
+        sqlx::query("UPDATE agents SET gateway_id = $2 WHERE id = $1 AND gateway_id IS NULL")
+            .bind(DbUuid::from(agent_id))
+            .bind(DbUuid::from(gateway_id))
+            .execute(pool)
+            .await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -292,12 +290,11 @@ pub async fn update_gateway_heartbeat_ts(
 pub async fn is_agent_blocked(pool: &DbPool, agent_id: Uuid) -> Result<bool, sqlx::Error> {
     #[cfg(feature = "postgres")]
     {
-        let val: Option<bool> = sqlx::query_scalar(
-            "SELECT NOT COALESCE(is_active, true) FROM agents WHERE id = $1",
-        )
-        .bind(agent_id)
-        .fetch_optional(pool)
-        .await?;
+        let val: Option<bool> =
+            sqlx::query_scalar("SELECT NOT COALESCE(is_active, true) FROM agents WHERE id = $1")
+                .bind(agent_id)
+                .fetch_optional(pool)
+                .await?;
         Ok(val.unwrap_or(false))
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -340,7 +337,11 @@ pub async fn update_agent_registration(
          identity_verified = ($11 IS NOT NULL) \
          WHERE id = $1 AND is_active = {}",
         crate::db::sql::now(),
-        if cfg!(feature = "postgres") { "true" } else { "1" }
+        if cfg!(feature = "postgres") {
+            "true"
+        } else {
+            "1"
+        }
     );
 
     #[cfg(feature = "postgres")]
@@ -514,7 +515,22 @@ pub async fn get_agent_component_configs(
         Ok(rows
             .into_iter()
             .map(
-                |(id, name, check, start, stop, integrity, post_start, infra, rebuild, rebuild_infra, interval, start_to, stop_to, env)| {
+                |(
+                    id,
+                    name,
+                    check,
+                    start,
+                    stop,
+                    integrity,
+                    post_start,
+                    infra,
+                    rebuild,
+                    rebuild_infra,
+                    interval,
+                    start_to,
+                    stop_to,
+                    env,
+                )| {
                     AgentComponentConfig {
                         component_id: id,
                         name,
@@ -573,7 +589,22 @@ pub async fn get_agent_component_configs(
         Ok(rows
             .into_iter()
             .map(
-                |(id, name, check, start, stop, integrity, post_start, infra, rebuild, rebuild_infra, interval, start_to, stop_to, env)| {
+                |(
+                    id,
+                    name,
+                    check,
+                    start,
+                    stop,
+                    integrity,
+                    post_start,
+                    infra,
+                    rebuild,
+                    rebuild_infra,
+                    interval,
+                    start_to,
+                    stop_to,
+                    env,
+                )| {
                     AgentComponentConfig {
                         component_id: id.into_inner(),
                         name,
@@ -588,7 +619,8 @@ pub async fn get_agent_component_configs(
                         check_interval_seconds: interval,
                         start_timeout_seconds: start_to,
                         stop_timeout_seconds: stop_to,
-                        env_vars: serde_json::from_str::<Value>(&env).unwrap_or(serde_json::json!({})),
+                        env_vars: serde_json::from_str::<Value>(&env)
+                            .unwrap_or(serde_json::json!({})),
                     }
                 },
             )
@@ -846,14 +878,16 @@ pub async fn get_enrollment_token_by_hash(
         .bind(token_hash)
         .fetch_optional(pool)
         .await?;
-        Ok(row.map(|(id, org, scope, max, cur, exp)| EnrollmentTokenInfo {
-            id,
-            organization_id: org,
-            scope,
-            max_uses: max,
-            current_uses: cur,
-            expires_at: exp,
-        }))
+        Ok(
+            row.map(|(id, org, scope, max, cur, exp)| EnrollmentTokenInfo {
+                id,
+                organization_id: org,
+                scope,
+                max_uses: max,
+                current_uses: cur,
+                expires_at: exp,
+            }),
+        )
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {

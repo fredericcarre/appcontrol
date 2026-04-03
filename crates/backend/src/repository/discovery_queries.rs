@@ -1,7 +1,7 @@
 //! Query functions for discovery domain. All sqlx queries live here.
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
-use crate::db::{DbPool, DbUuid, DbJson, IntArray, UuidArray};
+use crate::db::{DbJson, DbPool, DbUuid, IntArray, UuidArray};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -166,10 +166,21 @@ pub async fn get_draft_components(
     draft_id: Uuid,
 ) -> Result<
     Vec<(
-        Uuid, String, Option<String>, Option<String>, String,
-        serde_json::Value, Option<String>, Option<String>,
-        Option<String>, Option<String>, Option<String>, Option<String>,
-        serde_json::Value, serde_json::Value, Option<String>,
+        Uuid,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        serde_json::Value,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        serde_json::Value,
+        serde_json::Value,
+        Option<String>,
     )>,
     sqlx::Error,
 > {
@@ -189,16 +200,26 @@ pub async fn get_draft_components(
 
 /// Get draft components (sqlite).
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-#[allow(clippy::type_complexity)]
 pub async fn get_draft_components(
     pool: &DbPool,
     draft_id: Uuid,
 ) -> Result<
     Vec<(
-        Uuid, String, Option<String>, Option<String>, String,
-        serde_json::Value, Option<String>, Option<String>,
-        Option<String>, Option<String>, Option<String>, Option<String>,
-        serde_json::Value, serde_json::Value, Option<String>,
+        Uuid,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        serde_json::Value,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        serde_json::Value,
+        serde_json::Value,
+        Option<String>,
     )>,
     sqlx::Error,
 > {
@@ -231,10 +252,7 @@ pub async fn get_draft_dependencies(
 }
 
 /// Get user's organization ID.
-pub async fn get_user_org_id(
-    pool: &DbPool,
-    user_id: Uuid,
-) -> Result<DbUuid, sqlx::Error> {
+pub async fn get_user_org_id(pool: &DbPool, user_id: Uuid) -> Result<DbUuid, sqlx::Error> {
     sqlx::query_scalar::<_, DbUuid>("SELECT organization_id FROM users WHERE id = $1")
         .bind(crate::db::bind_id(user_id))
         .fetch_one(pool)
@@ -248,14 +266,12 @@ pub async fn insert_draft(
     org_id: DbUuid,
     name: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO discovery_drafts (id, organization_id, name) VALUES ($1, $2, $3)",
-    )
-    .bind(draft_id)
-    .bind(org_id)
-    .bind(name)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO discovery_drafts (id, organization_id, name) VALUES ($1, $2, $3)")
+        .bind(draft_id)
+        .bind(org_id)
+        .bind(name)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -382,11 +398,12 @@ pub async fn delete_draft_dependency(
     dep_id: Uuid,
     draft_id: Uuid,
 ) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM discovery_draft_dependencies WHERE id = $1 AND draft_id = $2")
-        .bind(dep_id)
-        .bind(draft_id)
-        .execute(pool)
-        .await?;
+    let result =
+        sqlx::query("DELETE FROM discovery_draft_dependencies WHERE id = $1 AND draft_id = $2")
+            .bind(dep_id)
+            .bind(draft_id)
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected())
 }
 
@@ -443,15 +460,22 @@ pub async fn create_app_from_draft(
 
 /// Get draft components for apply (postgres).
 #[cfg(feature = "postgres")]
-#[allow(clippy::type_complexity)]
 pub async fn get_draft_comps_for_apply(
     pool: &DbPool,
     draft_id: Uuid,
 ) -> Result<
     Vec<(
-        Uuid, String, Option<String>, Option<String>, String,
-        Option<Uuid>, Option<String>, Option<String>, Option<String>,
-        serde_json::Value, serde_json::Value,
+        Uuid,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<Uuid>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        serde_json::Value,
+        serde_json::Value,
     )>,
     sqlx::Error,
 > {
@@ -469,15 +493,22 @@ pub async fn get_draft_comps_for_apply(
 
 /// Get draft components for apply (sqlite).
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-#[allow(clippy::type_complexity)]
 pub async fn get_draft_comps_for_apply(
     pool: &DbPool,
     draft_id: Uuid,
 ) -> Result<
     Vec<(
-        Uuid, String, Option<String>, Option<String>, String,
-        Option<Uuid>, Option<String>, Option<String>, Option<String>,
-        serde_json::Value, serde_json::Value,
+        Uuid,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<Uuid>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        serde_json::Value,
+        serde_json::Value,
     )>,
     sqlx::Error,
 > {
@@ -675,53 +706,101 @@ pub async fn schedule_exists(
 /// Update schedule name.
 pub async fn update_schedule_name(pool: &DbPool, id: Uuid, name: &str) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE snapshot_schedules SET name = $2 WHERE id = $1")
-        .bind(id).bind(name).execute(pool).await?;
+        .bind(id)
+        .bind(name)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
 /// Update schedule agent_ids.
-pub async fn update_schedule_agent_ids(pool: &DbPool, id: Uuid, agent_ids: UuidArray) -> Result<(), sqlx::Error> {
+pub async fn update_schedule_agent_ids(
+    pool: &DbPool,
+    id: Uuid,
+    agent_ids: UuidArray,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE snapshot_schedules SET agent_ids = $2 WHERE id = $1")
-        .bind(id).bind(agent_ids).execute(pool).await?;
+        .bind(id)
+        .bind(agent_ids)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
 /// Update schedule frequency.
-pub async fn update_schedule_frequency(pool: &DbPool, id: Uuid, frequency: &str, next_run: chrono::DateTime<chrono::Utc>) -> Result<(), sqlx::Error> {
+pub async fn update_schedule_frequency(
+    pool: &DbPool,
+    id: Uuid,
+    frequency: &str,
+    next_run: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE snapshot_schedules SET frequency = $2, next_run_at = $3 WHERE id = $1")
-        .bind(id).bind(frequency).bind(next_run).execute(pool).await?;
+        .bind(id)
+        .bind(frequency)
+        .bind(next_run)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
 /// Get schedule frequency.
 pub async fn get_schedule_frequency(pool: &DbPool, id: Uuid) -> Result<String, sqlx::Error> {
     sqlx::query_scalar("SELECT frequency FROM snapshot_schedules WHERE id = $1")
-        .bind(id).fetch_one(pool).await
+        .bind(id)
+        .fetch_one(pool)
+        .await
 }
 
 /// Enable/disable schedule.
-pub async fn update_schedule_enabled(pool: &DbPool, id: Uuid, enabled: bool, next_run: Option<chrono::DateTime<chrono::Utc>>) -> Result<(), sqlx::Error> {
+pub async fn update_schedule_enabled(
+    pool: &DbPool,
+    id: Uuid,
+    enabled: bool,
+    next_run: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<(), sqlx::Error> {
     if enabled {
         sqlx::query("UPDATE snapshot_schedules SET enabled = $2, next_run_at = $3 WHERE id = $1")
-            .bind(id).bind(enabled).bind(next_run).execute(pool).await?;
+            .bind(id)
+            .bind(enabled)
+            .bind(next_run)
+            .execute(pool)
+            .await?;
     } else {
         sqlx::query("UPDATE snapshot_schedules SET enabled = $2 WHERE id = $1")
-            .bind(id).bind(enabled).execute(pool).await?;
+            .bind(id)
+            .bind(enabled)
+            .execute(pool)
+            .await?;
     }
     Ok(())
 }
 
 /// Update schedule retention days.
-pub async fn update_schedule_retention(pool: &DbPool, id: Uuid, retention_days: i32) -> Result<(), sqlx::Error> {
+pub async fn update_schedule_retention(
+    pool: &DbPool,
+    id: Uuid,
+    retention_days: i32,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE snapshot_schedules SET retention_days = $2 WHERE id = $1")
-        .bind(id).bind(retention_days).execute(pool).await?;
+        .bind(id)
+        .bind(retention_days)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
 /// Delete a snapshot schedule.
-pub async fn delete_snapshot_schedule(pool: &DbPool, id: Uuid, org_id: Uuid) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM snapshot_schedules WHERE id = $1 AND organization_id = $2")
-        .bind(id).bind(crate::db::bind_id(org_id)).execute(pool).await?;
+pub async fn delete_snapshot_schedule(
+    pool: &DbPool,
+    id: Uuid,
+    org_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let result =
+        sqlx::query("DELETE FROM snapshot_schedules WHERE id = $1 AND organization_id = $2")
+            .bind(id)
+            .bind(crate::db::bind_id(org_id))
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected())
 }
 

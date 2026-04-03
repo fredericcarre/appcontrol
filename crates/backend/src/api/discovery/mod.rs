@@ -7,26 +7,23 @@
 //! 4. **Edit draft**: `PUT /drafts/:id/components` and `PUT /drafts/:id/dependencies`
 //! 5. **Apply draft**: `POST /drafts/:id/apply` — creates a real application
 
-pub mod trigger;
-pub mod reports;
 pub mod correlation;
 pub mod draft;
 pub mod enrichment;
+pub mod reports;
+pub mod trigger;
 
 // Re-export all public handler functions
-pub use trigger::{trigger_scan, trigger_all};
-pub use reports::{list_reports, get_report};
 pub use correlation::correlate;
 pub use draft::{
-    list_drafts, get_draft, create_draft, update_draft_components,
-    update_draft_dependencies, apply_draft,
-    CreateDraftRequest, DraftComponentInput, DraftDependencyInput,
-    UpdateComponentsRequest, UpdateComponentInput,
-    UpdateDependenciesRequest, AddDependencyInput,
+    apply_draft, create_draft, get_draft, list_drafts, update_draft_components,
+    update_draft_dependencies, AddDependencyInput, CreateDraftRequest, DraftComponentInput,
+    DraftDependencyInput, UpdateComponentInput, UpdateComponentsRequest, UpdateDependenciesRequest,
 };
 pub use enrichment::{
-    list_schedules, create_schedule, update_schedule, delete_schedule,
-    list_snapshots, compare_snapshots, read_file_content,
-    CreateScheduleRequest, UpdateScheduleRequest,
-    ListSnapshotsQuery, CompareSnapshotsRequest, ReadFileContentRequest,
+    compare_snapshots, create_schedule, delete_schedule, list_schedules, list_snapshots,
+    read_file_content, update_schedule, CompareSnapshotsRequest, CreateScheduleRequest,
+    ListSnapshotsQuery, ReadFileContentRequest, UpdateScheduleRequest,
 };
+pub use reports::{get_report, list_reports};
+pub use trigger::{trigger_all, trigger_scan};

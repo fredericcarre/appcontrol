@@ -21,8 +21,7 @@ pub async fn list_reports(
         return Err(ApiError::Forbidden);
     }
 
-    let rows =
-        crate::repository::discovery_queries::list_discovery_reports(&state.db).await?;
+    let rows = crate::repository::discovery_queries::list_discovery_reports(&state.db).await?;
 
     let reports: Vec<Value> = rows
         .iter()
@@ -50,8 +49,7 @@ pub async fn get_report(
     }
 
     let row =
-        crate::repository::discovery_queries::get_discovery_report(&state.db, report_id)
-            .await?;
+        crate::repository::discovery_queries::get_discovery_report(&state.db, report_id).await?;
 
     match row {
         Some((id, agent_id, hostname, report, scanned_at)) => Ok(Json(json!({

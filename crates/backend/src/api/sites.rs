@@ -228,7 +228,10 @@ pub async fn delete_site(
         )));
     }
 
-    let deleted = state.site_repo.delete_site(id, *user.organization_id).await?;
+    let deleted = state
+        .site_repo
+        .delete_site(id, *user.organization_id)
+        .await?;
     if !deleted {
         return Err(ApiError::NotFound);
     }

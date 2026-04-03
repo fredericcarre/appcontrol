@@ -41,9 +41,10 @@ pub struct PreflightResult {
 /// Check if all agents for an application are reachable before starting
 pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult {
     // Get all components with their agent information
-    let components = crate::repository::core_queries::get_components_for_preflight(&state.db, app_id)
-        .await
-        .unwrap_or_default();
+    let components =
+        crate::repository::core_queries::get_components_for_preflight(&state.db, app_id)
+            .await
+            .unwrap_or_default();
 
     // Get connected agents and gateways from WebSocket hub
     let connected_agents: HashSet<Uuid> = state.ws_hub.connected_agent_ids().into_iter().collect();
@@ -73,9 +74,11 @@ pub async fn preflight_check(state: &AppState, app_id: Uuid) -> PreflightResult 
                 if let Some(gid) = gateway_id {
                     if !seen_gateways.contains(&gid) && !connected_gateways.contains(&gid) {
                         // Get gateway name
-                        let gw_name = crate::repository::core_queries::get_gateway_name_by_id(&state.db, *gid)
-                            .await
-                            .unwrap_or_else(|| gid.to_string());
+                        let gw_name = crate::repository::core_queries::get_gateway_name_by_id(
+                            &state.db, *gid,
+                        )
+                        .await
+                        .unwrap_or_else(|| gid.to_string());
 
                         disconnected_gateways.push((gid, gw_name));
                         seen_gateways.insert(*gid);
@@ -279,7 +282,8 @@ pub async fn status(
         return Err(ApiError::Forbidden);
     }
 
-    let components = crate::repository::core_queries::get_component_states(&state.db, app_id).await?;
+    let components =
+        crate::repository::core_queries::get_component_states(&state.db, app_id).await?;
 
     let data: Vec<Value> = components
         .iter()
@@ -310,7 +314,9 @@ pub async fn wait_running(
     let start_time = std::time::Instant::now();
 
     loop {
-        let components = crate::repository::core_queries::get_required_component_states(&state.db, app_id).await?;
+        let components =
+            crate::repository::core_queries::get_required_component_states(&state.db, app_id)
+                .await?;
 
         let total = components.len();
         let running_count = components.iter().filter(|(_, _, s)| s == "RUNNING").count();
@@ -421,7 +427,8 @@ pub async fn health(
     }
 
     // Get component states
-    let components = crate::repository::core_queries::get_component_states_with_agent(&state.db, app_id).await?;
+    let components =
+        crate::repository::core_queries::get_component_states_with_agent(&state.db, app_id).await?;
 
     // Pre-flight check for real-time agent status
     let preflight = preflight_check(&state, app_id).await;

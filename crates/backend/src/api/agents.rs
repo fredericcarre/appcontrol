@@ -54,10 +54,7 @@ pub async fn list_agents(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<Value>, ApiError> {
-    let agents = state
-        .agent_repo
-        .list_agents(*user.organization_id)
-        .await?;
+    let agents = state.agent_repo.list_agents(*user.organization_id).await?;
 
     // Get live connection status from the WebSocket hub
     let connected_agents = state.ws_hub.connected_agent_ids();
@@ -262,14 +259,18 @@ pub async fn get_agent_metrics(
     Query(params): Query<MetricsQuery>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify agent belongs to user's organization
-    if !crate::repository::agents::agent_exists_in_org(&state.db, agent_id, *user.organization_id).await? {
+    if !crate::repository::agents::agent_exists_in_org(&state.db, agent_id, *user.organization_id)
+        .await?
+    {
         return Err(ApiError::NotFound);
     }
 
     // Clamp minutes to valid range
     let minutes = params.minutes.clamp(1, 1440);
 
-    let metrics = crate::repository::agents::fetch_agent_metrics::<MetricPoint>(&state.db, agent_id, minutes).await?;
+    let metrics =
+        crate::repository::agents::fetch_agent_metrics::<MetricPoint>(&state.db, agent_id, minutes)
+            .await?;
 
     Ok(Json(json!({
         "agent_id": agent_id,
@@ -292,9 +293,10 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
         app_name: String,
     }
 
-    let components: Vec<ComponentInfo> = crate::repository::agents::get_agent_components(&state.db, agent_id)
-        .await
-        .unwrap_or_default();
+    let components: Vec<ComponentInfo> =
+        crate::repository::agents::get_agent_components(&state.db, agent_id)
+            .await
+            .unwrap_or_default();
 
     let mut affected = 0;
 
@@ -319,8 +321,12 @@ async fn transition_agent_components_to_unreachable(state: &AppState, agent_id: 
             "agent_id": agent_id.to_string(),
         });
         let result = crate::repository::agents::insert_unreachable_transition(
-            &state.db, *comp.id, &current_state.to_string(), &details_json,
-        ).await;
+            &state.db,
+            *comp.id,
+            &current_state.to_string(),
+            &details_json,
+        )
+        .await;
 
         if result.is_ok() {
             affected += 1;
@@ -371,7 +377,9 @@ pub async fn delete_agent(
     }
 
     // Verify agent exists and belongs to user's organization
-    let agent: Option<(DbUuid, String)> = crate::repository::agents::get_agent_in_org(&state.db, agent_id, *user.organization_id).await?;
+    let agent: Option<(DbUuid, String)> =
+        crate::repository::agents::get_agent_in_org(&state.db, agent_id, *user.organization_id)
+            .await?;
 
     let (_, hostname) = agent.ok_or(ApiError::NotFound)?;
 
@@ -441,8 +449,12 @@ pub async fn bulk_delete_agents(
     }
 
     // Verify all agents belong to the user's organization
-    let valid_agents =
-        crate::repository::agents::verify_agents_in_org(&state.db, &body.agent_ids, *user.organization_id).await?;
+    let valid_agents = crate::repository::agents::verify_agents_in_org(
+        &state.db,
+        &body.agent_ids,
+        *user.organization_id,
+    )
+    .await?;
 
     if valid_agents.is_empty() {
         return Err(ApiError::NotFound);

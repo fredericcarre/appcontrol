@@ -401,7 +401,7 @@ pub async fn export_certs_to_volume_if_configured(
         );
 
         // Log certificate event
-        let gw_expires = (chrono::Utc::now() + chrono::Duration::days(365)).to_rfc3339();
+        let _gw_expires = (chrono::Utc::now() + chrono::Duration::days(365)).to_rfc3339();
         #[cfg(feature = "postgres")]
         misc_queries::log_certificate_event_fixed_interval(
             pool,
@@ -413,9 +413,14 @@ pub async fn export_certs_to_volume_if_configured(
         .ok();
 
         #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        misc_queries::log_certificate_event_fixed_interval(pool, &fingerprint, &gateway_cn, &gw_expires)
-            .await
-            .ok();
+        misc_queries::log_certificate_event_fixed_interval(
+            pool,
+            &fingerprint,
+            &gateway_cn,
+            &gw_expires,
+        )
+        .await
+        .ok();
     }
 
     Ok(())

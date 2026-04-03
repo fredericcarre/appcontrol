@@ -207,11 +207,10 @@ impl SiteRepository for PgSiteRepository {
     }
 
     async fn count_apps_in_site(&self, site_id: Uuid) -> Result<i64, sqlx::Error> {
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM applications WHERE site_id = $1")
-                .bind(site_id)
-                .fetch_one(&self.pool)
-                .await?;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM applications WHERE site_id = $1")
+            .bind(site_id)
+            .fetch_one(&self.pool)
+            .await?;
         Ok(count)
     }
 }
@@ -359,11 +358,10 @@ impl SiteRepository for SqliteSiteRepository {
     }
 
     async fn count_apps_in_site(&self, site_id: Uuid) -> Result<i64, sqlx::Error> {
-        let count: i32 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM applications WHERE site_id = $1")
-                .bind(DbUuid::from(site_id))
-                .fetch_one(&self.pool)
-                .await?;
+        let count: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM applications WHERE site_id = $1")
+            .bind(DbUuid::from(site_id))
+            .fetch_one(&self.pool)
+            .await?;
         Ok(count as i64)
     }
 }

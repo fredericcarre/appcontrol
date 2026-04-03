@@ -60,8 +60,23 @@ pub async fn get_draft(
     let comp_json: Vec<Value> = components
         .iter()
         .map(
-            |(cid, comp_name, proc, host, ctype, meta, check, start, stop, restart,
-              confidence, source, configs, logs, matched_svc)| {
+            |(
+                cid,
+                comp_name,
+                proc,
+                host,
+                ctype,
+                meta,
+                check,
+                start,
+                stop,
+                restart,
+                confidence,
+                source,
+                configs,
+                logs,
+                matched_svc,
+            )| {
                 json!({
                     "id": cid, "name": comp_name, "process_name": proc,
                     "host": host, "component_type": ctype, "metadata": meta,
@@ -161,17 +176,26 @@ pub async fn create_draft(
         temp_to_real.insert(comp.temp_id.clone(), comp_id);
 
         repo::insert_draft_component(
-            &state.db, comp_id, draft_id, comp.agent_id,
-            &comp.name, &comp.process_name, &comp.host,
+            &state.db,
+            comp_id,
+            draft_id,
+            comp.agent_id,
+            &comp.name,
+            &comp.process_name,
+            &comp.host,
             IntArray::from(comp.listening_ports.clone()),
-            &comp.component_type, &comp.check_cmd, &comp.start_cmd,
-            &comp.stop_cmd, &comp.restart_cmd,
+            &comp.component_type,
+            &comp.check_cmd,
+            &comp.start_cmd,
+            &comp.stop_cmd,
+            &comp.restart_cmd,
             comp.command_confidence.as_deref().unwrap_or("low"),
             &comp.command_source,
             comp.config_files.as_ref().unwrap_or(&json!([])),
             comp.log_files.as_ref().unwrap_or(&json!([])),
             &comp.matched_service,
-        ).await?;
+        )
+        .await?;
     }
 
     let mut dep_count = 0u32;
@@ -180,7 +204,8 @@ pub async fn create_draft(
             temp_to_real.get(&dep.from_temp_id),
             temp_to_real.get(&dep.to_temp_id),
         ) {
-            repo::insert_draft_dependency(&state.db, draft_id, from_id, to_id, &dep.inferred_via).await?;
+            repo::insert_draft_dependency(&state.db, draft_id, from_id, to_id, &dep.inferred_via)
+                .await?;
             dep_count += 1;
         }
     }
@@ -237,9 +262,17 @@ pub async fn update_draft_components(
     let mut updated = 0u32;
     for comp in &body.components {
         let rows = repo::update_draft_component(
-            &state.db, comp.id, draft_id, &comp.name, &comp.component_type,
-            &comp.check_cmd, &comp.start_cmd, &comp.stop_cmd, &comp.restart_cmd,
-        ).await?;
+            &state.db,
+            comp.id,
+            draft_id,
+            &comp.name,
+            &comp.component_type,
+            &comp.check_cmd,
+            &comp.start_cmd,
+            &comp.stop_cmd,
+            &comp.restart_cmd,
+        )
+        .await?;
         updated += rows as u32;
     }
 
@@ -285,11 +318,20 @@ pub async fn update_draft_dependencies(
 
     let mut added = 0u32;
     for dep in &body.add {
-        repo::insert_draft_dependency(&state.db, draft_id, dep.from_component, dep.to_component, &dep.inferred_via).await?;
+        repo::insert_draft_dependency(
+            &state.db,
+            draft_id,
+            dep.from_component,
+            dep.to_component,
+            &dep.inferred_via,
+        )
+        .await?;
         added += 1;
     }
 
-    Ok(Json(json!({ "draft_id": draft_id, "added": added, "removed": removed })))
+    Ok(Json(
+        json!({ "draft_id": draft_id, "added": added, "removed": removed }),
+    ))
 }
 
 // ============================================================================
@@ -313,9 +355,14 @@ pub async fn apply_draft(
     }
 
     log_action(
-        &state.db, user.user_id, "discovery_apply", "discovery_draft", draft_id,
+        &state.db,
+        user.user_id,
+        "discovery_apply",
+        "discovery_draft",
+        draft_id,
         json!({ "name": &name }),
-    ).await?;
+    )
+    .await?;
 
     let site_id = repo::get_first_site_id(&state.db, org_id).await?;
     let site_id = site_id.ok_or(ApiError::Validation(
@@ -330,14 +377,33 @@ pub async fn apply_draft(
     let mut draft_to_real: std::collections::HashMap<Uuid, Uuid> = std::collections::HashMap::new();
 
     for (
-        draft_comp_id, comp_name, _process_name, host, comp_type,
-        agent_id, check_cmd, start_cmd, stop_cmd, config_files, log_files,
-    ) in &draft_comps {
+        draft_comp_id,
+        comp_name,
+        _process_name,
+        host,
+        comp_type,
+        agent_id,
+        check_cmd,
+        start_cmd,
+        stop_cmd,
+        config_files,
+        log_files,
+    ) in &draft_comps
+    {
         let real_comp_id = Uuid::new_v4();
         repo::insert_component_from_draft(
-            &state.db, real_comp_id, app_id, comp_name, comp_type,
-            host, agent_id, check_cmd, start_cmd, stop_cmd,
-        ).await?;
+            &state.db,
+            real_comp_id,
+            app_id,
+            comp_name,
+            comp_type,
+            host,
+            agent_id,
+            check_cmd,
+            start_cmd,
+            stop_cmd,
+        )
+        .await?;
         draft_to_real.insert(*draft_comp_id, real_comp_id);
 
         // Create custom commands for log files
@@ -345,10 +411,12 @@ pub async fn apply_draft(
             for log_entry in logs {
                 if let Some(log_path) = log_entry.get("path").and_then(|p| p.as_str()) {
                     let _ = repo::insert_component_command(
-                        &state.db, real_comp_id,
+                        &state.db,
+                        real_comp_id,
                         &format!("Logs: {}", log_path.rsplit('/').next().unwrap_or(log_path)),
                         &format!("tail -100 {}", log_path),
-                    ).await;
+                    )
+                    .await;
                 }
             }
         }
@@ -358,10 +426,15 @@ pub async fn apply_draft(
             for config_entry in configs {
                 if let Some(config_path) = config_entry.get("path").and_then(|p| p.as_str()) {
                     let _ = repo::insert_component_command(
-                        &state.db, real_comp_id,
-                        &format!("Config: {}", config_path.rsplit('/').next().unwrap_or(config_path)),
+                        &state.db,
+                        real_comp_id,
+                        &format!(
+                            "Config: {}",
+                            config_path.rsplit('/').next().unwrap_or(config_path)
+                        ),
                         &format!("cat {}", config_path),
-                    ).await;
+                    )
+                    .await;
                 }
             }
         }

@@ -349,9 +349,17 @@ async fn ensure_check_event_partitions(pool: &crate::db::DbPool) -> anyhow::Resu
             let next_month_year = if month == 12 { year + 1 } else { year };
             let next_month = if month == 12 { 1 } else { month + 1 };
 
-            if let Err(e) = appcontrol_backend::repository::startup_queries::create_check_event_partition(
-                pool, &partition_name, year, month, next_month_year, next_month,
-            ).await {
+            if let Err(e) =
+                appcontrol_backend::repository::startup_queries::create_check_event_partition(
+                    pool,
+                    &partition_name,
+                    year,
+                    month,
+                    next_month_year,
+                    next_month,
+                )
+                .await
+            {
                 let err_str = e.to_string();
                 // Ignore "already exists" errors (partition overlap)
                 if !err_str.contains("already exists") && !err_str.contains("overlap") {
@@ -407,7 +415,16 @@ async fn seed_initial_user(pool: &crate::db::DbPool, seed: &config::SeedConfig) 
     }
 
     // Create or update the admin user (platform super-admin + org admin)
-    match repo::upsert_admin_user(pool, user_id, org_id, &seed.admin_email, &seed.admin_display_name, &password_hash).await {
+    match repo::upsert_admin_user(
+        pool,
+        user_id,
+        org_id,
+        &seed.admin_email,
+        &seed.admin_display_name,
+        &password_hash,
+    )
+    .await
+    {
         Ok(_) => {
             tracing::info!(
                 email = %seed.admin_email,
@@ -745,7 +762,8 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
     migration_entries.sort_by_key(|(v, _, _)| *v);
 
     // Get already applied versions
-    let applied = appcontrol_backend::repository::startup_queries::get_applied_migrations(pool).await?;
+    let applied =
+        appcontrol_backend::repository::startup_queries::get_applied_migrations(pool).await?;
 
     let mut applied_count = 0;
     for (version, name, sql) in &migration_entries {
@@ -773,7 +791,11 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
             if trimmed.is_empty() {
                 continue;
             }
-            appcontrol_backend::repository::startup_queries::execute_migration_statement(&mut tx, trimmed).await.map_err(|e| {
+            appcontrol_backend::repository::startup_queries::execute_migration_statement(
+                &mut tx, trimmed,
+            )
+            .await
+            .map_err(|e| {
                 tracing::error!(
                     "Migration V{:03} failed on statement: {}\nError: {}",
                     version,
@@ -783,7 +805,8 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
                 e
             })?;
         }
-        appcontrol_backend::repository::startup_queries::record_migration(&mut tx, *version, name).await?;
+        appcontrol_backend::repository::startup_queries::record_migration(&mut tx, *version, name)
+            .await?;
         tx.commit().await?;
 
         applied_count += 1;

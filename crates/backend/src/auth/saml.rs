@@ -377,7 +377,9 @@ async fn find_or_create_saml_user(
         } else {
             &existing_role
         };
-        let _ = auth_queries::update_saml_user(pool, user_id, name_id, effective_role, display_name).await;
+        let _ =
+            auth_queries::update_saml_user(pool, user_id, name_id, effective_role, display_name)
+                .await;
 
         return Ok(AuthUser {
             user_id,

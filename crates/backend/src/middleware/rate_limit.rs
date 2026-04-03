@@ -100,7 +100,8 @@ async fn check_rate_limit(
     }
 
     // PostgreSQL-backed rate limiting for HA deployments.
-    let result = crate::repository::misc_queries::check_rate_limit_pg(pool, key, window_secs as i32).await;
+    let result =
+        crate::repository::misc_queries::check_rate_limit_pg(pool, key, window_secs as i32).await;
 
     match result {
         Ok(count) => count <= max_requests as i32,

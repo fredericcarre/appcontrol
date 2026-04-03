@@ -11,7 +11,6 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
-use crate::db::DbUuid;
 use crate::error::ApiError;
 use crate::repository::report_queries as repo;
 use crate::AppState;
@@ -36,31 +35,52 @@ pub async fn global_audit(
     let offset = params.offset.unwrap_or(0);
 
     let logs = repo::fetch_global_audit_logs(
-        &state.db, *user.organization_id, params.app_id, params.user_id, limit, offset,
-    ).await?;
+        &state.db,
+        *user.organization_id,
+        params.app_id,
+        params.user_id,
+        limit,
+        offset,
+    )
+    .await?;
 
     let data: Vec<Value> = logs
         .iter()
-        .map(|(id, _uid, user_email, action, target_type, target_id, details, at,
-               app_name, comp_name, agent_hostname, gateway_name)| {
-            let target_name = app_name.clone()
-                .or_else(|| comp_name.clone())
-                .or_else(|| agent_hostname.clone())
-                .or_else(|| gateway_name.clone());
+        .map(
+            |(
+                id,
+                _uid,
+                user_email,
+                action,
+                target_type,
+                target_id,
+                details,
+                at,
+                app_name,
+                comp_name,
+                agent_hostname,
+                gateway_name,
+            )| {
+                let target_name = app_name
+                    .clone()
+                    .or_else(|| comp_name.clone())
+                    .or_else(|| agent_hostname.clone())
+                    .or_else(|| gateway_name.clone());
 
-            let mut enriched_details = details.clone();
-            if let Some(name) = &target_name {
-                if let Some(obj) = enriched_details.as_object_mut() {
-                    obj.insert("name".to_string(), json!(name));
+                let mut enriched_details = details.clone();
+                if let Some(name) = &target_name {
+                    if let Some(obj) = enriched_details.as_object_mut() {
+                        obj.insert("name".to_string(), json!(name));
+                    }
                 }
-            }
 
-            json!({
-                "id": id, "user_email": user_email, "action": action,
-                "target_type": target_type, "target_id": target_id,
-                "target_name": target_name, "details": enriched_details, "created_at": at
-            })
-        })
+                json!({
+                    "id": id, "user_email": user_email, "action": action,
+                    "target_type": target_type, "target_id": target_id,
+                    "target_name": target_name, "details": enriched_details, "created_at": at
+                })
+            },
+        )
         .collect();
 
     Ok(Json(data))
@@ -73,9 +93,13 @@ pub async fn audit(
     Query(params): Query<super::ReportQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
-    if perm < PermissionLevel::View { return Err(ApiError::Forbidden); }
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
 
-    let from = params.from.unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
+    let from = params
+        .from
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let to = params.to.unwrap_or_else(chrono::Utc::now);
 
     let logs = repo::fetch_audit_log(&state.db, app_id, from, to).await?;
@@ -105,15 +129,19 @@ pub async fn activity_feed(
     Query(params): Query<ActivityQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
-    if perm < PermissionLevel::View { return Err(ApiError::Forbidden); }
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
 
     let limit = params.limit.unwrap_or(50).min(200);
-    let cursor = params.cursor
+    let cursor = params
+        .cursor
         .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(1));
 
     let transitions = repo::fetch_activity_transitions(&state.db, app_id, cursor, limit).await?;
     let actions = repo::fetch_activity_actions(&state.db, app_id, cursor, limit).await?;
-    let component_actions = repo::fetch_activity_component_actions(&state.db, app_id, cursor, limit).await?;
+    let component_actions =
+        repo::fetch_activity_component_actions(&state.db, app_id, cursor, limit).await?;
     let commands = repo::fetch_activity_commands(&state.db, app_id, cursor, limit).await?;
     let switchovers = repo::fetch_activity_switchovers(&state.db, app_id, cursor, limit).await?;
 
@@ -158,7 +186,9 @@ pub async fn activity_feed(
         }));
     }
 
-    for (req_id, comp_id, comp_name, cmd_type, exit_code, duration, dispatched, completed) in &commands {
+    for (req_id, comp_id, comp_name, cmd_type, exit_code, duration, dispatched, completed) in
+        &commands
+    {
         let label = format!("Commande {} sur {}", cmd_type, comp_name);
         events.push(json!({
             "kind": "command", "category": "planned_operation", "label": label,
@@ -173,13 +203,17 @@ pub async fn activity_feed(
         let label = match (phase.as_str(), status.as_str()) {
             ("PREPARE", "in_progress") => {
                 let mode = details["mode"].as_str().unwrap_or("FULL");
-                if mode == "SELECTIVE" { "Bascule DR partielle initiee".to_string() }
-                else { "Bascule DR complete initiee".to_string() }
+                if mode == "SELECTIVE" {
+                    "Bascule DR partielle initiee".to_string()
+                } else {
+                    "Bascule DR complete initiee".to_string()
+                }
             }
             ("VALIDATE", "completed") => "Validation DR reussie".to_string(),
             ("VALIDATE", "failed") => "Validation DR echouee".to_string(),
             ("STOP_SOURCE", "completed") => {
-                let count = details["components_impacted"].as_i64()
+                let count = details["components_impacted"]
+                    .as_i64()
                     .or_else(|| details["components_still_running"].as_i64().map(|_| 0));
                 match count {
                     Some(n) => format!("Arret source termine ({} composants)", n),
@@ -226,29 +260,38 @@ fn format_action_label(action: &str, details: &Value, component_name: Option<&st
         "stop_app" | "stop_application" => "Arret de l'application".to_string(),
         "start_switchover" => {
             let mode = details["mode"].as_str().unwrap_or("FULL");
-            let target = details["target_site"].as_str()
-                .or_else(|| details["target_site_id"].as_str()).unwrap_or("?");
-            if mode == "SELECTIVE" { format!("Bascule DR partielle vers {}", target) }
-            else { format!("Bascule DR complete vers {}", target) }
+            let target = details["target_site"]
+                .as_str()
+                .or_else(|| details["target_site_id"].as_str())
+                .unwrap_or("?");
+            if mode == "SELECTIVE" {
+                format!("Bascule DR partielle vers {}", target)
+            } else {
+                format!("Bascule DR complete vers {}", target)
+            }
         }
         "switchover_next_phase" => "Progression de la bascule DR".to_string(),
         "switchover_rollback" => "Annulation de la bascule DR".to_string(),
         "switchover_commit" => "Validation de la bascule DR".to_string(),
         "diagnose" | "start_diagnose" => "Diagnostic lance".to_string(),
         "rebuild" | "start_rebuild" => "Reconstruction lancee".to_string(),
-        "start_component" => component_name.map(|n| format!("Demarrage de {}", n))
+        "start_component" => component_name
+            .map(|n| format!("Demarrage de {}", n))
             .unwrap_or_else(|| "Demarrage d'un composant".to_string()),
-        "stop_component" => component_name.map(|n| format!("Arret de {}", n))
+        "stop_component" => component_name
+            .map(|n| format!("Arret de {}", n))
             .unwrap_or_else(|| "Arret d'un composant".to_string()),
         "execute_command" => {
             let cmd = details["command_name"].as_str().unwrap_or("commande");
-            component_name.map(|n| format!("Execution de '{}' sur {}", cmd, n))
+            component_name
+                .map(|n| format!("Execution de '{}' sur {}", cmd, n))
                 .unwrap_or_else(|| format!("Execution de '{}'", cmd))
         }
         "grant_permission" => "Attribution de permissions".to_string(),
         "revoke_permission" => "Revocation de permissions".to_string(),
         "create_share_link" => "Creation d'un lien de partage".to_string(),
-        "update_component" => component_name.map(|n| format!("Modification de {}", n))
+        "update_component" => component_name
+            .map(|n| format!("Modification de {}", n))
             .unwrap_or_else(|| "Modification d'un composant".to_string()),
         "create_component" => "Creation d'un composant".to_string(),
         "delete_component" => "Suppression d'un composant".to_string(),
@@ -266,7 +309,9 @@ fn categorize_event(action: &str, to_state: Option<&str>) -> &'static str {
         ("start_app", _) | ("stop_app", _) => "planned_operation",
         ("start_component", _) | ("stop_component", _) => "planned_operation",
         ("diagnose", _) | ("rebuild", _) => "maintenance",
-        ("update_component", _) | ("create_component", _) | ("delete_component", _) => "config_change",
+        ("update_component", _) | ("create_component", _) | ("delete_component", _) => {
+            "config_change"
+        }
         _ => "other",
     }
 }

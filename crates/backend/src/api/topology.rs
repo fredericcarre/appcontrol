@@ -45,7 +45,8 @@ pub async fn get_topology(
         .ok_or(ApiError::NotFound)?;
 
     // Fetch components with current state
-    let components = crate::repository::misc_queries::get_components_for_topology(&state.db, app_id).await?;
+    let components =
+        crate::repository::misc_queries::get_components_for_topology(&state.db, app_id).await?;
 
     // Build name lookup
     let name_map: HashMap<DbUuid, String> = components
@@ -247,9 +248,10 @@ pub async fn get_plan(
         let mut level_components = Vec::new();
 
         for &comp_id in level {
-            let row = crate::repository::misc_queries::get_component_plan_detail(&state.db, comp_id)
-                .await
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            let row =
+                crate::repository::misc_queries::get_component_plan_detail(&state.db, comp_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?;
 
             if let Some((name, current_state, host, is_optional)) = row {
                 let action = predict_action(operation, &current_state);
@@ -332,7 +334,8 @@ pub async fn validate_sequence(
     let operation = body.operation.as_deref().unwrap_or("start");
 
     // Fetch components and build name→id map
-    let components = crate::repository::misc_queries::get_component_ids_and_names(&state.db, app_id).await?;
+    let components =
+        crate::repository::misc_queries::get_component_ids_and_names(&state.db, app_id).await?;
 
     let name_to_id: HashMap<String, Uuid> = components
         .iter()
@@ -473,7 +476,9 @@ pub async fn dependency_history(
     let offset = params.offset.unwrap_or(0);
 
     // Query config_versions for dependency-related changes
-    let rows = crate::repository::misc_queries::get_dependency_history(&state.db, app_id, limit, offset).await?;
+    let rows =
+        crate::repository::misc_queries::get_dependency_history(&state.db, app_id, limit, offset)
+            .await?;
 
     let total = crate::repository::misc_queries::count_dependency_history(&state.db, app_id)
         .await

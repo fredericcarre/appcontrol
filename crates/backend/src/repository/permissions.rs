@@ -44,10 +44,8 @@ pub struct ShareLink {
 #[async_trait]
 pub trait PermissionRepository: Send + Sync {
     /// List user permissions for an application.
-    async fn list_user_permissions(
-        &self,
-        app_id: Uuid,
-    ) -> Result<Vec<UserPermission>, sqlx::Error>;
+    async fn list_user_permissions(&self, app_id: Uuid)
+        -> Result<Vec<UserPermission>, sqlx::Error>;
 
     /// Grant (or upsert) a user permission.
     async fn grant_user_permission(
@@ -60,10 +58,8 @@ pub trait PermissionRepository: Send + Sync {
     ) -> Result<Uuid, sqlx::Error>;
 
     /// List team permissions for an application.
-    async fn list_team_permissions(
-        &self,
-        app_id: Uuid,
-    ) -> Result<Vec<TeamPermission>, sqlx::Error>;
+    async fn list_team_permissions(&self, app_id: Uuid)
+        -> Result<Vec<TeamPermission>, sqlx::Error>;
 
     /// Grant (or upsert) a team permission.
     async fn grant_team_permission(
@@ -93,10 +89,7 @@ pub trait PermissionRepository: Send + Sync {
     async fn revoke_share_link(&self, id: Uuid, app_id: Uuid) -> Result<bool, sqlx::Error>;
 
     /// Look up a share link by token.
-    async fn get_share_link_by_token(
-        &self,
-        token: &str,
-    ) -> Result<Option<ShareLink>, sqlx::Error>;
+    async fn get_share_link_by_token(&self, token: &str) -> Result<Option<ShareLink>, sqlx::Error>;
 
     /// Get (site_id, organization_id) for an application.
     async fn app_site_info(&self, app_id: Uuid) -> Result<Option<(Uuid, Uuid)>, sqlx::Error>;
@@ -125,30 +118,25 @@ impl PermissionRepository for PgPermissionRepository {
         &self,
         app_id: Uuid,
     ) -> Result<Vec<UserPermission>, sqlx::Error> {
-        let rows = sqlx::query_as::<
-            _,
-            (
-                Uuid,
-                Uuid,
-                String,
-                Option<chrono::DateTime<chrono::Utc>>,
-            ),
-        >(
-            "SELECT id, user_id, permission_level, expires_at \
+        let rows =
+            sqlx::query_as::<_, (Uuid, Uuid, String, Option<chrono::DateTime<chrono::Utc>>)>(
+                "SELECT id, user_id, permission_level, expires_at \
              FROM app_permissions_users WHERE application_id = $1",
-        )
-        .bind(app_id)
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind(app_id)
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(rows
             .into_iter()
-            .map(|(id, user_id, permission_level, expires_at)| UserPermission {
-                id,
-                user_id,
-                permission_level,
-                expires_at,
-            })
+            .map(
+                |(id, user_id, permission_level, expires_at)| UserPermission {
+                    id,
+                    user_id,
+                    permission_level,
+                    expires_at,
+                },
+            )
             .collect())
     }
 
@@ -183,30 +171,25 @@ impl PermissionRepository for PgPermissionRepository {
         &self,
         app_id: Uuid,
     ) -> Result<Vec<TeamPermission>, sqlx::Error> {
-        let rows = sqlx::query_as::<
-            _,
-            (
-                Uuid,
-                Uuid,
-                String,
-                Option<chrono::DateTime<chrono::Utc>>,
-            ),
-        >(
-            "SELECT id, team_id, permission_level, expires_at \
+        let rows =
+            sqlx::query_as::<_, (Uuid, Uuid, String, Option<chrono::DateTime<chrono::Utc>>)>(
+                "SELECT id, team_id, permission_level, expires_at \
              FROM app_permissions_teams WHERE application_id = $1",
-        )
-        .bind(app_id)
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind(app_id)
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(rows
             .into_iter()
-            .map(|(id, team_id, permission_level, expires_at)| TeamPermission {
-                id,
-                team_id,
-                permission_level,
-                expires_at,
-            })
+            .map(
+                |(id, team_id, permission_level, expires_at)| TeamPermission {
+                    id,
+                    team_id,
+                    permission_level,
+                    expires_at,
+                },
+            )
             .collect())
     }
 
@@ -317,19 +300,15 @@ impl PermissionRepository for PgPermissionRepository {
     }
 
     async fn revoke_share_link(&self, id: Uuid, app_id: Uuid) -> Result<bool, sqlx::Error> {
-        let result =
-            sqlx::query("DELETE FROM share_links WHERE id = $1 AND application_id = $2")
-                .bind(id)
-                .bind(app_id)
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query("DELETE FROM share_links WHERE id = $1 AND application_id = $2")
+            .bind(id)
+            .bind(app_id)
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
-    async fn get_share_link_by_token(
-        &self,
-        token: &str,
-    ) -> Result<Option<ShareLink>, sqlx::Error> {
+    async fn get_share_link_by_token(&self, token: &str) -> Result<Option<ShareLink>, sqlx::Error> {
         let row = sqlx::query_as::<
             _,
             (
@@ -361,12 +340,11 @@ impl PermissionRepository for PgPermissionRepository {
     }
 
     async fn app_site_info(&self, app_id: Uuid) -> Result<Option<(Uuid, Uuid)>, sqlx::Error> {
-        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
-            "SELECT site_id, organization_id FROM applications WHERE id = $1",
-        )
-        .bind(app_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(Uuid, Uuid)> =
+            sqlx::query_as("SELECT site_id, organization_id FROM applications WHERE id = $1")
+                .bind(app_id)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row)
     }
 }
@@ -412,12 +390,14 @@ impl PermissionRepository for SqlitePermissionRepository {
 
         Ok(rows
             .into_iter()
-            .map(|(id, user_id, permission_level, expires_at)| UserPermission {
-                id: id.into_inner(),
-                user_id: user_id.into_inner(),
-                permission_level,
-                expires_at,
-            })
+            .map(
+                |(id, user_id, permission_level, expires_at)| UserPermission {
+                    id: id.into_inner(),
+                    user_id: user_id.into_inner(),
+                    permission_level,
+                    expires_at,
+                },
+            )
             .collect())
     }
 
@@ -470,12 +450,14 @@ impl PermissionRepository for SqlitePermissionRepository {
 
         Ok(rows
             .into_iter()
-            .map(|(id, team_id, permission_level, expires_at)| TeamPermission {
-                id: id.into_inner(),
-                team_id: team_id.into_inner(),
-                permission_level,
-                expires_at,
-            })
+            .map(
+                |(id, team_id, permission_level, expires_at)| TeamPermission {
+                    id: id.into_inner(),
+                    team_id: team_id.into_inner(),
+                    permission_level,
+                    expires_at,
+                },
+            )
             .collect())
     }
 
@@ -588,19 +570,15 @@ impl PermissionRepository for SqlitePermissionRepository {
     }
 
     async fn revoke_share_link(&self, id: Uuid, app_id: Uuid) -> Result<bool, sqlx::Error> {
-        let result =
-            sqlx::query("DELETE FROM share_links WHERE id = $1 AND application_id = $2")
-                .bind(DbUuid::from(id))
-                .bind(DbUuid::from(app_id))
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query("DELETE FROM share_links WHERE id = $1 AND application_id = $2")
+            .bind(DbUuid::from(id))
+            .bind(DbUuid::from(app_id))
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
-    async fn get_share_link_by_token(
-        &self,
-        token: &str,
-    ) -> Result<Option<ShareLink>, sqlx::Error> {
+    async fn get_share_link_by_token(&self, token: &str) -> Result<Option<ShareLink>, sqlx::Error> {
         let row = sqlx::query_as::<
             _,
             (
@@ -632,12 +610,11 @@ impl PermissionRepository for SqlitePermissionRepository {
     }
 
     async fn app_site_info(&self, app_id: Uuid) -> Result<Option<(Uuid, Uuid)>, sqlx::Error> {
-        let row: Option<(DbUuid, DbUuid)> = sqlx::query_as(
-            "SELECT site_id, organization_id FROM applications WHERE id = $1",
-        )
-        .bind(DbUuid::from(app_id))
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(DbUuid, DbUuid)> =
+            sqlx::query_as("SELECT site_id, organization_id FROM applications WHERE id = $1")
+                .bind(DbUuid::from(app_id))
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(|(s, o)| (s.into_inner(), o.into_inner())))
     }
 }
@@ -727,7 +704,17 @@ pub async fn team_has_site_access(pool: &DbPool, site_id: Uuid, team_id: Uuid) -
 pub async fn list_active_share_links(
     pool: &DbPool,
     app_id: Uuid,
-) -> Result<Vec<(DbUuid, String, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>, sqlx::Error> {
+) -> Result<
+    Vec<(
+        DbUuid,
+        String,
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<i32>,
+        i32,
+    )>,
+    sqlx::Error,
+> {
     #[cfg(feature = "postgres")]
     {
         sqlx::query_as::<_, (DbUuid, String, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>(
@@ -799,11 +786,12 @@ pub async fn delete_user_permission(
     perm_id: Uuid,
     app_id: Uuid,
 ) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM app_permissions_users WHERE id = $1 AND application_id = $2")
-        .bind(crate::db::bind_id(perm_id))
-        .bind(crate::db::bind_id(app_id))
-        .execute(pool)
-        .await?;
+    let result =
+        sqlx::query("DELETE FROM app_permissions_users WHERE id = $1 AND application_id = $2")
+            .bind(crate::db::bind_id(perm_id))
+            .bind(crate::db::bind_id(app_id))
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected())
 }
 
@@ -813,11 +801,12 @@ pub async fn delete_team_permission(
     perm_id: Uuid,
     app_id: Uuid,
 ) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM app_permissions_teams WHERE id = $1 AND application_id = $2")
-        .bind(crate::db::bind_id(perm_id))
-        .bind(crate::db::bind_id(app_id))
-        .execute(pool)
-        .await?;
+    let result =
+        sqlx::query("DELETE FROM app_permissions_teams WHERE id = $1 AND application_id = $2")
+            .bind(crate::db::bind_id(perm_id))
+            .bind(crate::db::bind_id(app_id))
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected())
 }
 
@@ -890,7 +879,17 @@ pub async fn search_users_by_pattern(
 pub async fn get_share_link_for_consume(
     pool: &DbPool,
     token: &str,
-) -> Result<Option<(DbUuid, DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>, sqlx::Error> {
+) -> Result<
+    Option<(
+        DbUuid,
+        DbUuid,
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<i32>,
+        i32,
+    )>,
+    sqlx::Error,
+> {
     #[cfg(feature = "postgres")]
     {
         sqlx::query_as::<_, (DbUuid, DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>(
@@ -987,8 +986,26 @@ pub async fn revoke_share_link_by_id(
 pub async fn list_all_user_permissions(
     pool: &DbPool,
     app_id: Uuid,
-) -> Result<Vec<(DbUuid, DbUuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>, sqlx::Error> {
-    sqlx::query_as::<_, (DbUuid, DbUuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+) -> Result<
+    Vec<(
+        DbUuid,
+        DbUuid,
+        String,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            DbUuid,
+            String,
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
         r#"SELECT apu.id, apu.user_id, apu.permission_level, u.email, apu.expires_at
            FROM app_permissions_users apu
            LEFT JOIN users u ON u.id = apu.user_id
@@ -1003,8 +1020,26 @@ pub async fn list_all_user_permissions(
 pub async fn list_all_team_permissions(
     pool: &DbPool,
     app_id: Uuid,
-) -> Result<Vec<(DbUuid, DbUuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>, sqlx::Error> {
-    sqlx::query_as::<_, (DbUuid, DbUuid, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+) -> Result<
+    Vec<(
+        DbUuid,
+        DbUuid,
+        String,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as::<
+        _,
+        (
+            DbUuid,
+            DbUuid,
+            String,
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
         r#"SELECT apt.id, apt.team_id, apt.permission_level, t.name, apt.expires_at
            FROM app_permissions_teams apt
            LEFT JOIN teams t ON t.id = apt.team_id
@@ -1019,7 +1054,17 @@ pub async fn list_all_team_permissions(
 pub async fn get_share_link_info(
     pool: &DbPool,
     token: &str,
-) -> Result<Option<(DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32, String)>, sqlx::Error> {
+) -> Result<
+    Option<(
+        DbUuid,
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<i32>,
+        i32,
+        String,
+    )>,
+    sqlx::Error,
+> {
     #[cfg(feature = "postgres")]
     {
         sqlx::query_as::<_, (DbUuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32, String)>(
