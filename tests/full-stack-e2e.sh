@@ -194,15 +194,32 @@ else
   exit 1
 fi
 
+# Activate the gateway (it starts as is_active=false after enrollment)
+log "Activating gateway..."
+sleep 2
+GW_LIST=$(api GET "/gateways")
+GW_ID=$(echo "$GW_LIST" | jq -r '[.. | objects | select(.id?) | .id] | .[0] // empty' 2>/dev/null)
+if [ -n "$GW_ID" ] && [ "$GW_ID" != "null" ]; then
+  api PUT "/gateways/$GW_ID/activate" -d '{}' > /dev/null 2>&1 || \
+  api PUT "/gateways/$GW_ID" -d '{"is_active":true}' > /dev/null 2>&1 || \
+  api POST "/gateways/$GW_ID/activate" -d '{}' > /dev/null 2>&1 || true
+  ok "Gateway activated (id=${GW_ID:0:8}...)"
+else
+  fail "Could not find gateway to activate"
+fi
+
 # ---------------------------------------------------------------------------
 # 5. Start agent
 # ---------------------------------------------------------------------------
 log "Starting agent..."
 
+mkdir -p "$WORKDIR/agent-data/tls" "$WORKDIR/agent-config"
+
 GATEWAY_URL="ws://localhost:$GATEWAY_PORT" \
 AGENT_ENROLLMENT_TOKEN="$AGENT_TOKEN" \
+DATA_DIR="$WORKDIR/agent-data" \
 RUST_LOG=info \
-"$AGENT_BIN" > "$LOGS/agent.log" 2>&1 &
+"$AGENT_BIN" --config-dir "$WORKDIR/agent-config" > "$LOGS/agent.log" 2>&1 &
 AGENT_PID=$!
 
 sleep 5
