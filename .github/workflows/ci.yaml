@@ -346,6 +346,48 @@ jobs:
         run: cat /tmp/appcontrol/logs/backend.log | tail -50 || true
 
   # ---------------------------------------------------------------------------
+  # Full-Stack E2E — backend + gateway + agent + real process start/stop
+  # ---------------------------------------------------------------------------
+  full-stack-e2e:
+    name: Full-Stack E2E (SQLite)
+    runs-on: ubuntu-latest
+    needs: [sqlite-build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+            target-sqlite/
+          key: ${{ runner.os }}-cargo-fullstack-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-fullstack-
+
+      - name: Build SQLite backend
+        run: |
+          export CARGO_TARGET_DIR=$PWD/target-sqlite
+          cd crates/backend
+          cargo build --release --no-default-features --features sqlite
+
+      - name: Build gateway and agent
+        run: cargo build --release -p appcontrol-gateway -p appcontrol-agent
+
+      - name: Run full-stack E2E test
+        run: |
+          BACKEND_BIN=./target-sqlite/release/appcontrol-backend \
+          GATEWAY_BIN=./target/release/appcontrol-gateway \
+          AGENT_BIN=./target/release/appcontrol-agent \
+          bash tests/full-stack-e2e.sh
+
+  # ---------------------------------------------------------------------------
   # E2E Integration Tests — in-process backend + real PostgreSQL
   # ---------------------------------------------------------------------------
   e2e-tests:
