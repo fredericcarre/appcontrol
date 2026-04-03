@@ -2243,4 +2243,225 @@ pub async fn insert_log_access_audit(
 }
 
 // NOTE: History queries are defined above in the "History (timeline) queries" section.
-// The duplicate functions below have been removed.
+
+// ============================================================================
+// Workspace queries (api/workspaces.rs)
+// ============================================================================
+
+/// Workspace row type.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct WorkspaceRow {
+    pub id: DbUuid,
+    pub organization_id: DbUuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// List workspaces for an organization.
+pub async fn list_workspaces(pool: &DbPool, org_id: DbUuid) -> Result<Vec<WorkspaceRow>, sqlx::Error> {
+    sqlx::query_as::<_, WorkspaceRow>(
+        "SELECT id, organization_id, name, description, created_at
+         FROM workspaces WHERE organization_id = $1 ORDER BY name",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Create a workspace.
+pub async fn create_workspace(
+    pool: &DbPool,
+    id: Uuid,
+    org_id: DbUuid,
+    name: &str,
+    description: &Option<String>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO workspaces (id, organization_id, name, description) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(crate::db::bind_id(id))
+    .bind(crate::db::bind_id(org_id))
+    .bind(name)
+    .bind(description)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Delete a workspace.
+pub async fn delete_workspace(pool: &DbPool, id: Uuid, org_id: DbUuid) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM workspaces WHERE id = $1 AND organization_id = $2")
+        .bind(crate::db::bind_id(id))
+        .bind(crate::db::bind_id(org_id))
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// Check if a workspace exists in an organization.
+#[cfg(feature = "postgres")]
+pub async fn workspace_exists(pool: &DbPool, id: Uuid, org_id: DbUuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND organization_id = $2)",
+    )
+    .bind(crate::db::bind_id(id))
+    .bind(crate::db::bind_id(org_id))
+    .fetch_one(pool)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn workspace_exists(pool: &DbPool, id: Uuid, org_id: DbUuid) -> Result<bool, sqlx::Error> {
+    let count = sqlx::query_scalar::<_, i32>(
+        "SELECT COUNT(*) FROM workspaces WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(crate::db::bind_id(id))
+    .bind(crate::db::bind_id(org_id))
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}
+
+/// List sites in a workspace.
+pub async fn list_workspace_sites(pool: &DbPool, workspace_id: Uuid) -> Result<Vec<(DbUuid, String, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String)>(
+        r#"
+        SELECT s.id, s.name, s.code
+        FROM sites s
+        JOIN workspace_sites ws ON ws.site_id = s.id
+        WHERE ws.workspace_id = $1
+        ORDER BY s.name
+        "#,
+    )
+    .bind(crate::db::bind_id(workspace_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Add a site to a workspace.
+pub async fn add_workspace_site(pool: &DbPool, workspace_id: Uuid, site_id: DbUuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO workspace_sites (workspace_id, site_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(crate::db::bind_id(workspace_id))
+    .bind(site_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Remove a site from a workspace.
+pub async fn remove_workspace_site(pool: &DbPool, workspace_id: Uuid, site_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM workspace_sites WHERE workspace_id = $1 AND site_id = $2")
+        .bind(crate::db::bind_id(workspace_id))
+        .bind(crate::db::bind_id(site_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// List members of a workspace.
+pub async fn list_workspace_members(pool: &DbPool, workspace_id: Uuid) -> Result<Vec<(DbUuid, Option<DbUuid>, Option<DbUuid>, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, Option<DbUuid>, Option<DbUuid>, String)>(
+        r#"
+        SELECT wm.id, wm.user_id, wm.team_id, wm.role
+        FROM workspace_members wm
+        WHERE wm.workspace_id = $1
+        ORDER BY wm.created_at
+        "#,
+    )
+    .bind(crate::db::bind_id(workspace_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Add a member to a workspace.
+pub async fn add_workspace_member(
+    pool: &DbPool,
+    workspace_id: Uuid,
+    user_id: Option<DbUuid>,
+    team_id: Option<DbUuid>,
+    role: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO workspace_members (workspace_id, user_id, team_id, role)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(crate::db::bind_id(workspace_id))
+    .bind(user_id)
+    .bind(team_id)
+    .bind(role)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Remove a member from a workspace.
+pub async fn remove_workspace_member(pool: &DbPool, member_id: Uuid, workspace_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM workspace_members WHERE id = $1 AND workspace_id = $2")
+        .bind(member_id)
+        .bind(crate::db::bind_id(workspace_id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// List all sites in an organization.
+pub async fn list_org_sites(pool: &DbPool, org_id: DbUuid) -> Result<Vec<(DbUuid, String, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String)>(
+        "SELECT id, name, code FROM sites WHERE organization_id = $1 ORDER BY name",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Check if workspace-site feature is configured for an org.
+#[cfg(feature = "postgres")]
+pub async fn has_workspace_sites_configured(pool: &DbPool, org_id: DbUuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM workspace_sites ws JOIN workspaces w ON w.id = ws.workspace_id WHERE w.organization_id = $1)",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_one(pool)
+    .await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn has_workspace_sites_configured(pool: &DbPool, org_id: DbUuid) -> Result<bool, sqlx::Error> {
+    let count = sqlx::query_scalar::<_, i32>(
+        "SELECT COUNT(*) FROM workspace_sites ws JOIN workspaces w ON w.id = ws.workspace_id WHERE w.organization_id = $1",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}
+
+/// List sites accessible by a specific user through workspace membership.
+pub async fn list_user_accessible_sites(
+    pool: &DbPool,
+    org_id: DbUuid,
+    user_id: DbUuid,
+) -> Result<Vec<(DbUuid, String, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, String, String)>(
+        r#"
+        SELECT DISTINCT s.id, s.name, s.code
+        FROM sites s
+        JOIN workspace_sites ws ON ws.site_id = s.id
+        JOIN workspace_members wm ON wm.workspace_id = ws.workspace_id
+        WHERE s.organization_id = $1
+          AND (
+              wm.user_id = $2
+              OR wm.team_id IN (SELECT team_id FROM team_members WHERE user_id = $2)
+          )
+        ORDER BY s.name
+        "#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(crate::db::bind_id(user_id))
+    .fetch_all(pool)
+    .await
+}
