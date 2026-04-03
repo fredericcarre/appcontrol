@@ -170,21 +170,7 @@ pub async fn trigger_all(
     )
     .await?;
 
-    #[cfg(feature = "postgres")]
-    let agent_ids = sqlx::query_scalar::<_, DbUuid>(
-        "SELECT id FROM agents WHERE organization_id = $1 AND is_active = true",
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let agent_ids = sqlx::query_scalar::<_, DbUuid>(
-        "SELECT id FROM agents WHERE organization_id = $1 AND is_active = 1",
-    )
-    .bind(crate::db::bind_id(user.organization_id))
-    .fetch_all(&state.db)
-    .await?;
+    let agent_ids = crate::repository::discovery_queries::list_active_agent_ids(&state.db, *user.organization_id).await?;
 
     let mut sent_count = 0u32;
     for agent_id in &agent_ids {
@@ -261,21 +247,7 @@ pub async fn correlate(
         std::collections::HashMap::new();
     for (agent_id, hostname, _) in &reports {
         agent_hostnames.insert(agent_id.into_inner(), hostname.clone());
-        #[cfg(feature = "postgres")]
-        let ips = sqlx::query_scalar::<_, serde_json::Value>(
-            "SELECT COALESCE(ip_addresses, '[]'::jsonb) FROM agents WHERE id = $1",
-        )
-        .bind(crate::db::bind_id(*agent_id))
-        .fetch_optional(&state.db)
-        .await?;
-
-        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-        let ips = sqlx::query_scalar::<_, serde_json::Value>(
-            "SELECT COALESCE(ip_addresses, '[]') FROM agents WHERE id = $1",
-        )
-        .bind(crate::db::bind_id(*agent_id))
-        .fetch_optional(&state.db)
-        .await?;
+        let ips = crate::repository::discovery_queries::get_agent_ip_addresses(&state.db, agent_id.into_inner()).await?;
         if let Some(ips_val) = ips {
             if let Some(arr) = ips_val.as_array() {
                 let ip_list: Vec<String> = arr
