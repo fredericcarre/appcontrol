@@ -177,7 +177,7 @@ ok "Agent enrollment token created"
 log "Starting gateway on port $GATEWAY_PORT..."
 
 BACKEND_URL="ws://localhost:$BACKEND_PORT/ws/gateway" \
-GATEWAY_LISTEN_PORT="$GATEWAY_PORT" \
+LISTEN_PORT="$GATEWAY_PORT" \
 GATEWAY_ZONE="e2e-zone" \
 GATEWAY_ENROLLMENT_TOKEN="$GW_TOKEN" \
 RUST_LOG=info \
@@ -215,8 +215,9 @@ log "Starting agent..."
 
 mkdir -p "$WORKDIR/agent-data/tls"
 
-GATEWAY_URL="ws://localhost:$GATEWAY_PORT" \
+GATEWAY_URL="wss://localhost:$GATEWAY_PORT" \
 AGENT_ENROLLMENT_TOKEN="$AGENT_TOKEN" \
+TLS_INSECURE=true \
 DATA_DIR="$WORKDIR/agent-data" \
 RUST_LOG=info \
 "$AGENT_BIN" > "$LOGS/agent.log" 2>&1 &
@@ -236,16 +237,22 @@ fi
 # 6. Verify agent registered
 # ---------------------------------------------------------------------------
 log "Checking agent registration..."
-sleep 3
 
-AGENTS_RESP=$(api GET "/agents")
-AGENT_COUNT=$(echo "$AGENTS_RESP" | jq '[.agents // . | if type == "array" then .[] else empty end] | length' 2>/dev/null || echo "0")
+AGENT_REGISTERED=false
+for i in $(seq 1 30); do
+  AGENTS_RESP=$(api GET "/agents")
+  AGENT_COUNT=$(echo "$AGENTS_RESP" | jq '[.agents // . | if type == "array" then .[] else empty end] | length' 2>/dev/null || echo "0")
+  if [ "$AGENT_COUNT" -ge 1 ]; then
+    AGENT_ID=$(echo "$AGENTS_RESP" | jq -r '[.agents // . | if type == "array" then .[] else empty end][0].id' 2>/dev/null)
+    ok "Agent registered (id=${AGENT_ID:0:8}..., count=$AGENT_COUNT)"
+    AGENT_REGISTERED=true
+    break
+  fi
+  sleep 1
+done
 
-if [ "$AGENT_COUNT" -ge 1 ]; then
-  AGENT_ID=$(echo "$AGENTS_RESP" | jq -r '[.agents // . | if type == "array" then .[] else empty end][0].id' 2>/dev/null)
-  ok "Agent registered (id=${AGENT_ID:0:8}..., count=$AGENT_COUNT)"
-else
-  fail "No agent registered (response: $AGENTS_RESP)"
+if [ "$AGENT_REGISTERED" = "false" ]; then
+  fail "No agent registered after 30s (response: $AGENTS_RESP)"
   # Continue anyway — some tests might still work
 fi
 
