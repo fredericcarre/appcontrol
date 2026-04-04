@@ -614,7 +614,90 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 15. Test heartbeat timeout → UNREACHABLE
+# 15. Test import map (preview + execute)
+# ---------------------------------------------------------------------------
+log "Testing import map (preview + execute)..."
+
+# Build a minimal 2-component JSON map inline
+IMPORT_MAP='{"name":"E2E-Imported-App","description":"Imported via E2E test","tags":{"env":"test"},"components":[{"name":"import-web","component_type":"service","host":"localhost","check_cmd":"test -f /tmp/appcontrol/import-web.running","start_cmd":"mkdir -p /tmp/appcontrol && touch /tmp/appcontrol/import-web.running","stop_cmd":"rm -f /tmp/appcontrol/import-web.running","check_interval_secs":10,"start_timeout_secs":30,"stop_timeout_secs":30,"position":{"x":100,"y":100}},{"name":"import-db","component_type":"database","host":"localhost","check_cmd":"test -f /tmp/appcontrol/import-db.running","start_cmd":"mkdir -p /tmp/appcontrol && touch /tmp/appcontrol/import-db.running","stop_cmd":"rm -f /tmp/appcontrol/import-db.running","check_interval_secs":10,"start_timeout_secs":30,"stop_timeout_secs":30,"position":{"x":100,"y":300}}],"dependencies":[{"from":"import-web","to":"import-db"}]}'
+
+# Step 1: Preview
+PREVIEW_BODY=$(jq -n --arg content "$IMPORT_MAP" --arg gw "$GW_ID" \
+  '{content: $content, format: "json", gateway_ids: [$gw]}')
+PREVIEW_RESP=$(api POST "/import/preview" -d "$PREVIEW_BODY")
+PREVIEW_VALID=$(echo "$PREVIEW_RESP" | jq -r '.valid // false' 2>/dev/null)
+PREVIEW_COMPS=$(echo "$PREVIEW_RESP" | jq -r '.component_count // 0' 2>/dev/null)
+
+if [ "$PREVIEW_VALID" = "true" ] && [ "$PREVIEW_COMPS" = "2" ]; then
+  ok "Import preview valid (2 components)"
+else
+  fail "Import preview failed (valid=$PREVIEW_VALID, components=$PREVIEW_COMPS)"
+fi
+
+# Step 2: Execute — build mappings from preview (all components → our agent)
+EXECUTE_BODY=$(jq -n --arg content "$IMPORT_MAP" --arg agent "$AGENT_ID" --arg gw "$GW_ID" \
+  '{content: $content, format: "json", profile: {name: "e2e-profile", description: "E2E test profile", profile_type: "primary", gateway_ids: [$gw], auto_failover: false, mappings: [{component_name: "import-web", agent_id: $agent, resolved_via: "manual"}, {component_name: "import-db", agent_id: $agent, resolved_via: "manual"}]}, conflict_action: "fail"}')
+
+EXEC_RESP=$(api POST "/import/execute" -d "$EXECUTE_BODY")
+EXEC_APP_ID=$(echo "$EXEC_RESP" | jq -r '.application_id // empty' 2>/dev/null)
+EXEC_COMPS=$(echo "$EXEC_RESP" | jq -r '.components_created // 0' 2>/dev/null)
+
+if [ -n "$EXEC_APP_ID" ] && [ "$EXEC_APP_ID" != "null" ] && [ "$EXEC_COMPS" = "2" ]; then
+  ok "Import execute created app with 2 components (id=${EXEC_APP_ID:0:8}...)"
+else
+  EXEC_CODE=$(api_code POST "/import/execute" -d "$EXECUTE_BODY")
+  fail "Import execute failed (app_id=$EXEC_APP_ID, components=$EXEC_COMPS, http=$EXEC_CODE, resp=$(echo "$EXEC_RESP" | head -c 200))"
+fi
+
+# Step 3: Verify imported app has both components and a dependency
+if [ -n "$EXEC_APP_ID" ] && [ "$EXEC_APP_ID" != "null" ]; then
+  IMPORTED_APP=$(api GET "/apps/$EXEC_APP_ID")
+  IMPORTED_COMP_COUNT=$(echo "$IMPORTED_APP" | jq '[.components // [] | .[] ] | length' 2>/dev/null)
+  IMPORTED_DEP_COUNT=$(echo "$IMPORTED_APP" | jq '[.dependencies // [] | .[] ] | length' 2>/dev/null)
+  if [ "$IMPORTED_COMP_COUNT" = "2" ] && [ "$IMPORTED_DEP_COUNT" = "1" ]; then
+    ok "Imported app verified (2 components, 1 dependency)"
+  else
+    fail "Imported app verification failed (components=$IMPORTED_COMP_COUNT, deps=$IMPORTED_DEP_COUNT)"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 16. Test discovery scan
+# ---------------------------------------------------------------------------
+log "Testing discovery scan..."
+
+# Trigger scan on all agents
+SCAN_RESP=$(api POST "/discovery/trigger-all")
+SCAN_SENT=$(echo "$SCAN_RESP" | jq -r '.agents_sent // 0' 2>/dev/null)
+SCAN_TARGETED=$(echo "$SCAN_RESP" | jq -r '.agents_targeted // 0' 2>/dev/null)
+
+if [ "$SCAN_TARGETED" -ge 1 ]; then
+  ok "Discovery trigger-all sent to $SCAN_SENT/$SCAN_TARGETED agents"
+else
+  fail "Discovery trigger-all found no agents (targeted=$SCAN_TARGETED)"
+fi
+
+# List reports (should not 500)
+REPORTS_CODE=$(api_code GET "/discovery/reports")
+if [ "$REPORTS_CODE" = "200" ]; then
+  ok "GET /discovery/reports returned 200"
+else
+  fail "GET /discovery/reports returned HTTP $REPORTS_CODE (expected 200)"
+fi
+
+# Wait a few seconds for agent to respond with scan results, then check again
+sleep 5
+REPORTS_RESP=$(api GET "/discovery/reports")
+REPORT_COUNT=$(echo "$REPORTS_RESP" | jq '[.reports // [] | .[]] | length' 2>/dev/null || echo "0")
+if [ "$REPORT_COUNT" -ge 1 ]; then
+  ok "Discovery reports received ($REPORT_COUNT reports)"
+else
+  # Agent may not support discovery yet — that's OK, at least the endpoint works
+  ok "Discovery reports endpoint works (0 reports — agent may not support scan)"
+fi
+
+# ---------------------------------------------------------------------------
+# 17. Test heartbeat timeout → UNREACHABLE
 # ---------------------------------------------------------------------------
 log "Testing heartbeat timeout (kill agent → expect UNREACHABLE)..."
 

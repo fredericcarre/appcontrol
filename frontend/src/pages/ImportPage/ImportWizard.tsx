@@ -356,6 +356,8 @@ export default function ImportWizard() {
                   },
                 });
               }}
+              content={state.content}
+              format={state.format}
             />
           )}
           {step === 'confirm' && state.preview && (
@@ -648,12 +650,38 @@ function SitesStep({ sites, selectedSites, onSitesChange }: SitesStepProps) {
 // Step 3: Resolution (Multi-Site)
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Parse original component commands from import content
+interface ParsedComponentCommands {
+  check_cmd?: string;
+  start_cmd?: string;
+  stop_cmd?: string;
+}
+
+function parseComponentCommands(content: string, format: string): Record<string, ParsedComponentCommands> {
+  const result: Record<string, ParsedComponentCommands> = {};
+  if (format !== 'json') return result;
+  try {
+    const data = JSON.parse(content);
+    const app = data.application || data;
+    for (const comp of app.components || []) {
+      result[comp.name] = {
+        check_cmd: comp.check_cmd || '',
+        start_cmd: comp.start_cmd || '',
+        stop_cmd: comp.stop_cmd || '',
+      };
+    }
+  } catch { /* ignore parse errors */ }
+  return result;
+}
+
 interface ResolutionStepProps {
   preview: ImportPreviewResponse;
   selectedSites: SelectedSite[];
   sites: SiteSummary[];
   componentSiteConfigs: Record<string, Record<string, ComponentSiteConfig>>;
   onConfigChange: (compName: string, siteId: string, config: ComponentSiteConfig) => void;
+  content: string;
+  format: string;
 }
 
 function ResolutionStep({
@@ -662,8 +690,11 @@ function ResolutionStep({
   sites,
   componentSiteConfigs,
   onConfigChange,
+  content,
+  format,
 }: ResolutionStepProps) {
   const primarySite = selectedSites.find((s) => s.siteType === 'primary');
+  const originalCommands = parseComponentCommands(content, format);
 
   const getSiteInfo = (siteId: string) => sites.find((s) => s.site_id === siteId);
 
@@ -700,6 +731,7 @@ function ResolutionStep({
             configs={componentSiteConfigs[comp.name] || {}}
             getAgentsForSite={getAgentsForSite}
             onConfigChange={(siteId, config) => onConfigChange(comp.name, siteId, config)}
+            originalCommands={originalCommands[comp.name]}
           />
         ))}
       </div>
@@ -729,6 +761,7 @@ interface ComponentSiteRowProps {
   configs: Record<string, ComponentSiteConfig>;
   getAgentsForSite: (siteId: string) => AvailableAgent[];
   onConfigChange: (siteId: string, config: ComponentSiteConfig) => void;
+  originalCommands?: ParsedComponentCommands;
 }
 
 function ComponentSiteRow({
@@ -738,6 +771,7 @@ function ComponentSiteRow({
   configs,
   getAgentsForSite,
   onConfigChange,
+  originalCommands,
 }: ComponentSiteRowProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -871,8 +905,56 @@ function ComponentSiteRow({
                       </select>
                     </div>
 
-                    {/* Command overrides (for DR sites) */}
-                    {!isPrimary && (
+                    {/* Commands section */}
+                    {isPrimary ? (
+                      <div className="mt-3 pt-3 border-t border-dashed space-y-2">
+                        <label className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Terminal className="h-3 w-3" />
+                          Commands
+                        </label>
+                        <div className="space-y-1.5">
+                          <div>
+                            <span className="text-[10px] text-muted-foreground">check_cmd</span>
+                            <input
+                              type="text"
+                              placeholder="Health check command"
+                              value={config.commandOverrides?.check_cmd ?? originalCommands?.check_cmd ?? ''}
+                              onChange={(e) => onConfigChange(selectedSite.siteId, {
+                                ...config,
+                                commandOverrides: { ...config.commandOverrides, check_cmd: e.target.value }
+                              })}
+                              className="w-full px-2 py-1 border rounded bg-background text-xs font-mono"
+                            />
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-muted-foreground">start_cmd</span>
+                            <input
+                              type="text"
+                              placeholder="Start command"
+                              value={config.commandOverrides?.start_cmd ?? originalCommands?.start_cmd ?? ''}
+                              onChange={(e) => onConfigChange(selectedSite.siteId, {
+                                ...config,
+                                commandOverrides: { ...config.commandOverrides, start_cmd: e.target.value }
+                              })}
+                              className="w-full px-2 py-1 border rounded bg-background text-xs font-mono"
+                            />
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-muted-foreground">stop_cmd</span>
+                            <input
+                              type="text"
+                              placeholder="Stop command"
+                              value={config.commandOverrides?.stop_cmd ?? originalCommands?.stop_cmd ?? ''}
+                              onChange={(e) => onConfigChange(selectedSite.siteId, {
+                                ...config,
+                                commandOverrides: { ...config.commandOverrides, stop_cmd: e.target.value }
+                              })}
+                              className="w-full px-2 py-1 border rounded bg-background text-xs font-mono"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
                       <div className="mt-3 pt-3 border-t border-dashed space-y-2">
                         <label className="text-xs text-muted-foreground flex items-center gap-1">
                           <Terminal className="h-3 w-3" />
@@ -1093,8 +1175,17 @@ function injectSiteOverrides(
 ): string {
   if (format !== 'json') return content;
 
+  const primarySite = selectedSites.find((s) => s.siteType === 'primary');
   const drSites = selectedSites.filter((s) => s.siteType === 'dr');
-  if (drSites.length === 0) return content;
+
+  // Check if there's anything to inject
+  const hasPrimaryEdits = primarySite && Object.values(configs).some((c) => {
+    const cfg = c[primarySite.siteId];
+    return cfg?.commandOverrides?.check_cmd !== undefined
+      || cfg?.commandOverrides?.start_cmd !== undefined
+      || cfg?.commandOverrides?.stop_cmd !== undefined;
+  });
+  if (drSites.length === 0 && !hasPrimaryEdits) return content;
 
   try {
     const data = JSON.parse(content);
@@ -1106,38 +1197,55 @@ function injectSiteOverrides(
       const compConfigs = configs[compName];
       if (!compConfigs) continue;
 
-      // Initialize site_overrides if needed
-      if (!comp.site_overrides) {
-        comp.site_overrides = [];
+      // Apply primary site command edits directly to the component
+      if (primarySite) {
+        const primaryConfig = compConfigs[primarySite.siteId];
+        if (primaryConfig?.commandOverrides) {
+          if (primaryConfig.commandOverrides.check_cmd !== undefined) {
+            comp.check_cmd = primaryConfig.commandOverrides.check_cmd;
+          }
+          if (primaryConfig.commandOverrides.start_cmd !== undefined) {
+            comp.start_cmd = primaryConfig.commandOverrides.start_cmd;
+          }
+          if (primaryConfig.commandOverrides.stop_cmd !== undefined) {
+            comp.stop_cmd = primaryConfig.commandOverrides.stop_cmd;
+          }
+        }
       }
 
       // Add override for each DR site that has command overrides
-      for (const drSite of drSites) {
-        const siteConfig = compConfigs[drSite.siteId];
-        const siteInfo = sites.find((s) => s.site_id === drSite.siteId);
-        if (!siteInfo || !siteConfig) continue;
-
-        // Skip disabled components
-        if (siteConfig.enabled === false) continue;
-
-        // Find or create override for this site
-        let override = comp.site_overrides.find(
-          (o: { site_code: string }) => o.site_code === siteInfo.site_code
-        );
-        if (!override) {
-          override = { site_code: siteInfo.site_code };
-          comp.site_overrides.push(override);
+      if (drSites.length > 0) {
+        if (!comp.site_overrides) {
+          comp.site_overrides = [];
         }
 
-        // Apply command overrides if present
-        if (siteConfig.commandOverrides?.check_cmd) {
-          override.check_cmd_override = siteConfig.commandOverrides.check_cmd;
-        }
-        if (siteConfig.commandOverrides?.start_cmd) {
-          override.start_cmd_override = siteConfig.commandOverrides.start_cmd;
-        }
-        if (siteConfig.commandOverrides?.stop_cmd) {
-          override.stop_cmd_override = siteConfig.commandOverrides.stop_cmd;
+        for (const drSite of drSites) {
+          const siteConfig = compConfigs[drSite.siteId];
+          const siteInfo = sites.find((s) => s.site_id === drSite.siteId);
+          if (!siteInfo || !siteConfig) continue;
+
+          // Skip disabled components
+          if (siteConfig.enabled === false) continue;
+
+          // Find or create override for this site
+          let override = comp.site_overrides.find(
+            (o: { site_code: string }) => o.site_code === siteInfo.site_code
+          );
+          if (!override) {
+            override = { site_code: siteInfo.site_code };
+            comp.site_overrides.push(override);
+          }
+
+          // Apply command overrides if present
+          if (siteConfig.commandOverrides?.check_cmd) {
+            override.check_cmd_override = siteConfig.commandOverrides.check_cmd;
+          }
+          if (siteConfig.commandOverrides?.start_cmd) {
+            override.start_cmd_override = siteConfig.commandOverrides.start_cmd;
+          }
+          if (siteConfig.commandOverrides?.stop_cmd) {
+            override.stop_cmd_override = siteConfig.commandOverrides.stop_cmd;
+          }
         }
       }
     }

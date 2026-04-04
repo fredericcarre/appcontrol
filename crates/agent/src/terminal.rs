@@ -760,12 +760,17 @@ impl TerminalManager {
             // Create process information struct
             let mut process_info: PROCESS_INFORMATION = std::mem::zeroed();
 
-            // Convert shell path to wide string
-            let shell_wide: Vec<u16> = shell_path
+            // Convert shell path to wide string command line
+            // cmd.exe needs /K flag to display an interactive prompt in ConPTY
+            let cmd_line_str = if shell_path.to_lowercase().ends_with("cmd.exe") {
+                format!("\"{}\" /K", shell_path)
+            } else {
+                shell_path.to_string()
+            };
+            let mut cmd_line: Vec<u16> = cmd_line_str
                 .encode_utf16()
                 .chain(std::iter::once(0))
                 .collect();
-            let mut cmd_line: Vec<u16> = shell_wide.clone();
 
             let result = CreateProcessW(
                 None,
