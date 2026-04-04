@@ -337,6 +337,8 @@ function Do-Start {
             $env:BACKEND_URL = "ws://localhost:" + $port + "/ws/gateway"
             $env:LISTEN_PORT = [string]$gwPort
             $env:GATEWAY_ZONE = $siteName
+            $env:GATEWAY_NAME = ("gw-" + $siteName)
+            if ($site.site_id) { $env:GATEWAY_SITE_ID = $site.site_id }
 
             $gwLog = Join-Path $script:LogDir ("gateway-" + $siteName + ".log")
             $gwErr = Join-Path $script:LogDir ("gateway-" + $siteName + ".err.log")
@@ -520,7 +522,17 @@ function Do-AddSite {
     }
 
     $gwPort = 4443
-    if ($Arg2) { $gwPort = [int]$Arg2 }
+    if ($Arg2) {
+        $gwPort = [int]$Arg2
+    } else {
+        # Auto-increment port to avoid conflicts with existing sites
+        $existingSites = Read-Sites
+        foreach ($s in $existingSites) {
+            if ($s.gateway_port -and [int]$s.gateway_port -ge $gwPort) {
+                $gwPort = [int]$s.gateway_port + 1
+            }
+        }
+    }
 
     $settings = Read-Settings
     if (-not $settings) {
@@ -614,6 +626,8 @@ function Do-AddSite {
             $env:BACKEND_URL = "ws://localhost:" + $port + "/ws/gateway"
             $env:LISTEN_PORT = [string]$gwPort
             $env:GATEWAY_ZONE = $siteName
+            $env:GATEWAY_NAME = ("gw-" + $siteName)
+            $env:GATEWAY_SITE_ID = $siteId
 
             $gwBin = Join-Path $script:BinDir ("appcontrol-gateway" + $script:BinExt)
             $gwLog = Join-Path $script:LogDir ("gateway-" + $siteName + ".log")
