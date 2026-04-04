@@ -2116,7 +2116,7 @@ pub async fn insert_cert_migration(
         r#"INSERT INTO certificate_rotations
            (id, organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, new_fingerprint, status, hostname)
            VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed', $8) ON CONFLICT DO NOTHING"#,
-    ).bind(DbUuid::new_v4()).bind(crate::db::bind_id(org_id)).bind(rotation_id).bind(crate::db::bind_id(agent_id)).bind(crate::db::bind_id(gateway_id))
+    ).bind(DbUuid::new_v4()).bind(crate::db::bind_id(org_id)).bind(rotation_id).bind(crate::db::bind_opt_id(agent_id)).bind(crate::db::bind_opt_id(gateway_id))
     .bind(old_fp).bind(new_fp).bind(hostname).execute(pool).await?;
     Ok(())
 }
@@ -2145,7 +2145,7 @@ pub async fn insert_cert_migration_failure(
         r#"INSERT INTO certificate_rotations
            (id, organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, status, hostname, error_message)
            VALUES ($1, $2, $3, $4, $5, $6, 'failed', $7, $8) ON CONFLICT DO NOTHING"#,
-    ).bind(DbUuid::new_v4()).bind(crate::db::bind_id(org_id)).bind(rotation_id).bind(crate::db::bind_id(agent_id)).bind(crate::db::bind_id(gateway_id))
+    ).bind(DbUuid::new_v4()).bind(crate::db::bind_id(org_id)).bind(rotation_id).bind(crate::db::bind_opt_id(agent_id)).bind(crate::db::bind_opt_id(gateway_id))
     .bind(old_fp).bind(hostname).bind(error_message).execute(pool).await?;
     Ok(())
 }

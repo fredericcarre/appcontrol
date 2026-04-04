@@ -94,8 +94,8 @@ pub async fn fetch_global_audit_logs(
         "#,
     )
     .bind(crate::db::bind_id(org_id))
-    .bind(crate::db::bind_id(app_id))
-    .bind(crate::db::bind_id(user_id))
+    .bind(crate::db::bind_opt_id(app_id))
+    .bind(crate::db::bind_opt_id(user_id))
     .bind(limit)
     .bind(offset)
     .fetch_all(db)
