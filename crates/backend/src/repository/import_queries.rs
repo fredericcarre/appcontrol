@@ -754,9 +754,11 @@ pub async fn create_binding_profile_mapping(
     agent_id: Uuid,
     resolved_via: &str,
 ) -> Result<(), sqlx::Error> {
+    let id = Uuid::new_v4();
     sqlx::query(
-        r#"INSERT INTO binding_profile_mappings (profile_id, component_name, host, agent_id, resolved_via) VALUES ($1, $2, $3, $4, $5)"#,
+        r#"INSERT INTO binding_profile_mappings (id, profile_id, component_name, host, agent_id, resolved_via) VALUES ($1, $2, $3, $4, $5, $6)"#,
     )
+    .bind(crate::db::bind_id(id))
     .bind(crate::db::bind_id(profile_id))
     .bind(component_name)
     .bind(host)
