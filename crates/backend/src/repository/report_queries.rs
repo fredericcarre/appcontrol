@@ -10,12 +10,12 @@ use uuid::Uuid;
 // ============================================================================
 
 pub type GlobalAuditRow = (
-    Uuid,
-    Uuid,
+    DbUuid,
+    DbUuid,
     String,
     String,
     String,
-    Uuid,
+    DbUuid,
     serde_json::Value,
     chrono::DateTime<chrono::Utc>,
     Option<String>,
@@ -356,7 +356,7 @@ pub async fn fetch_mttr_recoveries(
     to: chrono::DateTime<chrono::Utc>,
 ) -> Result<
     Vec<(
-        Uuid,
+        DbUuid,
         String,
         chrono::DateTime<chrono::Utc>,
         chrono::DateTime<chrono::Utc>,
@@ -367,7 +367,7 @@ pub async fn fetch_mttr_recoveries(
     sqlx::query_as::<
         _,
         (
-            Uuid,
+            DbUuid,
             String,
             chrono::DateTime<chrono::Utc>,
             chrono::DateTime<chrono::Utc>,
@@ -420,7 +420,7 @@ pub async fn fetch_mttr_recoveries(
     to: chrono::DateTime<chrono::Utc>,
 ) -> Result<
     Vec<(
-        Uuid,
+        DbUuid,
         String,
         chrono::DateTime<chrono::Utc>,
         chrono::DateTime<chrono::Utc>,
@@ -428,7 +428,7 @@ pub async fn fetch_mttr_recoveries(
     )>,
     sqlx::Error,
 > {
-    sqlx::query_as::<_, (Uuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64)>(
+    sqlx::query_as::<_, (DbUuid, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64)>(
         r#"
         WITH failed_events AS (
             SELECT st.component_id, c.name as component_name, st.created_at as failed_at,
@@ -682,7 +682,7 @@ pub async fn fetch_activity_transitions(
     limit: i64,
 ) -> Result<
     Vec<(
-        Uuid,
+        DbUuid,
         String,
         String,
         String,
@@ -694,7 +694,7 @@ pub async fn fetch_activity_transitions(
     sqlx::query_as::<
         _,
         (
-            Uuid,
+            DbUuid,
             String,
             String,
             String,
@@ -720,7 +720,7 @@ pub async fn fetch_activity_actions(
     limit: i64,
 ) -> Result<
     Vec<(
-        Uuid,
+        DbUuid,
         String,
         String,
         Value,
@@ -730,7 +730,7 @@ pub async fn fetch_activity_actions(
     )>,
     sqlx::Error,
 > {
-    sqlx::query_as::<_, (Uuid, String, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>(
+    sqlx::query_as::<_, (DbUuid, String, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>(
         r#"SELECT al.user_id, COALESCE(u.email, CAST(al.user_id AS TEXT)), al.action, al.details, al.created_at,
                al.status, al.error_message
         FROM action_log al LEFT JOIN users u ON u.id = al.user_id
@@ -745,7 +745,7 @@ pub async fn fetch_activity_component_actions(
     limit: i64,
 ) -> Result<
     Vec<(
-        Uuid,
+        DbUuid,
         String,
         String,
         String,
@@ -756,7 +756,7 @@ pub async fn fetch_activity_component_actions(
     )>,
     sqlx::Error,
 > {
-    sqlx::query_as::<_, (Uuid, String, String, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>(
+    sqlx::query_as::<_, (DbUuid, String, String, String, Value, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>)>(
         r#"SELECT al.user_id, COALESCE(u.email, CAST(al.user_id AS TEXT)), al.action,
                COALESCE(c.name, CAST(al.resource_id AS TEXT)), al.details, al.created_at, al.status, al.error_message
         FROM action_log al LEFT JOIN users u ON u.id = al.user_id
@@ -772,8 +772,8 @@ pub async fn fetch_activity_commands(
     limit: i64,
 ) -> Result<
     Vec<(
-        Uuid,
-        Uuid,
+        DbUuid,
+        DbUuid,
         String,
         String,
         Option<i16>,
@@ -783,7 +783,7 @@ pub async fn fetch_activity_commands(
     )>,
     sqlx::Error,
 > {
-    sqlx::query_as::<_, (Uuid, Uuid, String, String, Option<i16>, Option<i32>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+    sqlx::query_as::<_, (DbUuid, DbUuid, String, String, Option<i16>, Option<i32>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
         r#"SELECT ce.request_id, ce.component_id, c.name, ce.command_type,
                ce.exit_code, ce.duration_ms, ce.dispatched_at, ce.completed_at
         FROM command_executions ce JOIN components c ON c.id = ce.component_id AND c.application_id = $1
