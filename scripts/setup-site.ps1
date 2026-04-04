@@ -71,28 +71,37 @@ function Invoke-Api {
         [string]$Token
     )
     $uri = "$BackendUrl/api/v1$Path"
-    $headers = @{}
-    if ($Token) { $headers["Authorization"] = "Bearer $Token" }
 
+    # Build params for Invoke-WebRequest (more reliable than Invoke-RestMethod on PS 5.1)
     $params = @{
         Uri             = $uri
         Method          = $Method
-        Headers         = $headers
         UseBasicParsing = $true
     }
+
+    # Only add Headers when we have a token — empty Headers hashtable can cause issues on PS 5.1
+    if ($Token) {
+        $params["Headers"] = @{ "Authorization" = "Bearer $Token" }
+    }
+
     if ($Body) {
-        $params["Body"] = ($Body | ConvertTo-Json -Depth 10)
-        $params["ContentType"] = "application/json"
+        $jsonBody = ($Body | ConvertTo-Json -Depth 10)
+        $params["Body"] = [System.Text.Encoding]::UTF8.GetBytes($jsonBody)
+        $params["ContentType"] = "application/json; charset=utf-8"
     }
 
     try {
-        return Invoke-RestMethod @params
+        $response = Invoke-WebRequest @params
+        if ($response.Content) {
+            return ($response.Content | ConvertFrom-Json)
+        }
+        return $null
     } catch {
         $status = $_.Exception.Response.StatusCode.value__
         $detail = $_.ErrorDetails.Message
         if ($status -eq 409) { return $null }  # Already exists
         if ($status -eq 404) { return $null }  # Not found
-        Write-Status "API error: $Method $Path -> $status $detail" "ERROR"
+        Write-Status "API error: $Method $Path -> $status" "ERROR"
         throw
     }
 }
