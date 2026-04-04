@@ -357,7 +357,13 @@ function Do-Start {
         # Agent
         $agBin = Join-Path $script:BinDir ("appcontrol-agent" + $script:BinExt)
         if (Test-Path $agBin) {
+            $agId = $site.agent_id
+            if (-not $agId) { $agId = [guid]::NewGuid().ToString() }
+            $env:AGENT_ID = $agId
             $env:GATEWAY_URL = "ws://localhost:" + $gwPort
+            $agDataDir = Join-Path $script:DataDir ("agent-" + $siteName)
+            Ensure-Dir $agDataDir
+            $env:DATA_DIR = $agDataDir
 
             $agLog = Join-Path $script:LogDir ("agent-" + $siteName + ".log")
             $agErr = Join-Path $script:LogDir ("agent-" + $siteName + ".err.log")
@@ -612,11 +618,13 @@ function Do-AddSite {
     }
     if (-not $found) {
         $gwId = "gw-" + ($siteName -replace '[^a-zA-Z0-9]', '-').ToLower()
+        $agId = [guid]::NewGuid().ToString()
         $newEntry = @{
             name         = $siteName
             site_id      = $siteId
             gateway_port = $gwPort
             gateway_id   = $gwId
+            agent_id     = $agId
             enrolled     = $true
         }
         $sitesList.Add($newEntry) | Out-Null
@@ -648,7 +656,21 @@ function Do-AddSite {
             # Wait for gateway to be ready before starting agent
             Start-Sleep -Seconds 3
 
+            # Retrieve the agent_id we saved in sites.json
+            $savedSites = Read-Sites
+            $agId = $null
+            foreach ($ss in $savedSites) {
+                if ($ss.name -eq $siteName -and $ss.agent_id) {
+                    $agId = $ss.agent_id
+                    break
+                }
+            }
+            if (-not $agId) { $agId = [guid]::NewGuid().ToString() }
+            $env:AGENT_ID = $agId
             $env:GATEWAY_URL = "ws://localhost:" + $gwPort
+            $agDataDir = Join-Path $script:DataDir ("agent-" + $siteName)
+            Ensure-Dir $agDataDir
+            $env:DATA_DIR = $agDataDir
             $agBin = Join-Path $script:BinDir ("appcontrol-agent" + $script:BinExt)
             $agLog = Join-Path $script:LogDir ("agent-" + $siteName + ".log")
             $agErr = Join-Path $script:LogDir ("agent-" + $siteName + ".err.log")
