@@ -875,11 +875,13 @@ async fn test_nullable_uuid_queries() {
 
     // Seed org
     let org_id = uuid::Uuid::new_v4();
-    sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'UUID Test Org', 'uuid-test')")
-        .bind(DbUuid::from(org_id))
-        .execute(&pool)
-        .await
-        .expect("Failed to seed org");
+    sqlx::query(
+        "INSERT INTO organizations (id, name, slug) VALUES ($1, 'UUID Test Org', 'uuid-test')",
+    )
+    .bind(DbUuid::from(org_id))
+    .execute(&pool)
+    .await
+    .expect("Failed to seed org");
 
     // Create a site (required — site_id is NOT NULL on applications)
     let site_id = uuid::Uuid::new_v4();
@@ -922,45 +924,75 @@ async fn test_nullable_uuid_queries() {
         &pool, comp_id,
     )
     .await;
-    assert!(result.is_ok(), "get_component_referenced_app_id should not crash on NULL: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "get_component_referenced_app_id should not crash on NULL: {:?}",
+        result.err()
+    );
     assert_eq!(result.unwrap(), None, "referenced_app_id should be None");
 
     // --- Test 2: get_app_site_id returns the correct site_id ---
-    let fetched_site_id = appcontrol_backend::repository::core_queries::get_app_site_id(&pool, app_id).await;
-    assert_eq!(fetched_site_id, Some(site_id), "site_id should match (NOT NULL column)");
+    let fetched_site_id =
+        appcontrol_backend::repository::core_queries::get_app_site_id(&pool, app_id).await;
+    assert_eq!(
+        fetched_site_id,
+        Some(site_id),
+        "site_id should match (NOT NULL column)"
+    );
 
     // Also test with non-existent app — should return None
-    let no_site = appcontrol_backend::repository::core_queries::get_app_site_id(&pool, uuid::Uuid::new_v4()).await;
-    assert_eq!(no_site, None, "get_app_site_id for non-existent app should return None");
+    let no_site =
+        appcontrol_backend::repository::core_queries::get_app_site_id(&pool, uuid::Uuid::new_v4())
+            .await;
+    assert_eq!(
+        no_site, None,
+        "get_app_site_id for non-existent app should return None"
+    );
 
     // --- Test 3: get_start_component_info with NULL agent_id + referenced_app_id ---
-    let start_info = appcontrol_backend::repository::core_queries::get_start_component_info(
-        &pool, comp_id,
-    )
-    .await;
-    assert!(start_info.is_ok(), "get_start_component_info should not crash on NULL UUIDs: {:?}", start_info.err());
+    let start_info =
+        appcontrol_backend::repository::core_queries::get_start_component_info(&pool, comp_id)
+            .await;
+    assert!(
+        start_info.is_ok(),
+        "get_start_component_info should not crash on NULL UUIDs: {:?}",
+        start_info.err()
+    );
     let start_info = start_info.unwrap();
     assert_eq!(start_info.agent_id, None, "agent_id should be None");
-    assert_eq!(start_info.referenced_app_id, None, "referenced_app_id should be None");
+    assert_eq!(
+        start_info.referenced_app_id, None,
+        "referenced_app_id should be None"
+    );
 
     // --- Test 4: get_stop_component_info with NULL agent_id + referenced_app_id ---
-    let stop_info = appcontrol_backend::repository::core_queries::get_stop_component_info(
-        &pool, comp_id,
-    )
-    .await;
-    assert!(stop_info.is_ok(), "get_stop_component_info should not crash on NULL UUIDs: {:?}", stop_info.err());
+    let stop_info =
+        appcontrol_backend::repository::core_queries::get_stop_component_info(&pool, comp_id).await;
+    assert!(
+        stop_info.is_ok(),
+        "get_stop_component_info should not crash on NULL UUIDs: {:?}",
+        stop_info.err()
+    );
     let stop_info = stop_info.unwrap();
     assert_eq!(stop_info.agent_id, None, "agent_id should be None");
-    assert_eq!(stop_info.referenced_app_id, None, "referenced_app_id should be None");
+    assert_eq!(
+        stop_info.referenced_app_id, None,
+        "referenced_app_id should be None"
+    );
 
     // --- Test 5: is_gateway_active for non-existent gateway (should default to true) ---
-    let is_active = appcontrol_backend::repository::queries::is_gateway_active(
-        &pool,
-        uuid::Uuid::new_v4(),
-    )
-    .await;
-    assert!(is_active.is_ok(), "is_gateway_active should not crash: {:?}", is_active.err());
-    assert!(is_active.unwrap(), "Non-existent gateway should default to active (true)");
+    let is_active =
+        appcontrol_backend::repository::queries::is_gateway_active(&pool, uuid::Uuid::new_v4())
+            .await;
+    assert!(
+        is_active.is_ok(),
+        "is_gateway_active should not crash: {:?}",
+        is_active.err()
+    );
+    assert!(
+        is_active.unwrap(),
+        "Non-existent gateway should default to active (true)"
+    );
 
     // --- Test 6: Component with agent_id SET but referenced_app_id NULL ---
     let agent_id = uuid::Uuid::new_v4();
@@ -987,13 +1019,15 @@ async fn test_nullable_uuid_queries() {
     .await
     .expect("Failed to create component with agent");
 
-    let start_info = appcontrol_backend::repository::core_queries::get_start_component_info(
-        &pool, comp2_id,
-    )
-    .await
-    .expect("get_start_component_info should work with agent_id set");
+    let start_info =
+        appcontrol_backend::repository::core_queries::get_start_component_info(&pool, comp2_id)
+            .await
+            .expect("get_start_component_info should work with agent_id set");
     assert_eq!(start_info.agent_id, Some(agent_id), "agent_id should match");
-    assert_eq!(start_info.referenced_app_id, None, "referenced_app_id should still be None");
+    assert_eq!(
+        start_info.referenced_app_id, None,
+        "referenced_app_id should still be None"
+    );
 
     // --- Test 7: get_component_referenced_app_id with referenced_app_id SET ---
     let ref_app_id = uuid::Uuid::new_v4();
@@ -1021,12 +1055,17 @@ async fn test_nullable_uuid_queries() {
     .await
     .expect("Failed to create app-type component");
 
-    let fetched_ref = appcontrol_backend::repository::core_queries::get_component_referenced_app_id(
-        &pool, comp3_id,
-    )
-    .await
-    .expect("get_component_referenced_app_id should work with SET value");
-    assert_eq!(fetched_ref, Some(ref_app_id), "referenced_app_id should match the one we set");
+    let fetched_ref =
+        appcontrol_backend::repository::core_queries::get_component_referenced_app_id(
+            &pool, comp3_id,
+        )
+        .await
+        .expect("get_component_referenced_app_id should work with SET value");
+    assert_eq!(
+        fetched_ref,
+        Some(ref_app_id),
+        "referenced_app_id should match the one we set"
+    );
 
     // --- Test 8: is_gateway_active for existing active gateway ---
     let gw_id = uuid::Uuid::new_v4();
