@@ -77,7 +77,7 @@ pub async fn list_component_links(
         "SELECT id, component_id, label, url, link_type, display_order, created_at \
          FROM component_links WHERE component_id = $1 ORDER BY display_order, label",
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .fetch_all(pool)
     .await?;
 
@@ -110,7 +110,7 @@ pub async fn create_component_link(
            RETURNING id, component_id, label, url, link_type, display_order, created_at"#,
     )
     .bind(link_id)
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(label)
     .bind(url)
     .bind(link_type)
@@ -156,7 +156,7 @@ pub async fn update_component_link(
            WHERE id = $2 AND component_id = $1
            RETURNING id, component_id, label, url, link_type, display_order, created_at"#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(link_id)
     .bind(label)
     .bind(url)
@@ -196,7 +196,7 @@ pub async fn delete_component_link(
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM component_links WHERE id = $1 AND component_id = $2")
         .bind(link_id)
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .execute(pool)
         .await?;
 
@@ -235,7 +235,7 @@ pub async fn list_app_variables(
         "SELECT id, application_id, name, value, description, is_secret, created_at, updated_at \
          FROM app_variables WHERE application_id = $1 ORDER BY name",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(pool)
     .await;
 
@@ -265,7 +265,7 @@ pub async fn create_app_variable(
            RETURNING id, application_id, name, value, description, is_secret, created_at, updated_at"#,
     )
     .bind(var_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(name)
     .bind(value)
     .bind(description)
@@ -310,7 +310,7 @@ pub async fn update_app_variable(
 
     #[cfg(feature = "postgres")]
     return sqlx::query_as::<_, VariableInfo>(&sql)
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(var_id)
         .bind(value)
         .bind(description)
@@ -337,7 +337,7 @@ pub async fn delete_app_variable(
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM app_variables WHERE id = $1 AND application_id = $2")
         .bind(var_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .execute(pool)
         .await?;
 
@@ -390,7 +390,7 @@ pub async fn list_component_groups(
         "SELECT id, application_id, name, description, color, display_order, created_at \
          FROM component_groups WHERE application_id = $1 ORDER BY display_order, name",
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .fetch_all(pool)
     .await;
 
@@ -420,7 +420,7 @@ pub async fn create_component_group(
            RETURNING id, application_id, name, description, color, display_order, created_at"#,
     )
     .bind(group_id)
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(name)
     .bind(description)
     .bind(color)
@@ -463,7 +463,7 @@ pub async fn update_component_group(
            WHERE id = $2 AND application_id = $1
            RETURNING id, application_id, name, description, color, display_order, created_at"#,
     )
-    .bind(app_id)
+    .bind(crate::db::bind_id(app_id))
     .bind(group_id)
     .bind(name)
     .bind(description)
@@ -500,7 +500,7 @@ pub async fn delete_component_group(
     #[cfg(feature = "postgres")]
     let result = sqlx::query("DELETE FROM component_groups WHERE id = $1 AND application_id = $2")
         .bind(group_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .execute(pool)
         .await?;
 
@@ -988,7 +988,7 @@ pub async fn create_break_glass_session(
     ))
     .bind(session_id)
     .bind(account_id)
-    .bind(organization_id)
+    .bind(crate::db::bind_id(organization_id))
     .bind(ip)
     .bind(reason)
     .bind(duration_minutes)
@@ -1012,7 +1012,7 @@ pub async fn log_break_glass_activation(
     )
     .bind(Uuid::new_v4())
     .bind(account_id)
-    .bind(organization_id)
+    .bind(crate::db::bind_id(organization_id))
     .bind(details)
     .execute(pool)
     .await?;
@@ -1091,7 +1091,7 @@ pub async fn history_list_components(
         let rows = sqlx::query_as::<_, Row>(
             "SELECT id, name FROM components WHERE application_id = $1 ORDER BY name",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(pool)
         .await?;
         Ok(rows
@@ -1378,7 +1378,7 @@ pub async fn history_app_actions(
             LIMIT $4
             "#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(from)
         .bind(to)
         .bind(limit)
@@ -1705,7 +1705,7 @@ pub async fn check_approval_policy(
     sqlx::query_as::<_, (bool,)>(
         "SELECT enabled FROM approval_policies WHERE organization_id = $1 AND operation_type = $2",
     )
-    .bind(organization_id)
+    .bind(crate::db::bind_id(organization_id))
     .bind(operation_type)
     .fetch_optional(pool)
     .await
@@ -1735,11 +1735,11 @@ pub async fn insert_approval_request(
                       created_at, expires_at, resolved_at",
         db::sql::now()
     ))
-    .bind(request_id)
+    .bind(crate::db::bind_id(request_id))
     .bind(crate::db::bind_id(organization_id))
     .bind(operation_type)
     .bind(resource_type)
-    .bind(resource_id)
+    .bind(crate::db::bind_id(resource_id))
     .bind(risk_level)
     .bind(crate::db::bind_id(requested_by))
     .bind(request_payload)
@@ -1785,7 +1785,7 @@ pub async fn get_approval_request(
         WHERE id = $1 AND organization_id = $2
         "#,
     )
-    .bind(request_id)
+    .bind(crate::db::bind_id(request_id))
     .bind(crate::db::bind_id(organization_id))
     .fetch_optional(pool)
     .await
@@ -1797,7 +1797,7 @@ pub async fn expire_approval_request(pool: &DbPool, request_id: Uuid) -> Result<
         "UPDATE approval_requests SET status = 'expired', resolved_at = {} WHERE id = $1",
         db::sql::now()
     ))
-    .bind(request_id)
+    .bind(crate::db::bind_id(request_id))
     .execute(pool)
     .await?;
     Ok(())
@@ -1815,8 +1815,8 @@ pub async fn insert_approval_decision(
     sqlx::query(
         "INSERT INTO approval_decisions (id, request_id, decided_by, decision, reason) VALUES ($1, $2, $3, $4, $5)",
     )
-    .bind(decision_id)
-    .bind(request_id)
+    .bind(crate::db::bind_id(decision_id))
+    .bind(crate::db::bind_id(request_id))
     .bind(crate::db::bind_id(decided_by))
     .bind(decision)
     .bind(reason)
@@ -1830,7 +1830,7 @@ pub async fn count_approvals(pool: &DbPool, request_id: Uuid) -> Result<i64, sql
     sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM approval_decisions WHERE request_id = $1 AND decision = 'approved'",
     )
-    .bind(request_id)
+    .bind(crate::db::bind_id(request_id))
     .fetch_one(pool)
     .await
 }
@@ -1845,7 +1845,7 @@ pub async fn update_approval_status(
         "UPDATE approval_requests SET status = $2, resolved_at = {} WHERE id = $1",
         db::sql::now()
     ))
-    .bind(request_id)
+    .bind(crate::db::bind_id(request_id))
     .bind(status)
     .execute(pool)
     .await?;
@@ -2176,7 +2176,7 @@ pub async fn create_log_source(
     )
     .bind(crate::db::bind_id(id))
     .bind(crate::db::bind_id(component_id))
-    .bind(organization_id)
+    .bind(crate::db::bind_id(organization_id))
     .bind(name)
     .bind(source_type)
     .bind(description)
@@ -2343,7 +2343,7 @@ pub async fn insert_log_access_audit(
         "#,
     )
     .bind(id)
-    .bind(organization_id)
+    .bind(crate::db::bind_id(organization_id))
     .bind(crate::db::bind_id(user_id))
     .bind(crate::db::bind_id(component_id))
     .bind(log_source_id)
@@ -2478,7 +2478,7 @@ pub async fn add_workspace_site(
         "INSERT INTO workspace_sites (workspace_id, site_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
     )
     .bind(crate::db::bind_id(workspace_id))
-    .bind(site_id)
+    .bind(crate::db::bind_id(site_id))
     .execute(pool)
     .await?;
     Ok(())
@@ -2530,8 +2530,8 @@ pub async fn add_workspace_member(
          ON CONFLICT DO NOTHING",
     )
     .bind(crate::db::bind_id(workspace_id))
-    .bind(user_id)
-    .bind(team_id)
+    .bind(crate::db::bind_opt_id(user_id))
+    .bind(crate::db::bind_opt_id(team_id))
     .bind(role)
     .execute(pool)
     .await?;
@@ -2545,7 +2545,7 @@ pub async fn remove_workspace_member(
     workspace_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM workspace_members WHERE id = $1 AND workspace_id = $2")
-        .bind(member_id)
+        .bind(crate::db::bind_id(member_id))
         .bind(crate::db::bind_id(workspace_id))
         .execute(pool)
         .await?;
@@ -2744,7 +2744,7 @@ pub async fn is_cn_revoked(pool: &DbPool, org_id: Uuid, cn: &str) -> bool {
         sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM revoked_certificates WHERE organization_id = $1 AND cn = $2)",
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(cn)
         .fetch_one(pool)
         .await
@@ -2973,7 +2973,7 @@ pub async fn list_enrollment_events(
                ORDER BY created_at DESC
                LIMIT 100"#,
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_all(pool)
         .await?;
         Ok(rows
@@ -3043,7 +3043,7 @@ pub async fn get_active_profile_name(
         sqlx::query_as::<_, (String,)>(
             "SELECT name FROM binding_profiles WHERE application_id = $1 AND is_active = true",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_optional(pool)
         .await
     }
@@ -3062,7 +3062,7 @@ pub async fn get_active_profile_name(
 pub async fn deactivate_all_profiles(pool: &DbPool, app_id: Uuid) -> Result<(), sqlx::Error> {
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE binding_profiles SET is_active = false WHERE application_id = $1")
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .execute(pool)
         .await?;
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -3077,7 +3077,7 @@ pub async fn deactivate_all_profiles(pool: &DbPool, app_id: Uuid) -> Result<(), 
 pub async fn activate_profile(pool: &DbPool, profile_id: Uuid) -> Result<(), sqlx::Error> {
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE binding_profiles SET is_active = true WHERE id = $1")
-        .bind(profile_id)
+        .bind(crate::db::bind_id(profile_id))
         .execute(pool)
         .await?;
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -3124,8 +3124,8 @@ pub async fn log_profile_activation(
             r#"INSERT INTO switchover_log (switchover_id, application_id, phase, status, details)
                VALUES ($1, $2, 'COMMIT', 'completed', $3)"#,
         )
-        .bind(switchover_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(switchover_id))
+        .bind(crate::db::bind_id(app_id))
         .bind(serde_json::json!({
             "type": "profile_activation",
             "profile_name": profile_name,
@@ -4019,7 +4019,7 @@ pub async fn get_profile_mappings<T: for<'r> sqlx::FromRow<'r, crate::db::DbRow>
         ORDER BY component_name
         "#,
     )
-    .bind(profile_id)
+    .bind(crate::db::bind_id(profile_id))
     .fetch_all(pool)
     .await
 }
@@ -4060,7 +4060,7 @@ pub async fn create_binding_profile<
         RETURNING id, application_id, name, description, profile_type, is_active, gateway_ids, auto_failover, created_at, created_by
         "#,
     )
-    .bind(profile_id)
+    .bind(crate::db::bind_id(profile_id))
     .bind(crate::db::bind_id(app_id))
     .bind(name)
     .bind(description)
@@ -4087,7 +4087,7 @@ pub async fn copy_profile_mappings(
         WHERE profile_id = $1
         "#,
     )
-    .bind(from_profile_id)
+    .bind(crate::db::bind_id(from_profile_id))
     .fetch_all(pool)
     .await?;
 
@@ -4129,7 +4129,7 @@ pub async fn insert_profile_mapping(
     .bind(crate::db::bind_id(profile_id))
     .bind(component_name)
     .bind(host)
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(resolved_via)
     .execute(pool)
     .await?;
@@ -4139,7 +4139,7 @@ pub async fn insert_profile_mapping(
 /// Delete a binding profile.
 pub async fn delete_binding_profile(pool: &DbPool, profile_id: DbUuid) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM binding_profiles WHERE id = $1")
-        .bind(profile_id)
+        .bind(crate::db::bind_id(profile_id))
         .execute(pool)
         .await?;
     Ok(())

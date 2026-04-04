@@ -123,7 +123,7 @@ impl PermissionRepository for PgPermissionRepository {
                 "SELECT id, user_id, permission_level, expires_at \
              FROM app_permissions_users WHERE application_id = $1",
             )
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .fetch_all(&self.pool)
             .await?;
 
@@ -157,8 +157,8 @@ impl PermissionRepository for PgPermissionRepository {
                 crate::db::sql::now()
             ),
         )
-        .bind(app_id)
-        .bind(user_id)
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(user_id))
         .bind(level)
         .bind(granted_by)
         .bind(expires_at)
@@ -176,7 +176,7 @@ impl PermissionRepository for PgPermissionRepository {
                 "SELECT id, team_id, permission_level, expires_at \
              FROM app_permissions_teams WHERE application_id = $1",
             )
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .fetch_all(&self.pool)
             .await?;
 
@@ -210,8 +210,8 @@ impl PermissionRepository for PgPermissionRepository {
                 crate::db::sql::now()
             ),
         )
-        .bind(app_id)
-        .bind(team_id)
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(team_id))
         .bind(level)
         .bind(granted_by)
         .bind(expires_at)
@@ -245,7 +245,7 @@ impl PermissionRepository for PgPermissionRepository {
              VALUES ($1, $2, $3, $4, $5, $6) \
              RETURNING id, token, permission_level, expires_at, max_uses, current_uses, created_at",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(token)
         .bind(level)
         .bind(created_by)
@@ -281,7 +281,7 @@ impl PermissionRepository for PgPermissionRepository {
             "SELECT id, token, permission_level, expires_at, max_uses, current_uses, created_at \
              FROM share_links WHERE application_id = $1 ORDER BY created_at DESC",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&self.pool)
         .await?;
 
@@ -302,7 +302,7 @@ impl PermissionRepository for PgPermissionRepository {
     async fn revoke_share_link(&self, id: Uuid, app_id: Uuid) -> Result<bool, sqlx::Error> {
         let result = sqlx::query("DELETE FROM share_links WHERE id = $1 AND application_id = $2")
             .bind(id)
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
@@ -342,7 +342,7 @@ impl PermissionRepository for PgPermissionRepository {
     async fn app_site_info(&self, app_id: Uuid) -> Result<Option<(Uuid, Uuid)>, sqlx::Error> {
         let row: Option<(Uuid, Uuid)> =
             sqlx::query_as("SELECT site_id, organization_id FROM applications WHERE id = $1")
-                .bind(app_id)
+                .bind(crate::db::bind_id(app_id))
                 .fetch_optional(&self.pool)
                 .await?;
         Ok(row)
@@ -645,7 +645,7 @@ pub async fn has_workspace_sites(pool: &DbPool, org_id: Uuid) -> bool {
         sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM workspace_sites ws JOIN workspaces w ON w.id = ws.workspace_id WHERE w.organization_id = $1)",
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_one(pool)
         .await
         .unwrap_or(false)
@@ -676,8 +676,8 @@ pub async fn team_has_site_access(pool: &DbPool, site_id: Uuid, team_id: Uuid) -
             )
             "#,
         )
-        .bind(site_id)
-        .bind(team_id)
+        .bind(crate::db::bind_id(site_id))
+        .bind(crate::db::bind_id(team_id))
         .fetch_one(pool)
         .await
         .unwrap_or(false)
@@ -720,7 +720,7 @@ pub async fn list_active_share_links(
         sqlx::query_as::<_, (DbUuid, String, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, i32)>(
             "SELECT id, token, permission_level, expires_at, max_uses, use_count FROM app_share_links WHERE application_id = $1 AND is_active = true",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(pool)
         .await
     }
@@ -751,7 +751,7 @@ pub async fn insert_share_link(
             "INSERT INTO app_share_links (application_id, token, permission_level, created_by, expires_at, max_uses)
              VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(token)
         .bind(permission_level)
         .bind(created_by)
@@ -821,7 +821,7 @@ pub async fn list_org_users(
         sqlx::query_as::<_, (DbUuid, String, Option<String>, String)>(
             "SELECT id, email, display_name, role FROM users WHERE organization_id = $1 AND is_active = true ORDER BY display_name, email LIMIT $2",
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(limit)
         .fetch_all(pool)
         .await
@@ -853,7 +853,7 @@ pub async fn search_users_by_pattern(
                AND (email ILIKE $2 OR display_name ILIKE $2)
                ORDER BY display_name, email LIMIT $3"#,
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(pattern)
         .bind(limit)
         .fetch_all(pool)
@@ -964,7 +964,7 @@ pub async fn revoke_share_link_by_id(
             "UPDATE app_share_links SET is_active = false WHERE id = $1 AND application_id = $2",
         )
         .bind(link_id)
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .execute(pool)
         .await?;
         Ok(result.rows_affected())

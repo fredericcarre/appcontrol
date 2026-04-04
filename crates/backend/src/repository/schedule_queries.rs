@@ -34,7 +34,7 @@ pub async fn get_component_app_id(
     #[cfg(feature = "postgres")]
     {
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(pool)
             .await
     }
@@ -54,7 +54,7 @@ pub async fn get_app_org_id(pool: &DbPool, app_id: Uuid) -> Result<Option<Uuid>,
     #[cfg(feature = "postgres")]
     {
         sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM applications WHERE id = $1")
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .fetch_optional(pool)
             .await
     }
@@ -275,8 +275,8 @@ pub async fn insert_scheduled_snapshot(
         "#,
     )
     .bind(snapshot_id)
-    .bind(schedule_id)
-    .bind(organization_id)
+    .bind(crate::db::bind_id(schedule_id))
+    .bind(crate::db::bind_id(organization_id))
     .bind(agent_ids)
     .bind(report_ids)
     .bind(correlation_result)
@@ -301,7 +301,7 @@ pub async fn update_snapshot_schedule_after_run(
         WHERE id = $1
         "#,
     )
-    .bind(schedule_id)
+    .bind(crate::db::bind_id(schedule_id))
     .bind(next_run)
     .execute(pool)
     .await?;
@@ -387,8 +387,8 @@ pub async fn insert_scheduled_snapshot(
         "#,
     )
     .bind(DbUuid::from(snapshot_id))
-    .bind(schedule_id)
-    .bind(organization_id)
+    .bind(crate::db::bind_id(schedule_id))
+    .bind(crate::db::bind_id(organization_id))
     .bind(agent_ids)
     .bind(report_ids)
     .bind(correlation_result.to_string())
@@ -725,7 +725,7 @@ pub async fn get_org_id_for_component_app(
         let row = sqlx::query_scalar::<_, DbUuid>(
             "SELECT organization_id FROM applications WHERE id = $1",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_optional(pool)
         .await?;
         Ok(row.map(|v| v.into_inner()))

@@ -290,7 +290,7 @@ pub async fn update_oidc_sub_if_null(
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE users SET oidc_sub = $1 WHERE id = $2 AND oidc_sub IS NULL")
         .bind(oidc_sub)
-        .bind(user_id)
+        .bind(crate::db::bind_id(user_id))
         .execute(pool)
         .await?;
     Ok(())
@@ -317,8 +317,8 @@ pub async fn create_oidc_user(
         "INSERT INTO users (id, organization_id, external_id, email, display_name, role, oidc_sub)
          VALUES ($1, $2, $3, $4, $5, 'viewer', $6)",
     )
-    .bind(user_id)
-    .bind(org_id)
+    .bind(crate::db::bind_id(user_id))
+    .bind(crate::db::bind_id(org_id))
     .bind(external_id)
     .bind(email)
     .bind(display_name)
@@ -360,7 +360,7 @@ pub async fn is_team_member(
 ) -> Result<bool, sqlx::Error> {
     let count: i32 =
         sqlx::query_scalar("SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND user_id = $2")
-            .bind(team_id)
+            .bind(crate::db::bind_id(team_id))
             .bind(crate::db::bind_id(user_id))
             .fetch_one(pool)
             .await?;
@@ -377,7 +377,7 @@ pub async fn add_team_member(
         "INSERT INTO team_members (team_id, user_id) VALUES ($1, $2)
          ON CONFLICT DO NOTHING",
     )
-    .bind(team_id)
+    .bind(crate::db::bind_id(team_id))
     .bind(crate::db::bind_id(user_id))
     .execute(pool)
     .await?;
@@ -387,7 +387,7 @@ pub async fn add_team_member(
 /// Get a team name by ID.
 pub async fn get_team_name(pool: &DbPool, team_id: DbUuid) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar::<_, String>("SELECT name FROM teams WHERE id = $1")
-        .bind(team_id)
+        .bind(crate::db::bind_id(team_id))
         .fetch_optional(pool)
         .await
 }
@@ -399,7 +399,7 @@ pub async fn remove_team_member(
     user_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
-        .bind(team_id)
+        .bind(crate::db::bind_id(team_id))
         .bind(crate::db::bind_id(user_id))
         .execute(pool)
         .await?;
@@ -418,7 +418,7 @@ pub async fn update_saml_user(
         .bind(name_id)
         .bind(role)
         .bind(display_name)
-        .bind(user_id)
+        .bind(crate::db::bind_id(user_id))
         .execute(pool)
         .await?;
     Ok(())
@@ -479,7 +479,7 @@ pub async fn create_saml_group_mapping(
     )
     .bind(crate::db::bind_id(id))
     .bind(saml_group)
-    .bind(team_id)
+    .bind(crate::db::bind_id(team_id))
     .bind(default_role)
     .execute(pool)
     .await?;

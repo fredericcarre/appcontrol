@@ -130,7 +130,7 @@ impl TeamRepository for PgTeamRepository {
             "SELECT id, organization_id, name, description, created_at, updated_at \
              FROM teams WHERE organization_id = $1 ORDER BY name",
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
@@ -161,7 +161,7 @@ impl TeamRepository for PgTeamRepository {
              RETURNING id, organization_id, name, description, created_at, updated_at",
         )
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(name)
         .bind(description)
         .fetch_one(&self.pool)
@@ -226,7 +226,7 @@ impl TeamRepository for PgTeamRepository {
              FROM team_members tm JOIN users u ON u.id = tm.user_id \
              WHERE tm.team_id = $1 ORDER BY tm.role, u.display_name, u.email",
         )
-        .bind(team_id)
+        .bind(crate::db::bind_id(team_id))
         .fetch_all(&self.pool)
         .await?;
 
@@ -254,8 +254,8 @@ impl TeamRepository for PgTeamRepository {
         let id = sqlx::query_scalar::<_, Uuid>(
             "INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, $3) RETURNING id",
         )
-        .bind(team_id)
-        .bind(user_id)
+        .bind(crate::db::bind_id(team_id))
+        .bind(crate::db::bind_id(user_id))
         .bind(role)
         .fetch_one(&self.pool)
         .await?;
@@ -264,8 +264,8 @@ impl TeamRepository for PgTeamRepository {
 
     async fn remove_member(&self, team_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
-            .bind(team_id)
-            .bind(user_id)
+            .bind(crate::db::bind_id(team_id))
+            .bind(crate::db::bind_id(user_id))
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -275,8 +275,8 @@ impl TeamRepository for PgTeamRepository {
         let exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND role = 'lead')",
         )
-        .bind(team_id)
-        .bind(user_id)
+        .bind(crate::db::bind_id(team_id))
+        .bind(crate::db::bind_id(user_id))
         .fetch_one(&self.pool)
         .await?;
         Ok(exists)

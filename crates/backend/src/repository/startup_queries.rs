@@ -83,7 +83,7 @@ pub async fn store_ca_cert(
     key_pem: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE organizations SET ca_cert_pem = $2, ca_key_pem = $3 WHERE id = $1")
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(cert_pem)
         .bind(key_pem)
         .execute(pool)

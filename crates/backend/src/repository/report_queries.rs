@@ -54,9 +54,9 @@ pub async fn fetch_global_audit_logs(
         LIMIT $4 OFFSET $5
         "#,
     )
-    .bind(org_id)
-    .bind(app_id)
-    .bind(user_id)
+    .bind(crate::db::bind_id(org_id))
+    .bind(crate::db::bind_opt_id(app_id))
+    .bind(crate::db::bind_opt_id(user_id))
     .bind(limit)
     .bind(offset)
     .fetch_all(db)
@@ -93,9 +93,9 @@ pub async fn fetch_global_audit_logs(
         LIMIT $4 OFFSET $5
         "#,
     )
-    .bind(org_id)
-    .bind(app_id)
-    .bind(user_id)
+    .bind(crate::db::bind_id(org_id))
+    .bind(crate::db::bind_id(app_id))
+    .bind(crate::db::bind_id(user_id))
     .bind(limit)
     .bind(offset)
     .fetch_all(db)

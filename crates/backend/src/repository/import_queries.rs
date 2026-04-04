@@ -468,8 +468,8 @@ pub async fn find_agent_at_site_by_host(
                ))
                LIMIT 1"#,
         )
-        .bind(org_id)
-        .bind(site_id)
+        .bind(crate::db::bind_id(org_id))
+        .bind(crate::db::bind_id(site_id))
         .bind(host)
         .fetch_optional(pool)
         .await
@@ -795,7 +795,7 @@ pub async fn find_default_site(
         sqlx::query_as::<_, (DbUuid,)>(
             "SELECT id FROM sites WHERE organization_id = $1 AND is_active = true ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(pool)
         .await
     }

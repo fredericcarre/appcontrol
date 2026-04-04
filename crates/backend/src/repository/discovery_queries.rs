@@ -19,7 +19,7 @@ pub async fn list_active_agent_ids(
         sqlx::query_scalar::<_, DbUuid>(
             "SELECT id FROM agents WHERE organization_id = $1 AND is_active = true",
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_all(pool)
         .await
     }
@@ -44,7 +44,7 @@ pub async fn get_agent_ip_addresses(
         sqlx::query_scalar::<_, serde_json::Value>(
             "SELECT COALESCE(ip_addresses, '[]'::jsonb) FROM agents WHERE id = $1",
         )
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .fetch_optional(pool)
         .await
     }
@@ -193,7 +193,7 @@ pub async fn get_draft_components(
                 matched_service
          FROM discovery_draft_components WHERE draft_id = $1",
     )
-    .bind(draft_id)
+    .bind(crate::db::bind_id(draft_id))
     .fetch_all(pool)
     .await
 }
@@ -268,7 +268,7 @@ pub async fn insert_draft(
 ) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO discovery_drafts (id, organization_id, name) VALUES ($1, $2, $3)")
         .bind(crate::db::bind_id(draft_id))
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(name)
         .execute(pool)
         .await?;
@@ -433,7 +433,7 @@ pub async fn get_first_site_id(
     sqlx::query_scalar::<_, DbUuid>(
         "SELECT id FROM sites WHERE organization_id = $1 ORDER BY created_at ASC LIMIT 1",
     )
-    .bind(org_id)
+    .bind(crate::db::bind_id(org_id))
     .fetch_optional(pool)
     .await
 }
@@ -451,7 +451,7 @@ pub async fn create_app_from_draft(
          VALUES ($1, $2, $3, $4, 'advisory')",
     )
     .bind(crate::db::bind_id(app_id))
-    .bind(org_id)
+    .bind(crate::db::bind_id(org_id))
     .bind(crate::db::bind_id(site_id))
     .bind(name)
     .execute(pool)
@@ -487,7 +487,7 @@ pub async fn get_draft_comps_for_apply(
                 COALESCE(log_files, '[]'::jsonb)
          FROM discovery_draft_components WHERE draft_id = $1",
     )
-    .bind(draft_id)
+    .bind(crate::db::bind_id(draft_id))
     .fetch_all(pool)
     .await
 }
@@ -838,7 +838,7 @@ pub async fn list_snapshots(
              LIMIT 100",
         )
         .bind(crate::db::bind_id(org_id))
-        .bind(schedule_id)
+        .bind(crate::db::bind_id(schedule_id))
         .fetch_all(pool)
         .await
     } else {
@@ -905,7 +905,7 @@ pub async fn agent_exists_in_org(
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1 AND organization_id = $2)",
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(crate::db::bind_id(org_id))
     .fetch_one(pool)
     .await

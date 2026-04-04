@@ -82,7 +82,7 @@ pub async fn has_any_workspace_sites(pool: &DbPool, organization_id: Uuid) -> bo
         )
         "#,
     )
-    .bind(organization_id)
+    .bind(crate::db::bind_id(organization_id))
     .fetch_one(pool)
     .await
     .unwrap_or(false)
@@ -425,7 +425,7 @@ pub async fn store_check_event(
         r#"INSERT INTO check_events (component_id, check_type, exit_code, stdout, duration_ms, metrics)
            VALUES ($1, $2, $3, $4, $5, $6)"#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(check_type)
     .bind(exit_code)
     .bind(stdout)
@@ -774,8 +774,8 @@ pub async fn upsert_failover_health(
             unreachable_since = CASE WHEN EXCLUDED.is_reachable THEN NULL ELSE COALESCE(failover_health_status.unreachable_since, EXCLUDED.last_check_at) END
         "#
     )
-    .bind(profile_id)
-    .bind(agent_id)
+    .bind(crate::db::bind_id(*profile_id))
+    .bind(crate::db::bind_id(agent_id))
     .bind(is_reachable)
     .bind(now)
     .execute(pool)
@@ -808,7 +808,7 @@ pub async fn upsert_failover_health(
     )
     .bind(DbUuid::new_v4())
     .bind(DbUuid::from(*profile_id))
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(is_reachable_int)
     .bind(now)
     .execute(pool)
@@ -856,7 +856,7 @@ pub async fn log_auto_failover_action(
         VALUES ($1, 'auto_failover', 'application', $2, $3)
         "#,
     )
-    .bind(user_id)
+    .bind(crate::db::bind_id(user_id))
     .bind(DbUuid::from(app_id))
     .bind(details)
     .execute(pool)
@@ -879,7 +879,7 @@ pub async fn log_auto_failover_action(
         "#,
     )
     .bind(DbUuid::new_v4())
-    .bind(user_id)
+    .bind(crate::db::bind_id(user_id))
     .bind(DbUuid::from(app_id))
     .bind(details)
     .execute(pool)
@@ -1008,7 +1008,7 @@ pub async fn get_component_referenced_app_id(
         sqlx::query_scalar::<_, Uuid>(
             "SELECT referenced_app_id FROM components WHERE id = $1 AND referenced_app_id IS NOT NULL",
         )
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .fetch_optional(pool)
         .await
     }
@@ -1244,7 +1244,7 @@ pub async fn record_command_dispatch(
          VALUES ($1, $2, $3, $4, 'dispatched')
          ON CONFLICT (request_id) DO NOTHING",
     )
-    .bind(request_id)
+    .bind(crate::db::bind_id(request_id))
     .bind(crate::db::bind_id(component_id))
     .bind(crate::db::bind_id(agent_id))
     .bind(command_type)
@@ -1258,7 +1258,7 @@ pub async fn record_command_dispatch(
          ON CONFLICT (request_id) DO NOTHING",
     )
     .bind(DbUuid::new_v4())
-    .bind(request_id)
+    .bind(crate::db::bind_id(request_id))
     .bind(crate::db::bind_id(component_id))
     .bind(crate::db::bind_id(agent_id))
     .bind(command_type)
@@ -1292,7 +1292,7 @@ pub async fn record_command_result(
              WHERE request_id = $1",
         crate::db::sql::now()
     ))
-    .bind(request_id)
+    .bind(crate::db::bind_id(request_id))
     .bind(exit_code as i16)
     .bind(stdout)
     .bind(stderr)
@@ -1456,7 +1456,7 @@ pub async fn get_components_for_preflight(
 /// Fetch gateway name.
 pub async fn get_gateway_name_by_id(pool: &DbPool, gateway_id: Uuid) -> Option<String> {
     sqlx::query_scalar::<_, String>("SELECT name FROM gateways WHERE id = $1")
-        .bind(gateway_id)
+        .bind(crate::db::bind_id(gateway_id))
         .fetch_optional(pool)
         .await
         .ok()
@@ -1632,7 +1632,7 @@ pub async fn get_command_execution_status(
     sqlx::query_as::<_, (String, Option<i16>, Option<String>)>(
         "SELECT status, exit_code, stderr FROM command_executions WHERE request_id = $1",
     )
-    .bind(request_id)
+    .bind(crate::db::bind_id(request_id))
     .fetch_optional(pool)
     .await
 }
@@ -1699,7 +1699,7 @@ pub async fn insert_unreachable_transition(
                 jsonb_build_object('previous_state', $2, 'agent_id', $3::text))
         "#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(current_state)
     .bind(agent_id_str)
     .bind(trigger)
@@ -1715,7 +1715,7 @@ pub async fn set_component_unreachable(
     component_id: DbUuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .execute(pool)
         .await?;
     Ok(())
@@ -1783,7 +1783,7 @@ pub async fn insert_unreachable_transition(
         "#,
     )
     .bind(DbUuid::new_v4())
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(current_state)
     .bind(trigger)
     .bind(details.to_string())
@@ -1799,7 +1799,7 @@ pub async fn set_component_unreachable(
     component_id: DbUuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .execute(pool)
         .await?;
     Ok(())
@@ -1899,7 +1899,7 @@ pub async fn insert_schedule_execution(
         "#,
     )
     .bind(execution_id)
-    .bind(schedule_id)
+    .bind(crate::db::bind_id(schedule_id))
     .bind(action_log_id)
     .bind(status)
     .bind(message)
@@ -1957,7 +1957,7 @@ pub async fn update_operation_schedule_after_run(
         WHERE id = $1
         "#,
     )
-    .bind(schedule_id)
+    .bind(crate::db::bind_id(schedule_id))
     .bind(status)
     .bind(message)
     .bind(next_run)
@@ -2066,7 +2066,7 @@ pub async fn find_active_rotation(
 ) -> Result<Option<(Uuid,)>, sqlx::Error> {
     sqlx::query_as(
         r#"SELECT rotation_id FROM rotation_progress WHERE organization_id = $1 AND status = 'in_progress'"#,
-    ).bind(org_id).fetch_optional(pool).await
+    ).bind(crate::db::bind_id(org_id)).fetch_optional(pool).await
 }
 
 /// Get current CA cert from an organization.
@@ -2075,7 +2075,7 @@ pub async fn get_current_ca(
     org_id: Uuid,
 ) -> Result<Option<(Option<String>,)>, sqlx::Error> {
     sqlx::query_as("SELECT ca_cert_pem FROM organizations WHERE id = $1")
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(pool)
         .await
 }
@@ -2083,13 +2083,13 @@ pub async fn get_current_ca(
 /// Count agents with certificates.
 pub async fn count_certified_agents(pool: &DbPool, org_id: Uuid) -> Result<(i64,), sqlx::Error> {
     sqlx::query_as("SELECT COUNT(*) FROM agents WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL")
-        .bind(org_id).fetch_one(pool).await
+        .bind(crate::db::bind_id(org_id)).fetch_one(pool).await
 }
 
 /// Count gateways with certificates.
 pub async fn count_certified_gateways(pool: &DbPool, org_id: Uuid) -> Result<(i64,), sqlx::Error> {
     sqlx::query_as("SELECT COUNT(*) FROM gateways WHERE organization_id = $1 AND certificate_fingerprint IS NOT NULL")
-        .bind(org_id).fetch_one(pool).await
+        .bind(crate::db::bind_id(org_id)).fetch_one(pool).await
 }
 
 /// Insert a certificate migration record.
@@ -2108,7 +2108,7 @@ pub async fn insert_cert_migration(
         r#"INSERT INTO certificate_rotations
            (organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, new_fingerprint, status, hostname)
            VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7) ON CONFLICT DO NOTHING"#,
-    ).bind(org_id).bind(rotation_id).bind(agent_id).bind(gateway_id)
+    ).bind(crate::db::bind_id(org_id)).bind(rotation_id).bind(crate::db::bind_opt_id(agent_id)).bind(crate::db::bind_opt_id(gateway_id))
     .bind(old_fp).bind(new_fp).bind(hostname).execute(pool).await?;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -2116,7 +2116,7 @@ pub async fn insert_cert_migration(
         r#"INSERT INTO certificate_rotations
            (id, organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, new_fingerprint, status, hostname)
            VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed', $8) ON CONFLICT DO NOTHING"#,
-    ).bind(DbUuid::new_v4()).bind(org_id).bind(rotation_id).bind(agent_id).bind(gateway_id)
+    ).bind(DbUuid::new_v4()).bind(crate::db::bind_id(org_id)).bind(rotation_id).bind(crate::db::bind_id(agent_id)).bind(crate::db::bind_id(gateway_id))
     .bind(old_fp).bind(new_fp).bind(hostname).execute(pool).await?;
     Ok(())
 }
@@ -2137,7 +2137,7 @@ pub async fn insert_cert_migration_failure(
         r#"INSERT INTO certificate_rotations
            (organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, status, hostname, error_message)
            VALUES ($1, $2, $3, $4, $5, 'failed', $6, $7) ON CONFLICT DO NOTHING"#,
-    ).bind(org_id).bind(rotation_id).bind(agent_id).bind(gateway_id)
+    ).bind(crate::db::bind_id(org_id)).bind(rotation_id).bind(crate::db::bind_opt_id(agent_id)).bind(crate::db::bind_opt_id(gateway_id))
     .bind(old_fp).bind(hostname).bind(error_message).execute(pool).await?;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -2145,7 +2145,7 @@ pub async fn insert_cert_migration_failure(
         r#"INSERT INTO certificate_rotations
            (id, organization_id, rotation_id, agent_id, gateway_id, old_fingerprint, status, hostname, error_message)
            VALUES ($1, $2, $3, $4, $5, $6, 'failed', $7, $8) ON CONFLICT DO NOTHING"#,
-    ).bind(DbUuid::new_v4()).bind(org_id).bind(rotation_id).bind(agent_id).bind(gateway_id)
+    ).bind(DbUuid::new_v4()).bind(crate::db::bind_id(org_id)).bind(rotation_id).bind(crate::db::bind_id(agent_id)).bind(crate::db::bind_id(gateway_id))
     .bind(old_fp).bind(hostname).bind(error_message).execute(pool).await?;
     Ok(())
 }
@@ -2157,7 +2157,7 @@ pub async fn increment_migrated_agents(
     rotation_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE rotation_progress SET migrated_agents = migrated_agents + 1 WHERE organization_id = $1 AND rotation_id = $2")
-        .bind(org_id).bind(rotation_id).execute(pool).await?;
+        .bind(crate::db::bind_id(org_id)).bind(rotation_id).execute(pool).await?;
     Ok(())
 }
 
@@ -2168,7 +2168,7 @@ pub async fn increment_migrated_gateways(
     rotation_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE rotation_progress SET migrated_gateways = migrated_gateways + 1 WHERE organization_id = $1 AND rotation_id = $2")
-        .bind(org_id).bind(rotation_id).execute(pool).await?;
+        .bind(crate::db::bind_id(org_id)).bind(rotation_id).execute(pool).await?;
     Ok(())
 }
 
@@ -2179,7 +2179,7 @@ pub async fn increment_failed_agents(
     rotation_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE rotation_progress SET failed_agents = failed_agents + 1 WHERE organization_id = $1 AND rotation_id = $2")
-        .bind(org_id).bind(rotation_id).execute(pool).await?;
+        .bind(crate::db::bind_id(org_id)).bind(rotation_id).execute(pool).await?;
     Ok(())
 }
 
@@ -2190,7 +2190,7 @@ pub async fn increment_failed_gateways(
     rotation_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE rotation_progress SET failed_gateways = failed_gateways + 1 WHERE organization_id = $1 AND rotation_id = $2")
-        .bind(org_id).bind(rotation_id).execute(pool).await?;
+        .bind(crate::db::bind_id(org_id)).bind(rotation_id).execute(pool).await?;
     Ok(())
 }
 
@@ -2204,7 +2204,7 @@ pub async fn get_rotation_counts(
         r#"SELECT total_agents, total_gateways, migrated_agents, migrated_gateways
            FROM rotation_progress WHERE organization_id = $1 AND rotation_id = $2"#,
     )
-    .bind(org_id)
+    .bind(crate::db::bind_id(org_id))
     .bind(rotation_id)
     .fetch_optional(pool)
     .await
@@ -2219,7 +2219,7 @@ pub async fn mark_rotation_ready(
     sqlx::query(&format!(
         "UPDATE rotation_progress SET status = 'ready', completed_at = {} WHERE organization_id = $1 AND rotation_id = $2 AND status = 'in_progress'",
         crate::db::sql::now()
-    )).bind(org_id).bind(rotation_id).execute(pool).await?;
+    )).bind(crate::db::bind_id(org_id)).bind(rotation_id).execute(pool).await?;
     Ok(())
 }
 
@@ -2252,7 +2252,7 @@ pub async fn get_rotation_progress_details(
            FROM rotation_progress WHERE organization_id = $1
            ORDER BY started_at DESC LIMIT 1"#,
     )
-    .bind(org_id)
+    .bind(crate::db::bind_id(org_id))
     .fetch_optional(pool)
     .await
 }
@@ -2263,7 +2263,7 @@ pub async fn get_ca_certs(
     org_id: Uuid,
 ) -> Result<Option<(Option<String>, Option<String>)>, sqlx::Error> {
     sqlx::query_as("SELECT ca_cert_pem, pending_ca_cert_pem FROM organizations WHERE id = $1")
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(pool)
         .await
 }
@@ -2277,7 +2277,7 @@ pub async fn get_rotation_status(
         r#"SELECT rotation_id, status FROM rotation_progress
            WHERE organization_id = $1 ORDER BY started_at DESC LIMIT 1"#,
     )
-    .bind(org_id)
+    .bind(crate::db::bind_id(org_id))
     .fetch_optional(pool)
     .await
 }
@@ -2314,7 +2314,7 @@ pub async fn query_agents_exact_hostname(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
         WHERE a.organization_id = $1 AND LOWER(a.hostname) = $2 AND a.gateway_id = ANY($3)"#,
-    ).bind(org_id).bind(host_lower).bind(gateway_ids).fetch_all(pool).await
+    ).bind(crate::db::bind_id(org_id)).bind(host_lower).bind(gateway_ids).fetch_all(pool).await
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -2356,7 +2356,7 @@ pub async fn query_agents_fqdn_match(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
         WHERE a.organization_id = $1 AND LOWER(a.hostname) LIKE $2 || '%' AND a.gateway_id = ANY($3)"#,
-    ).bind(org_id).bind(fqdn_pattern).bind(gateway_ids).fetch_all(pool).await
+    ).bind(crate::db::bind_id(org_id)).bind(fqdn_pattern).bind(gateway_ids).fetch_all(pool).await
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -2398,7 +2398,7 @@ pub async fn query_agents_ip_match(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
         WHERE a.organization_id = $1 AND a.ip_addresses @> $2::jsonb AND a.gateway_id = ANY($3)"#,
-    ).bind(org_id).bind(serde_json::json!([ip])).bind(gateway_ids).fetch_all(pool).await
+    ).bind(crate::db::bind_id(org_id)).bind(serde_json::json!([ip])).bind(gateway_ids).fetch_all(pool).await
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -2440,7 +2440,7 @@ pub async fn query_agents_list(
         r#"SELECT a.id AS agent_id, a.hostname, a.gateway_id, g.name AS gateway_name, a.ip_addresses, a.is_active
         FROM agents a LEFT JOIN gateways g ON a.gateway_id = g.id
         WHERE a.organization_id = $1 AND a.gateway_id = ANY($2) ORDER BY a.hostname"#,
-    ).bind(org_id).bind(gateway_ids).fetch_all(pool).await
+    ).bind(crate::db::bind_id(org_id)).bind(gateway_ids).fetch_all(pool).await
 }
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -2477,7 +2477,10 @@ pub async fn fetch_pattern_rules(
     let rules_sql: &str = "SELECT search_pattern, replace_pattern FROM dr_pattern_rules WHERE organization_id = $1 AND is_active = true ORDER BY priority DESC";
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let rules_sql: &str = "SELECT search_pattern, replace_pattern FROM dr_pattern_rules WHERE organization_id = $1 AND is_active = 1 ORDER BY priority DESC";
-    sqlx::query_as(rules_sql).bind(org_id).fetch_all(pool).await
+    sqlx::query_as(rules_sql)
+        .bind(crate::db::bind_id(org_id))
+        .fetch_all(pool)
+        .await
 }
 
 // ============================================================================
@@ -2504,7 +2507,7 @@ pub async fn start_rotation_tx(
              WHERE id = $1",
         db::sql::now()
     ))
-    .bind(org_id)
+    .bind(crate::db::bind_id(org_id))
     .bind(new_ca_cert_pem)
     .bind(new_ca_key_pem)
     .execute(&mut *tx)
@@ -2515,7 +2518,7 @@ pub async fn start_rotation_tx(
            (organization_id, rotation_id, total_agents, total_gateways, initiated_by, grace_period_secs)
            VALUES ($1, $2, $3, $4, $5, $6)"#,
     )
-    .bind(org_id)
+    .bind(crate::db::bind_id(org_id))
     .bind(rotation_id)
     .bind(agent_count as i32)
     .bind(gateway_count as i32)
@@ -2545,7 +2548,7 @@ pub async fn finalize_rotation_tx(
                rotation_started_at = NULL
            WHERE id = $1"#,
     )
-    .bind(org_id)
+    .bind(crate::db::bind_id(org_id))
     .execute(&mut *tx)
     .await?;
 
@@ -2555,7 +2558,7 @@ pub async fn finalize_rotation_tx(
              WHERE organization_id = $1 AND rotation_id = $2",
         db::sql::now()
     ))
-    .bind(org_id)
+    .bind(crate::db::bind_id(org_id))
     .bind(rotation_id)
     .execute(&mut *tx)
     .await?;
@@ -2579,7 +2582,7 @@ pub async fn cancel_rotation_tx(
                rotation_started_at = NULL
            WHERE id = $1"#,
     )
-    .bind(org_id)
+    .bind(crate::db::bind_id(org_id))
     .execute(&mut *tx)
     .await?;
 
@@ -2588,7 +2591,7 @@ pub async fn cancel_rotation_tx(
            SET status = 'cancelled'
            WHERE organization_id = $1 AND rotation_id = $2"#,
     )
-    .bind(org_id)
+    .bind(crate::db::bind_id(org_id))
     .bind(rotation_id)
     .execute(&mut *tx)
     .await?;

@@ -142,7 +142,7 @@ impl AgentRepository for PgAgentRepository {
             WHERE a.organization_id = $1
             ORDER BY a.hostname"#,
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_all(&self.pool)
         .await?;
 
@@ -178,7 +178,7 @@ impl AgentRepository for PgAgentRepository {
              FROM agents WHERE id = $1 AND organization_id = $2",
         )
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(&self.pool)
         .await?;
 
@@ -205,7 +205,7 @@ impl AgentRepository for PgAgentRepository {
             "SELECT hostname, gateway_id FROM agents WHERE id = $1 AND organization_id = $2",
         )
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(&self.pool)
         .await
     }
@@ -413,7 +413,7 @@ pub async fn insert_unreachable_transition(
         r#"INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details)
            VALUES ($1, $2, 'UNREACHABLE', 'agent_blocked', $3)"#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(from_state)
     .bind(details_json)
     .execute(pool)
@@ -581,7 +581,7 @@ pub async fn verify_agents_in_org(
 ) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
     sqlx::query_as("SELECT id, hostname FROM agents WHERE id = ANY($1) AND organization_id = $2")
         .bind(agent_ids)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_all(pool)
         .await
 }

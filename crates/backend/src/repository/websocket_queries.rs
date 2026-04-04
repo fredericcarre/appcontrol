@@ -25,7 +25,7 @@ pub async fn lookup_site_by_code(
         sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM sites WHERE organization_id = $1 AND code = $2",
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(code)
         .fetch_optional(pool)
         .await
@@ -77,11 +77,11 @@ pub async fn upsert_gateway(
             last_heartbeat_at = now()
         "#,
     )
-    .bind(gateway_id)
-    .bind(org_id)
+    .bind(crate::db::bind_id(gateway_id))
+    .bind(crate::db::bind_id(org_id))
     .bind(name)
     .bind(zone)
-    .bind(site_id)
+    .bind(crate::db::bind_opt_id(site_id))
     .execute(pool)
     .await?;
 
@@ -141,7 +141,7 @@ pub async fn get_agent_cert_fingerprint(
     #[cfg(feature = "postgres")]
     {
         sqlx::query_scalar("SELECT certificate_fingerprint FROM agents WHERE id = $1")
-            .bind(agent_id)
+            .bind(crate::db::bind_id(agent_id))
             .fetch_optional(pool)
             .await
     }
@@ -182,8 +182,8 @@ pub async fn update_agent_connection_info(
                version = COALESCE($5, agents.version),
                identity_verified = ($3 IS NOT NULL)"#,
     )
-    .bind(agent_id)
-    .bind(gateway_id)
+    .bind(crate::db::bind_id(agent_id))
+    .bind(crate::db::bind_id(gateway_id))
     .bind(cert_fingerprint)
     .bind(cert_cn)
     .bind(version)
@@ -248,8 +248,8 @@ pub async fn restore_agent_gateway_if_null(
     #[cfg(feature = "postgres")]
     let result =
         sqlx::query("UPDATE agents SET gateway_id = $2 WHERE id = $1 AND gateway_id IS NULL")
-            .bind(agent_id)
-            .bind(gateway_id)
+            .bind(crate::db::bind_id(agent_id))
+            .bind(crate::db::bind_id(gateway_id))
             .execute(pool)
             .await?;
 
@@ -276,7 +276,7 @@ pub async fn insert_agent_metrics(
     sqlx::query(
         "INSERT INTO agent_metrics (agent_id, cpu_pct, memory_pct, disk_used_pct) VALUES ($1, $2, $3, $4)",
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(cpu)
     .bind(memory)
     .bind(disk)
@@ -307,7 +307,10 @@ pub async fn update_gateway_heartbeat_ts(
         crate::db::sql::now()
     );
     #[cfg(feature = "postgres")]
-    sqlx::query(&sql).bind(gateway_id).execute(pool).await?;
+    sqlx::query(&sql)
+        .bind(crate::db::bind_id(gateway_id))
+        .execute(pool)
+        .await?;
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     sqlx::query(&sql)
         .bind(DbUuid::from(gateway_id))
@@ -326,7 +329,7 @@ pub async fn is_agent_blocked(pool: &DbPool, agent_id: Uuid) -> Result<bool, sql
     {
         let val: Option<bool> =
             sqlx::query_scalar("SELECT NOT COALESCE(is_active, true) FROM agents WHERE id = $1")
-                .bind(agent_id)
+                .bind(crate::db::bind_id(agent_id))
                 .fetch_optional(pool)
                 .await?;
         Ok(val.unwrap_or(false))
@@ -380,7 +383,7 @@ pub async fn update_agent_registration(
 
     #[cfg(feature = "postgres")]
     sqlx::query(&sql)
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .bind(hostname)
         .bind(serde_json::json!(ip_addresses))
         .bind(version)
@@ -430,7 +433,7 @@ pub async fn insert_discovery_report(
         "INSERT INTO discovery_reports (id, agent_id, hostname, report, scanned_at) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(Uuid::new_v4())
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .bind(hostname)
     .bind(report)
     .bind(scanned_at)
@@ -544,7 +547,7 @@ pub async fn get_agent_component_configs(
              WHERE c.agent_id = $1
                AND a.is_suspended = false",
         )
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .fetch_all(pool)
         .await?;
 
@@ -708,7 +711,7 @@ pub async fn get_agent_active_components(
     #[cfg(feature = "postgres")]
     {
         let rows = sqlx::query_as::<_, Row>(sql)
-            .bind(agent_id)
+            .bind(crate::db::bind_id(agent_id))
             .fetch_all(pool)
             .await?;
         Ok(rows
@@ -757,7 +760,7 @@ pub async fn insert_unreachable_transition(
                 jsonb_build_object('previous_state', $2, 'agent_id', $4::text))
         "#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(from_state)
     .bind(trigger)
     .bind(agent_id.to_string())
@@ -795,7 +798,7 @@ pub async fn set_component_unreachable(
 ) -> Result<(), sqlx::Error> {
     #[cfg(feature = "postgres")]
     sqlx::query("UPDATE components SET current_state = 'UNREACHABLE' WHERE id = $1")
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .execute(pool)
         .await?;
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
@@ -821,7 +824,7 @@ pub async fn get_agents_for_application(
             "SELECT DISTINCT agent_id FROM components \
              WHERE application_id = $1 AND agent_id IS NOT NULL",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(pool)
         .await
     }
