@@ -4087,7 +4087,7 @@ pub async fn copy_profile_mappings(
         WHERE profile_id = $1
         "#,
     )
-    .bind(&from_profile_id)
+    .bind(from_profile_id)
     .fetch_all(pool)
     .await?;
 
