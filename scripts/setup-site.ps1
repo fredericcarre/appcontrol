@@ -72,37 +72,36 @@ function Invoke-Api {
     )
     $uri = "$BackendUrl/api/v1$Path"
 
-    # Build params for Invoke-WebRequest (more reliable than Invoke-RestMethod on PS 5.1)
-    $params = @{
-        Uri             = $uri
-        Method          = $Method
-        UseBasicParsing = $true
-    }
+    # Use .NET WebClient for maximum PS 5.1 compatibility
+    $wc = New-Object System.Net.WebClient
+    $wc.Encoding = [System.Text.Encoding]::UTF8
 
-    # Only add Headers when we have a token — empty Headers hashtable can cause issues on PS 5.1
     if ($Token) {
-        $params["Headers"] = @{ "Authorization" = "Bearer $Token" }
-    }
-
-    if ($Body) {
-        $jsonBody = ($Body | ConvertTo-Json -Depth 10)
-        $params["Body"] = [System.Text.Encoding]::UTF8.GetBytes($jsonBody)
-        $params["ContentType"] = "application/json; charset=utf-8"
+        $wc.Headers.Add("Authorization", "Bearer $Token")
     }
 
     try {
-        $response = Invoke-WebRequest @params
-        if ($response.Content) {
-            return ($response.Content | ConvertFrom-Json)
+        if ($Body) {
+            $wc.Headers.Add("Content-Type", "application/json; charset=utf-8")
+            $jsonBody = ($Body | ConvertTo-Json -Depth 10)
+            $responseText = $wc.UploadString($uri, $Method.ToUpper(), $jsonBody)
+        } else {
+            $responseText = $wc.DownloadString($uri)
+        }
+
+        if ($responseText) {
+            return ($responseText | ConvertFrom-Json)
         }
         return $null
-    } catch {
-        $status = $_.Exception.Response.StatusCode.value__
-        $detail = $_.ErrorDetails.Message
+    } catch [System.Net.WebException] {
+        $webEx = $_.Exception
+        $status = [int]$webEx.Response.StatusCode
         if ($status -eq 409) { return $null }  # Already exists
         if ($status -eq 404) { return $null }  # Not found
         Write-Status "API error: $Method $Path -> $status" "ERROR"
         throw
+    } finally {
+        $wc.Dispose()
     }
 }
 
@@ -144,11 +143,11 @@ $loginResp = Invoke-Api -Method POST -Path "/auth/login" -Body @{
     password = $Password
 }
 if (-not $loginResp.token) {
-    Write-Status "Login failed — check email/password" "ERROR"
+    Write-Status "Login failed — check email/password (response: $($loginResp | ConvertTo-Json -Compress))" "ERROR"
     exit 1
 }
 $token = $loginResp.token
-Write-Status "Logged in" "SUCCESS"
+Write-Status "Logged in (token: $($token.Substring(0, [Math]::Min(20, $token.Length)))...)" "SUCCESS"
 
 # ---------------------------------------------------------------------------
 # Create or find site
