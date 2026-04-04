@@ -365,13 +365,13 @@ function Do-Start {
 
             if (Test-Path $agConfigFile) {
                 # Enrolled agent — use its config file
-                $agArgs = ("--config " + """" + $agConfigFile + """")
-                $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgs -PassThru -NoNewWindow `
+                $agArgList = @("--config", $agConfigFile)
+                $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgList -PassThru -NoNewWindow `
                     -RedirectStandardOutput $agLog -RedirectStandardError $agErr
             } else {
                 # Fallback: no enrollment yet — connect directly
                 Write-Warn ("Agent for '" + $siteName + "' not enrolled. Run add-site again to enroll.")
-                $env:GATEWAY_URL = "ws://localhost:" + $gwPort
+                $env:GATEWAY_URL = "wss://localhost:" + $gwPort
                 Ensure-Dir $agDataDir
                 $env:DATA_DIR = $agDataDir
                 $agProc = Start-Process -FilePath $agBin -PassThru -NoNewWindow `
@@ -725,27 +725,44 @@ function Do-AddSite {
             $agBin = Join-Path $script:BinDir ("appcontrol-agent" + $script:BinExt)
             $agDataDir = Join-Path $script:DataDir ("agent-" + $siteName)
             Ensure-Dir $agDataDir
-            $agEnrollUrl = "ws://localhost:" + $gwPort
+            $agEnrollUrl = "wss://localhost:" + $gwPort
             Write-Info ("Enrolling agent for site '" + $siteName + "'...")
-            $enrollArgs = ("--enroll " + $agEnrollUrl + " --token " + $agEnrollToken + " --enroll-dir " + """" + $agDataDir + """")
+            $enrollArgList = @("--enroll", $agEnrollUrl, "--token", $agEnrollToken, "--enroll-dir", $agDataDir)
             $agEnrollLog = Join-Path $script:LogDir ("agent-enroll-" + $siteName + ".log")
             $agEnrollErr = Join-Path $script:LogDir ("agent-enroll-" + $siteName + ".err.log")
-            $enrollProc = Start-Process -FilePath $agBin -ArgumentList $enrollArgs -PassThru -NoNewWindow `
+            Write-Info ("Enroll command: " + $agBin + " " + ($enrollArgList -join " "))
+            $enrollProc = Start-Process -FilePath $agBin -ArgumentList $enrollArgList -PassThru -NoNewWindow `
                 -RedirectStandardOutput $agEnrollLog -RedirectStandardError $agEnrollErr
             $enrollProc.WaitForExit(30000) | Out-Null
             if ($enrollProc.ExitCode -eq 0) {
                 Write-Ok "Agent enrolled successfully"
             } else {
-                Write-Warn ("Agent enrollment exited with code " + $enrollProc.ExitCode + " - check " + $agEnrollErr)
+                Write-Warn ("Agent enrollment exited with code " + $enrollProc.ExitCode)
+                # Show enrollment error log
+                if (Test-Path $agEnrollErr) {
+                    $errContent = Get-Content $agEnrollErr -Raw
+                    if ($errContent) { Write-Warn ("Enrollment error: " + $errContent.Substring(0, [Math]::Min(500, $errContent.Length))) }
+                }
             }
 
             # --- Start agent with enrolled config ---
             $agConfigFile = Join-Path $agDataDir "agent.yaml"
-            $agArgs = ("--config " + """" + $agConfigFile + """")
-            $agLog = Join-Path $script:LogDir ("agent-" + $siteName + ".log")
-            $agErr = Join-Path $script:LogDir ("agent-" + $siteName + ".err.log")
-            $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgs -PassThru -NoNewWindow `
-                -RedirectStandardOutput $agLog -RedirectStandardError $agErr
+            if (-not (Test-Path $agConfigFile)) {
+                Write-Err ("Agent config not created at " + $agConfigFile + " - enrollment may have failed")
+                Write-Warn "Starting agent without enrollment (fallback mode)..."
+                $env:GATEWAY_URL = "wss://localhost:" + $gwPort
+                $env:DATA_DIR = $agDataDir
+                $agLog = Join-Path $script:LogDir ("agent-" + $siteName + ".log")
+                $agErr = Join-Path $script:LogDir ("agent-" + $siteName + ".err.log")
+                $agProc = Start-Process -FilePath $agBin -PassThru -NoNewWindow `
+                    -RedirectStandardOutput $agLog -RedirectStandardError $agErr
+            } else {
+                $agArgList = @("--config", $agConfigFile)
+                $agLog = Join-Path $script:LogDir ("agent-" + $siteName + ".log")
+                $agErr = Join-Path $script:LogDir ("agent-" + $siteName + ".err.log")
+                $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgList -PassThru -NoNewWindow `
+                    -RedirectStandardOutput $agLog -RedirectStandardError $agErr
+            }
             Write-Info ("Agent started with PID " + $agProc.Id)
 
             # Update pids
