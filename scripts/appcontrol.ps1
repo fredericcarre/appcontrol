@@ -222,16 +222,20 @@ function Do-Install {
     }
     Write-Ok "Binaries downloaded to bin/"
 
-    # Download frontend
+    # Download frontend (optional - may not be available in all releases)
     $frontendZip = Join-Path $script:BinDir "frontend.zip"
     $frontendUrl = $script:ReleasesBase + "/frontend.zip"
-    Download-File -Url $frontendUrl -OutPath $frontendZip
-    if (Test-Path $script:FrontendDir) {
-        Remove-Item -Path (Join-Path $script:FrontendDir "*") -Recurse -Force -ErrorAction SilentlyContinue
+    try {
+        Download-File -Url $frontendUrl -OutPath $frontendZip
+        if (Test-Path $script:FrontendDir) {
+            Remove-Item -Path (Join-Path $script:FrontendDir "*") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Expand-Archive -Path $frontendZip -DestinationPath $script:FrontendDir -Force
+        Remove-Item $frontendZip -Force -ErrorAction SilentlyContinue
+        Write-Ok "Frontend extracted to frontend/"
+    } catch {
+        Write-Warn "Frontend not available for download (not required for API-only mode)"
     }
-    Expand-Archive -Path $frontendZip -DestinationPath $script:FrontendDir -Force
-    Remove-Item $frontendZip -Force -ErrorAction SilentlyContinue
-    Write-Ok "Frontend extracted to frontend/"
 
     # Create empty sites.json if missing
     if (-not (Test-Path $script:SitesFile)) {
@@ -657,16 +661,20 @@ function Do-Upgrade {
     }
     Write-Ok "Binaries updated"
 
-    # Re-download frontend
+    # Re-download frontend (optional)
     $frontendZip = Join-Path $script:BinDir "frontend.zip"
     $frontendUrl = $script:ReleasesBase + "/frontend.zip"
-    Download-File -Url $frontendUrl -OutPath $frontendZip
-    if (Test-Path $script:FrontendDir) {
-        Remove-Item -Path (Join-Path $script:FrontendDir "*") -Recurse -Force -ErrorAction SilentlyContinue
+    try {
+        Download-File -Url $frontendUrl -OutPath $frontendZip
+        if (Test-Path $script:FrontendDir) {
+            Remove-Item -Path (Join-Path $script:FrontendDir "*") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Expand-Archive -Path $frontendZip -DestinationPath $script:FrontendDir -Force
+        Remove-Item $frontendZip -Force -ErrorAction SilentlyContinue
+        Write-Ok "Frontend updated"
+    } catch {
+        Write-Warn "Frontend not available for download"
     }
-    Expand-Archive -Path $frontendZip -DestinationPath $script:FrontendDir -Force
-    Remove-Item $frontendZip -Force -ErrorAction SilentlyContinue
-    Write-Ok "Frontend updated"
 
     # Restart
     Do-Start
