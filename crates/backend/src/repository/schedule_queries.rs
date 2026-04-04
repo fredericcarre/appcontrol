@@ -752,8 +752,8 @@ pub async fn create_component_schedule(
              cron_expression, timezone, is_enabled, next_run_at, created_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $10)"#,
     )
-    .bind(schedule_id)
-    .bind(org_id)
+    .bind(crate::db::bind_id(schedule_id))
+    .bind(crate::db::bind_id(org_id))
     .bind(crate::db::bind_id(comp_id))
     .bind(name)
     .bind(description)
@@ -779,7 +779,7 @@ pub async fn fetch_schedule_row(
                created_by, created_at, updated_at
         FROM operation_schedules WHERE id = $1"#,
     )
-    .bind(schedule_id)
+    .bind(crate::db::bind_id(schedule_id))
     .fetch_optional(pool)
     .await
 }
@@ -801,7 +801,7 @@ pub async fn update_schedule_fields(
              timezone = $6, is_enabled = $7, next_run_at = $8, updated_at = {} WHERE id = $1",
         crate::db::sql::now()
     ))
-    .bind(schedule_id).bind(name).bind(description).bind(operation)
+    .bind(crate::db::bind_id(schedule_id)).bind(name).bind(description).bind(operation)
     .bind(cron_expression).bind(timezone).bind(is_enabled).bind(next_run_at)
     .execute(pool).await?;
     Ok(())
@@ -813,7 +813,7 @@ pub async fn delete_operation_schedule(
     schedule_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM operation_schedules WHERE id = $1")
-        .bind(schedule_id)
+        .bind(crate::db::bind_id(schedule_id))
         .execute(pool)
         .await?;
     Ok(())
@@ -830,7 +830,7 @@ pub async fn toggle_schedule_enabled(
         "UPDATE operation_schedules SET is_enabled = $2, next_run_at = $3, updated_at = {} WHERE id = $1",
         crate::db::sql::now()
     ))
-    .bind(schedule_id).bind(enabled).bind(next_run_at).execute(pool).await?;
+    .bind(crate::db::bind_id(schedule_id)).bind(enabled).bind(next_run_at).execute(pool).await?;
     Ok(())
 }
 
@@ -840,7 +840,7 @@ pub async fn set_schedule_run_now(pool: &DbPool, schedule_id: Uuid) -> Result<()
         "UPDATE operation_schedules SET next_run_at = {now}, updated_at = {now} WHERE id = $1",
         now = crate::db::sql::now()
     ))
-    .bind(schedule_id)
+    .bind(crate::db::bind_id(schedule_id))
     .execute(pool)
     .await?;
     Ok(())
@@ -856,7 +856,7 @@ pub async fn list_executions(
         FROM operation_schedule_executions WHERE schedule_id = $1
         ORDER BY executed_at DESC LIMIT 100"#,
     )
-    .bind(schedule_id)
+    .bind(crate::db::bind_id(schedule_id))
     .fetch_all(pool)
     .await
 }
