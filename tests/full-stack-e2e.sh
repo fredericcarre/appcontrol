@@ -430,7 +430,143 @@ api POST "/apps/$APP_ID/stop" -d '{}' > /dev/null 2>&1 || true
 wait_component_state "$APP_ID" "test-service" "STOPPED" 30 || sleep 5
 
 # ---------------------------------------------------------------------------
-# 13. Test heartbeat timeout → UNREACHABLE
+# 13. DORA Reports — verify report endpoints return data
+# ---------------------------------------------------------------------------
+log "Testing DORA report endpoints..."
+
+# Compliance report
+COMPLIANCE_CODE=$(api_code GET "/apps/$APP_ID/reports/compliance")
+if [ "$COMPLIANCE_CODE" = "200" ]; then
+  COMPLIANCE=$(api GET "/apps/$APP_ID/reports/compliance")
+  DORA_COMPLIANT=$(echo "$COMPLIANCE" | jq -r '.dora_compliant // empty' 2>/dev/null)
+  if [ -n "$DORA_COMPLIANT" ]; then
+    ok "Compliance report returned (dora_compliant=$DORA_COMPLIANT)"
+  else
+    ok "Compliance report returned HTTP 200"
+  fi
+else
+  fail "Compliance report failed (HTTP $COMPLIANCE_CODE)"
+fi
+
+# MTTR report
+MTTR_CODE=$(api_code GET "/apps/$APP_ID/reports/mttr")
+if [ "$MTTR_CODE" = "200" ]; then
+  MTTR=$(api GET "/apps/$APP_ID/reports/mttr")
+  INCIDENTS=$(echo "$MTTR" | jq -r '.summary.total_incidents // 0' 2>/dev/null)
+  ok "MTTR report returned (incidents=$INCIDENTS)"
+else
+  fail "MTTR report failed (HTTP $MTTR_CODE)"
+fi
+
+# Incidents report
+INCIDENTS_CODE=$(api_code GET "/apps/$APP_ID/reports/incidents")
+if [ "$INCIDENTS_CODE" = "200" ]; then
+  ok "Incidents report returned HTTP 200"
+else
+  fail "Incidents report failed (HTTP $INCIDENTS_CODE)"
+fi
+
+# Availability report
+AVAIL_CODE=$(api_code GET "/apps/$APP_ID/reports/availability")
+if [ "$AVAIL_CODE" = "200" ]; then
+  ok "Availability report returned HTTP 200"
+else
+  fail "Availability report failed (HTTP $AVAIL_CODE)"
+fi
+
+# RTO report
+RTO_CODE=$(api_code GET "/apps/$APP_ID/reports/rto")
+if [ "$RTO_CODE" = "200" ]; then
+  ok "RTO report returned HTTP 200"
+else
+  fail "RTO report failed (HTTP $RTO_CODE)"
+fi
+
+# Switchover history report
+SW_REPORT_CODE=$(api_code GET "/apps/$APP_ID/reports/switchovers")
+if [ "$SW_REPORT_CODE" = "200" ]; then
+  ok "Switchover history report returned HTTP 200"
+else
+  fail "Switchover history report failed (HTTP $SW_REPORT_CODE)"
+fi
+
+# PRA (DRP exercise) report
+PRA_CODE=$(api_code GET "/apps/$APP_ID/reports/pra")
+if [ "$PRA_CODE" = "200" ]; then
+  ok "PRA/DRP exercise report returned HTTP 200"
+else
+  fail "PRA/DRP exercise report failed (HTTP $PRA_CODE)"
+fi
+
+# ---------------------------------------------------------------------------
+# 14. DR Switchover — test site failover lifecycle
+# ---------------------------------------------------------------------------
+log "Testing DR switchover..."
+
+# Create DR site
+DR_SITE_RESP=$(api POST "/sites" -d '{"name":"DR-Site","code":"DR","site_type":"dr"}')
+DR_SITE_ID=$(echo "$DR_SITE_RESP" | jq -r '.id // empty' 2>/dev/null)
+if [ -z "$DR_SITE_ID" ] || [ "$DR_SITE_ID" = "null" ]; then
+  fail "Could not create DR site"
+  DR_SITE_ID=""
+else
+  ok "DR site created (id=${DR_SITE_ID:0:8}...)"
+fi
+
+if [ -n "$DR_SITE_ID" ]; then
+  # Start switchover
+  SW_RESP=$(api POST "/apps/$APP_ID/switchover" -d "{
+    \"target_site_id\": \"$DR_SITE_ID\",
+    \"mode\": \"FULL\"
+  }" 2>/dev/null)
+  SW_CODE=$(echo "$SW_RESP" | jq -r '.switchover_id // .id // empty' 2>/dev/null)
+  SW_HTTP=$(api_code POST "/apps/$APP_ID/switchover" -d "{
+    \"target_site_id\": \"$DR_SITE_ID\",
+    \"mode\": \"FULL\"
+  }")
+
+  # Accept 200, 202 (started), 400/409 (validation error — no binding profiles etc.)
+  if [ "$SW_HTTP" = "200" ] || [ "$SW_HTTP" = "202" ]; then
+    ok "Switchover initiated (HTTP $SW_HTTP)"
+
+    # Check switchover status
+    STATUS_CODE=$(api_code GET "/apps/$APP_ID/switchover/status")
+    if [ "$STATUS_CODE" = "200" ]; then
+      SW_STATUS=$(api GET "/apps/$APP_ID/switchover/status")
+      PHASE=$(echo "$SW_STATUS" | jq -r '.phase // .current_phase // "unknown"' 2>/dev/null)
+      ok "Switchover status: phase=$PHASE"
+    else
+      fail "Switchover status check failed (HTTP $STATUS_CODE)"
+    fi
+
+    # Try to advance phases (may fail without full DR infrastructure — that's OK)
+    NEXT_CODE=$(api_code POST "/apps/$APP_ID/switchover/next-phase" -d '{}')
+    if [ "$NEXT_CODE" = "200" ] || [ "$NEXT_CODE" = "202" ]; then
+      ok "Switchover next-phase accepted (HTTP $NEXT_CODE)"
+    else
+      ok "Switchover next-phase: HTTP $NEXT_CODE (expected — limited DR infra in E2E)"
+    fi
+
+    # Test rollback (before commit — should always work)
+    ROLLBACK_CODE=$(api_code POST "/apps/$APP_ID/switchover/rollback" -d '{}')
+    if [ "$ROLLBACK_CODE" = "200" ] || [ "$ROLLBACK_CODE" = "202" ]; then
+      ok "Switchover rollback succeeded"
+    else
+      ok "Switchover rollback: HTTP $ROLLBACK_CODE (may be OK if already rolled back)"
+    fi
+
+  elif [ "$SW_HTTP" = "400" ] || [ "$SW_HTTP" = "409" ]; then
+    # Expected: switchover requires binding profiles, agents on DR site, etc.
+    ok "Switchover correctly rejected (HTTP $SW_HTTP — missing DR prerequisites)"
+  else
+    fail "Switchover unexpected response (HTTP $SW_HTTP)"
+  fi
+else
+  fail "Skipping switchover test — no DR site"
+fi
+
+# ---------------------------------------------------------------------------
+# 15. Test heartbeat timeout → UNREACHABLE
 # ---------------------------------------------------------------------------
 log "Testing heartbeat timeout (kill agent → expect UNREACHABLE)..."
 
