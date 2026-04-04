@@ -657,3 +657,22 @@ Fixes based on production engineer review. All items address identified weakness
 - [x] `cargo build --workspace` — clean (0 errors)
 - [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
 - [x] `cargo test --workspace` — 134 unit tests pass (33 agent + 12 backend + 75 common + 14 gateway)
+
+## Technical Debt — Database Layer Refactoring
+
+### Level 1: CI Lint (DONE)
+- [x] `scripts/lint-sqlite.sh` — Automated SQLite safety checks (missing `id` in INSERTs, raw Uuid types, raw binds)
+- [x] `.github/workflows/ci.yaml` — Lint runs as first step of `sqlite-build` job, blocks CI on errors
+
+### Level 2: Unify PG/SQLite Queries (TODO)
+- [ ] Always provide `id` in all INSERTs (even PG) — eliminates the #1 source of SQLite bugs
+- [ ] Add `sql::for_update(alias)` helper to `db.rs` — returns `"FOR UPDATE OF {alias}"` on PG, `""` on SQLite
+- [ ] Convert 275 dual-cfg function pairs to single unified functions using `format!()` + `sql::*` helpers
+- [ ] Eliminate ~10,000 lines of duplication (85% of repository/ code is duplicated PG/SQLite)
+- [ ] Target files by priority: core_queries.rs (41 pairs), misc_queries.rs (42), gateway_queries.rs (28), queries.rs (29)
+
+### Level 3: Unified Repository Architecture (TODO)
+- [ ] Extend trait pattern to all 22 repository files (currently only 8/22 have traits)
+- [ ] Create `QueryBuilder` DSL encapsulating all SQL dialect differences
+- [ ] Single `RepositoryImpl` per domain instead of `PgXxx` + `SqliteXxx` structs
+- [ ] Consider compile-time SQL generation macro for type-safe cross-DB queries
