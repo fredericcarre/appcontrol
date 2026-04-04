@@ -107,9 +107,9 @@ function Write-Pids {
 }
 
 function Is-ProcessRunning {
-    param([int]$Pid)
+    param([int]$ProcessId)
     try {
-        $proc = Get-Process -Id $Pid -ErrorAction SilentlyContinue
+        $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
         if ($proc -and (-not $proc.HasExited)) { return $true }
         return $false
     } catch {
@@ -395,9 +395,9 @@ function Do-Stop {
         $agentProps = $pids.agents.PSObject.Properties
         foreach ($prop in $agentProps) {
             $name = $prop.Name
-            $pid = [int]$prop.Value
-            Write-Info ("Stopping agent '" + $name + "' (PID " + $pid + ")")
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            $procId = [int]$prop.Value
+            Write-Info ("Stopping agent '" + $name + "' (PID " + $procId + ")")
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -406,17 +406,17 @@ function Do-Stop {
         $gwProps = $pids.gateways.PSObject.Properties
         foreach ($prop in $gwProps) {
             $name = $prop.Name
-            $pid = [int]$prop.Value
-            Write-Info ("Stopping gateway '" + $name + "' (PID " + $pid + ")")
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            $procId = [int]$prop.Value
+            Write-Info ("Stopping gateway '" + $name + "' (PID " + $procId + ")")
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
         }
     }
 
     # Stop backend
     if ($pids.backend) {
-        $pid = [int]$pids.backend
-        Write-Info ("Stopping backend (PID " + $pid + ")")
-        Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+        $procId = [int]$pids.backend
+        Write-Info ("Stopping backend (PID " + $procId + ")")
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
     }
 
     # Remove pids file
@@ -472,12 +472,12 @@ function Do-Status {
         $gwProps = $pids.gateways.PSObject.Properties
         foreach ($prop in $gwProps) {
             $name = $prop.Name
-            $pid = [int]$prop.Value
+            $procId = [int]$prop.Value
             $status = "STOPPED"
-            if ($pid -gt 0 -and (Is-ProcessRunning $pid)) { $status = "RUNNING" }
+            if ($procId -gt 0 -and (Is-ProcessRunning $procId)) { $status = "RUNNING" }
             $color = "Red"
             if ($status -eq "RUNNING") { $color = "Green" }
-            Write-Host ("  Gateway       " + $name + "  PID " + $pid + "   ") -NoNewline
+            Write-Host ("  Gateway       " + $name + "  PID " + $procId + "   ") -NoNewline
             Write-Host $status -ForegroundColor $color
         }
     }
@@ -487,12 +487,12 @@ function Do-Status {
         $agProps = $pids.agents.PSObject.Properties
         foreach ($prop in $agProps) {
             $name = $prop.Name
-            $pid = [int]$prop.Value
+            $procId = [int]$prop.Value
             $status = "STOPPED"
-            if ($pid -gt 0 -and (Is-ProcessRunning $pid)) { $status = "RUNNING" }
+            if ($procId -gt 0 -and (Is-ProcessRunning $procId)) { $status = "RUNNING" }
             $color = "Red"
             if ($status -eq "RUNNING") { $color = "Green" }
-            Write-Host ("  Agent         " + $name + "  PID " + $pid + "   ") -NoNewline
+            Write-Host ("  Agent         " + $name + "  PID " + $procId + "   ") -NoNewline
             Write-Host $status -ForegroundColor $color
         }
     }
