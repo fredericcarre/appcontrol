@@ -17,7 +17,9 @@ use std::path::Path;
 /// `token` is the enrollment token (e.g., "ac_enroll_...").
 /// `config_dir` is where to write certs and config (e.g., "/etc/appcontrol").
 pub async fn enroll(gateway_url: &str, token: &str, config_dir: &str) -> anyhow::Result<()> {
-    let hostname = crate::platform::gethostname();
+    // Allow custom hostname via env var (needed when multiple agents run on same host)
+    let hostname = std::env::var("AGENT_HOSTNAME")
+        .unwrap_or_else(|_| crate::platform::gethostname());
     tracing::info!("Enrolling agent '{}' via gateway {}", hostname, gateway_url);
 
     // Convert WebSocket URL to HTTP URL for the enrollment HTTP POST request
@@ -129,7 +131,14 @@ pub async fn enroll(gateway_url: &str, token: &str, config_dir: &str) -> anyhow:
     // IMPORTANT: Use forward slashes in paths for YAML compatibility.
     // Backslashes are escape characters in YAML (e.g., \t = tab, \n = newline).
     // Forward slashes work on both Windows and Unix.
-    let to_yaml_path = |p: &Path| -> String { p.to_string_lossy().replace('\\', "/") };
+    // Also strip the \\?\ prefix that Windows canonicalize() adds (UNC verbatim paths).
+    let to_yaml_path = |p: &Path| -> String {
+        let s = p.to_string_lossy().replace('\\', "/");
+        match s.strip_prefix("//?/") {
+            Some(stripped) => stripped.to_string(),
+            None => s,
+        }
+    };
 
     let config_content = format!(
         r#"# AppControl Agent Configuration

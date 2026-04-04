@@ -725,8 +725,11 @@ function Do-AddSite {
             $agBin = Join-Path $script:BinDir ("appcontrol-agent" + $script:BinExt)
             $agDataDir = Join-Path $script:DataDir ("agent-" + $siteName)
             Ensure-Dir $agDataDir
+            # Set unique hostname per site so each agent gets a distinct ID
+            $realHostname = [System.Net.Dns]::GetHostName()
+            $env:AGENT_HOSTNAME = ($realHostname + "-" + $siteName)
             $agEnrollUrl = "wss://localhost:" + $gwPort
-            Write-Info ("Enrolling agent for site '" + $siteName + "'...")
+            Write-Info ("Enrolling agent for site '" + $siteName + "' as " + $env:AGENT_HOSTNAME + "...")
             $enrollArgList = @("--enroll", $agEnrollUrl, "--token", $agEnrollToken, "--enroll-dir", $agDataDir)
             $agEnrollLog = Join-Path $script:LogDir ("agent-enroll-" + $siteName + ".log")
             $agEnrollErr = Join-Path $script:LogDir ("agent-enroll-" + $siteName + ".err.log")
