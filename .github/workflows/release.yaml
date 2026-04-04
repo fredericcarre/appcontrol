@@ -400,8 +400,10 @@ jobs:
       - name: Package examples
         run: tar czf artifacts/examples.tar.gz examples/
 
-      - name: Copy release compose file
-        run: cp docker/docker-compose.release.yaml artifacts/docker-compose.release.yaml
+      - name: Copy release compose file and standalone script
+        run: |
+          cp docker/docker-compose.release.yaml artifacts/docker-compose.release.yaml
+          cp scripts/appcontrol.ps1 artifacts/appcontrol.ps1
 
       - name: Generate checksums
         working-directory: artifacts
@@ -442,6 +444,15 @@ jobs:
           # Add to PATH: [Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$env:LOCALAPPDATA\appcontrol", "User")
           ```
 
+          **Standalone (Windows/Linux, no Docker):**
+          ```powershell
+          mkdir AppControl; cd AppControl
+          Invoke-WebRequest -Uri "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/appcontrol.ps1" -OutFile appcontrol.ps1
+          .\appcontrol.ps1 install
+          .\appcontrol.ps1 start
+          .\appcontrol.ps1 add-site Production
+          ```
+
           **Docker images:**
           ```bash
           docker pull ghcr.io/fredericcarre/appcontrol-backend:${{ steps.version.outputs.VERSION }}
@@ -461,6 +472,7 @@ jobs:
           | `appcontrol-backend-{os}-{arch}[.exe]` | Backend API server binary |
           | `appcontrol-gateway-{os}-{arch}[.exe]` | Gateway binary |
           | `appcontrol-frontend.zip` | Frontend static files (extract to `frontend/` next to backend exe) |
+          | `appcontrol.ps1` | Standalone deployment script (Windows PS 5.1+ / Linux pwsh) |
           | `docker-compose.release.yaml` | Docker Compose for running from images |
           | `appcontrol-azure-gateway` | Combined gateway+agent Docker image with Azure CLI |
           | `examples.tar.gz` | Example application maps |
@@ -549,6 +561,9 @@ jobs:
           mkdir -p scripts
           cp ../scripts/*.ps1 ../scripts/*.sh ../scripts/*.json ../scripts/*.md scripts/ 2>/dev/null || true
 
+          # Also place appcontrol.ps1 at repo root for maximum visibility
+          cp ../scripts/appcontrol.ps1 ./appcontrol.ps1
+
           # Copy examples
           mkdir -p examples
           cp ../examples/*.json ../examples/*.md examples/ 2>/dev/null || true
@@ -601,8 +616,9 @@ jobs:
           zip -r ../artifacts/appcontrol-docs-scripts.zip docs/ scripts/ examples/ docker/ openshift/ azure/ LICENSE README.md 2>/dev/null || true
           cd ..
 
-          # Also copy compose files individually
+          # Also copy compose files and standalone script individually
           cp corp-repo/docker/docker-compose.release.yaml artifacts/docker-compose.release.yaml 2>/dev/null || true
+          cp corp-repo/scripts/appcontrol.ps1 artifacts/appcontrol.ps1 2>/dev/null || true
 
       - name: Generate checksums
         working-directory: artifacts
@@ -621,14 +637,14 @@ jobs:
           APPCONTROL_VERSION=${{ steps.version.outputs.VERSION }} docker compose -f docker-compose.release.yaml up -d
           ```
 
-          **Windows Standalone (SQLite, no Docker):**
+          **Windows/Linux Standalone (SQLite, no Docker):**
           ```powershell
-          gh release download ${{ github.ref_name }} --repo xcomponent/appcontrol-release --pattern '*.exe' --dir appcontrol\bin
-          gh release download ${{ github.ref_name }} --repo xcomponent/appcontrol-release --pattern 'appcontrol-docs-scripts.zip'
-          Expand-Archive appcontrol-docs-scripts.zip -DestinationPath appcontrol
-          cd appcontrol\scripts
-          .\deploy-standalone.ps1
-          .\setup-site.ps1 -SiteName "Production"
+          mkdir AppControl; cd AppControl
+          # Download the unified script
+          Invoke-WebRequest -Uri "https://github.com/xcomponent/appcontrol-release/releases/download/${{ github.ref_name }}/appcontrol.ps1" -OutFile appcontrol.ps1
+          .\appcontrol.ps1 install
+          .\appcontrol.ps1 start
+          .\appcontrol.ps1 add-site Production
           ```
 
           **CLI binary:**

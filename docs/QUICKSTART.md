@@ -1,10 +1,68 @@
 # AppControl QuickStart Guide
 
-Get AppControl v4 running in under 10 minutes. This guide covers two deployment paths: a fully containerized stack via Docker Compose, and a local development setup with hot-reload.
+Get AppControl v4 running in under 5 minutes. Three deployment paths: standalone (no Docker), Docker Compose, or local dev with hot-reload.
 
 ---
 
-## Prerequisites
+## Option S: Standalone (No Docker - Fastest)
+
+The simplest way to get started. Single script, SQLite database, no dependencies.
+
+**Works on:** Windows (PowerShell 5.1+), Linux/macOS (PowerShell Core `pwsh`).
+
+```powershell
+# 1. Create a directory and download the script
+mkdir AppControl
+cd AppControl
+Invoke-WebRequest -Uri "https://github.com/fredericcarre/appcontrol/releases/latest/download/appcontrol.ps1" -OutFile appcontrol.ps1
+
+# 2. Install (downloads binaries + frontend)
+.\appcontrol.ps1 install
+
+# 3. Start the backend
+.\appcontrol.ps1 start
+
+# 4. Add a site with gateway + agent
+.\appcontrol.ps1 add-site Production
+```
+
+Open http://localhost:3000 and log in with `admin@localhost` / `admin`.
+
+### Standalone commands
+
+| Command | Description |
+|---------|-------------|
+| `.\appcontrol.ps1 install` | Download binaries and create directory structure |
+| `.\appcontrol.ps1 start` | Start backend + all configured gateways + agents |
+| `.\appcontrol.ps1 stop` | Stop all processes |
+| `.\appcontrol.ps1 status` | Show status of all components |
+| `.\appcontrol.ps1 add-site <name> [port]` | Add a site (default gateway port: 4443) |
+| `.\appcontrol.ps1 upgrade` | Stop, update binaries, restart (preserves data) |
+| `.\appcontrol.ps1 logs [file]` | Show recent log output |
+
+### Upgrade
+
+```powershell
+.\appcontrol.ps1 upgrade
+```
+
+This stops all services, downloads the latest binaries and frontend, then restarts everything. Your database (`data/appcontrol.db`) and configuration (`config/`) are never touched.
+
+### Directory layout
+
+```
+AppControl/
+  appcontrol.ps1    # This script (updated by upgrade)
+  bin/              # Binaries (overwritten by upgrade)
+  data/             # SQLite database (PRESERVED by upgrade)
+  config/           # Settings + sites (PRESERVED by upgrade)
+  logs/             # Log files
+  frontend/         # Web UI (overwritten by upgrade)
+```
+
+---
+
+## Prerequisites (Docker options)
 
 | Requirement | Docker Compose | Local Dev |
 |-------------|:--------------:|:---------:|
@@ -15,7 +73,7 @@ Get AppControl v4 running in under 10 minutes. This guide covers two deployment 
 
 ---
 
-## Option A: Docker Compose (Fastest)
+## Option A: Docker Compose
 
 This brings up the full stack in containers: PostgreSQL, backend API, frontend SPA, and gateway.
 

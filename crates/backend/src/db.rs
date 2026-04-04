@@ -119,6 +119,9 @@ impl<'q> sqlx::Encode<'q, sqlx::Postgres> for DbUuid {
 impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for DbUuid {
     fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         let text: &str = <&str as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
+        if text.is_empty() {
+            return Err("empty string is not a valid UUID (NULL column?)".into());
+        }
         let uuid = Uuid::parse_str(text)?;
         Ok(DbUuid(uuid))
     }

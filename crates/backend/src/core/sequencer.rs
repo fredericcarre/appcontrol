@@ -763,6 +763,22 @@ pub async fn stop_single_component(
             ComponentState::Stopped => return Ok(()),
             _ => {
                 if std::time::Instant::now() > deadline {
+                    // Stop timeout expired. If still in STOPPING, force-transition to STOPPED.
+                    // The stop command was sent; if the process is somehow still alive,
+                    // the next health check cycle will detect it and transition accordingly.
+                    if current == ComponentState::Stopping {
+                        tracing::warn!(
+                            component_id = %component_id,
+                            "Stop timeout expired while STOPPING — forcing transition to STOPPED"
+                        );
+                        let _ = super::fsm::transition_component(
+                            state,
+                            component_id,
+                            ComponentState::Stopped,
+                        )
+                        .await;
+                        return Ok(());
+                    }
                     let name = get_component_name(&state.db, component_id).await;
                     return Err(SequencerError::ComponentFailed {
                         id: component_id,
@@ -1064,7 +1080,19 @@ async fn wait_for_stopped(
         }
 
         if std::time::Instant::now() > deadline {
-            tracing::warn!(component_id = %component_id, "Timeout waiting for STOPPED");
+            // Timeout waiting for STOPPED — force transition if stuck in STOPPING
+            let current = super::fsm::get_current_state(&state.db, component_id).await?;
+            if current == ComponentState::Stopping {
+                tracing::warn!(
+                    component_id = %component_id,
+                    "wait_for_stopped: timeout while STOPPING — forcing transition to STOPPED"
+                );
+                let _ =
+                    super::fsm::transition_component(state, component_id, ComponentState::Stopped)
+                        .await;
+                return Ok(());
+            }
+            tracing::warn!(component_id = %component_id, state = ?current, "Timeout waiting for STOPPED");
             let name = get_component_name(&state.db, component_id).await;
             return Err(SequencerError::ComponentFailed {
                 id: component_id,

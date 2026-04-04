@@ -852,7 +852,245 @@ async fn test_sqlite_startup_full() {
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
-/// Test 4: Migration parity — SQLite versions match PostgreSQL.
+/// Test 4: Nullable UUID queries — verify all nullable UUID paths work correctly.
+///
+/// This is the critical SQLite parity test. SQLite stores UUIDs as TEXT via `DbUuid`.
+/// When a nullable UUID column (referenced_app_id, agent_id, site_id) is NULL,
+/// the query must not crash. This test exercises:
+/// - `get_component_referenced_app_id` on a component with NULL referenced_app_id
+/// - `get_app_site_id` on an app with NULL site_id
+/// - `get_start_component_info` / `get_stop_component_info` with NULL agent_id + referenced_app_id
+/// - `is_gateway_active` on a non-existent gateway (returns true by default)
+/// - `Option<DbUuid>` in FromRow structs with real NULL values
+#[tokio::test]
+async fn test_nullable_uuid_queries() {
+    use appcontrol_backend::db::DbUuid;
+
+    let tmp_dir = std::env::temp_dir().join(format!("appcontrol_e2e_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let db_url = format!("sqlite:{}", tmp_dir.join("test.db").display());
+
+    let pool = create_test_pool(&db_url).await;
+    run_sqlite_migrations(&pool).await;
+
+    // Seed org
+    let org_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO organizations (id, name, slug) VALUES ($1, 'UUID Test Org', 'uuid-test')",
+    )
+    .bind(DbUuid::from(org_id))
+    .execute(&pool)
+    .await
+    .expect("Failed to seed org");
+
+    // Create a site (required — site_id is NOT NULL on applications)
+    let site_id = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO sites (id, organization_id, name, code, site_type) VALUES ($1, $2, 'Test Site', 'TST', 'primary')")
+        .bind(DbUuid::from(site_id))
+        .bind(DbUuid::from(org_id))
+        .execute(&pool)
+        .await
+        .expect("Failed to create site");
+
+    // Create an app with site_id (required NOT NULL)
+    let app_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO applications (id, organization_id, name, description, site_id) \
+         VALUES ($1, $2, 'Null-UUID-App', 'test', $3)",
+    )
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(org_id))
+    .bind(DbUuid::from(site_id))
+    .execute(&pool)
+    .await
+    .expect("Failed to create app");
+
+    // Create a component WITHOUT agent_id and WITHOUT referenced_app_id (both NULL)
+    let comp_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO components (id, application_id, name, component_type, \
+         check_cmd, start_cmd, stop_cmd, check_interval_seconds, \
+         start_timeout_seconds, stop_timeout_seconds) \
+         VALUES ($1, $2, 'test-svc', 'service', 'true', 'true', 'true', 30, 60, 30)",
+    )
+    .bind(DbUuid::from(comp_id))
+    .bind(DbUuid::from(app_id))
+    .execute(&pool)
+    .await
+    .expect("Failed to create component");
+
+    // --- Test 1: get_component_referenced_app_id with NULL referenced_app_id ---
+    let result = appcontrol_backend::repository::core_queries::get_component_referenced_app_id(
+        &pool, comp_id,
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "get_component_referenced_app_id should not crash on NULL: {:?}",
+        result.err()
+    );
+    assert_eq!(result.unwrap(), None, "referenced_app_id should be None");
+
+    // --- Test 2: get_app_site_id returns the correct site_id ---
+    let fetched_site_id =
+        appcontrol_backend::repository::core_queries::get_app_site_id(&pool, app_id).await;
+    assert_eq!(
+        fetched_site_id,
+        Some(site_id),
+        "site_id should match (NOT NULL column)"
+    );
+
+    // Also test with non-existent app — should return None
+    let no_site =
+        appcontrol_backend::repository::core_queries::get_app_site_id(&pool, uuid::Uuid::new_v4())
+            .await;
+    assert_eq!(
+        no_site, None,
+        "get_app_site_id for non-existent app should return None"
+    );
+
+    // --- Test 3: get_start_component_info with NULL agent_id + referenced_app_id ---
+    let start_info =
+        appcontrol_backend::repository::core_queries::get_start_component_info(&pool, comp_id)
+            .await;
+    assert!(
+        start_info.is_ok(),
+        "get_start_component_info should not crash on NULL UUIDs: {:?}",
+        start_info.err()
+    );
+    let start_info = start_info.unwrap();
+    assert_eq!(start_info.agent_id, None, "agent_id should be None");
+    assert_eq!(
+        start_info.referenced_app_id, None,
+        "referenced_app_id should be None"
+    );
+
+    // --- Test 4: get_stop_component_info with NULL agent_id + referenced_app_id ---
+    let stop_info =
+        appcontrol_backend::repository::core_queries::get_stop_component_info(&pool, comp_id).await;
+    assert!(
+        stop_info.is_ok(),
+        "get_stop_component_info should not crash on NULL UUIDs: {:?}",
+        stop_info.err()
+    );
+    let stop_info = stop_info.unwrap();
+    assert_eq!(stop_info.agent_id, None, "agent_id should be None");
+    assert_eq!(
+        stop_info.referenced_app_id, None,
+        "referenced_app_id should be None"
+    );
+
+    // --- Test 5: is_gateway_active for non-existent gateway (should default to true) ---
+    let is_active =
+        appcontrol_backend::repository::queries::is_gateway_active(&pool, uuid::Uuid::new_v4())
+            .await;
+    assert!(
+        is_active.is_ok(),
+        "is_gateway_active should not crash: {:?}",
+        is_active.err()
+    );
+    assert!(
+        is_active.unwrap(),
+        "Non-existent gateway should default to active (true)"
+    );
+
+    // --- Test 6: Component with agent_id SET but referenced_app_id NULL ---
+    let agent_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO agents (id, organization_id, hostname, is_active) VALUES ($1, $2, 'test-host', 1)",
+    )
+    .bind(DbUuid::from(agent_id))
+    .bind(DbUuid::from(org_id))
+    .execute(&pool)
+    .await
+    .expect("Failed to create agent");
+
+    let comp2_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO components (id, application_id, name, component_type, agent_id, \
+         check_cmd, start_cmd, stop_cmd, check_interval_seconds, \
+         start_timeout_seconds, stop_timeout_seconds) \
+         VALUES ($1, $2, 'with-agent', 'service', $3, 'true', 'true', 'true', 30, 60, 30)",
+    )
+    .bind(DbUuid::from(comp2_id))
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(agent_id))
+    .execute(&pool)
+    .await
+    .expect("Failed to create component with agent");
+
+    let start_info =
+        appcontrol_backend::repository::core_queries::get_start_component_info(&pool, comp2_id)
+            .await
+            .expect("get_start_component_info should work with agent_id set");
+    assert_eq!(start_info.agent_id, Some(agent_id), "agent_id should match");
+    assert_eq!(
+        start_info.referenced_app_id, None,
+        "referenced_app_id should still be None"
+    );
+
+    // --- Test 7: get_component_referenced_app_id with referenced_app_id SET ---
+    let ref_app_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO applications (id, organization_id, name, description, site_id) \
+         VALUES ($1, $2, 'Referenced-App', 'test', $3)",
+    )
+    .bind(DbUuid::from(ref_app_id))
+    .bind(DbUuid::from(org_id))
+    .bind(DbUuid::from(site_id))
+    .execute(&pool)
+    .await
+    .expect("Failed to create referenced app");
+
+    let comp3_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO components (id, application_id, name, component_type, referenced_app_id, \
+         check_cmd, check_interval_seconds, start_timeout_seconds, stop_timeout_seconds) \
+         VALUES ($1, $2, 'app-ref-comp', 'application', $3, 'true', 30, 60, 30)",
+    )
+    .bind(DbUuid::from(comp3_id))
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(ref_app_id))
+    .execute(&pool)
+    .await
+    .expect("Failed to create app-type component");
+
+    let fetched_ref =
+        appcontrol_backend::repository::core_queries::get_component_referenced_app_id(
+            &pool, comp3_id,
+        )
+        .await
+        .expect("get_component_referenced_app_id should work with SET value");
+    assert_eq!(
+        fetched_ref,
+        Some(ref_app_id),
+        "referenced_app_id should match the one we set"
+    );
+
+    // --- Test 8: is_gateway_active for existing active gateway ---
+    let gw_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO gateways (id, organization_id, name, is_active, last_heartbeat_at) \
+         VALUES ($1, $2, 'test-gw', 1, datetime('now'))",
+    )
+    .bind(DbUuid::from(gw_id))
+    .bind(DbUuid::from(org_id))
+    .execute(&pool)
+    .await
+    .expect("Failed to create gateway");
+
+    let is_active = appcontrol_backend::repository::queries::is_gateway_active(&pool, gw_id)
+        .await
+        .expect("is_gateway_active should work for existing gateway");
+    assert!(is_active, "Existing active gateway should return true");
+
+    eprintln!("All 8 nullable UUID tests passed!");
+
+    drop(pool);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+/// Test 5: Migration parity — SQLite versions match PostgreSQL.
 #[test]
 fn test_sqlite_migrations_match_postgres() {
     let base_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");

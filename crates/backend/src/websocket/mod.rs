@@ -815,11 +815,12 @@ async fn process_gateway_message(
                 // without waiting for the next scheduled check interval.
                 send_run_checks_now(state, agent_id);
 
-                // Update agent record: gateway_id, certificate fingerprint, version
+                // Upsert agent record: create if not enrolled, update if exists
                 if let Err(e) = ws_repo::update_agent_connection_info(
                     &state.db,
                     agent_id,
                     gw_id,
+                    &hostname,
                     cert_fingerprint.as_deref(),
                     cert_cn.as_deref(),
                     version.as_deref(),
@@ -828,7 +829,7 @@ async fn process_gateway_message(
                 {
                     tracing::warn!(
                         agent_id = %agent_id,
-                        "Failed to update agent record: {}", e
+                        "Failed to upsert agent record: {}", e
                     );
                 }
             } else {

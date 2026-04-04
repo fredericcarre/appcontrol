@@ -1,17 +1,49 @@
 # Quick Start - AppControl v4
 
-Get AppControl running — no build required.
+Get AppControl running - no build required.
 
-## Prerequisites
+## Option 1: Standalone (SQLite, no Docker - fastest)
+
+Works on **Windows** (PowerShell 5.1+) and **Linux/macOS** (PowerShell Core / pwsh).
+
+```powershell
+mkdir AppControl
+cd AppControl
+
+# Download the unified script from GitHub releases
+Invoke-WebRequest -Uri "https://github.com/fredericcarre/appcontrol/releases/latest/download/appcontrol.ps1" -OutFile appcontrol.ps1
+
+# Install (downloads binaries + frontend)
+.\appcontrol.ps1 install
+
+# Start the backend
+.\appcontrol.ps1 start
+
+# Add your first site (creates site + gateway + agent)
+.\appcontrol.ps1 add-site Production
+
+# Check status
+.\appcontrol.ps1 status
+```
+
+Open http://localhost:3000 - login with `admin@localhost` / `admin`.
+
+Available commands: `install`, `start`, `stop`, `status`, `add-site`, `upgrade`, `logs`, `help`.
+
+See [Standalone Deployment](docs/WINDOWS_DEPLOYMENT.md) for details.
+
+---
+
+## Option 2: Docker Compose (full stack with PostgreSQL)
+
+### Prerequisites
 
 | Tool | Version | Install |
 |------|---------|---------|
 | Docker Desktop | 4.x | [docker.com](https://www.docker.com/products/docker-desktop/) |
 | Docker Compose | v2+ | Included with Docker Desktop |
 
-That's it. Everything else comes from pre-built images.
-
-## 1. Download and start
+### 1. Download and start
 
 ```bash
 # Grab the latest release compose file + examples
