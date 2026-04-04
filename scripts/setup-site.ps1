@@ -99,7 +99,10 @@ function Invoke-Api {
         $response.Close()
 
         if ($responseText) {
-            return ($responseText | ConvertFrom-Json)
+            Write-Host "[DEBUG] Raw response ($($responseText.Length) chars): $($responseText.Substring(0, [Math]::Min(200, $responseText.Length)))" -ForegroundColor DarkGray
+            $parsed = ($responseText | ConvertFrom-Json)
+            Write-Host "[DEBUG] Parsed type: $($parsed.GetType().Name), token prop: $($parsed.token.GetType().Name) len=$($parsed.token.Length)" -ForegroundColor DarkGray
+            return $parsed
         }
         return $null
     } catch [System.Net.WebException] {
