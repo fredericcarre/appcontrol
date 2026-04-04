@@ -72,22 +72,31 @@ function Invoke-Api {
     )
     $uri = "$BackendUrl/api/v1$Path"
 
-    # Use .NET WebClient for maximum PS 5.1 compatibility
-    $wc = New-Object System.Net.WebClient
-    $wc.Encoding = [System.Text.Encoding]::UTF8
+    # Use HttpWebRequest for full control over headers (PS 5.1 compatible)
+    $request = [System.Net.HttpWebRequest]::Create($uri)
+    $request.Method = $Method.ToUpper()
+    $request.Accept = "application/json"
 
     if ($Token) {
-        $wc.Headers.Add("Authorization", "Bearer $Token")
+        $request.Headers.Add("Authorization", "Bearer $Token")
+    }
+
+    if ($Body) {
+        $request.ContentType = "application/json; charset=utf-8"
+        $jsonBody = ($Body | ConvertTo-Json -Depth 10)
+        $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($jsonBody)
+        $request.ContentLength = $bodyBytes.Length
+        $reqStream = $request.GetRequestStream()
+        $reqStream.Write($bodyBytes, 0, $bodyBytes.Length)
+        $reqStream.Close()
     }
 
     try {
-        if ($Body) {
-            $wc.Headers.Add("Content-Type", "application/json; charset=utf-8")
-            $jsonBody = ($Body | ConvertTo-Json -Depth 10)
-            $responseText = $wc.UploadString($uri, $Method.ToUpper(), $jsonBody)
-        } else {
-            $responseText = $wc.DownloadString($uri)
-        }
+        $response = $request.GetResponse()
+        $reader = New-Object System.IO.StreamReader($response.GetResponseStream(), [System.Text.Encoding]::UTF8)
+        $responseText = $reader.ReadToEnd()
+        $reader.Close()
+        $response.Close()
 
         if ($responseText) {
             return ($responseText | ConvertFrom-Json)
@@ -95,13 +104,15 @@ function Invoke-Api {
         return $null
     } catch [System.Net.WebException] {
         $webEx = $_.Exception
-        $status = [int]$webEx.Response.StatusCode
-        if ($status -eq 409) { return $null }  # Already exists
-        if ($status -eq 404) { return $null }  # Not found
-        Write-Status "API error: $Method $Path -> $status" "ERROR"
+        if ($webEx.Response) {
+            $status = [int]$webEx.Response.StatusCode
+            if ($status -eq 409) { return $null }  # Already exists
+            if ($status -eq 404) { return $null }  # Not found
+            Write-Status "API error: $Method $Path -> $status" "ERROR"
+        } else {
+            Write-Status "API error: $Method $Path -> $($webEx.Message)" "ERROR"
+        }
         throw
-    } finally {
-        $wc.Dispose()
     }
 }
 
@@ -138,16 +149,26 @@ New-Item -ItemType Directory -Force -Path $LogsDir | Out-Null
 # ---------------------------------------------------------------------------
 
 Write-Status "Logging in as $Email..." "INFO"
-$loginResp = Invoke-Api -Method POST -Path "/auth/login" -Body @{
-    email    = $Email
-    password = $Password
+try {
+    $loginResp = Invoke-Api -Method POST -Path "/auth/login" -Body @{
+        email    = $Email
+        password = $Password
+    }
+} catch {
+    Write-Status "Login request failed: $($_.Exception.Message)" "ERROR"
+    exit 1
 }
-if (-not $loginResp.token) {
-    Write-Status "Login failed — check email/password (response: $($loginResp | ConvertTo-Json -Compress))" "ERROR"
+if (-not $loginResp -or -not $loginResp.token) {
+    Write-Status "Login failed — no token in response" "ERROR"
+    if ($loginResp) {
+        Write-Status "Response: $($loginResp | ConvertTo-Json -Compress)" "ERROR"
+    } else {
+        Write-Status "Response was empty" "ERROR"
+    }
     exit 1
 }
 $token = $loginResp.token
-Write-Status "Logged in (token: $($token.Substring(0, [Math]::Min(20, $token.Length)))...)" "SUCCESS"
+Write-Status "Logged in (token length: $($token.Length) chars)" "SUCCESS"
 
 # ---------------------------------------------------------------------------
 # Create or find site
