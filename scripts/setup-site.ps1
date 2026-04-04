@@ -99,10 +99,7 @@ function Invoke-Api {
         $response.Close()
 
         if ($responseText) {
-            Write-Host "[DEBUG] Raw response ($($responseText.Length) chars): $($responseText.Substring(0, [Math]::Min(200, $responseText.Length)))" -ForegroundColor DarkGray
-            $parsed = ($responseText | ConvertFrom-Json)
-            Write-Host "[DEBUG] Parsed type: $($parsed.GetType().Name), token prop: $($parsed.token.GetType().Name) len=$($parsed.token.Length)" -ForegroundColor DarkGray
-            return $parsed
+            return ($responseText | ConvertFrom-Json)
         }
         return $null
     } catch [System.Net.WebException] {
@@ -155,9 +152,9 @@ Write-Status "Logging in as $Email..." "INFO"
 
 # Login with explicit raw HTTP (bypass Invoke-Api for full debug)
 $loginUri = "$BackendUrl/api/v1/auth/login"
-$loginBody = "{`"email`":`"$Email`",`"password`":`"$Password`"}"
-Write-Host "[DEBUG] POST $loginUri" -ForegroundColor DarkGray
-Write-Host "[DEBUG] Body: $loginBody" -ForegroundColor DarkGray
+$loginHash = @{ email = $Email; password = $Password }
+$loginBody = ($loginHash | ConvertTo-Json -Compress)
+Write-Host ("[DEBUG] POST " + $loginUri) -ForegroundColor DarkGray
 
 try {
     $loginReq = [System.Net.HttpWebRequest]::Create($loginUri)
@@ -176,23 +173,27 @@ try {
     $loginReader.Close()
     $loginHttpResp.Close()
 } catch {
-    Write-Status "Login request failed: $($_.Exception.Message)" "ERROR"
+    Write-Status ("Login request failed: " + $_.Exception.Message) "ERROR"
     exit 1
 }
 
-Write-Host "[DEBUG] Raw response ($($loginRaw.Length) chars):" -ForegroundColor DarkGray
+$rawLen = $loginRaw.Length
+Write-Host ("[DEBUG] Raw response (" + $rawLen + " chars):") -ForegroundColor DarkGray
 Write-Host $loginRaw -ForegroundColor DarkGray
 
 # Extract token with regex (avoids ConvertFrom-Json quirks on PS 5.1)
-if ($loginRaw -match '"token"\s*:\s*"([^"]+)"') {
-    $token = $Matches[1]
+$tokenPattern = [regex]'"token"\s*:\s*"([^"]+)"'
+$tokenMatch = $tokenPattern.Match($loginRaw)
+if ($tokenMatch.Success) {
+    $token = $tokenMatch.Groups[1].Value
 } else {
     Write-Status "Login failed — no token found in response" "ERROR"
     Write-Host $loginRaw -ForegroundColor Red
     exit 1
 }
 
-Write-Status "Logged in (token length: $($token.Length) chars)" "SUCCESS"
+$tokenLen = $token.Length
+Write-Status ("Logged in (token length: " + $tokenLen + " chars)") "SUCCESS"
 
 # ---------------------------------------------------------------------------
 # Create or find site
