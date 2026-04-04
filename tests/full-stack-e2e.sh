@@ -254,16 +254,22 @@ fi
 # 6. Verify agent registered
 # ---------------------------------------------------------------------------
 log "Checking agent registration..."
-sleep 3
-
-AGENTS_RESP=$(api GET "/agents")
-AGENT_COUNT=$(echo "$AGENTS_RESP" | jq '[.agents // . | if type == "array" then .[] else empty end] | length' 2>/dev/null || echo "0")
+AGENT_COUNT=0
+AGENT_ID=""
+for i in $(seq 1 20); do
+  AGENTS_RESP=$(api GET "/agents" 2>/dev/null || echo "{}")
+  AGENT_COUNT=$(echo "$AGENTS_RESP" | jq '[.agents // . | if type == "array" then .[] else empty end] | length' 2>/dev/null || echo "0")
+  if [ "$AGENT_COUNT" -ge 1 ]; then
+    AGENT_ID=$(echo "$AGENTS_RESP" | jq -r '[.agents // . | if type == "array" then .[] else empty end][0].id' 2>/dev/null)
+    break
+  fi
+  sleep 2
+done
 
 if [ "$AGENT_COUNT" -ge 1 ]; then
-  AGENT_ID=$(echo "$AGENTS_RESP" | jq -r '[.agents // . | if type == "array" then .[] else empty end][0].id' 2>/dev/null)
   ok "Agent registered (id=${AGENT_ID:0:8}..., count=$AGENT_COUNT)"
 else
-  fail "No agent registered (response: $AGENTS_RESP)"
+  fail "No agent registered after 40s (response: $AGENTS_RESP)"
   # Continue anyway — some tests might still work
 fi
 
@@ -306,9 +312,9 @@ COMP_RESP=$(api POST "/apps/$APP_ID/components" -d "{
   \"name\": \"test-service\",
   \"component_type\": \"service\",
   \"agent_id\": \"$AGENT_ID\",
-  \"start_cmd\": \"nohup bash -c 'while true; do sleep 1; done' &\",
-  \"stop_cmd\": \"pkill -f 'while true; do sleep 1; done' || true\",
-  \"check_cmd\": \"pgrep -f 'while true; do sleep 1; done'\",
+  \"start_cmd\": \"nohup sleep 99999 &\",
+  \"stop_cmd\": \"pkill -f 'sleep 99999' || true\",
+  \"check_cmd\": \"pgrep -f 'sleep 99999'\",
   \"check_interval_seconds\": 5,
   \"start_timeout_seconds\": 30,
   \"stop_timeout_seconds\": 15
@@ -356,7 +362,14 @@ fi
 # 11. Stop the application
 # ---------------------------------------------------------------------------
 log "Stopping application..."
+# Wait briefly to ensure start operation lock is released
+sleep 2
 STOP_CODE=$(api_code POST "/apps/$APP_ID/stop" -d '{}')
+if [ "$STOP_CODE" = "409" ]; then
+  # Operation lock might still be held — retry after a delay
+  sleep 5
+  STOP_CODE=$(api_code POST "/apps/$APP_ID/stop" -d '{}')
+fi
 if [ "$STOP_CODE" = "200" ] || [ "$STOP_CODE" = "202" ]; then
   ok "Stop command accepted (HTTP $STOP_CODE)"
 else
