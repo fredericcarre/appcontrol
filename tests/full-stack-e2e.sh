@@ -134,6 +134,20 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
+# Set short heartbeat timeout for E2E (default 180s is too long for CI)
+log "Setting heartbeat timeout to 15s for E2E..."
+sleep 2  # let migrations/seed finish
+if echo "$DB_URL" | grep -q "^sqlite"; then
+  DB_FILE=$(echo "$DB_URL" | sed 's/^sqlite://')
+  sqlite3 "$DB_FILE" "UPDATE organizations SET heartbeat_timeout_seconds = 15;" 2>/dev/null && \
+    ok "Heartbeat timeout set to 15s (SQLite)" || \
+    log "  WARN: Could not set heartbeat timeout (SQLite)"
+else
+  psql "$DB_URL" -c "UPDATE organizations SET heartbeat_timeout_seconds = 15;" 2>/dev/null && \
+    ok "Heartbeat timeout set to 15s (PostgreSQL)" || \
+    log "  WARN: Could not set heartbeat timeout (PostgreSQL)"
+fi
+
 # ---------------------------------------------------------------------------
 # 2. Login
 # ---------------------------------------------------------------------------
@@ -428,9 +442,8 @@ wait_component_state "$APP_ID" "test-service" "RUNNING" 60 || true
 kill "$AGENT_PID" 2>/dev/null || true
 AGENT_PID=0
 
-# Wait for heartbeat monitor to detect stale agent (default timeout ~180s, but we check)
-# The heartbeat monitor runs every 30s. With a short timeout it should detect within ~60s.
-log "  Agent killed. Waiting for heartbeat timeout (this may take up to 60s)..."
+# Heartbeat timeout set to 15s, monitor runs every 30s → detect within ~45s
+log "  Agent killed. Waiting for heartbeat timeout (15s timeout + 30s check interval)..."
 if wait_component_state "$APP_ID" "test-service" "UNREACHABLE" 90; then
   ok "Component transitioned to UNREACHABLE after agent death"
 else
