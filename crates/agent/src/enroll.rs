@@ -18,8 +18,8 @@ use std::path::Path;
 /// `config_dir` is where to write certs and config (e.g., "/etc/appcontrol").
 pub async fn enroll(gateway_url: &str, token: &str, config_dir: &str) -> anyhow::Result<()> {
     // Allow custom hostname via env var (needed when multiple agents run on same host)
-    let hostname = std::env::var("AGENT_HOSTNAME")
-        .unwrap_or_else(|_| crate::platform::gethostname());
+    let hostname =
+        std::env::var("AGENT_HOSTNAME").unwrap_or_else(|_| crate::platform::gethostname());
     tracing::info!("Enrolling agent '{}' via gateway {}", hostname, gateway_url);
 
     // Convert WebSocket URL to HTTP URL for the enrollment HTTP POST request
