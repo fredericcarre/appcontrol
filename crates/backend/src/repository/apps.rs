@@ -1084,9 +1084,10 @@ impl AppRepository for SqliteAppRepository {
 
     async fn grant_owner_permission(&self, app_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) \
-             VALUES ($1, $2, 'owner', $2)",
+            "INSERT INTO app_permissions_users (id, application_id, user_id, permission_level, granted_by) \
+             VALUES ($1, $2, $3, 'owner', $3)",
         )
+        .bind(crate::db::bind_id(Uuid::new_v4()))
         .bind(DbUuid::from(app_id))
         .bind(DbUuid::from(user_id))
         .execute(&self.pool)

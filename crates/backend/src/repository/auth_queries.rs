@@ -374,9 +374,10 @@ pub async fn add_team_member(
     user_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO team_members (team_id, user_id) VALUES ($1, $2)
+        "INSERT INTO team_members (id, team_id, user_id) VALUES ($1, $2, $3)
          ON CONFLICT DO NOTHING",
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(team_id))
     .bind(crate::db::bind_id(user_id))
     .execute(pool)

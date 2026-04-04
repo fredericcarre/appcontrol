@@ -778,11 +778,12 @@ pub async fn create_user(
 ) -> Result<UserRow, sqlx::Error> {
     let org_id: Uuid = org_id.into();
     sqlx::query_as::<_, UserRow>(
-        r#"INSERT INTO users (organization_id, external_id, email, display_name, role, auth_provider, password_hash)
-           VALUES ($1, $2, $3, $4, $5, 'local', $6)
+        r#"INSERT INTO users (id, organization_id, external_id, email, display_name, role, auth_provider, password_hash)
+           VALUES ($1, $2, $3, $4, $5, $6, 'local', $7)
            RETURNING id, organization_id, email, display_name, role, auth_provider,
                      is_active, last_login_at, created_at"#,
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(org_id))
     .bind(external_id)
     .bind(email)
@@ -1878,12 +1879,13 @@ pub async fn upsert_approval_policy(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
-        INSERT INTO approval_policies (organization_id, operation_type, risk_level, required_approvals, timeout_minutes, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO approval_policies (id, organization_id, operation_type, risk_level, required_approvals, timeout_minutes, enabled)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (organization_id, operation_type)
-        DO UPDATE SET risk_level = $3, required_approvals = $4, timeout_minutes = $5, enabled = $6
+        DO UPDATE SET risk_level = $4, required_approvals = $5, timeout_minutes = $6, enabled = $7
         "#,
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(organization_id))
     .bind(operation_type)
     .bind(risk_level)
@@ -2525,10 +2527,11 @@ pub async fn add_workspace_member(
     role: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO workspace_members (workspace_id, user_id, team_id, role)
-         VALUES ($1, $2, $3, $4)
+        "INSERT INTO workspace_members (id, workspace_id, user_id, team_id, role)
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT DO NOTHING",
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(workspace_id))
     .bind(crate::db::bind_opt_id(user_id))
     .bind(crate::db::bind_opt_id(team_id))
@@ -2922,9 +2925,10 @@ pub async fn log_enrollment_event(
     ip_address: &str,
 ) {
     sqlx::query(
-        r#"INSERT INTO enrollment_events (organization_id, token_id, event_type, hostname, ip_address)
-           VALUES ($1, $2, $3, $4, $5)"#,
+        r#"INSERT INTO enrollment_events (id, organization_id, token_id, event_type, hostname, ip_address)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(org_id))
     .bind(token_id.map(crate::db::bind_id))
     .bind(event_type)
@@ -3376,10 +3380,11 @@ pub async fn insert_webhook_delivery(
     if let Some(sc) = status_code {
         sqlx::query(
             r#"
-            INSERT INTO webhook_deliveries (webhook_id, event_type, payload, status_code, response_body, attempt)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO webhook_deliveries (id, webhook_id, event_type, payload, status_code, response_body, attempt)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
         )
+        .bind(crate::db::bind_id(Uuid::new_v4()))
         .bind(webhook_id)
         .bind(event_type)
         .bind(payload)
@@ -3391,10 +3396,11 @@ pub async fn insert_webhook_delivery(
     } else {
         sqlx::query(
             r#"
-            INSERT INTO webhook_deliveries (webhook_id, event_type, payload, response_body, attempt)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO webhook_deliveries (id, webhook_id, event_type, payload, response_body, attempt)
+            VALUES ($1, $2, $3, $4, $5, $6)
             "#,
         )
+        .bind(crate::db::bind_id(Uuid::new_v4()))
         .bind(webhook_id)
         .bind(event_type)
         .bind(payload)

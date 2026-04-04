@@ -953,9 +953,10 @@ pub async fn insert_gateway_cert_revoked_event(
     cn: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        r#"INSERT INTO certificate_events (gateway_id, event_type, fingerprint, cn)
-           VALUES ($1, 'revoked', $2, $3)"#,
+        r#"INSERT INTO certificate_events (id, gateway_id, event_type, fingerprint, cn)
+           VALUES ($1, $2, 'revoked', $3, $4)"#,
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(gateway_id))
     .bind(fingerprint)
     .bind(cn)
@@ -1125,10 +1126,11 @@ pub async fn insert_agent_blocked_event_tx<'a>(
     agent_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        r#"INSERT INTO certificate_events (agent_id, event_type, fingerprint, cn)
-           SELECT $1, 'blocked', certificate_fingerprint, certificate_cn
-           FROM agents WHERE id = $1"#,
+        r#"INSERT INTO certificate_events (id, agent_id, event_type, fingerprint, cn)
+           SELECT $1, $2, 'blocked', certificate_fingerprint, certificate_cn
+           FROM agents WHERE id = $2"#,
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(agent_id))
     .execute(&mut **tx)
     .await?;

@@ -411,13 +411,14 @@ impl PermissionRepository for SqlitePermissionRepository {
     ) -> Result<Uuid, sqlx::Error> {
         let id = sqlx::query_scalar::<_, DbUuid>(
             &format!(
-                "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at) \
-                 VALUES ($1, $2, $3, $4, $5) \
-                 ON CONFLICT (application_id, user_id) DO UPDATE SET permission_level = $3, expires_at = $5, updated_at = {} \
+                "INSERT INTO app_permissions_users (id, application_id, user_id, permission_level, granted_by, expires_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6) \
+                 ON CONFLICT (application_id, user_id) DO UPDATE SET permission_level = $4, expires_at = $6, updated_at = {} \
                  RETURNING id",
                 crate::db::sql::now()
             ),
         )
+        .bind(DbUuid::from(Uuid::new_v4()))
         .bind(DbUuid::from(app_id))
         .bind(DbUuid::from(user_id))
         .bind(level)
@@ -471,13 +472,14 @@ impl PermissionRepository for SqlitePermissionRepository {
     ) -> Result<Uuid, sqlx::Error> {
         let id = sqlx::query_scalar::<_, DbUuid>(
             &format!(
-                "INSERT INTO app_permissions_teams (application_id, team_id, permission_level, granted_by, expires_at) \
-                 VALUES ($1, $2, $3, $4, $5) \
-                 ON CONFLICT (application_id, team_id) DO UPDATE SET permission_level = $3, expires_at = $5, updated_at = {} \
+                "INSERT INTO app_permissions_teams (id, application_id, team_id, permission_level, granted_by, expires_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6) \
+                 ON CONFLICT (application_id, team_id) DO UPDATE SET permission_level = $4, expires_at = $6, updated_at = {} \
                  RETURNING id",
                 crate::db::sql::now()
             ),
         )
+        .bind(DbUuid::from(Uuid::new_v4()))
         .bind(DbUuid::from(app_id))
         .bind(DbUuid::from(team_id))
         .bind(level)
@@ -919,8 +921,8 @@ pub async fn grant_permission_via_share_link(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         &format!(
-            "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by, expires_at)
-             VALUES ($1, $2, $3, $4, NULL)
+            "INSERT INTO app_permissions_users (id, application_id, user_id, permission_level, granted_by, expires_at)
+             VALUES ($1, $2, $3, $4, $5, NULL)
              ON CONFLICT (application_id, user_id) DO UPDATE SET
                  permission_level = CASE
                      WHEN EXCLUDED.permission_level > app_permissions_users.permission_level
@@ -931,6 +933,7 @@ pub async fn grant_permission_via_share_link(
             crate::db::sql::now()
         ),
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(app_id))
     .bind(crate::db::bind_id(user_id))
     .bind(permission_level)

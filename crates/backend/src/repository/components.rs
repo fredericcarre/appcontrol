@@ -1426,8 +1426,8 @@ impl ComponentRepository for SqliteComponentRepository {
         user_id: Uuid,
         command_text: &str,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query("INSERT INTO command_executions (request_id, component_id, agent_id, command_type, status, user_id, command_text) VALUES ($1, $2, $3, $4, 'dispatched', $5, $6) ON CONFLICT (request_id) DO NOTHING")
-            .bind(DbUuid::from(request_id)).bind(DbUuid::from(component_id)).bind(DbUuid::from(agent_id)).bind(command_type).bind(DbUuid::from(user_id)).bind(command_text)
+        sqlx::query("INSERT INTO command_executions (id, request_id, component_id, agent_id, command_type, status, user_id, command_text) VALUES ($1, $2, $3, $4, $5, 'dispatched', $6, $7) ON CONFLICT (request_id) DO NOTHING")
+            .bind(DbUuid::from(Uuid::new_v4())).bind(DbUuid::from(request_id)).bind(DbUuid::from(component_id)).bind(DbUuid::from(agent_id)).bind(command_type).bind(DbUuid::from(user_id)).bind(command_text)
             .execute(&self.pool).await?;
         Ok(())
     }
