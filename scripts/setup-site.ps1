@@ -75,10 +75,11 @@ function Invoke-Api {
     if ($Token) { $headers["Authorization"] = "Bearer $Token" }
 
     $params = @{
-        Uri         = $uri
-        Method      = $Method
-        ContentType = "application/json"
-        Headers     = $headers
+        Uri             = $uri
+        Method          = $Method
+        ContentType     = "application/json"
+        Headers         = $headers
+        UseBasicParsing = $true
     }
     if ($Body) {
         $params["Body"] = ($Body | ConvertTo-Json -Depth 10)
