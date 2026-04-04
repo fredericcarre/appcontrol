@@ -287,7 +287,7 @@ function Do-Start {
     $env:APP_ENV = "development"
     $env:RUST_LOG = "info"
     $env:STATIC_DIR = $script:FrontendDir
-    $env:LISTEN_PORT = $port
+    $env:PORT = $port
 
     # Start backend
     $backendLog = Join-Path $script:LogDir "backend.log"
@@ -334,6 +334,9 @@ function Do-Start {
         # Gateway
         $gwBin = Join-Path $script:BinDir ("appcontrol-gateway" + $script:BinExt)
         if (Test-Path $gwBin) {
+            $gwId = $site.gateway_id
+            if (-not $gwId) { $gwId = "gw-" + ($siteName -replace '[^a-zA-Z0-9]', '-').ToLower() }
+            $env:GATEWAY_ID = $gwId
             $env:BACKEND_URL = "ws://localhost:" + $port + "/ws/gateway"
             $env:LISTEN_PORT = [string]$gwPort
             $env:GATEWAY_ZONE = $siteName
@@ -346,6 +349,9 @@ function Do-Start {
                 -RedirectStandardOutput $gwLog -RedirectStandardError $gwErr
             $pids.gateways[$siteName] = $gwProc.Id
             Write-Info ("Gateway '" + $siteName + "' started with PID " + $gwProc.Id + " on port " + $gwPort)
+
+            # Wait for gateway to be ready before starting agent
+            Start-Sleep -Seconds 3
         }
 
         # Agent
@@ -605,10 +611,12 @@ function Do-AddSite {
         }
     }
     if (-not $found) {
+        $gwId = "gw-" + ($siteName -replace '[^a-zA-Z0-9]', '-').ToLower()
         $newEntry = @{
             name         = $siteName
             site_id      = $siteId
             gateway_port = $gwPort
+            gateway_id   = $gwId
             enrolled     = $true
         }
         $sitesList.Add($newEntry) | Out-Null
@@ -623,6 +631,8 @@ function Do-AddSite {
         if (Is-ProcessRunning $bPid) {
             Write-Info "Backend is running, starting gateway and agent for new site..."
 
+            $gwId = "gw-" + ($siteName -replace '[^a-zA-Z0-9]', '-').ToLower()
+            $env:GATEWAY_ID = $gwId
             $env:BACKEND_URL = "ws://localhost:" + $port + "/ws/gateway"
             $env:LISTEN_PORT = [string]$gwPort
             $env:GATEWAY_ZONE = $siteName
@@ -634,6 +644,9 @@ function Do-AddSite {
             $gwErr = Join-Path $script:LogDir ("gateway-" + $siteName + ".err.log")
             $gwProc = Start-Process -FilePath $gwBin -PassThru -NoNewWindow `
                 -RedirectStandardOutput $gwLog -RedirectStandardError $gwErr
+
+            # Wait for gateway to be ready before starting agent
+            Start-Sleep -Seconds 3
 
             $env:GATEWAY_URL = "ws://localhost:" + $gwPort
             $agBin = Join-Path $script:BinDir ("appcontrol-agent" + $script:BinExt)

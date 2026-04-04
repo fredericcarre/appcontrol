@@ -278,7 +278,10 @@ if (-not $gwAlreadyExists) {
 }
 
 $backendHost = $BackendUrl -replace "http://","" -replace "https://",""
-$env:BACKEND_URL = "ws://" + $backendHost + "//ws/gateway"
+$env:BACKEND_URL = "ws://" + $backendHost + "/ws/gateway"
+$env:GATEWAY_ID = ("gw-" + ($SiteName -replace '[^a-zA-Z0-9]', '-').ToLower())
+$env:GATEWAY_NAME = ("gw-" + $SiteName)
+$env:GATEWAY_SITE_ID = $siteId
 $env:GATEWAY_ZONE = $siteCode
 $env:LISTEN_PORT = "$GatewayPort"
 $env:RUST_LOG = "info"
