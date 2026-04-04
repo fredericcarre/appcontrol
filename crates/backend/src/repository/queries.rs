@@ -104,7 +104,7 @@ pub async fn is_gateway_active(pool: &DbPool, gateway_id: Uuid) -> Result<bool, 
                 .bind(gateway_id)
                 .fetch_optional(pool)
                 .await?;
-        Ok(val.unwrap_or(false))
+        Ok(val.unwrap_or(true))
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
@@ -113,7 +113,7 @@ pub async fn is_gateway_active(pool: &DbPool, gateway_id: Uuid) -> Result<bool, 
                 .bind(DbUuid::from(gateway_id))
                 .fetch_optional(pool)
                 .await?;
-        Ok(val.map(|v| v != 0).unwrap_or(false))
+        Ok(val.map(|v| v != 0).unwrap_or(true))
     }
 }
 

@@ -195,22 +195,26 @@ pub async fn get_component_permission_info(
 /// Get site_id for an application.
 pub async fn get_app_site_id(pool: &DbPool, app_id: Uuid) -> Option<Uuid> {
     #[cfg(feature = "postgres")]
-    return sqlx::query_scalar::<_, DbUuid>("SELECT site_id FROM applications WHERE id = $1")
-        .bind(crate::db::bind_id(app_id))
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-        .map(DbUuid::into_inner);
+    return sqlx::query_scalar::<_, DbUuid>(
+        "SELECT site_id FROM applications WHERE id = $1 AND site_id IS NOT NULL",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .map(DbUuid::into_inner);
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    return sqlx::query_scalar::<_, DbUuid>("SELECT site_id FROM applications WHERE id = $1")
-        .bind(DbUuid::from(app_id))
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-        .map(DbUuid::into_inner);
+    return sqlx::query_scalar::<_, DbUuid>(
+        "SELECT site_id FROM applications WHERE id = $1 AND site_id IS NOT NULL",
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .map(DbUuid::into_inner);
 }
 
 // ============================================================================
@@ -1001,15 +1005,17 @@ pub async fn get_component_referenced_app_id(
 ) -> Result<Option<Uuid>, sqlx::Error> {
     #[cfg(feature = "postgres")]
     {
-        sqlx::query_scalar::<_, Uuid>("SELECT referenced_app_id FROM components WHERE id = $1")
-            .bind(component_id)
-            .fetch_optional(pool)
-            .await
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT referenced_app_id FROM components WHERE id = $1 AND referenced_app_id IS NOT NULL",
+        )
+        .bind(component_id)
+        .fetch_optional(pool)
+        .await
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
         let row = sqlx::query_scalar::<_, DbUuid>(
-            "SELECT referenced_app_id FROM components WHERE id = $1",
+            "SELECT referenced_app_id FROM components WHERE id = $1 AND referenced_app_id IS NOT NULL",
         )
         .bind(DbUuid::from(component_id))
         .fetch_optional(pool)
