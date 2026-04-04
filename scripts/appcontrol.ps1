@@ -224,7 +224,7 @@ function Do-Install {
 
     # Download frontend (optional - may not be available in all releases)
     $frontendZip = Join-Path $script:BinDir "frontend.zip"
-    $frontendUrl = $script:ReleasesBase + "/frontend.zip"
+    $frontendUrl = $script:ReleasesBase + "/appcontrol-frontend.zip"
     try {
         Download-File -Url $frontendUrl -OutPath $frontendZip
         if (Test-Path $script:FrontendDir) {
@@ -663,7 +663,7 @@ function Do-Upgrade {
 
     # Re-download frontend (optional)
     $frontendZip = Join-Path $script:BinDir "frontend.zip"
-    $frontendUrl = $script:ReleasesBase + "/frontend.zip"
+    $frontendUrl = $script:ReleasesBase + "/appcontrol-frontend.zip"
     try {
         Download-File -Url $frontendUrl -OutPath $frontendZip
         if (Test-Path $script:FrontendDir) {
