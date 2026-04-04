@@ -387,7 +387,7 @@ fi
 
 # Verify the process was actually killed
 sleep 2
-if pgrep -f "while true; do sleep 1; done" > /dev/null 2>&1; then
+if pgrep -f "sleep 99999" > /dev/null 2>&1; then
   fail "Process still running after stop"
 else
   ok "Process successfully terminated"
@@ -413,7 +413,7 @@ fi
 
 # Stop again for cleanup
 api POST "/apps/$APP_ID/stop" -d '{}' > /dev/null 2>&1 || true
-sleep 5
+wait_component_state "$APP_ID" "test-service" "STOPPED" 30 || sleep 5
 
 # ---------------------------------------------------------------------------
 # 13. Test heartbeat timeout → UNREACHABLE
