@@ -153,7 +153,7 @@ pub async fn has_profile_mapping(
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM binding_profile_mappings WHERE profile_id = $1 AND component_name = $2)",
     )
-    .bind(profile_id)
+    .bind(crate::db::bind_id(profile_id))
     .bind(component_name)
     .fetch_one(pool)
     .await
@@ -169,7 +169,7 @@ pub async fn get_target_agents_for_profile(
         r#"SELECT DISTINCT bpm.agent_id, a.hostname FROM binding_profile_mappings bpm
         JOIN agents a ON a.id = bpm.agent_id WHERE bpm.profile_id = $1"#,
     )
-    .bind(profile_id)
+    .bind(crate::db::bind_id(profile_id))
     .fetch_all(pool)
     .await
 }
@@ -183,7 +183,7 @@ pub async fn get_agent_last_heartbeat(
     sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
         "SELECT last_heartbeat_at FROM agents WHERE id = $1",
     )
-    .bind(agent_id)
+    .bind(crate::db::bind_id(agent_id))
     .fetch_optional(pool)
     .await
 }
@@ -278,11 +278,11 @@ pub async fn switch_active_profile(
     #[cfg(feature = "postgres")]
     {
         sqlx::query("UPDATE binding_profiles SET is_active = false WHERE application_id = $1")
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .execute(pool)
             .await?;
         sqlx::query("UPDATE binding_profiles SET is_active = true WHERE id = $1")
-            .bind(profile_id)
+            .bind(crate::db::bind_id(profile_id))
             .execute(pool)
             .await?;
     }
@@ -372,7 +372,10 @@ pub async fn activate_profile(
     let sql: &str = "UPDATE binding_profiles SET is_active = true WHERE id = $1";
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let sql: &str = "UPDATE binding_profiles SET is_active = 1 WHERE id = $1";
-    sqlx::query(sql).bind(profile_id).execute(pool).await?;
+    sqlx::query(sql)
+        .bind(crate::db::bind_id(profile_id))
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -402,7 +405,7 @@ pub async fn get_profile_mappings(
     sqlx::query_as::<_, (String, DbUuid)>(
         "SELECT component_name, agent_id FROM binding_profile_mappings WHERE profile_id = $1",
     )
-    .bind(profile_id)
+    .bind(crate::db::bind_id(profile_id))
     .fetch_all(pool)
     .await
 }
@@ -441,7 +444,7 @@ pub async fn get_site_cmd_overrides(
     sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
         r#"SELECT check_cmd_override, start_cmd_override, stop_cmd_override FROM site_overrides WHERE component_id = $1 AND site_id = $2"#,
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(DbUuid::from(site_id))
     .fetch_optional(pool)
     .await
@@ -461,7 +464,7 @@ pub async fn update_component_for_switchover(
         "UPDATE components SET agent_id = $2, check_cmd = COALESCE($3, check_cmd), start_cmd = COALESCE($4, start_cmd), stop_cmd = COALESCE($5, stop_cmd), updated_at = {} WHERE id = $1",
         crate::db::sql::now()
     ))
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(new_agent_id)
     .bind(check_override)
     .bind(start_override)
@@ -482,7 +485,7 @@ pub async fn record_switchover_config_version(
     let component_id = component_id.into();
     #[cfg(feature = "postgres")]
     sqlx::query("INSERT INTO config_versions (resource_type, resource_id, changed_by, before_snapshot, after_snapshot) VALUES ('component_switchover', $1, $2, $3, $4)")
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .bind(DbUuid::from(initiated_by))
         .bind(DbJson::from(before))
         .bind(DbJson::from(after))
@@ -491,7 +494,7 @@ pub async fn record_switchover_config_version(
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     sqlx::query("INSERT INTO config_versions (id, resource_type, resource_id, changed_by, before_snapshot, after_snapshot) VALUES ($1, 'component_switchover', $2, $3, $4, $5)")
         .bind(crate::db::bind_id(uuid::Uuid::new_v4()))
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .bind(DbUuid::from(initiated_by))
         .bind(DbJson::from(before))
         .bind(DbJson::from(after))
@@ -516,8 +519,8 @@ pub async fn apply_profile_agent_bindings(
              AND p.id = $2
              AND c.name = m.component_name"#,
     )
-    .bind(app_id)
-    .bind(profile_id)
+    .bind(crate::db::bind_id(app_id))
+    .bind(crate::db::bind_id(profile_id))
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
@@ -542,7 +545,7 @@ pub async fn apply_profile_agent_bindings(
         let result = sqlx::query(
             "UPDATE components SET agent_id = $1 WHERE application_id = $2 AND name = $3",
         )
-        .bind(agent_id)
+        .bind(crate::db::bind_id(agent_id))
         .bind(DbUuid::from(app_id))
         .bind(&comp_name)
         .execute(pool)

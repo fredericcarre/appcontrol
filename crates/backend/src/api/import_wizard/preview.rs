@@ -46,7 +46,7 @@ pub async fn preview_import(
     .await?;
 
     let existing_application = existing_row.map(|(id, name, created_at)| ExistingApplicationInfo {
-        id,
+        id: *id,
         name,
         component_count: 0,
         created_at,

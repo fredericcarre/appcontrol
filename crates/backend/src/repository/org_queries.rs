@@ -107,20 +107,22 @@ pub async fn create_organization_with_admin(
     let mut tx = pool.begin().await?;
 
     let org = sqlx::query_as::<_, OrgRow>(
-        r#"INSERT INTO organizations (name, slug)
-           VALUES ($1, $2)
+        r#"INSERT INTO organizations (id, name, slug)
+           VALUES ($1, $2, $3)
            RETURNING id, name, slug, created_at, updated_at"#,
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(name)
     .bind(slug)
     .fetch_one(&mut *tx)
     .await?;
 
     let admin_id = sqlx::query_scalar::<_, DbUuid>(
-        r#"INSERT INTO users (organization_id, external_id, email, display_name, role, auth_provider)
-           VALUES ($1, $2, $3, $4, 'admin', 'local')
+        r#"INSERT INTO users (id, organization_id, external_id, email, display_name, role, auth_provider)
+           VALUES ($1, $2, $3, $4, $5, 'admin', 'local')
            RETURNING id"#,
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(org.id)
     .bind(format!("local-admin-{}", org.slug))
     .bind(admin_email)

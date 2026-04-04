@@ -179,7 +179,7 @@ impl GatewayRepository for PgGatewayRepository {
                WHERE g.organization_id = $1
                ORDER BY COALESCE(s.name, 'zzz'), g.priority, g.name"#,
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_all(&self.pool)
         .await?;
 
@@ -229,7 +229,7 @@ impl GatewayRepository for PgGatewayRepository {
                FROM gateways WHERE id = $1 AND organization_id = $2"#,
         )
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(Into::into))
@@ -260,9 +260,9 @@ impl GatewayRepository for PgGatewayRepository {
                          version, last_heartbeat_at, created_at"#,
         )
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(name)
-        .bind(site_id)
+        .bind(crate::db::bind_opt_id(site_id))
         .bind(is_active)
         .bind(is_primary)
         .bind(priority)
@@ -275,8 +275,8 @@ impl GatewayRepository for PgGatewayRepository {
         sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM sites WHERE id = $1 AND organization_id = $2)",
         )
-        .bind(site_id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(site_id))
+        .bind(crate::db::bind_id(org_id))
         .fetch_one(&self.pool)
         .await
     }
@@ -291,8 +291,8 @@ impl GatewayRepository for PgGatewayRepository {
             "UPDATE gateways SET is_primary = false \
              WHERE organization_id = $1 AND site_id = $2 AND id != $3",
         )
-        .bind(org_id)
-        .bind(site_id)
+        .bind(crate::db::bind_id(org_id))
+        .bind(crate::db::bind_id(site_id))
         .bind(except_id)
         .execute(&self.pool)
         .await?;
@@ -306,7 +306,7 @@ impl GatewayRepository for PgGatewayRepository {
     ) -> Result<Option<(Option<Uuid>, String)>, sqlx::Error> {
         sqlx::query_as("SELECT site_id, zone FROM gateways WHERE id = $1 AND organization_id = $2")
             .bind(id)
-            .bind(org_id)
+            .bind(crate::db::bind_id(org_id))
             .fetch_optional(&self.pool)
             .await
     }

@@ -100,6 +100,9 @@ jobs:
           key: ${{ runner.os }}-cargo-sqlite-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-sqlite-
 
+      - name: SQLite safety lint (missing id, raw Uuid types, raw binds)
+        run: bash scripts/lint-sqlite.sh
+
       # CRITICAL: Build from crate directory to avoid workspace feature unification!
       # Building from workspace root causes e2e-tests' sqlx/postgres to contaminate the build.
       - name: Build backend with SQLite feature (from crate directory)

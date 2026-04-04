@@ -366,7 +366,7 @@ impl AppRepository for PgAppRepository {
              FROM applications WHERE id = $1 AND organization_id = $2",
         )
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(&self.pool)
         .await?;
 
@@ -429,11 +429,11 @@ impl AppRepository for PgAppRepository {
              RETURNING id, name, description, organization_id, site_id, tags, created_at, updated_at",
         )
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(name)
         .bind(description)
         .bind(tags)
-        .bind(site_id)
+        .bind(crate::db::bind_opt_id(site_id))
         .fetch_optional(&self.pool)
         .await?;
 
@@ -452,7 +452,7 @@ impl AppRepository for PgAppRepository {
     async fn delete_app(&self, id: Uuid, org_id: Uuid) -> Result<bool, sqlx::Error> {
         let result = sqlx::query("DELETE FROM applications WHERE id = $1 AND organization_id = $2")
             .bind(id)
-            .bind(org_id)
+            .bind(crate::db::bind_id(org_id))
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
@@ -463,7 +463,7 @@ impl AppRepository for PgAppRepository {
             "SELECT id FROM sites WHERE organization_id = $1 AND is_active = true \
              ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(|(id,)| id))
@@ -475,7 +475,7 @@ impl AppRepository for PgAppRepository {
              VALUES ($1, $2, 'Default Site', 'DEFAULT', 'primary')",
         )
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -486,8 +486,8 @@ impl AppRepository for PgAppRepository {
             "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) \
              VALUES ($1, $2, 'owner', $2)",
         )
-        .bind(app_id)
-        .bind(user_id)
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(user_id))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -501,15 +501,15 @@ impl AppRepository for PgAppRepository {
         sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
         )
-        .bind(app_id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(&self.pool)
         .await
     }
 
     async fn get_app_name(&self, app_id: Uuid) -> Result<Option<String>, sqlx::Error> {
         sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .fetch_optional(&self.pool)
             .await
     }
@@ -517,7 +517,7 @@ impl AppRepository for PgAppRepository {
     async fn is_app_suspended(&self, app_id: Uuid) -> Result<bool, sqlx::Error> {
         let val: Option<bool> =
             sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
-                .bind(app_id)
+                .bind(crate::db::bind_id(app_id))
                 .fetch_optional(&self.pool)
                 .await?;
         Ok(val.unwrap_or(false))
@@ -527,8 +527,8 @@ impl AppRepository for PgAppRepository {
         sqlx::query(
             "UPDATE applications SET is_suspended = true, suspended_at = now(), suspended_by = $2, updated_at = now() WHERE id = $1",
         )
-        .bind(app_id)
-        .bind(user_id)
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(user_id))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -538,7 +538,7 @@ impl AppRepository for PgAppRepository {
         sqlx::query(
             "UPDATE applications SET is_suspended = false, suspended_at = NULL, suspended_by = NULL, updated_at = now() WHERE id = $1",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -557,7 +557,7 @@ impl AppRepository for PgAppRepository {
              VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)",
         )
         .bind(resource_type)
-        .bind(resource_id)
+        .bind(crate::db::bind_id(resource_id))
         .bind(changed_by)
         .bind(before_snapshot)
         .bind(after_snapshot)
@@ -570,7 +570,7 @@ impl AppRepository for PgAppRepository {
         sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM components WHERE application_id = $1 AND current_state = 'FAILED'",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&self.pool)
         .await
     }
@@ -634,7 +634,7 @@ impl AppRepository for PgAppRepository {
                LEFT JOIN gateways g ON a.gateway_id = g.id
                WHERE c.application_id = $1 ORDER BY c.name"#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&self.pool)
         .await?;
 
@@ -686,7 +686,7 @@ impl AppRepository for PgAppRepository {
             "SELECT id, from_component_id, to_component_id FROM dependencies \
              WHERE from_component_id IN (SELECT id FROM components WHERE application_id = $1)",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&self.pool)
         .await?;
 
@@ -713,7 +713,7 @@ impl AppRepository for PgAppRepository {
             "SELECT a.site_id, s.name as site_name, s.code as site_code, s.site_type \
              FROM applications a JOIN sites s ON a.site_id = s.id WHERE a.id = $1",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_optional(&self.pool)
         .await?;
 
@@ -759,7 +759,7 @@ impl AppRepository for PgAppRepository {
             WHERE c.application_id = $1
             ORDER BY c.id, s.id, (c.agent_id = bpm.agent_id) DESC"#,
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&self.pool)
         .await?;
 
@@ -801,7 +801,7 @@ impl AppRepository for PgAppRepository {
              FROM site_overrides \
              WHERE component_id IN (SELECT id FROM components WHERE application_id = $1)",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&self.pool)
         .await?;
 
@@ -1084,9 +1084,10 @@ impl AppRepository for SqliteAppRepository {
 
     async fn grant_owner_permission(&self, app_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO app_permissions_users (application_id, user_id, permission_level, granted_by) \
-             VALUES ($1, $2, 'owner', $2)",
+            "INSERT INTO app_permissions_users (id, application_id, user_id, permission_level, granted_by) \
+             VALUES ($1, $2, $3, 'owner', $3)",
         )
+        .bind(crate::db::bind_id(Uuid::new_v4()))
         .bind(DbUuid::from(app_id))
         .bind(DbUuid::from(user_id))
         .execute(&self.pool)

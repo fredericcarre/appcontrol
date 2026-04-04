@@ -160,6 +160,12 @@ pub fn bind_id(id: impl Into<Uuid>) -> DbUuid {
     DbUuid::from(id.into())
 }
 
+/// Convert an optional UUID to an optional DbUuid for SQLite TEXT binding.
+#[inline]
+pub fn bind_opt_id(id: Option<impl Into<Uuid>>) -> Option<DbUuid> {
+    id.map(|v| DbUuid::from(v.into()))
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // DbJson — cross-database JSON value type
 // ══════════════════════════════════════════════════════════════════════════════

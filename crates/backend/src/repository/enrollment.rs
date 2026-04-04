@@ -105,7 +105,7 @@ impl EnrollmentRepository for PgEnrollmentRepository {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
              RETURNING id",
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(token_hash)
         .bind(token_prefix)
         .bind(name)
@@ -129,7 +129,7 @@ impl EnrollmentRepository for PgEnrollmentRepository {
                 crate::db::sql::now()
             ),
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_all(&self.pool)
         .await?;
 
@@ -161,7 +161,7 @@ impl EnrollmentRepository for PgEnrollmentRepository {
             crate::db::sql::now()
         ))
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(revoked_by)
         .execute(&self.pool)
         .await?;

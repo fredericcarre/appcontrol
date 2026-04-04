@@ -128,7 +128,7 @@ impl SiteRepository for PgSiteRepository {
                  AND ($3::bool IS NULL OR is_active = $3)
                ORDER BY code"#,
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(site_type)
         .bind(is_active)
         .fetch_all(&self.pool)
@@ -142,7 +142,7 @@ impl SiteRepository for PgSiteRepository {
                FROM sites WHERE id = $1 AND organization_id = $2"#,
         )
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(Into::into))
@@ -161,7 +161,7 @@ impl SiteRepository for PgSiteRepository {
                VALUES ($1, $2, $3, $4, $5)
                RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
         )
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(name)
         .bind(code)
         .bind(site_type)
@@ -188,7 +188,7 @@ impl SiteRepository for PgSiteRepository {
                RETURNING id, organization_id, name, code, site_type, location, is_active, created_at"#,
         )
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .bind(name)
         .bind(location)
         .bind(is_active)
@@ -200,7 +200,7 @@ impl SiteRepository for PgSiteRepository {
     async fn delete_site(&self, id: Uuid, org_id: Uuid) -> Result<bool, sqlx::Error> {
         let result = sqlx::query("DELETE FROM sites WHERE id = $1 AND organization_id = $2")
             .bind(id)
-            .bind(org_id)
+            .bind(crate::db::bind_id(org_id))
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
@@ -208,7 +208,7 @@ impl SiteRepository for PgSiteRepository {
 
     async fn count_apps_in_site(&self, site_id: Uuid) -> Result<i64, sqlx::Error> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM applications WHERE site_id = $1")
-            .bind(site_id)
+            .bind(crate::db::bind_id(site_id))
             .fetch_one(&self.pool)
             .await?;
         Ok(count)

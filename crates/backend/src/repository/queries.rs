@@ -34,7 +34,7 @@ pub async fn insert_config_version(
          VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)",
     )
     .bind(resource_type)
-    .bind(resource_id)
+    .bind(crate::db::bind_id(resource_id))
     .bind(changed_by)
     .bind(before_snapshot)
     .bind(after_snapshot)
@@ -63,7 +63,7 @@ pub async fn get_user_org_id(pool: &DbPool, user_id: Uuid) -> Result<Option<Uuid
     #[cfg(feature = "postgres")]
     {
         sqlx::query_scalar::<_, Uuid>("SELECT organization_id FROM users WHERE id = $1")
-            .bind(user_id)
+            .bind(crate::db::bind_id(user_id))
             .fetch_optional(pool)
             .await
     }
@@ -101,7 +101,7 @@ pub async fn is_gateway_active(pool: &DbPool, gateway_id: Uuid) -> Result<bool, 
     {
         let val: Option<bool> =
             sqlx::query_scalar("SELECT COALESCE(is_active, true) FROM gateways WHERE id = $1")
-                .bind(gateway_id)
+                .bind(crate::db::bind_id(gateway_id))
                 .fetch_optional(pool)
                 .await?;
         Ok(val.unwrap_or(true))
@@ -125,7 +125,10 @@ pub async fn update_gateway_heartbeat(pool: &DbPool, gateway_id: Uuid) -> Result
             "UPDATE gateways SET last_heartbeat_at = {}, is_active = true WHERE id = $1",
             crate::db::sql::now(),
         );
-        sqlx::query(&sql).bind(gateway_id).execute(pool).await?;
+        sqlx::query(&sql)
+            .bind(crate::db::bind_id(gateway_id))
+            .execute(pool)
+            .await?;
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
@@ -149,7 +152,7 @@ pub async fn get_gateway_name(
     #[cfg(feature = "postgres")]
     {
         sqlx::query_scalar("SELECT name FROM gateways WHERE id = $1")
-            .bind(gateway_id)
+            .bind(crate::db::bind_id(gateway_id))
             .fetch_optional(pool)
             .await
     }
@@ -170,7 +173,7 @@ pub async fn get_agent_hostname(
     #[cfg(feature = "postgres")]
     {
         sqlx::query_scalar("SELECT hostname FROM agents WHERE id = $1")
-            .bind(agent_id)
+            .bind(crate::db::bind_id(agent_id))
             .fetch_optional(pool)
             .await
     }
@@ -191,7 +194,7 @@ pub async fn get_component_app_id(
     #[cfg(feature = "postgres")]
     {
         sqlx::query_scalar::<_, Uuid>("SELECT application_id FROM components WHERE id = $1")
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_optional(pool)
             .await
     }
@@ -218,7 +221,7 @@ pub async fn update_component_state(
     );
     #[cfg(feature = "postgres")]
     sqlx::query(&sql)
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .bind(state)
         .execute(pool)
         .await?;
@@ -244,7 +247,7 @@ pub async fn insert_state_transition(
     sqlx::query(
         "INSERT INTO state_transitions (component_id, from_state, to_state, trigger, details) VALUES ($1, $2, $3, $4, $5)"
     )
-    .bind(component_id)
+    .bind(crate::db::bind_id(component_id))
     .bind(from_state)
     .bind(to_state)
     .bind(trigger)
@@ -285,8 +288,8 @@ pub async fn insert_check_event(
         "INSERT INTO check_events (component_id, agent_id, check_type, exit_code, stdout, stderr, duration_ms, metrics) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
     )
-    .bind(component_id)
-    .bind(agent_id)
+    .bind(crate::db::bind_id(component_id))
+    .bind(crate::db::bind_id(agent_id))
     .bind(check_type)
     .bind(exit_code)
     .bind(stdout)
@@ -320,7 +323,7 @@ pub async fn get_app_name(pool: &DbPool, app_id: Uuid) -> Result<Option<String>,
     #[cfg(feature = "postgres")]
     {
         sqlx::query_scalar("SELECT name FROM applications WHERE id = $1")
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .fetch_optional(pool)
             .await
     }
@@ -339,7 +342,7 @@ pub async fn is_app_suspended(pool: &DbPool, app_id: Uuid) -> Result<bool, sqlx:
     {
         let val: Option<bool> =
             sqlx::query_scalar("SELECT is_suspended FROM applications WHERE id = $1")
-                .bind(app_id)
+                .bind(crate::db::bind_id(app_id))
                 .fetch_optional(pool)
                 .await?;
         Ok(val.unwrap_or(false))
@@ -361,7 +364,7 @@ pub async fn get_org_heartbeat_timeout(pool: &DbPool, org_id: Uuid) -> Result<i3
     {
         let val: Option<i32> =
             sqlx::query_scalar("SELECT heartbeat_timeout_seconds FROM organizations WHERE id = $1")
-                .bind(org_id)
+                .bind(crate::db::bind_id(org_id))
                 .fetch_optional(pool)
                 .await?;
         Ok(val.unwrap_or(180))
@@ -388,8 +391,8 @@ pub async fn verify_app_org(
         sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM applications WHERE id = $1 AND organization_id = $2",
         )
-        .bind(app_id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(pool)
         .await
     }
@@ -412,7 +415,7 @@ pub async fn is_agent_active(pool: &DbPool, agent_id: Uuid) -> Result<bool, sqlx
     {
         let val: Option<bool> =
             sqlx::query_scalar("SELECT COALESCE(is_active, true) FROM agents WHERE id = $1")
-                .bind(agent_id)
+                .bind(crate::db::bind_id(agent_id))
                 .fetch_optional(pool)
                 .await?;
         Ok(val.unwrap_or(false))
@@ -443,7 +446,7 @@ pub async fn update_agent_heartbeat(
             crate::db::sql::now(),
         );
         sqlx::query(&sql)
-            .bind(agent_id)
+            .bind(crate::db::bind_id(agent_id))
             .bind(version)
             .bind(os_info)
             .execute(pool)
@@ -471,7 +474,7 @@ pub async fn site_exists(pool: &DbPool, site_id: Uuid) -> Result<bool, sqlx::Err
     #[cfg(feature = "postgres")]
     {
         let row: Option<Uuid> = sqlx::query_scalar("SELECT id FROM sites WHERE id = $1")
-            .bind(site_id)
+            .bind(crate::db::bind_id(site_id))
             .fetch_optional(pool)
             .await?;
         Ok(row.is_some())
@@ -498,7 +501,7 @@ pub async fn get_latest_check_metrics(
                WHERE component_id = $1 AND metrics IS NOT NULL
                ORDER BY created_at DESC LIMIT 1"#,
         )
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .fetch_optional(pool)
         .await
     }
@@ -535,7 +538,7 @@ pub async fn get_metrics_history(
                WHERE component_id = $1 AND metrics IS NOT NULL
                ORDER BY created_at DESC LIMIT $2"#,
         )
-        .bind(component_id)
+        .bind(crate::db::bind_id(component_id))
         .bind(limit)
         .fetch_all(pool)
         .await
@@ -615,7 +618,7 @@ pub async fn list_site_overrides(
     #[cfg(feature = "postgres")]
     {
         let rows = sqlx::query_as::<_, Row>(sql)
-            .bind(component_id)
+            .bind(crate::db::bind_id(component_id))
             .fetch_all(pool)
             .await?;
         Ok(rows
@@ -705,7 +708,7 @@ pub async fn upsert_site_override(
              ON CONFLICT (component_id, site_id) DO UPDATE SET check_cmd_override = $3, start_cmd_override = $4, stop_cmd_override = $5, rebuild_cmd_override = $6, env_vars_override = $7, agent_id_override = $8 \
              RETURNING id"
         )
-        .bind(component_id).bind(site_id).bind(check_cmd).bind(start_cmd).bind(stop_cmd).bind(rebuild_cmd).bind(env_vars).bind(agent_id)
+        .bind(crate::db::bind_id(component_id)).bind(crate::db::bind_id(site_id)).bind(check_cmd).bind(start_cmd).bind(stop_cmd).bind(rebuild_cmd).bind(env_vars).bind(crate::db::bind_opt_id(agent_id))
         .fetch_one(pool).await?;
         Ok(id)
     }
@@ -743,8 +746,8 @@ pub async fn delete_site_override(
     {
         let result =
             sqlx::query("DELETE FROM site_overrides WHERE component_id = $1 AND site_id = $2")
-                .bind(component_id)
-                .bind(site_id)
+                .bind(crate::db::bind_id(component_id))
+                .bind(crate::db::bind_id(site_id))
                 .execute(pool)
                 .await?;
         Ok(result.rows_affected() > 0)

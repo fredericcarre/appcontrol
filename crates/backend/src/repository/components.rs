@@ -448,7 +448,7 @@ impl ComponentRepository for PgComponentRepository {
             COMPONENT_COLS
         );
         let rows = sqlx::query_as::<_, PgComponentRow>(&sql)
-            .bind(app_id)
+            .bind(crate::db::bind_id(app_id))
             .fetch_all(&self.pool)
             .await?;
         Ok(rows.into_iter().map(Into::into).collect())
@@ -468,7 +468,7 @@ impl ComponentRepository for PgComponentRepository {
                 WHERE c.id = $1 AND a.organization_id = $2"
         )
         .bind(id)
-        .bind(org_id)
+        .bind(crate::db::bind_id(org_id))
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(Into::into))
@@ -619,7 +619,7 @@ impl ComponentRepository for PgComponentRepository {
             "SELECT id, application_id, from_component_id, to_component_id, created_at \
              FROM dependencies WHERE application_id = $1",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -645,7 +645,7 @@ impl ComponentRepository for PgComponentRepository {
              VALUES ($1, $2, $3) \
              RETURNING id, application_id, from_component_id, to_component_id, created_at",
         )
-        .bind(app_id)
+        .bind(crate::db::bind_id(app_id))
         .bind(from_id)
         .bind(to_id)
         .fetch_one(&self.pool)
@@ -715,7 +715,7 @@ impl ComponentRepository for PgComponentRepository {
     ) -> Result<Option<CustomCommand>, sqlx::Error> {
         let row: Option<(Uuid, String, bool)> = sqlx::query_as(
             "SELECT id, command, requires_confirmation FROM component_commands WHERE component_id = $1 AND name = $2"
-        ).bind(component_id).bind(name).fetch_optional(&self.pool).await?;
+        ).bind(crate::db::bind_id(component_id)).bind(name).fetch_optional(&self.pool).await?;
         Ok(row.map(|(id, command, req)| CustomCommand {
             id,
             command,
@@ -772,7 +772,7 @@ impl ComponentRepository for PgComponentRepository {
         command_text: &str,
     ) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT INTO command_executions (request_id, component_id, agent_id, command_type, status, user_id, command_text) VALUES ($1, $2, $3, $4, 'dispatched', $5, $6) ON CONFLICT (request_id) DO NOTHING")
-            .bind(request_id).bind(component_id).bind(agent_id).bind(command_type).bind(user_id).bind(command_text)
+            .bind(crate::db::bind_id(request_id)).bind(crate::db::bind_id(component_id)).bind(crate::db::bind_id(agent_id)).bind(command_type).bind(crate::db::bind_id(user_id)).bind(command_text)
             .execute(&self.pool).await?;
         Ok(())
     }
@@ -801,7 +801,7 @@ impl ComponentRepository for PgComponentRepository {
         }
         let rows = sqlx::query_as::<_, Row>(
             "SELECT id, component_id, name, command, description, requires_confirmation, min_permission_level, created_at FROM component_commands WHERE component_id = $1 ORDER BY name"
-        ).bind(component_id).fetch_all(&self.pool).await?;
+        ).bind(crate::db::bind_id(component_id)).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
             .map(|r| CustomCommandRaw {
@@ -841,10 +841,10 @@ impl ComponentRepository for PgComponentRepository {
         }
         let rows = if let Some(st) = status {
             sqlx::query_as::<_, Row>("SELECT id, request_id, component_id, agent_id, command_type, exit_code, stdout, stderr, duration_ms, status, dispatched_at, completed_at FROM command_executions WHERE component_id = $1 AND status = $2 ORDER BY dispatched_at DESC LIMIT $3 OFFSET $4")
-                .bind(component_id).bind(st).bind(limit).bind(offset).fetch_all(&self.pool).await?
+                .bind(crate::db::bind_id(component_id)).bind(st).bind(limit).bind(offset).fetch_all(&self.pool).await?
         } else {
             sqlx::query_as::<_, Row>("SELECT id, request_id, component_id, agent_id, command_type, exit_code, stdout, stderr, duration_ms, status, dispatched_at, completed_at FROM command_executions WHERE component_id = $1 ORDER BY dispatched_at DESC LIMIT $2 OFFSET $3")
-                .bind(component_id).bind(limit).bind(offset).fetch_all(&self.pool).await?
+                .bind(crate::db::bind_id(component_id)).bind(limit).bind(offset).fetch_all(&self.pool).await?
         };
         Ok(rows
             .into_iter()
@@ -882,7 +882,7 @@ impl ComponentRepository for PgComponentRepository {
         }
         let rows = sqlx::query_as::<_, Row>(
             "SELECT id, component_id, from_state, to_state, trigger, created_at FROM state_transitions WHERE component_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3"
-        ).bind(component_id).bind(limit).bind(offset).fetch_all(&self.pool).await?;
+        ).bind(crate::db::bind_id(component_id)).bind(limit).bind(offset).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
             .map(|r| StateTransitionRaw {
@@ -914,7 +914,7 @@ impl ComponentRepository for PgComponentRepository {
         }
         let rows = sqlx::query_as::<_, Row>(
             "SELECT id, component_id, check_type, exit_code, stdout, duration_ms, created_at FROM check_events WHERE component_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3"
-        ).bind(component_id).bind(limit).bind(offset).fetch_all(&self.pool).await?;
+        ).bind(crate::db::bind_id(component_id)).bind(limit).bind(offset).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
             .map(|r| CheckEventRaw {
@@ -953,7 +953,7 @@ impl ComponentRepository for PgComponentRepository {
                 .bind(id)
                 .bind(x)
                 .bind(y)
-                .bind(app_id)
+                .bind(crate::db::bind_id(app_id))
                 .execute(&mut *tx)
                 .await?;
         }
@@ -970,7 +970,7 @@ impl ComponentRepository for PgComponentRepository {
         after_snapshot: &str,
     ) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT INTO config_versions (resource_type, resource_id, changed_by, before_snapshot, after_snapshot) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)")
-            .bind(resource_type).bind(resource_id).bind(changed_by).bind(before_snapshot).bind(after_snapshot)
+            .bind(resource_type).bind(crate::db::bind_id(resource_id)).bind(changed_by).bind(before_snapshot).bind(after_snapshot)
             .execute(&self.pool).await?;
         Ok(())
     }
@@ -984,7 +984,7 @@ impl ComponentRepository for PgComponentRepository {
         let mut total = 0u64;
         let result =
             sqlx::query("UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL")
-                .bind(agent_id)
+                .bind(crate::db::bind_id(agent_id))
                 .bind(hostname)
                 .execute(&self.pool)
                 .await?;
@@ -993,7 +993,7 @@ impl ComponentRepository for PgComponentRepository {
             let result = sqlx::query(
                 "UPDATE components SET agent_id = $1 WHERE host = $2 AND agent_id IS NULL",
             )
-            .bind(agent_id)
+            .bind(crate::db::bind_id(agent_id))
             .bind(ip)
             .execute(&self.pool)
             .await?;
@@ -1426,8 +1426,8 @@ impl ComponentRepository for SqliteComponentRepository {
         user_id: Uuid,
         command_text: &str,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query("INSERT INTO command_executions (request_id, component_id, agent_id, command_type, status, user_id, command_text) VALUES ($1, $2, $3, $4, 'dispatched', $5, $6) ON CONFLICT (request_id) DO NOTHING")
-            .bind(DbUuid::from(request_id)).bind(DbUuid::from(component_id)).bind(DbUuid::from(agent_id)).bind(command_type).bind(DbUuid::from(user_id)).bind(command_text)
+        sqlx::query("INSERT INTO command_executions (id, request_id, component_id, agent_id, command_type, status, user_id, command_text) VALUES ($1, $2, $3, $4, $5, 'dispatched', $6, $7) ON CONFLICT (request_id) DO NOTHING")
+            .bind(DbUuid::from(Uuid::new_v4())).bind(DbUuid::from(request_id)).bind(DbUuid::from(component_id)).bind(DbUuid::from(agent_id)).bind(command_type).bind(DbUuid::from(user_id)).bind(command_text)
             .execute(&self.pool).await?;
         Ok(())
     }
