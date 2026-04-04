@@ -335,7 +335,7 @@ function Do-Start {
         $gwBin = Join-Path $script:BinDir ("appcontrol-gateway" + $script:BinExt)
         if (Test-Path $gwBin) {
             $env:BACKEND_URL = "ws://localhost:" + $port + "/ws/gateway"
-            $env:GATEWAY_LISTEN_PORT = [string]$gwPort
+            $env:LISTEN_PORT = [string]$gwPort
             $env:GATEWAY_ZONE = $siteName
 
             $gwLog = Join-Path $script:LogDir ("gateway-" + $siteName + ".log")
@@ -612,7 +612,7 @@ function Do-AddSite {
             Write-Info "Backend is running, starting gateway and agent for new site..."
 
             $env:BACKEND_URL = "ws://localhost:" + $port + "/ws/gateway"
-            $env:GATEWAY_LISTEN_PORT = [string]$gwPort
+            $env:LISTEN_PORT = [string]$gwPort
             $env:GATEWAY_ZONE = $siteName
 
             $gwBin = Join-Path $script:BinDir ("appcontrol-gateway" + $script:BinExt)

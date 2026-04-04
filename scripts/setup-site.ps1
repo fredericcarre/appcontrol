@@ -280,7 +280,7 @@ if (-not $gwAlreadyExists) {
 $backendHost = $BackendUrl -replace "http://","" -replace "https://",""
 $env:BACKEND_URL = "ws://" + $backendHost + "//ws/gateway"
 $env:GATEWAY_ZONE = $siteCode
-$env:GATEWAY_LISTEN_PORT = "$GatewayPort"
+$env:LISTEN_PORT = "$GatewayPort"
 $env:RUST_LOG = "info"
 
 $gwProcess = Start-Process -FilePath $gwBin -PassThru -WindowStyle Normal
