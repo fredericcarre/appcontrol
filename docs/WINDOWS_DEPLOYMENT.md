@@ -1,6 +1,26 @@
-# Windows Deployment Guide
+# Windows & Linux Standalone Deployment Guide
 
-Run the full AppControl stack on Windows Server — backend, gateway, and agents
+## Quick Start (Recommended)
+
+The unified `appcontrol.ps1` script handles everything: install, start, stop, upgrade, and site management. Works on Windows (PowerShell 5.1+) and Linux/macOS (PowerShell Core `pwsh`).
+
+```powershell
+mkdir AppControl
+cd AppControl
+Invoke-WebRequest -Uri "https://github.com/fredericcarre/appcontrol/releases/latest/download/appcontrol.ps1" -OutFile appcontrol.ps1
+.\appcontrol.ps1 install       # Download binaries + frontend
+.\appcontrol.ps1 start         # Start backend
+.\appcontrol.ps1 add-site Prod # Create site + gateway + agent
+.\appcontrol.ps1 status        # Check everything is running
+```
+
+See the [full command reference](#standalone-commands) below.
+
+---
+
+## Production Deployment (Windows Services)
+
+For production Windows Server deployments, run AppControl components
 as native Windows services.
 
 ## Architecture
@@ -353,3 +373,55 @@ C:\ProgramData\AppControl\
             ca.crt
     buffer-<agent-id>\      (offline buffer, sled DB)
 ```
+
+---
+
+## Standalone Commands
+
+The unified `appcontrol.ps1` script (for dev/demo use with SQLite):
+
+| Command | Description |
+|---------|-------------|
+| `.\appcontrol.ps1 install` | Download binaries and create directory structure |
+| `.\appcontrol.ps1 start` | Start backend + all configured gateways + agents |
+| `.\appcontrol.ps1 stop` | Stop all processes |
+| `.\appcontrol.ps1 status` | Show status of all components with PIDs |
+| `.\appcontrol.ps1 add-site <name> [port]` | Add a site (default gateway port: 4443) |
+| `.\appcontrol.ps1 upgrade` | Stop, update binaries+frontend, restart (preserves data + config) |
+| `.\appcontrol.ps1 logs [file]` | Show last 50 lines of log (default: backend) |
+
+### Standalone directory layout
+
+```
+AppControl/
+  appcontrol.ps1          # Unified script
+  start.bat               # Windows shortcut (calls appcontrol.ps1 start)
+  bin/                    # Binaries (overwritten by upgrade)
+    appcontrol-backend-sqlite.exe
+    appcontrol-gateway.exe
+    appcontrol-agent.exe
+  data/                   # NEVER touched by upgrade
+    appcontrol.db          # SQLite database
+    pids.json              # Running process IDs
+  config/                 # NEVER touched by upgrade
+    settings.json          # JWT secret, admin credentials
+    sites.json             # Configured sites
+  logs/                   # Log files
+    backend.log
+    gateway-Production.log
+    agent-Production.log
+  frontend/               # Web UI (overwritten by upgrade)
+```
+
+### Upgrade workflow
+
+```powershell
+.\appcontrol.ps1 upgrade
+```
+
+1. Stops all processes (agents, gateways, backend)
+2. Downloads latest binaries (overwrites `bin/`)
+3. Downloads latest frontend (overwrites `frontend/`)
+4. Restarts everything
+
+Your database and configuration are preserved. SQL migrations run automatically on backend start.

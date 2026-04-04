@@ -621,14 +621,14 @@ jobs:
           APPCONTROL_VERSION=${{ steps.version.outputs.VERSION }} docker compose -f docker-compose.release.yaml up -d
           ```
 
-          **Windows Standalone (SQLite, no Docker):**
+          **Windows/Linux Standalone (SQLite, no Docker):**
           ```powershell
-          gh release download ${{ github.ref_name }} --repo xcomponent/appcontrol-release --pattern '*.exe' --dir appcontrol\bin
-          gh release download ${{ github.ref_name }} --repo xcomponent/appcontrol-release --pattern 'appcontrol-docs-scripts.zip'
-          Expand-Archive appcontrol-docs-scripts.zip -DestinationPath appcontrol
-          cd appcontrol\scripts
-          .\deploy-standalone.ps1
-          .\setup-site.ps1 -SiteName "Production"
+          mkdir AppControl; cd AppControl
+          # Download the unified script
+          Invoke-WebRequest -Uri "https://github.com/xcomponent/appcontrol-release/releases/download/${{ github.ref_name }}/appcontrol.ps1" -OutFile appcontrol.ps1
+          .\appcontrol.ps1 install
+          .\appcontrol.ps1 start
+          .\appcontrol.ps1 add-site Production
           ```
 
           **CLI binary:**
