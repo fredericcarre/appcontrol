@@ -4,7 +4,7 @@
     Setup a complete AppControl site with gateway + agent on this machine.
 
 .DESCRIPTION
-    Stateless script — queries the backend for everything:
+    Stateless script - queries the backend for everything:
     1. Logs in to the backend (must be running)
     2. Creates a site if it doesn't exist
     3. Checks if a gateway is already registered for this site
@@ -60,7 +60,7 @@ function Write-Status {
         "ERROR"   { "Red" }
         default   { "White" }
     }
-    Write-Host "[$Type] $Message" -ForegroundColor $color
+    Write-Host ("[$Type] " + $Message) -ForegroundColor $color
 }
 
 function Invoke-Api {
@@ -70,15 +70,14 @@ function Invoke-Api {
         [object]$Body,
         [string]$Token
     )
-    $uri = "$BackendUrl/api/v1$Path"
+    $uri = $BackendUrl + "/api/v1" + $Path
 
-    # Use HttpWebRequest for full control over headers (PS 5.1 compatible)
     $request = [System.Net.HttpWebRequest]::Create($uri)
     $request.Method = $Method.ToUpper()
     $request.Accept = "application/json"
 
     if ($Token) {
-        $request.Headers.Add("Authorization", "Bearer $Token")
+        $request.Headers.Add("Authorization", "Bearer " + $Token)
     }
 
     if ($Body) {
@@ -106,11 +105,11 @@ function Invoke-Api {
         $webEx = $_.Exception
         if ($webEx.Response) {
             $status = [int]$webEx.Response.StatusCode
-            if ($status -eq 409) { return $null }  # Already exists
-            if ($status -eq 404) { return $null }  # Not found
-            Write-Status "API error: $Method $Path -> $status" "ERROR"
+            if ($status -eq 409) { return $null }
+            if ($status -eq 404) { return $null }
+            Write-Status ("API error: " + $Method + " " + $Path + " -> " + $status) "ERROR"
         } else {
-            Write-Status "API error: $Method $Path -> $($webEx.Message)" "ERROR"
+            Write-Status ("API error: " + $Method + " " + $Path + " -> " + $webEx.Message) "ERROR"
         }
         throw
     }
@@ -128,10 +127,15 @@ Write-Host ""
 
 # Check backend is running
 try {
-    Invoke-RestMethod -Uri "$BackendUrl/health" -TimeoutSec 5 | Out-Null
-    Write-Status "Backend running at $BackendUrl" "SUCCESS"
+    $healthUri = $BackendUrl + "/health"
+    $healthReq = [System.Net.HttpWebRequest]::Create($healthUri)
+    $healthReq.Method = "GET"
+    $healthReq.Timeout = 5000
+    $healthResp = $healthReq.GetResponse()
+    $healthResp.Close()
+    Write-Status ("Backend running at " + $BackendUrl) "SUCCESS"
 } catch {
-    Write-Status "Backend not running at $BackendUrl — start it first" "ERROR"
+    Write-Status ("Backend not running at " + $BackendUrl + " - start it first") "ERROR"
     exit 1
 }
 
@@ -139,8 +143,8 @@ try {
 $gwBin = Join-Path $BinDir "appcontrol-gateway.exe"
 $agentBin = Join-Path $BinDir "appcontrol-agent.exe"
 
-if (-not (Test-Path $gwBin)) { Write-Status "Gateway binary not found: $gwBin" "ERROR"; exit 1 }
-if (-not (Test-Path $agentBin)) { Write-Status "Agent binary not found: $agentBin" "ERROR"; exit 1 }
+if (-not (Test-Path $gwBin)) { Write-Status ("Gateway binary not found: " + $gwBin) "ERROR"; exit 1 }
+if (-not (Test-Path $agentBin)) { Write-Status ("Agent binary not found: " + $agentBin) "ERROR"; exit 1 }
 
 New-Item -ItemType Directory -Force -Path $LogsDir | Out-Null
 
@@ -148,52 +152,19 @@ New-Item -ItemType Directory -Force -Path $LogsDir | Out-Null
 # Login
 # ---------------------------------------------------------------------------
 
-Write-Status "Logging in as $Email..." "INFO"
+Write-Status ("Logging in as " + $Email + "...") "INFO"
 
-# Login with explicit raw HTTP (bypass Invoke-Api for full debug)
-$loginUri = "$BackendUrl/api/v1/auth/login"
-$loginHash = @{ email = $Email; password = $Password }
-$loginBody = ($loginHash | ConvertTo-Json -Compress)
-Write-Host ("[DEBUG] POST " + $loginUri) -ForegroundColor DarkGray
-
-try {
-    $loginReq = [System.Net.HttpWebRequest]::Create($loginUri)
-    $loginReq.Method = "POST"
-    $loginReq.ContentType = "application/json; charset=utf-8"
-    $loginReq.Accept = "application/json"
-    $loginBytes = [System.Text.Encoding]::UTF8.GetBytes($loginBody)
-    $loginReq.ContentLength = $loginBytes.Length
-    $loginStream = $loginReq.GetRequestStream()
-    $loginStream.Write($loginBytes, 0, $loginBytes.Length)
-    $loginStream.Close()
-
-    $loginHttpResp = $loginReq.GetResponse()
-    $loginReader = New-Object System.IO.StreamReader($loginHttpResp.GetResponseStream(), [System.Text.Encoding]::UTF8)
-    $loginRaw = $loginReader.ReadToEnd()
-    $loginReader.Close()
-    $loginHttpResp.Close()
-} catch {
-    Write-Status ("Login request failed: " + $_.Exception.Message) "ERROR"
-    exit 1
+$loginResp = Invoke-Api -Method POST -Path "/auth/login" -Body @{
+    email    = $Email
+    password = $Password
 }
 
-$rawLen = $loginRaw.Length
-Write-Host ("[DEBUG] Raw response (" + $rawLen + " chars):") -ForegroundColor DarkGray
-Write-Host $loginRaw -ForegroundColor DarkGray
-
-# Extract token with regex (avoids ConvertFrom-Json quirks on PS 5.1)
-$tokenPattern = [regex]'"token"\s*:\s*"([^"]+)"'
-$tokenMatch = $tokenPattern.Match($loginRaw)
-if ($tokenMatch.Success) {
-    $token = $tokenMatch.Groups[1].Value
-} else {
-    Write-Status "Login failed — no token found in response" "ERROR"
-    Write-Host $loginRaw -ForegroundColor Red
+if (-not $loginResp -or -not $loginResp.token) {
+    Write-Status "Login failed - no token in response" "ERROR"
     exit 1
 }
-
-$tokenLen = $token.Length
-Write-Status ("Logged in (token length: " + $tokenLen + " chars)") "SUCCESS"
+$token = $loginResp.token
+Write-Status ("Logged in (token length: " + $token.Length + " chars)") "SUCCESS"
 
 # ---------------------------------------------------------------------------
 # Create or find site
@@ -208,34 +179,40 @@ if (-not $SiteName) {
 $siteCode = ($SiteName -replace '[^a-zA-Z0-9]', '-').ToUpper()
 if ($siteCode.Length -gt 10) { $siteCode = $siteCode.Substring(0, 10) }
 
-Write-Status "Looking for site '$SiteName'..." "INFO"
+Write-Status ("Looking for site '" + $SiteName + "'...") "INFO"
 
 $sitesResp = Invoke-Api -Method GET -Path "/sites" -Token $token
-$sitesList = if ($sitesResp.sites) { $sitesResp.sites } elseif ($sitesResp -is [array]) { $sitesResp } else { @() }
+$sitesList = @()
+if ($sitesResp.sites) { $sitesList = $sitesResp.sites }
+elseif ($sitesResp -is [array]) { $sitesList = $sitesResp }
+
 $existingSite = $sitesList | Where-Object { $_.name -eq $SiteName } | Select-Object -First 1
 
 if ($existingSite) {
     $siteId = $existingSite.id
-    Write-Status "Site '$SiteName' exists (ID: $siteId)" "INFO"
+    Write-Status ("Site '" + $SiteName + "' exists (ID: " + $siteId + ")") "INFO"
 } else {
-    Write-Status "Creating site '$SiteName'..." "INFO"
+    Write-Status ("Creating site '" + $SiteName + "'...") "INFO"
     $site = Invoke-Api -Method POST -Path "/sites" -Token $token -Body @{
         name      = $SiteName
         code      = $siteCode
         site_type = "primary"
     }
     $siteId = $site.id
-    Write-Status "Site created (ID: $siteId)" "SUCCESS"
+    Write-Status ("Site created (ID: " + $siteId + ")") "SUCCESS"
 }
 
 # ---------------------------------------------------------------------------
 # Check if gateway exists for this site
 # ---------------------------------------------------------------------------
 
-Write-Status "Checking gateways for site '$SiteName'..." "INFO"
+Write-Status ("Checking gateways for site '" + $SiteName + "'...") "INFO"
 
 $gwResp = Invoke-Api -Method GET -Path "/gateways" -Token $token
-$gwList = if ($gwResp.gateways) { $gwResp.gateways } elseif ($gwResp -is [array]) { $gwResp } else { @() }
+$gwList = @()
+if ($gwResp.gateways) { $gwList = $gwResp.gateways }
+elseif ($gwResp -is [array]) { $gwList = $gwResp }
+
 # Flatten grouped response (gateways grouped by site)
 if ($gwList.Count -gt 0 -and $gwList[0].gateways) {
     $flatGw = @()
@@ -249,9 +226,9 @@ $siteGateway = $gwList | Where-Object { $_.site_id -eq $siteId } | Select-Object
 $gwAlreadyExists = $null -ne $siteGateway
 
 if ($gwAlreadyExists) {
-    Write-Status "Gateway already registered: $($siteGateway.name) (ID: $($siteGateway.id))" "INFO"
+    Write-Status ("Gateway already registered: " + $siteGateway.name + " (ID: " + $siteGateway.id + ")") "INFO"
 } else {
-    Write-Status "No gateway for this site — will enroll one" "INFO"
+    Write-Status "No gateway for this site - will enroll one" "INFO"
 }
 
 # ---------------------------------------------------------------------------
@@ -261,16 +238,18 @@ if ($gwAlreadyExists) {
 Write-Status "Checking agents..." "INFO"
 
 $agentsResp = Invoke-Api -Method GET -Path "/agents" -Token $token
-$agentsList = if ($agentsResp.agents) { $agentsResp.agents } elseif ($agentsResp -is [array]) { $agentsResp } else { @() }
+$agentsList = @()
+if ($agentsResp.agents) { $agentsList = $agentsResp.agents }
+elseif ($agentsResp -is [array]) { $agentsList = $agentsResp }
 
 $hostname = [System.Net.Dns]::GetHostName()
 $myAgent = $agentsList | Where-Object { $_.hostname -eq $hostname } | Select-Object -First 1
 $agentAlreadyExists = $null -ne $myAgent
 
 if ($agentAlreadyExists) {
-    Write-Status "Agent already registered: $hostname (ID: $($myAgent.id))" "INFO"
+    Write-Status ("Agent already registered: " + $hostname + " (ID: " + $myAgent.id + ")") "INFO"
 } else {
-    Write-Status "No agent for hostname '$hostname' — will enroll one" "INFO"
+    Write-Status ("No agent for hostname '" + $hostname + "' - will enroll one") "INFO"
 }
 
 # ---------------------------------------------------------------------------
@@ -282,8 +261,9 @@ Write-Status "Starting gateway..." "INFO"
 
 if (-not $gwAlreadyExists) {
     # Create enrollment token for gateway
+    $gwDateStr = Get-Date -Format "yyyyMMdd"
     $gwTokenResp = Invoke-Api -Method POST -Path "/enrollment/tokens" -Token $token -Body @{
-        name        = "GW-$SiteName-$(Get-Date -Format 'yyyyMMdd')"
+        name        = ("GW-" + $SiteName + "-" + $gwDateStr)
         scope       = "gateway"
         max_uses    = 1
         valid_hours = 8760
@@ -293,18 +273,19 @@ if (-not $gwAlreadyExists) {
 
     $env:GATEWAY_ENROLLMENT_TOKEN = $gwEnrollToken
 } else {
-    # Already enrolled — no token needed (gateway remembers its cert)
+    # Already enrolled - no token needed (gateway remembers its cert)
     $env:GATEWAY_ENROLLMENT_TOKEN = ""
 }
 
-$env:BACKEND_URL = "ws://$($BackendUrl -replace 'http://','' -replace 'https://','')//ws/gateway"
+$backendHost = $BackendUrl -replace "http://","" -replace "https://",""
+$env:BACKEND_URL = "ws://" + $backendHost + "//ws/gateway"
 $env:GATEWAY_ZONE = $siteCode
 $env:GATEWAY_LISTEN_PORT = "$GatewayPort"
 $env:RUST_LOG = "info"
 
 $gwProcess = Start-Process -FilePath $gwBin -PassThru -WindowStyle Normal
 Start-Sleep -Seconds 5
-Write-Status "Gateway started (PID: $($gwProcess.Id))" "SUCCESS"
+Write-Status ("Gateway started (PID: " + $gwProcess.Id + ")") "SUCCESS"
 
 # Assign gateway to site if newly enrolled
 if (-not $gwAlreadyExists) {
@@ -313,7 +294,9 @@ if (-not $gwAlreadyExists) {
 
     # Re-fetch gateways to find the newly registered one
     $gwResp2 = Invoke-Api -Method GET -Path "/gateways" -Token $token
-    $gwList2 = if ($gwResp2.gateways) { $gwResp2.gateways } elseif ($gwResp2 -is [array]) { $gwResp2 } else { @() }
+    $gwList2 = @()
+    if ($gwResp2.gateways) { $gwList2 = $gwResp2.gateways }
+    elseif ($gwResp2 -is [array]) { $gwList2 = $gwResp2 }
     if ($gwList2.Count -gt 0 -and $gwList2[0].gateways) {
         $flatGw2 = @()
         foreach ($group in $gwList2) { if ($group.gateways) { $flatGw2 += $group.gateways } }
@@ -327,8 +310,9 @@ if (-not $gwAlreadyExists) {
 
     if ($newGw) {
         try {
-            Invoke-Api -Method PUT -Path "/gateways/$($newGw.id)" -Token $token -Body @{ site_id = $siteId }
-            Write-Status "Gateway assigned to site '$SiteName'" "SUCCESS"
+            $gwId = $newGw.id
+            Invoke-Api -Method PUT -Path ("/gateways/" + $gwId) -Token $token -Body @{ site_id = $siteId }
+            Write-Status ("Gateway assigned to site '" + $SiteName + "'") "SUCCESS"
         } catch {
             Write-Status "Could not assign gateway (may need manual assignment in UI)" "WARNING"
         }
@@ -344,8 +328,9 @@ Write-Status "Starting agent..." "INFO"
 
 if (-not $agentAlreadyExists) {
     # Create enrollment token for agent
+    $agDateStr = Get-Date -Format "yyyyMMdd"
     $agentTokenResp = Invoke-Api -Method POST -Path "/enrollment/tokens" -Token $token -Body @{
-        name        = "Agent-$hostname-$(Get-Date -Format 'yyyyMMdd')"
+        name        = ("Agent-" + $hostname + "-" + $agDateStr)
         scope       = "agent"
         max_uses    = 1
         valid_hours = 8760
@@ -358,12 +343,12 @@ if (-not $agentAlreadyExists) {
     $env:AGENT_ENROLLMENT_TOKEN = ""
 }
 
-$env:GATEWAY_URL = "ws://localhost:$GatewayPort"
+$env:GATEWAY_URL = "ws://localhost:" + $GatewayPort
 $env:RUST_LOG = "info"
 
 $agentProcess = Start-Process -FilePath $agentBin -PassThru -WindowStyle Normal
 Start-Sleep -Seconds 3
-Write-Status "Agent started (PID: $($agentProcess.Id))" "SUCCESS"
+Write-Status ("Agent started (PID: " + $agentProcess.Id + ")") "SUCCESS"
 
 # ---------------------------------------------------------------------------
 # Summary
@@ -371,13 +356,13 @@ Write-Status "Agent started (PID: $($agentProcess.Id))" "SUCCESS"
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "  Site '$SiteName' is ready!" -ForegroundColor Green
+Write-Host ("  Site '" + $SiteName + "' is ready!") -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Site:      $SiteName (code: $siteCode)"
-Write-Host "  Gateway:   PID $($gwProcess.Id) — port $GatewayPort"
-Write-Host "  Agent:     PID $($agentProcess.Id) — hostname $hostname"
-Write-Host "  Web UI:    $BackendUrl"
+Write-Host ("  Site:      " + $SiteName + " (code: " + $siteCode + ")")
+Write-Host ("  Gateway:   PID " + $gwProcess.Id + " - port " + $GatewayPort)
+Write-Host ("  Agent:     PID " + $agentProcess.Id + " - hostname " + $hostname)
+Write-Host ("  Web UI:    " + $BackendUrl)
 Write-Host ""
 if (-not $gwAlreadyExists -or -not $agentAlreadyExists) {
     Write-Host "  First run: gateway and agent are being enrolled." -ForegroundColor Yellow
