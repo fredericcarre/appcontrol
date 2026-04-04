@@ -163,6 +163,54 @@ fi
 ok "Logged in"
 
 # ---------------------------------------------------------------------------
+# 2b. Setup-site workflow — mirrors scripts/setup-site.ps1 flow
+# ---------------------------------------------------------------------------
+log "Testing setup-site workflow (GET /sites, /gateways, /agents with auth)..."
+
+# GET /sites with Bearer token (this is where setup-site.ps1 fails on Windows)
+SITES_CODE=$(api_code GET "/sites")
+if [ "$SITES_CODE" = "200" ]; then
+  ok "GET /sites with auth (HTTP 200)"
+else
+  fail "GET /sites with auth returned HTTP $SITES_CODE (expected 200)"
+fi
+
+# GET /gateways with Bearer token
+GW_LIST_CODE=$(api_code GET "/gateways")
+if [ "$GW_LIST_CODE" = "200" ]; then
+  ok "GET /gateways with auth (HTTP 200)"
+else
+  fail "GET /gateways with auth returned HTTP $GW_LIST_CODE (expected 200)"
+fi
+
+# GET /agents with Bearer token
+AGENTS_LIST_CODE=$(api_code GET "/agents")
+if [ "$AGENTS_LIST_CODE" = "200" ]; then
+  ok "GET /agents with auth (HTTP 200)"
+else
+  fail "GET /agents with auth returned HTTP $AGENTS_LIST_CODE (expected 200)"
+fi
+
+# Verify token is properly rejected when invalid
+BAD_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X GET \
+  -H "Authorization: Bearer invalid-token-12345" \
+  "http://127.0.0.1:${BACKEND_PORT}/api/v1/sites")
+if [ "$BAD_CODE" = "401" ]; then
+  ok "Invalid token correctly rejected (HTTP 401)"
+else
+  fail "Invalid token not rejected (HTTP $BAD_CODE, expected 401)"
+fi
+
+# Verify no token returns 401
+NO_AUTH_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X GET \
+  "http://127.0.0.1:${BACKEND_PORT}/api/v1/sites")
+if [ "$NO_AUTH_CODE" = "401" ]; then
+  ok "No auth correctly rejected (HTTP 401)"
+else
+  fail "No auth not rejected (HTTP $NO_AUTH_CODE, expected 401)"
+fi
+
+# ---------------------------------------------------------------------------
 # 3. Create enrollment tokens
 # ---------------------------------------------------------------------------
 log "Creating enrollment tokens..."
