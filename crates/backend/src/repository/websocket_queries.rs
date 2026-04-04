@@ -159,43 +159,77 @@ pub async fn update_agent_connection_info(
     pool: &DbPool,
     agent_id: Uuid,
     gateway_id: Uuid,
+    hostname: &str,
     cert_fingerprint: Option<&str>,
     cert_cn: Option<&str>,
     version: Option<&str>,
 ) -> Result<(), sqlx::Error> {
+    // In standalone/dev mode (no enrollment), agents may not exist yet.
+    // Use an upsert: INSERT if missing, UPDATE if already present.
+    // Derive org_id from the gateway's organization_id.
     #[cfg(feature = "postgres")]
     sqlx::query(
-        "UPDATE agents SET gateway_id = $2, \
-         certificate_fingerprint = COALESCE($3, certificate_fingerprint), \
-         certificate_cn = COALESCE($4, certificate_cn), \
-         version = COALESCE($5, version), \
-         identity_verified = ($3 IS NOT NULL) \
-         WHERE id = $1",
+        r#"INSERT INTO agents (id, organization_id, hostname, is_active, gateway_id,
+               certificate_fingerprint, certificate_cn, identity_verified, version)
+           SELECT $1, g.organization_id, $6,
+               true, $2, $3, $4, ($3 IS NOT NULL), $5
+           FROM gateways g WHERE g.id = $2
+           ON CONFLICT (id) DO UPDATE SET
+               gateway_id = $2,
+               hostname = $6,
+               certificate_fingerprint = COALESCE($3, agents.certificate_fingerprint),
+               certificate_cn = COALESCE($4, agents.certificate_cn),
+               version = COALESCE($5, agents.version),
+               identity_verified = ($3 IS NOT NULL)"#,
     )
     .bind(agent_id)
     .bind(gateway_id)
     .bind(cert_fingerprint)
     .bind(cert_cn)
     .bind(version)
+    .bind(hostname)
     .execute(pool)
     .await?;
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    sqlx::query(
-        "UPDATE agents SET gateway_id = $2, \
-         certificate_fingerprint = COALESCE($3, certificate_fingerprint), \
-         certificate_cn = COALESCE($4, certificate_cn), \
-         version = COALESCE($5, version), \
-         identity_verified = ($3 IS NOT NULL) \
-         WHERE id = $1",
-    )
-    .bind(DbUuid::from(agent_id))
-    .bind(DbUuid::from(gateway_id))
-    .bind(cert_fingerprint)
-    .bind(cert_cn)
-    .bind(version)
-    .execute(pool)
-    .await?;
+    {
+        // SQLite: two-step approach — first try UPDATE; if 0 rows affected, INSERT.
+        let rows = sqlx::query(
+            "UPDATE agents SET gateway_id = $2, hostname = $6, \
+             certificate_fingerprint = COALESCE($3, certificate_fingerprint), \
+             certificate_cn = COALESCE($4, certificate_cn), \
+             version = COALESCE($5, version), \
+             identity_verified = ($3 IS NOT NULL) \
+             WHERE id = $1",
+        )
+        .bind(DbUuid::from(agent_id))
+        .bind(DbUuid::from(gateway_id))
+        .bind(cert_fingerprint)
+        .bind(cert_cn)
+        .bind(version)
+        .bind(hostname)
+        .execute(pool)
+        .await?;
+
+        if rows.rows_affected() == 0 {
+            // Agent doesn't exist yet — create from gateway's org
+            sqlx::query(
+                "INSERT OR IGNORE INTO agents (id, organization_id, hostname, is_active, gateway_id, \
+                 certificate_fingerprint, certificate_cn, identity_verified, version) \
+                 SELECT $1, g.organization_id, $6, \
+                 1, $2, $3, $4, ($3 IS NOT NULL), $5 \
+                 FROM gateways g WHERE g.id = $2",
+            )
+            .bind(DbUuid::from(agent_id))
+            .bind(DbUuid::from(gateway_id))
+            .bind(cert_fingerprint)
+            .bind(cert_cn)
+            .bind(version)
+            .bind(hostname)
+            .execute(pool)
+            .await?;
+        }
+    }
 
     Ok(())
 }

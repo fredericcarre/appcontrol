@@ -342,6 +342,7 @@ function Do-Start {
             $env:GATEWAY_ZONE = $siteName
             $env:GATEWAY_NAME = ("gw-" + $siteName)
             if ($site.site_id) { $env:GATEWAY_SITE_ID = $site.site_id }
+            if ($site.gw_enroll_token) { $env:GATEWAY_ENROLLMENT_TOKEN = $site.gw_enroll_token }
 
             $gwLog = Join-Path $script:LogDir ("gateway-" + $siteName + ".log")
             $gwErr = Join-Path $script:LogDir ("gateway-" + $siteName + ".err.log")
@@ -354,21 +355,28 @@ function Do-Start {
             Start-Sleep -Seconds 3
         }
 
-        # Agent
+        # Agent (uses enrolled config from data/agent-<sitename>/agent.yaml)
         $agBin = Join-Path $script:BinDir ("appcontrol-agent" + $script:BinExt)
         if (Test-Path $agBin) {
-            $agId = $site.agent_id
-            if (-not $agId) { $agId = [guid]::NewGuid().ToString() }
-            $env:AGENT_ID = $agId
-            $env:GATEWAY_URL = "ws://localhost:" + $gwPort
             $agDataDir = Join-Path $script:DataDir ("agent-" + $siteName)
-            Ensure-Dir $agDataDir
-            $env:DATA_DIR = $agDataDir
-
+            $agConfigFile = Join-Path $agDataDir "agent.yaml"
             $agLog = Join-Path $script:LogDir ("agent-" + $siteName + ".log")
             $agErr = Join-Path $script:LogDir ("agent-" + $siteName + ".err.log")
-            $agProc = Start-Process -FilePath $agBin -PassThru -NoNewWindow `
-                -RedirectStandardOutput $agLog -RedirectStandardError $agErr
+
+            if (Test-Path $agConfigFile) {
+                # Enrolled agent — use its config file
+                $agArgs = ("--config " + """" + $agConfigFile + """")
+                $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgs -PassThru -NoNewWindow `
+                    -RedirectStandardOutput $agLog -RedirectStandardError $agErr
+            } else {
+                # Fallback: no enrollment yet — connect directly
+                Write-Warn ("Agent for '" + $siteName + "' not enrolled. Run add-site again to enroll.")
+                $env:GATEWAY_URL = "ws://localhost:" + $gwPort
+                Ensure-Dir $agDataDir
+                $env:DATA_DIR = $agDataDir
+                $agProc = Start-Process -FilePath $agBin -PassThru -NoNewWindow `
+                    -RedirectStandardOutput $agLog -RedirectStandardError $agErr
+            }
             $pids.agents[$siteName] = $agProc.Id
             Write-Info ("Agent '" + $siteName + "' started with PID " + $agProc.Id)
         }
@@ -605,6 +613,61 @@ function Do-AddSite {
         }
     }
 
+    # --- PKI initialization (once) ---
+    Write-Info "Checking PKI..."
+    $caResult = $null
+    try {
+        $caResult = Invoke-Api -Method "GET" -Uri ($baseUrl + "/enrollment/pki/ca") -Token $token
+    } catch {}
+    if (-not $caResult -or -not $caResult.ca_cert_pem) {
+        Write-Info "Initializing PKI (Certificate Authority)..."
+        $pkiBody = @{ org_name = "AppControl"; validity_days = 3650 }
+        try {
+            Invoke-Api -Method "POST" -Uri ($baseUrl + "/enrollment/pki/init") -Body $pkiBody -Token $token | Out-Null
+            Write-Ok "PKI initialized"
+        } catch {
+            Write-Warn "PKI init failed (may already exist) - continuing"
+        }
+    } else {
+        Write-Ok "PKI already initialized"
+    }
+
+    # --- Create gateway enrollment token ---
+    Write-Info "Creating gateway enrollment token..."
+    $gwTokenBody = @{
+        name       = ("gw-enroll-" + $siteName)
+        scope      = "gateway"
+        max_uses   = 10
+        valid_hours = 8760
+    }
+    $gwTokenResult = Invoke-Api -Method "POST" -Uri ($baseUrl + "/enrollment/tokens") -Body $gwTokenBody -Token $token
+    $gwEnrollToken = $null
+    if ($gwTokenResult -and $gwTokenResult.token) {
+        $gwEnrollToken = $gwTokenResult.token
+        Write-Ok "Gateway enrollment token created"
+    } else {
+        Write-Err "Failed to create gateway enrollment token"
+        return
+    }
+
+    # --- Create agent enrollment token ---
+    Write-Info "Creating agent enrollment token..."
+    $agTokenBody = @{
+        name       = ("agent-enroll-" + $siteName)
+        scope      = "agent"
+        max_uses   = 10
+        valid_hours = 8760
+    }
+    $agTokenResult = Invoke-Api -Method "POST" -Uri ($baseUrl + "/enrollment/tokens") -Body $agTokenBody -Token $token
+    $agEnrollToken = $null
+    if ($agTokenResult -and $agTokenResult.token) {
+        $agEnrollToken = $agTokenResult.token
+        Write-Ok "Agent enrollment token created"
+    } else {
+        Write-Err "Failed to create agent enrollment token"
+        return
+    }
+
     # Save to sites.json
     $existingSites = Read-Sites
     $sitesList = New-Object System.Collections.ArrayList
@@ -618,14 +681,13 @@ function Do-AddSite {
     }
     if (-not $found) {
         $gwId = "gw-" + ($siteName -replace '[^a-zA-Z0-9]', '-').ToLower()
-        $agId = [guid]::NewGuid().ToString()
         $newEntry = @{
-            name         = $siteName
-            site_id      = $siteId
-            gateway_port = $gwPort
-            gateway_id   = $gwId
-            agent_id     = $agId
-            enrolled     = $true
+            name               = $siteName
+            site_id            = $siteId
+            gateway_port       = $gwPort
+            gateway_id         = $gwId
+            gw_enroll_token    = $gwEnrollToken
+            agent_enroll_token = $agEnrollToken
         }
         $sitesList.Add($newEntry) | Out-Null
         Write-Sites $sitesList
@@ -639,6 +701,7 @@ function Do-AddSite {
         if (Is-ProcessRunning $bPid) {
             Write-Info "Backend is running, starting gateway and agent for new site..."
 
+            # --- Start gateway with enrollment token ---
             $gwId = "gw-" + ($siteName -replace '[^a-zA-Z0-9]', '-').ToLower()
             $env:GATEWAY_ID = $gwId
             $env:BACKEND_URL = "ws://localhost:" + $port + "/ws/gateway"
@@ -646,36 +709,44 @@ function Do-AddSite {
             $env:GATEWAY_ZONE = $siteName
             $env:GATEWAY_NAME = ("gw-" + $siteName)
             $env:GATEWAY_SITE_ID = $siteId
+            $env:GATEWAY_ENROLLMENT_TOKEN = $gwEnrollToken
 
             $gwBin = Join-Path $script:BinDir ("appcontrol-gateway" + $script:BinExt)
             $gwLog = Join-Path $script:LogDir ("gateway-" + $siteName + ".log")
             $gwErr = Join-Path $script:LogDir ("gateway-" + $siteName + ".err.log")
             $gwProc = Start-Process -FilePath $gwBin -PassThru -NoNewWindow `
                 -RedirectStandardOutput $gwLog -RedirectStandardError $gwErr
+            Write-Info ("Gateway started with PID " + $gwProc.Id + " on port " + $gwPort)
 
-            # Wait for gateway to be ready before starting agent
-            Start-Sleep -Seconds 3
+            # Wait for gateway to be ready
+            Start-Sleep -Seconds 5
 
-            # Retrieve the agent_id we saved in sites.json
-            $savedSites = Read-Sites
-            $agId = $null
-            foreach ($ss in $savedSites) {
-                if ($ss.name -eq $siteName -and $ss.agent_id) {
-                    $agId = $ss.agent_id
-                    break
-                }
-            }
-            if (-not $agId) { $agId = [guid]::NewGuid().ToString() }
-            $env:AGENT_ID = $agId
-            $env:GATEWAY_URL = "ws://localhost:" + $gwPort
+            # --- Enroll agent via gateway ---
+            $agBin = Join-Path $script:BinDir ("appcontrol-agent" + $script:BinExt)
             $agDataDir = Join-Path $script:DataDir ("agent-" + $siteName)
             Ensure-Dir $agDataDir
-            $env:DATA_DIR = $agDataDir
-            $agBin = Join-Path $script:BinDir ("appcontrol-agent" + $script:BinExt)
+            $agEnrollUrl = "ws://localhost:" + $gwPort
+            Write-Info ("Enrolling agent for site '" + $siteName + "'...")
+            $enrollArgs = ("--enroll " + $agEnrollUrl + " --token " + $agEnrollToken + " --enroll-dir " + """" + $agDataDir + """")
+            $agEnrollLog = Join-Path $script:LogDir ("agent-enroll-" + $siteName + ".log")
+            $agEnrollErr = Join-Path $script:LogDir ("agent-enroll-" + $siteName + ".err.log")
+            $enrollProc = Start-Process -FilePath $agBin -ArgumentList $enrollArgs -PassThru -NoNewWindow `
+                -RedirectStandardOutput $agEnrollLog -RedirectStandardError $agEnrollErr
+            $enrollProc.WaitForExit(30000) | Out-Null
+            if ($enrollProc.ExitCode -eq 0) {
+                Write-Ok "Agent enrolled successfully"
+            } else {
+                Write-Warn ("Agent enrollment exited with code " + $enrollProc.ExitCode + " - check " + $agEnrollErr)
+            }
+
+            # --- Start agent with enrolled config ---
+            $agConfigFile = Join-Path $agDataDir "agent.yaml"
+            $agArgs = ("--config " + """" + $agConfigFile + """")
             $agLog = Join-Path $script:LogDir ("agent-" + $siteName + ".log")
             $agErr = Join-Path $script:LogDir ("agent-" + $siteName + ".err.log")
-            $agProc = Start-Process -FilePath $agBin -PassThru -NoNewWindow `
+            $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgs -PassThru -NoNewWindow `
                 -RedirectStandardOutput $agLog -RedirectStandardError $agErr
+            Write-Info ("Agent started with PID " + $agProc.Id)
 
             # Update pids
             if (-not $pids.gateways) {
