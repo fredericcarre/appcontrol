@@ -152,25 +152,46 @@ New-Item -ItemType Directory -Force -Path $LogsDir | Out-Null
 # ---------------------------------------------------------------------------
 
 Write-Status "Logging in as $Email..." "INFO"
+
+# Login with explicit raw HTTP (bypass Invoke-Api for full debug)
+$loginUri = "$BackendUrl/api/v1/auth/login"
+$loginBody = "{`"email`":`"$Email`",`"password`":`"$Password`"}"
+Write-Host "[DEBUG] POST $loginUri" -ForegroundColor DarkGray
+Write-Host "[DEBUG] Body: $loginBody" -ForegroundColor DarkGray
+
 try {
-    $loginResp = Invoke-Api -Method POST -Path "/auth/login" -Body @{
-        email    = $Email
-        password = $Password
-    }
+    $loginReq = [System.Net.HttpWebRequest]::Create($loginUri)
+    $loginReq.Method = "POST"
+    $loginReq.ContentType = "application/json; charset=utf-8"
+    $loginReq.Accept = "application/json"
+    $loginBytes = [System.Text.Encoding]::UTF8.GetBytes($loginBody)
+    $loginReq.ContentLength = $loginBytes.Length
+    $loginStream = $loginReq.GetRequestStream()
+    $loginStream.Write($loginBytes, 0, $loginBytes.Length)
+    $loginStream.Close()
+
+    $loginHttpResp = $loginReq.GetResponse()
+    $loginReader = New-Object System.IO.StreamReader($loginHttpResp.GetResponseStream(), [System.Text.Encoding]::UTF8)
+    $loginRaw = $loginReader.ReadToEnd()
+    $loginReader.Close()
+    $loginHttpResp.Close()
 } catch {
     Write-Status "Login request failed: $($_.Exception.Message)" "ERROR"
     exit 1
 }
-if (-not $loginResp -or -not $loginResp.token) {
-    Write-Status "Login failed — no token in response" "ERROR"
-    if ($loginResp) {
-        Write-Status "Response: $($loginResp | ConvertTo-Json -Compress)" "ERROR"
-    } else {
-        Write-Status "Response was empty" "ERROR"
-    }
+
+Write-Host "[DEBUG] Raw response ($($loginRaw.Length) chars):" -ForegroundColor DarkGray
+Write-Host $loginRaw -ForegroundColor DarkGray
+
+# Extract token with regex (avoids ConvertFrom-Json quirks on PS 5.1)
+if ($loginRaw -match '"token"\s*:\s*"([^"]+)"') {
+    $token = $Matches[1]
+} else {
+    Write-Status "Login failed — no token found in response" "ERROR"
+    Write-Host $loginRaw -ForegroundColor Red
     exit 1
 }
-$token = $loginResp.token
+
 Write-Status "Logged in (token length: $($token.Length) chars)" "SUCCESS"
 
 # ---------------------------------------------------------------------------
