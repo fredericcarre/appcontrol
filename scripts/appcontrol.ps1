@@ -582,9 +582,11 @@ function Do-AddSite {
     }
 
     # Save to sites.json
-    $sites = Read-Sites
+    $existingSites = Read-Sites
+    $sitesList = New-Object System.Collections.ArrayList
+    foreach ($s in $existingSites) { $sitesList.Add($s) | Out-Null }
     $found = $false
-    foreach ($s in $sites) {
+    foreach ($s in $sitesList) {
         if ($s.name -eq $siteName) {
             $found = $true
             break
@@ -597,9 +599,9 @@ function Do-AddSite {
             gateway_port = $gwPort
             enrolled     = $true
         }
-        $sites += $newEntry
-        Write-Sites $sites
-        Write-Ok ("Saved site to config/sites.json")
+        $sitesList.Add($newEntry) | Out-Null
+        Write-Sites $sitesList
+        Write-Ok "Saved site to config/sites.json"
     }
 
     # If backend is running, start gateway + agent for this site
