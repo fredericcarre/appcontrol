@@ -77,12 +77,12 @@ function Invoke-Api {
     $params = @{
         Uri             = $uri
         Method          = $Method
-        ContentType     = "application/json"
         Headers         = $headers
         UseBasicParsing = $true
     }
     if ($Body) {
         $params["Body"] = ($Body | ConvertTo-Json -Depth 10)
+        $params["ContentType"] = "application/json"
     }
 
     try {
