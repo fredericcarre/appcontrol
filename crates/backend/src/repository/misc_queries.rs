@@ -4078,18 +4078,35 @@ pub async fn copy_profile_mappings(
     to_profile_id: Uuid,
     from_profile_id: DbUuid,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    // Fetch existing mappings first, then insert with new IDs
+    // (SQLite TEXT PRIMARY KEY has no auto-generation)
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
         r#"
-        INSERT INTO binding_profile_mappings (profile_id, component_name, host, agent_id, resolved_via)
-        SELECT $1, component_name, host, agent_id, resolved_via
+        SELECT component_name, host, agent_id, resolved_via
         FROM binding_profile_mappings
-        WHERE profile_id = $2
+        WHERE profile_id = $1
         "#,
     )
-    .bind(to_profile_id)
-    .bind(from_profile_id)
-    .execute(pool)
+    .bind(&from_profile_id)
+    .fetch_all(pool)
     .await?;
+
+    for (component_name, host, agent_id, resolved_via) in rows {
+        sqlx::query(
+            r#"
+            INSERT INTO binding_profile_mappings (id, profile_id, component_name, host, agent_id, resolved_via)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+        )
+        .bind(crate::db::bind_id(Uuid::new_v4()))
+        .bind(crate::db::bind_id(to_profile_id))
+        .bind(&component_name)
+        .bind(&host)
+        .bind(&agent_id)
+        .bind(&resolved_via)
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
 
@@ -4104,11 +4121,12 @@ pub async fn insert_profile_mapping(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
-        INSERT INTO binding_profile_mappings (profile_id, component_name, host, agent_id, resolved_via)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO binding_profile_mappings (id, profile_id, component_name, host, agent_id, resolved_via)
+        VALUES ($1, $2, $3, $4, $5, $6)
         "#,
     )
-    .bind(profile_id)
+    .bind(crate::db::bind_id(Uuid::new_v4()))
+    .bind(crate::db::bind_id(profile_id))
     .bind(component_name)
     .bind(host)
     .bind(agent_id)

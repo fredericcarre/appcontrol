@@ -446,9 +446,10 @@ pub async fn apply_draft(
 
     let mut dep_count = 0u32;
     for (from_draft, to_draft) in &draft_deps {
-        if let (Some(&from_real), Some(&to_real)) =
-            (draft_to_real.get(&**from_draft), draft_to_real.get(&**to_draft))
-        {
+        if let (Some(&from_real), Some(&to_real)) = (
+            draft_to_real.get(&**from_draft),
+            draft_to_real.get(&**to_draft),
+        ) {
             repo::insert_dependency(&state.db, app_id, from_real, to_real).await?;
             dep_count += 1;
         }

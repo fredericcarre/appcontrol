@@ -691,8 +691,8 @@ pub async fn upsert_site_override(
     env_vars_override: &Option<Value>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        r#"INSERT INTO site_overrides (component_id, site_id, agent_id_override, check_cmd_override, start_cmd_override, stop_cmd_override, rebuild_cmd_override, env_vars_override)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        r#"INSERT INTO site_overrides (id, component_id, site_id, agent_id_override, check_cmd_override, start_cmd_override, stop_cmd_override, rebuild_cmd_override, env_vars_override)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (component_id, site_id) DO UPDATE SET
             agent_id_override = EXCLUDED.agent_id_override,
             check_cmd_override = EXCLUDED.check_cmd_override,
@@ -701,6 +701,7 @@ pub async fn upsert_site_override(
             rebuild_cmd_override = EXCLUDED.rebuild_cmd_override,
             env_vars_override = EXCLUDED.env_vars_override"#,
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(component_id))
     .bind(crate::db::bind_id(site_id))
     .bind(agent_id_override.map(crate::db::bind_id))
