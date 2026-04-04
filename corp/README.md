@@ -74,31 +74,35 @@ open http://localhost:8080
 
 **Login:** `admin@localhost` / `admin`
 
-### Option 2 — Windows Standalone (SQLite, no Docker)
+### Option 2 — Standalone (Windows/Linux, no Docker)
 
-No database to install, no Docker required. A single `.exe` backend with embedded SQLite.
+No database to install, no Docker required. One script does everything.
 
 ```powershell
-# 1. Download binaries + scripts
-gh release download --repo xcomponent/appcontrol-release --pattern '*.exe' --dir appcontrol\bin
-gh release download --repo xcomponent/appcontrol-release --pattern 'appcontrol-docs-scripts.zip'
-Expand-Archive appcontrol-docs-scripts.zip -DestinationPath appcontrol
+mkdir AppControl; cd AppControl
 
-# 2. Deploy (creates start.bat, sets up env vars)
-cd appcontrol\scripts
-.\deploy-standalone.ps1
+# Download the standalone script (visible at the repo root)
+Invoke-WebRequest -Uri "https://github.com/xcomponent/appcontrol-release/raw/main/appcontrol.ps1" -OutFile appcontrol.ps1
 
-# 3. Start the backend
-cd ..\standalone
-.\start.bat
+# Install (downloads binaries + frontend)
+.\appcontrol.ps1 install
 
-# 4. Setup a site with gateway + agent (in another terminal)
-cd appcontrol\scripts
-.\setup-site.ps1 -SiteName "Production"
+# Start the backend
+.\appcontrol.ps1 start
+
+# Add your first site (creates gateway + agent, handles enrollment)
+.\appcontrol.ps1 add-site Production
+
+# Add more sites
+.\appcontrol.ps1 add-site DR-Site
 ```
 
 **Login:** `admin@localhost` / `admin`  
 **Web UI:** http://localhost:3000
+
+Other commands: `stop`, `status`, `upgrade`, `logs [file]`, `help`
+
+> Works on Windows PowerShell 5.1+ and PowerShell Core 6+ (Linux/macOS).
 
 ### Option 3 — CLI only
 
@@ -150,6 +154,7 @@ Each release includes:
 | `appcontrol-backend-{os}-{arch}[.exe]` | Backend API server (PostgreSQL) |
 | `appcontrol-backend-sqlite-{os}-{arch}[.exe]` | Backend API server (SQLite standalone) |
 | `appcontrol-gateway-{os}-{arch}[.exe]` | Gateway binary |
+| `appcontrol.ps1` | Standalone deployment script (Windows PS 5.1+ / Linux pwsh) |
 | `docker-compose.release.yaml` | Docker Compose for the full stack |
 | `appcontrol-docs-scripts.zip` | Documentation, scripts, and examples |
 | `appcontrol-*.tgz` | Helm chart (OpenShift compatible) |
@@ -181,8 +186,7 @@ Full documentation is included in `appcontrol-docs-scripts.zip`:
 
 | Script | Description |
 |--------|-------------|
-| `scripts/deploy-standalone.ps1` | Deploy Windows standalone (SQLite, no Docker) |
-| `scripts/setup-site.ps1` | Setup site + gateway + agent enrollment |
+| **`appcontrol.ps1`** | **Unified standalone deployment** (install, start, stop, add-site, upgrade) |
 | `scripts/deploy-windows.ps1` | Deploy Windows services (PostgreSQL mode) |
 | `scripts/install-agent-windows.ps1` | Install agent as Windows service |
 | `scripts/deploy-azure-gateway.sh` | Deploy gateway on Azure |

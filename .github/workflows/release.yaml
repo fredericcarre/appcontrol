@@ -561,6 +561,9 @@ jobs:
           mkdir -p scripts
           cp ../scripts/*.ps1 ../scripts/*.sh ../scripts/*.json ../scripts/*.md scripts/ 2>/dev/null || true
 
+          # Also place appcontrol.ps1 at repo root for maximum visibility
+          cp ../scripts/appcontrol.ps1 ./appcontrol.ps1
+
           # Copy examples
           mkdir -p examples
           cp ../examples/*.json ../examples/*.md examples/ 2>/dev/null || true
