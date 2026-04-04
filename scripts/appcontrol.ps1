@@ -560,7 +560,13 @@ function Do-AddSite {
 
     # Create site if needed
     if (-not $siteId) {
-        $newSiteBody = @{ name = $siteName }
+        $siteCode = ($siteName -replace '[^a-zA-Z0-9]', '-').ToUpper()
+        if ($siteCode.Length -gt 10) { $siteCode = $siteCode.Substring(0, 10) }
+        $newSiteBody = @{
+            name      = $siteName
+            code      = $siteCode
+            site_type = "primary"
+        }
         $created = Invoke-Api -Method "POST" -Uri ($baseUrl + "/sites") -Body $newSiteBody -Token $token
         if ($created -and $created.id) {
             $siteId = $created.id
