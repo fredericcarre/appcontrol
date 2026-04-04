@@ -53,8 +53,8 @@ pub async fn get_report(
 
     match row {
         Some((id, agent_id, hostname, report, scanned_at)) => Ok(Json(json!({
-            "id": id,
-            "agent_id": agent_id,
+            "id": *id,
+            "agent_id": *agent_id,
             "hostname": hostname,
             "report": report,
             "scanned_at": scanned_at,

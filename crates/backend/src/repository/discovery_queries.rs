@@ -83,8 +83,8 @@ pub async fn get_discovery_report(
     report_id: Uuid,
 ) -> Result<
     Option<(
-        Uuid,
-        Uuid,
+        DbUuid,
+        DbUuid,
         String,
         serde_json::Value,
         chrono::DateTime<chrono::Utc>,
@@ -94,8 +94,8 @@ pub async fn get_discovery_report(
     sqlx::query_as::<
         _,
         (
-            Uuid,
-            Uuid,
+            DbUuid,
+            DbUuid,
             String,
             serde_json::Value,
             chrono::DateTime<chrono::Utc>,
@@ -104,7 +104,7 @@ pub async fn get_discovery_report(
         "SELECT id, agent_id, hostname, report, scanned_at
          FROM discovery_reports WHERE id = $1",
     )
-    .bind(report_id)
+    .bind(crate::db::bind_id(report_id))
     .fetch_optional(pool)
     .await
 }
@@ -153,7 +153,7 @@ pub async fn get_draft_header(
     sqlx::query_as::<_, (DbUuid, String, String, chrono::DateTime<chrono::Utc>)>(
         "SELECT id, name, status, inferred_at FROM discovery_drafts WHERE id = $1",
     )
-    .bind(draft_id)
+    .bind(crate::db::bind_id(draft_id))
     .fetch_optional(pool)
     .await
 }
@@ -166,7 +166,7 @@ pub async fn get_draft_components(
     draft_id: Uuid,
 ) -> Result<
     Vec<(
-        Uuid,
+        DbUuid,
         String,
         Option<String>,
         Option<String>,
@@ -205,7 +205,7 @@ pub async fn get_draft_components(
     draft_id: Uuid,
 ) -> Result<
     Vec<(
-        Uuid,
+        DbUuid,
         String,
         Option<String>,
         Option<String>,
@@ -232,7 +232,7 @@ pub async fn get_draft_components(
                 matched_service
          FROM discovery_draft_components WHERE draft_id = $1",
     )
-    .bind(draft_id)
+    .bind(crate::db::bind_id(draft_id))
     .fetch_all(pool)
     .await
 }
@@ -246,7 +246,7 @@ pub async fn get_draft_dependencies(
         "SELECT id, from_component, to_component, inferred_via
          FROM discovery_draft_dependencies WHERE draft_id = $1",
     )
-    .bind(draft_id)
+    .bind(crate::db::bind_id(draft_id))
     .fetch_all(pool)
     .await
 }
@@ -267,7 +267,7 @@ pub async fn insert_draft(
     name: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO discovery_drafts (id, organization_id, name) VALUES ($1, $2, $3)")
-        .bind(draft_id)
+        .bind(crate::db::bind_id(draft_id))
         .bind(org_id)
         .bind(name)
         .execute(pool)
@@ -307,8 +307,8 @@ pub async fn insert_draft_component(
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
     )
     .bind(crate::db::bind_id(comp_id))
-    .bind(draft_id)
-    .bind(agent_id)
+    .bind(crate::db::bind_id(draft_id))
+    .bind(agent_id.map(crate::db::bind_id))
     .bind(name)
     .bind(process_name)
     .bind(host)
@@ -338,12 +338,13 @@ pub async fn insert_draft_dependency(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO discovery_draft_dependencies
-         (draft_id, from_component, to_component, inferred_via)
-         VALUES ($1, $2, $3, $4)",
+         (id, draft_id, from_component, to_component, inferred_via)
+         VALUES ($1, $2, $3, $4, $5)",
     )
-    .bind(draft_id)
-    .bind(from_component)
-    .bind(to_component)
+    .bind(crate::db::bind_id(Uuid::new_v4()))
+    .bind(crate::db::bind_id(draft_id))
+    .bind(crate::db::bind_id(from_component))
+    .bind(crate::db::bind_id(to_component))
     .bind(inferred_via)
     .execute(pool)
     .await?;
@@ -356,7 +357,7 @@ pub async fn get_draft_status(
     draft_id: Uuid,
 ) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar::<_, String>("SELECT status FROM discovery_drafts WHERE id = $1")
-        .bind(draft_id)
+        .bind(crate::db::bind_id(draft_id))
         .fetch_optional(pool)
         .await
 }
@@ -379,10 +380,10 @@ pub async fn update_draft_component(
              check_cmd = $5, start_cmd = $6, stop_cmd = $7, restart_cmd = $8
          WHERE id = $1 AND draft_id = $4",
     )
-    .bind(comp_id)
+    .bind(crate::db::bind_id(comp_id))
     .bind(name)
     .bind(component_type)
-    .bind(draft_id)
+    .bind(crate::db::bind_id(draft_id))
     .bind(check_cmd)
     .bind(start_cmd)
     .bind(stop_cmd)
@@ -400,8 +401,8 @@ pub async fn delete_draft_dependency(
 ) -> Result<u64, sqlx::Error> {
     let result =
         sqlx::query("DELETE FROM discovery_draft_dependencies WHERE id = $1 AND draft_id = $2")
-            .bind(dep_id)
-            .bind(draft_id)
+            .bind(crate::db::bind_id(dep_id))
+            .bind(crate::db::bind_id(draft_id))
             .execute(pool)
             .await?;
     Ok(result.rows_affected())
@@ -419,7 +420,7 @@ pub async fn get_draft_for_apply(
     sqlx::query_as::<_, (DbUuid, DbUuid, String, String)>(
         "SELECT id, organization_id, name, status FROM discovery_drafts WHERE id = $1",
     )
-    .bind(draft_id)
+    .bind(crate::db::bind_id(draft_id))
     .fetch_optional(pool)
     .await
 }
@@ -465,12 +466,12 @@ pub async fn get_draft_comps_for_apply(
     draft_id: Uuid,
 ) -> Result<
     Vec<(
-        Uuid,
+        DbUuid,
         String,
         Option<String>,
         Option<String>,
         String,
-        Option<Uuid>,
+        Option<DbUuid>,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -498,12 +499,12 @@ pub async fn get_draft_comps_for_apply(
     draft_id: Uuid,
 ) -> Result<
     Vec<(
-        Uuid,
+        DbUuid,
         String,
         Option<String>,
         Option<String>,
         String,
-        Option<Uuid>,
+        Option<DbUuid>,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -519,7 +520,7 @@ pub async fn get_draft_comps_for_apply(
                 COALESCE(log_files, '[]')
          FROM discovery_draft_components WHERE draft_id = $1",
     )
-    .bind(draft_id)
+    .bind(crate::db::bind_id(draft_id))
     .fetch_all(pool)
     .await
 }
@@ -542,12 +543,12 @@ pub async fn insert_component_from_draft(
                                  check_cmd, start_cmd, stop_cmd, current_state)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'UNKNOWN')",
     )
-    .bind(comp_id)
+    .bind(crate::db::bind_id(comp_id))
     .bind(crate::db::bind_id(app_id))
     .bind(name)
     .bind(comp_type)
     .bind(host)
-    .bind(agent_id)
+    .bind(agent_id.map(crate::db::bind_id))
     .bind(check_cmd)
     .bind(start_cmd)
     .bind(stop_cmd)
@@ -564,9 +565,10 @@ pub async fn insert_component_command(
     command: &str,
 ) -> Result<(), sqlx::Error> {
     let _ = sqlx::query(
-        "INSERT INTO component_commands (component_id, label, command) VALUES ($1, $2, $3)",
+        "INSERT INTO component_commands (id, component_id, name, command) VALUES ($1, $2, $3, $4)",
     )
-    .bind(comp_id)
+    .bind(crate::db::bind_id(Uuid::new_v4()))
+    .bind(crate::db::bind_id(comp_id))
     .bind(label)
     .bind(command)
     .execute(pool)
@@ -583,7 +585,7 @@ pub async fn get_draft_deps_for_apply(
         "SELECT from_component, to_component
          FROM discovery_draft_dependencies WHERE draft_id = $1",
     )
-    .bind(draft_id)
+    .bind(crate::db::bind_id(draft_id))
     .fetch_all(pool)
     .await
 }
@@ -596,12 +598,13 @@ pub async fn insert_dependency(
     to_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO dependencies (application_id, from_component_id, to_component_id)
-         VALUES ($1, $2, $3)",
+        "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id)
+         VALUES ($1, $2, $3, $4)",
     )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(app_id))
-    .bind(from_id)
-    .bind(to_id)
+    .bind(crate::db::bind_id(from_id))
+    .bind(crate::db::bind_id(to_id))
     .execute(pool)
     .await?;
     Ok(())
@@ -616,7 +619,7 @@ pub async fn mark_draft_applied(
     sqlx::query(
         "UPDATE discovery_drafts SET status = 'applied', applied_app_id = $2 WHERE id = $1",
     )
-    .bind(draft_id)
+    .bind(crate::db::bind_id(draft_id))
     .bind(crate::db::bind_id(app_id))
     .execute(pool)
     .await?;
@@ -675,7 +678,7 @@ pub async fn insert_snapshot_schedule(
         "INSERT INTO snapshot_schedules (id, organization_id, name, agent_ids, frequency, retention_days, next_run_at, created_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
-    .bind(schedule_id)
+    .bind(crate::db::bind_id(schedule_id))
     .bind(crate::db::bind_id(org_id))
     .bind(name)
     .bind(agent_ids)
@@ -697,7 +700,7 @@ pub async fn schedule_exists(
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM snapshot_schedules WHERE id = $1 AND organization_id = $2)",
     )
-    .bind(schedule_id)
+    .bind(crate::db::bind_id(schedule_id))
     .bind(crate::db::bind_id(org_id))
     .fetch_one(pool)
     .await
@@ -706,7 +709,7 @@ pub async fn schedule_exists(
 /// Update schedule name.
 pub async fn update_schedule_name(pool: &DbPool, id: Uuid, name: &str) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE snapshot_schedules SET name = $2 WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(name)
         .execute(pool)
         .await?;
@@ -720,7 +723,7 @@ pub async fn update_schedule_agent_ids(
     agent_ids: UuidArray,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE snapshot_schedules SET agent_ids = $2 WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(agent_ids)
         .execute(pool)
         .await?;
@@ -735,7 +738,7 @@ pub async fn update_schedule_frequency(
     next_run: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE snapshot_schedules SET frequency = $2, next_run_at = $3 WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(frequency)
         .bind(next_run)
         .execute(pool)
@@ -746,7 +749,7 @@ pub async fn update_schedule_frequency(
 /// Get schedule frequency.
 pub async fn get_schedule_frequency(pool: &DbPool, id: Uuid) -> Result<String, sqlx::Error> {
     sqlx::query_scalar("SELECT frequency FROM snapshot_schedules WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .fetch_one(pool)
         .await
 }
@@ -760,14 +763,14 @@ pub async fn update_schedule_enabled(
 ) -> Result<(), sqlx::Error> {
     if enabled {
         sqlx::query("UPDATE snapshot_schedules SET enabled = $2, next_run_at = $3 WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .bind(enabled)
             .bind(next_run)
             .execute(pool)
             .await?;
     } else {
         sqlx::query("UPDATE snapshot_schedules SET enabled = $2 WHERE id = $1")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .bind(enabled)
             .execute(pool)
             .await?;
@@ -782,7 +785,7 @@ pub async fn update_schedule_retention(
     retention_days: i32,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE snapshot_schedules SET retention_days = $2 WHERE id = $1")
-        .bind(id)
+        .bind(crate::db::bind_id(id))
         .bind(retention_days)
         .execute(pool)
         .await?;
@@ -797,7 +800,7 @@ pub async fn delete_snapshot_schedule(
 ) -> Result<u64, sqlx::Error> {
     let result =
         sqlx::query("DELETE FROM snapshot_schedules WHERE id = $1 AND organization_id = $2")
-            .bind(id)
+            .bind(crate::db::bind_id(id))
             .bind(crate::db::bind_id(org_id))
             .execute(pool)
             .await?;

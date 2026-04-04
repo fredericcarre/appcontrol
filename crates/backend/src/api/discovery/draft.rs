@@ -391,6 +391,7 @@ pub async fn apply_draft(
     ) in &draft_comps
     {
         let real_comp_id = Uuid::new_v4();
+        let agent_uuid = agent_id.map(|a| *a);
         repo::insert_component_from_draft(
             &state.db,
             real_comp_id,
@@ -398,13 +399,13 @@ pub async fn apply_draft(
             comp_name,
             comp_type,
             host,
-            agent_id,
+            &agent_uuid,
             check_cmd,
             start_cmd,
             stop_cmd,
         )
         .await?;
-        draft_to_real.insert(*draft_comp_id, real_comp_id);
+        draft_to_real.insert(**draft_comp_id, real_comp_id);
 
         // Create custom commands for log files
         if let Some(logs) = log_files.as_array() {
@@ -446,7 +447,7 @@ pub async fn apply_draft(
     let mut dep_count = 0u32;
     for (from_draft, to_draft) in &draft_deps {
         if let (Some(&from_real), Some(&to_real)) =
-            (draft_to_real.get(from_draft), draft_to_real.get(to_draft))
+            (draft_to_real.get(&**from_draft), draft_to_real.get(&**to_draft))
         {
             repo::insert_dependency(&state.db, app_id, from_real, to_real).await?;
             dep_count += 1;
