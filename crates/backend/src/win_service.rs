@@ -169,6 +169,7 @@ fn run_service() -> anyhow::Result<()> {
             gateway_repo: appcontrol_backend::repository::gateways::create_gateway_repository(
                 pool.clone(),
             ),
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
             write_queue: appcontrol_backend::db::WriteQueue::new(pool.clone()),
             db: pool,
             ws_hub,
