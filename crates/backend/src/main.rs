@@ -149,6 +149,8 @@ async fn main() -> anyhow::Result<()> {
         enrollment_repo: repository::enrollment::create_enrollment_repository(pool.clone()),
         agent_repo: repository::agents::create_agent_repository(pool.clone()),
         gateway_repo: repository::gateways::create_gateway_repository(pool.clone()),
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        write_queue: db::WriteQueue::new(pool.clone()),
         db: pool,
         ws_hub,
         config,

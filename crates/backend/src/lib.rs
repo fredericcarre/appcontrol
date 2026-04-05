@@ -32,6 +32,10 @@ pub struct AppState {
     pub terminal_sessions: terminal::TerminalSessionManager,
     pub log_subscriptions: websocket::LogSubscriptionManager,
     pub pending_log_requests: websocket::PendingLogRequests,
+    /// SQLite write queue — serializes all writes to avoid "database is locked".
+    /// On PostgreSQL this field doesn't exist (PostgreSQL handles concurrency natively).
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    pub write_queue: crate::db::WriteQueue,
     // Repository instances — all database queries go through these
     pub app_repo: Box<dyn repository::apps::AppRepository>,
     pub component_repo: Box<dyn repository::components::ComponentRepository>,

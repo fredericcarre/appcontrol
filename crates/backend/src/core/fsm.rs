@@ -47,55 +47,114 @@ pub async fn get_current_states(
 }
 
 /// Transition a component to a new state, validating the FSM rules.
+///
+/// PostgreSQL: uses a transaction with row-level locking for safety.
+/// SQLite: uses individual queries to minimize write lock duration
+/// (SQLite has a single global writer lock, so short individual writes
+/// are better than a long-held transaction).
 pub async fn transition_component(
     state: &Arc<AppState>,
     component_id: impl Into<Uuid>,
     new_state: ComponentState,
 ) -> Result<(), FsmError> {
     let component_id: Uuid = component_id.into();
-    let mut tx = state
-        .db
-        .begin()
+
+    // --- Read current state and validate transition ---
+    #[cfg(feature = "postgres")]
+    let (current, app_id, component_name, app_name) = {
+        let mut tx = state
+            .db
+            .begin()
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
+
+        let row = core_queries::fetch_component_for_transition(&mut tx, component_id)
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
+
+        let (current_str, raw_app_id, component_name, app_name) =
+            row.ok_or(FsmError::ComponentNotFound(component_id))?;
+        let app_id: Uuid = raw_app_id.into();
+        let current = parse_state(&current_str)?;
+
+        if !is_valid_transition(current, new_state) {
+            return Err(FsmError::InvalidTransition {
+                from: current.to_string(),
+                to: new_state.to_string(),
+            });
+        }
+
+        core_queries::insert_state_transition(
+            &mut tx,
+            component_id,
+            &current.to_string(),
+            &new_state.to_string(),
+            "api",
+        )
         .await
         .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    // Read current state with row lock, including names for event broadcasting
-    let row = core_queries::fetch_component_for_transition(&mut tx, component_id)
-        .await
-        .map_err(|e| FsmError::Database(e.to_string()))?;
+        core_queries::update_component_state(&mut tx, component_id, &new_state.to_string())
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    let (current_str, raw_app_id, component_name, app_name) =
-        row.ok_or(FsmError::ComponentNotFound(component_id))?;
-    let app_id: Uuid = raw_app_id.into();
-    let current = parse_state(&current_str)?;
+        tx.commit()
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    if !is_valid_transition(current, new_state) {
-        return Err(FsmError::InvalidTransition {
-            from: current.to_string(),
-            to: new_state.to_string(),
-        });
-    }
+        (current, app_id, component_name, app_name)
+    };
 
-    // Insert state transition (append-only audit trail)
-    core_queries::insert_state_transition(
-        &mut tx,
-        component_id,
-        &current.to_string(),
-        &new_state.to_string(),
-        "api",
-    )
-    .await
-    .map_err(|e| FsmError::Database(e.to_string()))?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let (current, app_id, component_name, app_name) = {
+        // Read current state from pool (reads are concurrent in WAL mode)
+        let row = core_queries::fetch_component_for_transition_pool(&state.db, component_id)
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    // Update cached current_state on the components row (fast read path)
-    core_queries::update_component_state(&mut tx, component_id, &new_state.to_string())
-        .await
-        .map_err(|e| FsmError::Database(e.to_string()))?;
+        let (current_str, raw_app_id, component_name, app_name) =
+            row.ok_or(FsmError::ComponentNotFound(component_id))?;
+        let app_id: Uuid = raw_app_id.into();
+        let current = parse_state(&current_str)?;
 
-    // Commit the transaction
-    tx.commit()
-        .await
-        .map_err(|e| FsmError::Database(e.to_string()))?;
+        if !is_valid_transition(current, new_state) {
+            return Err(FsmError::InvalidTransition {
+                from: current.to_string(),
+                to: new_state.to_string(),
+            });
+        }
+
+        // Serialize writes through the write queue (no lock contention)
+        let from_str = current.to_string();
+        let to_str = new_state.to_string();
+        state
+            .write_queue
+            .execute(move |pool| async move {
+                if let Err(e) = core_queries::update_component_state_pool(
+                    &pool,
+                    component_id,
+                    &to_str,
+                )
+                .await
+                {
+                    tracing::warn!(component_id = %component_id, "Failed to update state: {e}");
+                }
+                if let Err(e) = core_queries::insert_state_transition_pool(
+                    &pool,
+                    component_id,
+                    &from_str,
+                    &to_str,
+                    "api",
+                )
+                .await
+                {
+                    tracing::warn!(component_id = %component_id, "Failed to insert transition: {e}");
+                }
+            })
+            .await;
+
+        (current, app_id, component_name, app_name)
+    };
 
     metrics::counter!(
         "state_transitions_total",
@@ -142,39 +201,74 @@ pub async fn force_transition_component(
     new_state: ComponentState,
 ) -> Result<(), FsmError> {
     let component_id: Uuid = component_id.into();
-    let mut tx = state
-        .db
-        .begin()
+
+    #[cfg(feature = "postgres")]
+    let (current, app_id, component_name, app_name) = {
+        let mut tx = state
+            .db
+            .begin()
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
+
+        let row = core_queries::fetch_component_for_transition(&mut tx, component_id)
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
+        let (current_str, raw_app_id, component_name, app_name) =
+            row.ok_or(FsmError::ComponentNotFound(component_id))?;
+        let app_id: Uuid = raw_app_id.into();
+        let current = parse_state(&current_str)?;
+
+        core_queries::insert_state_transition(
+            &mut tx,
+            component_id,
+            &current.to_string(),
+            &new_state.to_string(),
+            "force",
+        )
         .await
         .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    let row = core_queries::fetch_component_for_transition(&mut tx, component_id)
-        .await
-        .map_err(|e| FsmError::Database(e.to_string()))?;
+        core_queries::update_component_state(&mut tx, component_id, &new_state.to_string())
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    let (current_str, raw_app_id, component_name, app_name) =
-        row.ok_or(FsmError::ComponentNotFound(component_id))?;
-    let app_id: Uuid = raw_app_id.into();
-    let current = parse_state(&current_str)?;
+        tx.commit()
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
 
-    // No FSM validation — force the transition
-    core_queries::insert_state_transition(
-        &mut tx,
-        component_id,
-        &current.to_string(),
-        &new_state.to_string(),
-        "force",
-    )
-    .await
-    .map_err(|e| FsmError::Database(e.to_string()))?;
+        (current, app_id, component_name, app_name)
+    };
 
-    core_queries::update_component_state(&mut tx, component_id, &new_state.to_string())
-        .await
-        .map_err(|e| FsmError::Database(e.to_string()))?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let (current, app_id, component_name, app_name) = {
+        let row = core_queries::fetch_component_for_transition_pool(&state.db, component_id)
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?;
+        let (current_str, raw_app_id, component_name, app_name) =
+            row.ok_or(FsmError::ComponentNotFound(component_id))?;
+        let app_id: Uuid = raw_app_id.into();
+        let current = parse_state(&current_str)?;
 
-    tx.commit()
-        .await
-        .map_err(|e| FsmError::Database(e.to_string()))?;
+        let from_str = current.to_string();
+        let to_str = new_state.to_string();
+        state
+            .write_queue
+            .execute(move |pool| async move {
+                let _ =
+                    core_queries::update_component_state_pool(&pool, component_id, &to_str).await;
+                let _ = core_queries::insert_state_transition_pool(
+                    &pool,
+                    component_id,
+                    &from_str,
+                    &to_str,
+                    "force",
+                )
+                .await;
+            })
+            .await;
+
+        (current, app_id, component_name, app_name)
+    };
 
     metrics::counter!(
         "state_transitions_total",

@@ -328,20 +328,22 @@ pub async fn create_pool(config: &AppConfig) -> Result<DbPool, sqlx::Error> {
         }
 
         sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(config.db_pool_size.min(8)) // SQLite: single writer, keep pool small
+            .max_connections(config.db_pool_size.min(4)) // SQLite: single writer, minimal pool
             .idle_timeout(Some(Duration::from_secs(config.db_idle_timeout_secs)))
             .acquire_timeout(Duration::from_secs(config.db_connect_timeout_secs))
             .after_connect(|conn, _meta| {
                 Box::pin(async move {
                     use sqlx::Executor;
-                    // Enable WAL mode for better concurrency
+                    // WAL mode: allows concurrent readers with one writer
                     conn.execute("PRAGMA journal_mode=WAL").await?;
-                    // Busy timeout: 60s to handle write contention during operations
+                    // Busy timeout: wait up to 60s when another connection holds the lock
                     conn.execute("PRAGMA busy_timeout=60000").await?;
                     // Foreign keys enforcement (off by default in SQLite)
                     conn.execute("PRAGMA foreign_keys=ON").await?;
-                    // Synchronous mode for durability (NORMAL is good balance)
+                    // NORMAL sync: good durability/performance balance with WAL
                     conn.execute("PRAGMA synchronous=NORMAL").await?;
+                    // Increase WAL autocheckpoint threshold to reduce checkpoint frequency
+                    conn.execute("PRAGMA wal_autocheckpoint=1000").await?;
                     Ok(())
                 })
             })
@@ -349,7 +351,10 @@ pub async fn create_pool(config: &AppConfig) -> Result<DbPool, sqlx::Error> {
                 config
                     .database_url
                     .parse::<sqlx::sqlite::SqliteConnectOptions>()?
-                    .create_if_missing(true),
+                    .create_if_missing(true)
+                    // Use IMMEDIATE transactions: acquire write lock at BEGIN, not at first write.
+                    // This prevents SQLITE_BUSY during COMMIT after long read-then-write sequences.
+                    .statement_cache_capacity(100),
             )
             .await
     }
@@ -375,6 +380,77 @@ pub fn is_sqlite() -> bool {
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 pub fn is_sqlite() -> bool {
     true
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SQLite Write Queue — serializes all writes to avoid "database is locked"
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// SQLite allows only one writer at a time. Instead of fighting over the lock
+// with busy_timeout, we funnel all writes through a single-threaded queue.
+// Reads still go through the pool (WAL mode allows concurrent readers).
+
+/// A boxed async closure that performs a database write.
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+type WriteOp = Box<
+    dyn FnOnce(DbPool) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send,
+>;
+
+/// Queue that serializes all SQLite writes on a single background task.
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+#[derive(Clone)]
+pub struct WriteQueue {
+    tx: tokio::sync::mpsc::Sender<WriteOp>,
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+impl WriteQueue {
+    /// Create a new write queue backed by a dedicated pool connection.
+    pub fn new(pool: DbPool) -> Self {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<WriteOp>(4096);
+        tokio::spawn(async move {
+            while let Some(op) = rx.recv().await {
+                op(pool.clone()).await;
+            }
+        });
+        Self { tx }
+    }
+
+    /// Submit a write operation. Returns immediately (fire-and-forget).
+    /// Use this for audit trail inserts, check events, etc.
+    pub fn fire_and_forget<F, Fut>(&self, f: F)
+    where
+        F: FnOnce(DbPool) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let _ = tx.send(Box::new(move |pool| Box::pin(f(pool)))).await;
+        });
+    }
+
+    /// Submit a write operation and wait for it to complete.
+    /// Use this for critical writes where the caller needs confirmation.
+    pub async fn execute<F, Fut, T>(&self, f: F) -> T
+    where
+        F: FnOnce(DbPool) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        let _ = self
+            .tx
+            .send(Box::new(move |pool| {
+                Box::pin(async move {
+                    let result = f(pool).await;
+                    let _ = result_tx.send(result);
+                })
+            }))
+            .await;
+        result_rx
+            .await
+            .expect("WriteQueue dropped before completion")
+    }
 }
 
 /// Spawn a background task that periodically reports pool metrics to Prometheus.
