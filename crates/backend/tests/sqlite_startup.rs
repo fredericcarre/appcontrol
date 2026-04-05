@@ -711,12 +711,22 @@ async fn test_sqlite_startup_full() {
         .json()
         .await
         .unwrap_or(serde_json::json!({"agents": []}));
-    let dummy_agent_id: uuid::Uuid = agents_body["agents"]
+    let valid_agent_id: Option<uuid::Uuid> = agents_body["agents"]
         .as_array()
         .and_then(|a| a.first())
         .and_then(|a| a["id"].as_str())
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(uuid::Uuid::new_v4);
+        .and_then(|s| s.parse().ok());
+
+    // Build mappings only if we have a valid agent (FK constraint requires it)
+    let mappings = if let Some(aid) = valid_agent_id {
+        serde_json::json!([{
+            "component_name": first_comp_name,
+            "agent_id": aid.to_string(),
+            "resolved_via": "wizard"
+        }])
+    } else {
+        serde_json::json!([])
+    };
     let resp = client
         .post(format!("{}/api/v1/apps/{}/profiles", api_url, app_id))
         .header("Authorization", format!("Bearer {}", token))
@@ -725,13 +735,7 @@ async fn test_sqlite_startup_full() {
             "description": "Primary site configuration",
             "profile_type": "primary",
             "gateway_ids": [],
-            "mappings": [
-                {
-                    "component_name": first_comp_name,
-                    "agent_id": dummy_agent_id.to_string(),
-                    "resolved_via": "wizard"
-                }
-            ]
+            "mappings": mappings
         }))
         .send()
         .await
