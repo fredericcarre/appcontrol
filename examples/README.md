@@ -111,6 +111,26 @@ Oracle RAC Node 2 → Oracle RAC Node 1
 - Integrity checks (DataGuard, ASM)
 - Long timeout values for enterprise middleware
 
+## Windows Examples
+
+The default examples use Unix shell commands (`test -f`, `touch`, `rm -f`) which don't work on Windows CMD. Windows-compatible versions are provided:
+
+| Linux/macOS | Windows |
+|-------------|---------|
+| `metrics-demo.json` | `metrics-demo-windows.json` |
+| `three-tier-webapp.json` | `three-tier-webapp-windows.json` |
+
+**Windows command equivalents:**
+
+| Unix | Windows CMD |
+|------|-------------|
+| `touch file` | `echo.> file` |
+| `test -f file` | `if exist file (exit /b 0) else (exit /b 1)` |
+| `rm -f file` | `del /f /q file 2>nul` |
+| `mkdir -p dir` | `if not exist dir mkdir dir` |
+
+Windows examples use `%TEMP%\appcontrol\` instead of `/tmp/appcontrol/` for flag files.
+
 ## Getting the Examples
 
 ### From the latest release (recommended)
