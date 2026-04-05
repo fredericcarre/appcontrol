@@ -492,18 +492,40 @@ pub async fn store_check_event(
     duration_ms: i32,
     metrics: &Option<serde_json::Value>,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"INSERT INTO check_events (component_id, check_type, exit_code, stdout, duration_ms, metrics)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
-    )
-    .bind(crate::db::bind_id(component_id))
-    .bind(check_type)
-    .bind(exit_code)
-    .bind(stdout)
-    .bind(duration_ms)
-    .bind(metrics)
-    .execute(pool)
-    .await?;
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query(
+            r#"INSERT INTO check_events (component_id, check_type, exit_code, stdout, duration_ms, metrics)
+               VALUES ($1, $2, $3, $4, $5, $6)"#,
+        )
+        .bind(crate::db::bind_id(component_id))
+        .bind(check_type)
+        .bind(exit_code)
+        .bind(stdout)
+        .bind(duration_ms)
+        .bind(metrics)
+        .execute(pool)
+        .await?;
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        // SQLite: metrics must be stored as TEXT (not JSON blob)
+        let metrics_str = metrics
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        sqlx::query(
+            r#"INSERT INTO check_events (component_id, check_type, exit_code, stdout, duration_ms, metrics)
+               VALUES ($1, $2, $3, $4, $5, $6)"#,
+        )
+        .bind(crate::db::bind_id(component_id))
+        .bind(check_type)
+        .bind(exit_code)
+        .bind(stdout)
+        .bind(duration_ms)
+        .bind(metrics_str)
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
 
