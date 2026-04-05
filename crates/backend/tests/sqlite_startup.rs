@@ -707,7 +707,10 @@ async fn test_sqlite_startup_full() {
         .send()
         .await
         .expect("List agents request failed");
-    let agents_body: serde_json::Value = agents_resp.json().await.unwrap_or(serde_json::json!({"agents": []}));
+    let agents_body: serde_json::Value = agents_resp
+        .json()
+        .await
+        .unwrap_or(serde_json::json!({"agents": []}));
     let dummy_agent_id: uuid::Uuid = agents_body["agents"]
         .as_array()
         .and_then(|a| a.first())
