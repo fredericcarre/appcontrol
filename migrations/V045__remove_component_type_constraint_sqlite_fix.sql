@@ -1,0 +1,4 @@
+-- V045: No-op for PostgreSQL (constraint already removed in V031)
+-- This migration exists to keep version numbering in sync with SQLite.
+-- The SQLite V045 recreates the components table to remove the CHECK constraint
+-- that V031 failed to remove (V031 was a no-op for SQLite).

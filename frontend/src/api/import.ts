@@ -72,6 +72,7 @@ export interface ImportPreviewResponse {
 
 export interface MappingConfig {
   component_name: string;
+  host?: string;
   agent_id: string;
   resolved_via: string;
 }
