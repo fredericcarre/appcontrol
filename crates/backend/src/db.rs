@@ -328,7 +328,7 @@ pub async fn create_pool(config: &AppConfig) -> Result<DbPool, sqlx::Error> {
         }
 
         sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(config.db_pool_size.min(16)) // SQLite doesn't benefit from many connections
+            .max_connections(config.db_pool_size.min(8)) // SQLite: single writer, keep pool small
             .idle_timeout(Some(Duration::from_secs(config.db_idle_timeout_secs)))
             .acquire_timeout(Duration::from_secs(config.db_connect_timeout_secs))
             .after_connect(|conn, _meta| {
@@ -336,8 +336,8 @@ pub async fn create_pool(config: &AppConfig) -> Result<DbPool, sqlx::Error> {
                     use sqlx::Executor;
                     // Enable WAL mode for better concurrency
                     conn.execute("PRAGMA journal_mode=WAL").await?;
-                    // Busy timeout for handling concurrent access
-                    conn.execute("PRAGMA busy_timeout=30000").await?;
+                    // Busy timeout: 60s to handle write contention during operations
+                    conn.execute("PRAGMA busy_timeout=60000").await?;
                     // Foreign keys enforcement (off by default in SQLite)
                     conn.execute("PRAGMA foreign_keys=ON").await?;
                     // Synchronous mode for durability (NORMAL is good balance)

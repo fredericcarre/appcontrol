@@ -319,19 +319,17 @@ pub async fn get_app(
                 "connected"
             };
 
-            // For application-type components, derive state from referenced app
-            // If component_type is 'application' but no referenced_app_id, show UNKNOWN
-            let derived_state = if c.component_type == "application" {
-                match c.referenced_app_id {
-                    Some(ref_id) => referenced_app_statuses
+            // For application-type components with a referenced app, derive state from that app.
+            // If component_type is 'application' but no referenced_app_id, treat as normal component.
+            let derived_state =
+                if let Some(ref_id) = c.referenced_app_id.filter(|_| c.component_type == "application") {
+                    referenced_app_statuses
                         .get(&ref_id)
                         .cloned()
-                        .unwrap_or_else(|| "UNKNOWN".to_string()),
-                    None => "UNKNOWN".to_string(), // Misconfigured: application type without referenced app
-                }
-            } else {
-                c.current_state.clone()
-            };
+                        .unwrap_or_else(|| "UNKNOWN".to_string())
+                } else {
+                    c.current_state.clone()
+                };
 
             json!({
                 "id": c.id,

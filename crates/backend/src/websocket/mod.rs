@@ -952,15 +952,7 @@ async fn process_agent_message(
                 "Processing check result"
             );
 
-            // Store check event with metrics for audit trail
-            if let Err(e) = crate::core::fsm::store_check_event(&state.db, &cr).await {
-                tracing::warn!(
-                    component_id = %cr.component_id,
-                    "Failed to store check event: {}", e
-                );
-            }
-
-            // Process FSM transition based on exit code
+            // Process FSM transition first (priority: state must update fast)
             if let Err(e) =
                 crate::core::fsm::process_check_result(state, cr.component_id, cr.exit_code).await
             {
@@ -970,6 +962,19 @@ async fn process_agent_message(
                     "Failed to process check result: {}", e
                 );
             }
+
+            // Store check event in background to reduce DB contention.
+            // The FSM transition above is the critical path; the audit event
+            // can be slightly delayed without impact.
+            let db = state.db.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::core::fsm::store_check_event(&db, &cr).await {
+                    tracing::warn!(
+                        component_id = %cr.component_id,
+                        "Failed to store check event: {}", e
+                    );
+                }
+            });
         }
         appcontrol_common::AgentMessage::CommandResult {
             request_id,

@@ -781,7 +781,7 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
         #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
         if needs_fk_off {
             sqlx::query("PRAGMA foreign_keys = OFF")
-                .execute(&*pool)
+                .execute(pool)
                 .await?;
         }
 
@@ -825,7 +825,7 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
         #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
         if needs_fk_off {
             sqlx::query("PRAGMA foreign_keys = ON")
-                .execute(&*pool)
+                .execute(pool)
                 .await?;
         }
 
