@@ -4142,6 +4142,17 @@ pub async fn insert_profile_mapping(
     Ok(())
 }
 
+/// Get agent hostname by ID.
+pub async fn get_agent_hostname(pool: &DbPool, agent_id: Uuid) -> Result<Option<String>, sqlx::Error> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT hostname FROM agents WHERE id = $1",
+    )
+    .bind(crate::db::bind_id(agent_id))
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.0))
+}
+
 /// Delete a binding profile.
 pub async fn delete_binding_profile(pool: &DbPool, profile_id: DbUuid) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM binding_profiles WHERE id = $1")

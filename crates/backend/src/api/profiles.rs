@@ -88,7 +88,9 @@ pub struct CreateProfileRequest {
 #[derive(Debug, Deserialize)]
 pub struct CreateMappingRequest {
     pub component_name: String,
-    pub host: String,
+    /// Host is optional — resolved from agent hostname when not provided
+    #[serde(default)]
+    pub host: Option<String>,
     pub agent_id: DbUuid,
     pub resolved_via: String,
 }
@@ -263,11 +265,21 @@ pub async fn create_profile(
     } else if let Some(ref mappings) = body.mappings {
         // Create manual mappings
         for m in mappings {
+            // Resolve host from agent hostname if not provided
+            let host = match &m.host {
+                Some(h) if !h.is_empty() => h.clone(),
+                _ => {
+                    // Look up agent hostname
+                    crate::repository::misc_queries::get_agent_hostname(&state.db, *m.agent_id)
+                        .await?
+                        .unwrap_or_default()
+                }
+            };
             crate::repository::misc_queries::insert_profile_mapping(
                 &state.db,
                 profile_id,
                 &m.component_name,
-                &m.host,
+                &host,
                 m.agent_id,
                 &m.resolved_via,
             )

@@ -74,10 +74,26 @@ async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) {
         let sql = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Cannot read migration: {}", path.display()));
 
+        // Some migrations need FK checks disabled (table recreation)
+        let needs_fk_off = sql.contains("-- FK_OFF");
+        if needs_fk_off {
+            sqlx::query("PRAGMA foreign_keys = OFF")
+                .execute(&*pool)
+                .await
+                .expect("Failed to disable FK checks");
+        }
+
         sqlx::raw_sql(&sql)
             .execute(pool)
             .await
             .unwrap_or_else(|e| panic!("Migration {} failed: {}", name, e));
+
+        if needs_fk_off {
+            sqlx::query("PRAGMA foreign_keys = ON")
+                .execute(&*pool)
+                .await
+                .expect("Failed to re-enable FK checks");
+        }
 
         sqlx::query("INSERT INTO _migrations (version, name) VALUES ($1, $2)")
             .bind(version)
@@ -679,6 +695,54 @@ async fn test_sqlite_startup_full() {
         );
         eprintln!("  Created dependency: {} → {}", from, to);
     }
+
+    // --- Create binding profile (without host in mappings — should resolve from agent) ---
+    // Regression test: the onboarding wizard sends mappings without 'host',
+    // the backend should accept this and resolve the hostname from the agent.
+    let first_comp_name = components[0].0;
+    // Fetch agents to get a valid agent_id for the profile mapping
+    let agents_resp = client
+        .get(format!("{}/api/v1/agents", api_url))
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .expect("List agents request failed");
+    let agents_body: serde_json::Value = agents_resp.json().await.unwrap_or(serde_json::json!({"agents": []}));
+    let dummy_agent_id: uuid::Uuid = agents_body["agents"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|a| a["id"].as_str())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(uuid::Uuid::new_v4);
+    let resp = client
+        .post(format!("{}/api/v1/apps/{}/profiles", api_url, app_id))
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&serde_json::json!({
+            "name": "primary",
+            "description": "Primary site configuration",
+            "profile_type": "primary",
+            "gateway_ids": [],
+            "mappings": [
+                {
+                    "component_name": first_comp_name,
+                    "agent_id": dummy_agent_id.to_string(),
+                    "resolved_via": "wizard"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .expect("Create profile request failed");
+    let profile_status = resp.status().as_u16();
+    let profile_body = resp.text().await.unwrap_or_default();
+    assert!(
+        profile_status == 200 || profile_status == 201,
+        "POST /api/v1/apps/{}/profiles should return 200/201, got {} — body: {}",
+        app_id,
+        profile_status,
+        &profile_body[..profile_body.len().min(500)]
+    );
+    eprintln!("Created binding profile without host in mappings — OK");
 
     // --- Verify app topology ---
     let resp = client
