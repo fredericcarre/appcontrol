@@ -411,6 +411,77 @@ pub async fn update_component_state<'a>(
     Ok(())
 }
 
+// ── SQLite pool-based variants (no transaction, minimal lock duration) ──
+
+/// Fetch component for transition using pool directly (SQLite only).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn fetch_component_for_transition_pool(
+    pool: &crate::db::DbPool,
+    component_id: Uuid,
+) -> Result<Option<(String, DbUuid, String, String)>, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        current_state: String,
+        application_id: String,
+        component_name: String,
+        app_name: String,
+    }
+    let row = sqlx::query_as::<_, Row>(
+        r#"SELECT c.current_state, c.application_id, c.name as component_name, a.name as app_name
+           FROM components c
+           JOIN applications a ON c.application_id = a.id
+           WHERE c.id = $1"#,
+    )
+    .bind(component_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|r| {
+        let app_id = DbUuid::from(Uuid::parse_str(&r.application_id).unwrap_or(Uuid::nil()));
+        (r.current_state, app_id, r.component_name, r.app_name)
+    }))
+}
+
+/// Update component state using pool directly (SQLite only).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn update_component_state_pool(
+    pool: &crate::db::DbPool,
+    component_id: Uuid,
+    new_state: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE components SET current_state = $2, updated_at = datetime('now') WHERE id = $1",
+    )
+    .bind(component_id.to_string())
+    .bind(new_state)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert state transition using pool directly (SQLite only).
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn insert_state_transition_pool(
+    pool: &crate::db::DbPool,
+    component_id: Uuid,
+    from_state: &str,
+    to_state: &str,
+    trigger: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO state_transitions (id, component_id, from_state, to_state, trigger)
+           VALUES ($1, $2, $3, $4, $5)"#,
+    )
+    .bind(crate::db::bind_id(Uuid::new_v4()))
+    .bind(crate::db::bind_id(component_id))
+    .bind(from_state)
+    .bind(to_state)
+    .bind(trigger)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Store a check event.
 pub async fn store_check_event(
     pool: &DbPool,

@@ -963,18 +963,31 @@ async fn process_agent_message(
                 );
             }
 
-            // Store check event in background to reduce DB contention.
-            // The FSM transition above is the critical path; the audit event
-            // can be slightly delayed without impact.
-            let db = state.db.clone();
-            tokio::spawn(async move {
-                if let Err(e) = crate::core::fsm::store_check_event(&db, &cr).await {
-                    tracing::warn!(
-                        component_id = %cr.component_id,
-                        "Failed to store check event: {}", e
-                    );
-                }
-            });
+            // Store check event via write queue (SQLite) or background task (PostgreSQL).
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            {
+                let db = state.db.clone();
+                state.write_queue.fire_and_forget(move |_pool| async move {
+                    if let Err(e) = crate::core::fsm::store_check_event(&db, &cr).await {
+                        tracing::warn!(
+                            component_id = %cr.component_id,
+                            "Failed to store check event: {}", e
+                        );
+                    }
+                });
+            }
+            #[cfg(feature = "postgres")]
+            {
+                let db = state.db.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::core::fsm::store_check_event(&db, &cr).await {
+                        tracing::warn!(
+                            component_id = %cr.component_id,
+                            "Failed to store check event: {}", e
+                        );
+                    }
+                });
+            }
         }
         appcontrol_common::AgentMessage::CommandResult {
             request_id,

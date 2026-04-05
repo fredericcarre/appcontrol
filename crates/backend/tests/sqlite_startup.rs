@@ -426,6 +426,7 @@ async fn start_backend(
         gateway_repo: appcontrol_backend::repository::gateways::create_gateway_repository(
             pool.clone(),
         ),
+        write_queue: appcontrol_backend::db::WriteQueue::new(pool.clone()),
         db: pool,
         ws_hub: appcontrol_backend::websocket::Hub::new(),
         config,
