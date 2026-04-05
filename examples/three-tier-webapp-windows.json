@@ -1,0 +1,93 @@
+{
+  "name": "E-Commerce Platform",
+  "description": "Classic 3-tier web application (Windows version). Uses flag files in %TEMP%\\appcontrol\\.",
+  "tags": { "env": "demo", "tier": "test", "team": "platform" },
+  "components": [
+    {
+      "name": "PostgreSQL Primary",
+      "component_type": "database",
+      "host": "localhost",
+      "check_cmd": "if exist %TEMP%\\appcontrol\\postgresql-primary.running (exit /b 0) else (exit /b 1)",
+      "start_cmd": "if not exist %TEMP%\\appcontrol mkdir %TEMP%\\appcontrol & echo.> %TEMP%\\appcontrol\\postgresql-primary.running",
+      "stop_cmd": "del /f /q %TEMP%\\appcontrol\\postgresql-primary.running 2>nul",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 30,
+      "position": { "x": 400, "y": 400 }
+    },
+    {
+      "name": "Redis Cache",
+      "component_type": "cache",
+      "host": "localhost",
+      "check_cmd": "if exist %TEMP%\\appcontrol\\redis-cache.running (exit /b 0) else (exit /b 1)",
+      "start_cmd": "if not exist %TEMP%\\appcontrol mkdir %TEMP%\\appcontrol & echo.> %TEMP%\\appcontrol\\redis-cache.running",
+      "stop_cmd": "del /f /q %TEMP%\\appcontrol\\redis-cache.running 2>nul",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 30,
+      "position": { "x": 500, "y": 300 }
+    },
+    {
+      "name": "App Server 1",
+      "component_type": "appserver",
+      "host": "localhost",
+      "check_cmd": "if exist %TEMP%\\appcontrol\\app-server-1.running (exit /b 0) else (exit /b 1)",
+      "start_cmd": "if not exist %TEMP%\\appcontrol mkdir %TEMP%\\appcontrol & echo.> %TEMP%\\appcontrol\\app-server-1.running",
+      "stop_cmd": "del /f /q %TEMP%\\appcontrol\\app-server-1.running 2>nul",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 30,
+      "position": { "x": 350, "y": 200 }
+    },
+    {
+      "name": "App Server 2",
+      "component_type": "appserver",
+      "host": "localhost",
+      "check_cmd": "if exist %TEMP%\\appcontrol\\app-server-2.running (exit /b 0) else (exit /b 1)",
+      "start_cmd": "if not exist %TEMP%\\appcontrol mkdir %TEMP%\\appcontrol & echo.> %TEMP%\\appcontrol\\app-server-2.running",
+      "stop_cmd": "del /f /q %TEMP%\\appcontrol\\app-server-2.running 2>nul",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 30,
+      "position": { "x": 550, "y": 200 }
+    },
+    {
+      "name": "Batch Processor",
+      "component_type": "batch",
+      "host": "localhost",
+      "check_cmd": "if exist %TEMP%\\appcontrol\\batch-processor.running (exit /b 0) else (exit /b 1)",
+      "start_cmd": "if not exist %TEMP%\\appcontrol mkdir %TEMP%\\appcontrol & echo.> %TEMP%\\appcontrol\\batch-processor.running",
+      "stop_cmd": "del /f /q %TEMP%\\appcontrol\\batch-processor.running 2>nul",
+      "check_interval_secs": 15,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 60,
+      "position": { "x": 700, "y": 200 }
+    },
+    {
+      "name": "HAProxy Load Balancer",
+      "component_type": "loadbalancer",
+      "host": "localhost",
+      "check_cmd": "if exist %TEMP%\\appcontrol\\haproxy-lb.running (exit /b 0) else (exit /b 1)",
+      "start_cmd": "if not exist %TEMP%\\appcontrol mkdir %TEMP%\\appcontrol & echo.> %TEMP%\\appcontrol\\haproxy-lb.running",
+      "stop_cmd": "del /f /q %TEMP%\\appcontrol\\haproxy-lb.running 2>nul",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 15,
+      "stop_timeout_secs": 15,
+      "position": { "x": 450, "y": 50 }
+    }
+  ],
+  "dependencies": [
+    { "from": "App Server 1", "to": "PostgreSQL Primary", "type": "strong" },
+    { "from": "App Server 1", "to": "Redis Cache", "type": "weak" },
+    { "from": "App Server 2", "to": "PostgreSQL Primary", "type": "strong" },
+    { "from": "App Server 2", "to": "Redis Cache", "type": "weak" },
+    { "from": "Batch Processor", "to": "PostgreSQL Primary", "type": "strong" },
+    { "from": "HAProxy Load Balancer", "to": "App Server 1", "type": "strong" },
+    { "from": "HAProxy Load Balancer", "to": "App Server 2", "type": "strong" }
+  ],
+  "notes": {
+    "start_order": "PostgreSQL Primary → Redis Cache (parallel) → App Server 1 + App Server 2 + Batch Processor (parallel) → HAProxy",
+    "stop_order": "HAProxy → App Servers + Batch (parallel) → Redis (parallel) → PostgreSQL Primary",
+    "testing": "All commands use %TEMP%\\appcontrol\\ with .running flag files. Compatible with Windows CMD."
+  }
+}
