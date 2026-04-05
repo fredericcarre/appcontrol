@@ -287,6 +287,34 @@ pub async fn create_profile(
         }
     }
 
+    // Auto-activate the first primary profile so agents start checking immediately.
+    // Best-effort: if activation fails (e.g. missing FK references), the profile
+    // is still created and can be activated manually later.
+    if body.profile_type == "primary" {
+        let active_exists =
+            crate::repository::misc_queries::get_active_profile_name(&state.db, app_id)
+                .await
+                .ok()
+                .flatten()
+                .is_some();
+        if !active_exists {
+            if let Err(e) =
+                crate::repository::misc_queries::activate_profile(&state.db, profile_id).await
+            {
+                tracing::warn!("Auto-activate profile failed (will need manual activation): {e}");
+            } else if let Err(e) = crate::repository::misc_queries::apply_profile_mappings(
+                &state.db, app_id, profile_id,
+            )
+            .await
+            {
+                tracing::warn!("Auto-apply profile mappings failed: {e}");
+            } else {
+                crate::websocket::push_config_to_affected_agents(&state, Some(app_id), None, None)
+                    .await;
+            }
+        }
+    }
+
     Ok((StatusCode::CREATED, Json(profile)))
 }
 
@@ -353,6 +381,9 @@ pub async fn activate_profile(
         *profile.id,
     )
     .await?;
+
+    // Notify agents about the new bindings so they start health checks
+    crate::websocket::push_config_to_affected_agents(&state, Some(app_id), None, None).await;
 
     Ok(Json(json!({
         "message": "Profile activated successfully",

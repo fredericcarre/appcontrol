@@ -622,35 +622,70 @@ pub async fn complete_action_cancelled(
 // Rate Limit (PostgreSQL HA mode)
 // ============================================================================
 
-/// PostgreSQL-backed rate limit check (UPSERT + window reset).
+/// Database-backed rate limit check (UPSERT + window reset).
 /// Returns the current count after increment.
 pub async fn check_rate_limit_pg(
     pool: &DbPool,
     key: &str,
     window_secs: i32,
 ) -> Result<i32, sqlx::Error> {
-    sqlx::query_scalar::<_, i32>(
-        r#"
-        INSERT INTO rate_limit_counters (key, count, window_start)
-        VALUES ($1, 1, now())
-        ON CONFLICT (key) DO UPDATE SET
-            count = CASE
-                WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
-                THEN 1
-                ELSE rate_limit_counters.count + 1
-            END,
-            window_start = CASE
-                WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
-                THEN now()
-                ELSE rate_limit_counters.window_start
-            END
-        RETURNING count
-        "#,
-    )
-    .bind(key)
-    .bind(window_secs)
-    .fetch_one(pool)
-    .await
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_scalar::<_, i32>(
+            r#"
+            INSERT INTO rate_limit_counters (key, count, window_start)
+            VALUES ($1, 1, now())
+            ON CONFLICT (key) DO UPDATE SET
+                count = CASE
+                    WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
+                    THEN 1
+                    ELSE rate_limit_counters.count + 1
+                END,
+                window_start = CASE
+                    WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
+                    THEN now()
+                    ELSE rate_limit_counters.window_start
+                END
+            RETURNING count
+            "#,
+        )
+        .bind(key)
+        .bind(window_secs)
+        .fetch_one(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        // SQLite: UPSERT with datetime arithmetic
+        sqlx::query(
+            r#"
+            INSERT INTO rate_limit_counters (key, count, window_start)
+            VALUES ($1, 1, datetime('now'))
+            ON CONFLICT (key) DO UPDATE SET
+                count = CASE
+                    WHEN rate_limit_counters.window_start < datetime('now', '-' || $2 || ' seconds')
+                    THEN 1
+                    ELSE rate_limit_counters.count + 1
+                END,
+                window_start = CASE
+                    WHEN rate_limit_counters.window_start < datetime('now', '-' || $2 || ' seconds')
+                    THEN datetime('now')
+                    ELSE rate_limit_counters.window_start
+                END
+            "#,
+        )
+        .bind(key)
+        .bind(window_secs)
+        .execute(pool)
+        .await?;
+
+        // SQLite doesn't support RETURNING — fetch the count
+        let count: i32 = sqlx::query_scalar("SELECT count FROM rate_limit_counters WHERE key = $1")
+            .bind(key)
+            .fetch_one(pool)
+            .await?;
+        Ok(count)
+    }
 }
 
 /// Cleanup expired rate limit counters (PostgreSQL).
@@ -3098,19 +3133,44 @@ pub async fn apply_profile_mappings(
     app_id: Uuid,
     profile_id: Uuid,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"UPDATE components c
-           SET agent_id = m.agent_id
-           FROM binding_profile_mappings m
-           JOIN binding_profiles p ON m.profile_id = p.id
-           WHERE c.application_id = $1
-             AND p.id = $2
-             AND c.name = m.component_name"#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(crate::db::bind_id(profile_id))
-    .execute(pool)
-    .await?;
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query(
+            r#"UPDATE components c
+               SET agent_id = m.agent_id
+               FROM binding_profile_mappings m
+               JOIN binding_profiles p ON m.profile_id = p.id
+               WHERE c.application_id = $1
+                 AND p.id = $2
+                 AND c.name = m.component_name"#,
+        )
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(profile_id))
+        .execute(pool)
+        .await?;
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query(
+            r#"UPDATE components
+               SET agent_id = (
+                   SELECT m.agent_id
+                   FROM binding_profile_mappings m
+                   WHERE m.profile_id = $2
+                     AND m.component_name = components.name
+               )
+               WHERE application_id = $1
+                 AND name IN (
+                     SELECT m2.component_name
+                     FROM binding_profile_mappings m2
+                     WHERE m2.profile_id = $2
+                 )"#,
+        )
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(profile_id))
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
 
