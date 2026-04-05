@@ -415,6 +415,9 @@ pub async fn import_yaml_map(
         warnings,
     };
 
+    // Notify agents about new components so they start health checks
+    crate::websocket::push_config_to_affected_agents(&state, Some(app_id), None, None).await;
+
     Ok((StatusCode::CREATED, Json(json!(result))))
 }
 
@@ -965,6 +968,9 @@ pub async fn import_json_map(
         links_created,
         warnings,
     };
+
+    // Notify agents about new components so they start health checks
+    crate::websocket::push_config_to_affected_agents(&state, Some(app_id), None, None).await;
 
     Ok((StatusCode::CREATED, Json(json!(result))))
 }

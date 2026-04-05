@@ -3098,19 +3098,44 @@ pub async fn apply_profile_mappings(
     app_id: Uuid,
     profile_id: Uuid,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"UPDATE components c
-           SET agent_id = m.agent_id
-           FROM binding_profile_mappings m
-           JOIN binding_profiles p ON m.profile_id = p.id
-           WHERE c.application_id = $1
-             AND p.id = $2
-             AND c.name = m.component_name"#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .bind(crate::db::bind_id(profile_id))
-    .execute(pool)
-    .await?;
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query(
+            r#"UPDATE components c
+               SET agent_id = m.agent_id
+               FROM binding_profile_mappings m
+               JOIN binding_profiles p ON m.profile_id = p.id
+               WHERE c.application_id = $1
+                 AND p.id = $2
+                 AND c.name = m.component_name"#,
+        )
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(profile_id))
+        .execute(pool)
+        .await?;
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query(
+            r#"UPDATE components
+               SET agent_id = (
+                   SELECT m.agent_id
+                   FROM binding_profile_mappings m
+                   WHERE m.profile_id = $2
+                     AND m.component_name = components.name
+               )
+               WHERE application_id = $1
+                 AND name IN (
+                     SELECT m2.component_name
+                     FROM binding_profile_mappings m2
+                     WHERE m2.profile_id = $2
+                 )"#,
+        )
+        .bind(crate::db::bind_id(app_id))
+        .bind(crate::db::bind_id(profile_id))
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
 
