@@ -773,6 +773,18 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
 
         tracing::info!("Applying migration V{:03}: {}", version, name);
 
+        // SQLite: some migrations need FK checks disabled (e.g. table recreation).
+        // The marker "-- FK_OFF" in the SQL signals this.  PRAGMA foreign_keys
+        // must be set outside any transaction, so we toggle it around the tx.
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let needs_fk_off = sql.contains("-- FK_OFF");
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        if needs_fk_off {
+            sqlx::query("PRAGMA foreign_keys = OFF")
+                .execute(&*pool)
+                .await?;
+        }
+
         // Execute migration in a transaction.
         // Migration files contain multiple SQL statements separated by semicolons.
         // sqlx::query() uses the extended protocol which only supports one statement,
@@ -808,6 +820,14 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
         appcontrol_backend::repository::startup_queries::record_migration(&mut tx, *version, name)
             .await?;
         tx.commit().await?;
+
+        // Re-enable FK checks after the migration transaction commits
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        if needs_fk_off {
+            sqlx::query("PRAGMA foreign_keys = ON")
+                .execute(&*pool)
+                .await?;
+        }
 
         applied_count += 1;
     }

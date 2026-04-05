@@ -1,15 +1,10 @@
 -- V045: Actually remove component_type CHECK constraint (SQLite)
 -- V031 was a no-op but the CHECK constraint from V004 is still active.
 -- SQLite requires table recreation to remove CHECK constraints.
---
--- Strategy: rename old → create new → copy → drop old.
--- ALTER TABLE RENAME does not trigger FK cascades.
+-- FK_OFF
 
--- Step 1: Rename old table (no FK cascade triggered)
-ALTER TABLE components RENAME TO components_old;
-
--- Step 2: Create new table without CHECK constraint on component_type
-CREATE TABLE components (
+-- Step 1: Create new table without CHECK constraint on component_type
+CREATE TABLE components_new (
     id TEXT PRIMARY KEY,
     application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -49,8 +44,8 @@ CREATE TABLE components (
     UNIQUE(application_id, name)
 );
 
--- Step 3: Copy all data
-INSERT INTO components SELECT
+-- Step 2: Copy all data
+INSERT INTO components_new SELECT
     id, application_id, name, component_type, agent_id,
     check_cmd, start_cmd, stop_cmd,
     integrity_check_cmd, post_start_check_cmd,
@@ -66,10 +61,13 @@ INSERT INTO components SELECT
     referenced_app_id,
     cluster_size, cluster_nodes,
     log_capture_enabled, log_buffer_lines
-FROM components_old;
+FROM components;
 
--- Step 4: Drop old table
-DROP TABLE components_old;
+-- Step 3: Drop old table (FK_OFF prevents cascade deletes in child tables)
+DROP TABLE components;
+
+-- Step 4: Rename new table
+ALTER TABLE components_new RENAME TO components;
 
 -- Step 5: Recreate indexes
 CREATE INDEX idx_components_app ON components (application_id);
