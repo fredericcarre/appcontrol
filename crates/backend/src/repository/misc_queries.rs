@@ -622,35 +622,70 @@ pub async fn complete_action_cancelled(
 // Rate Limit (PostgreSQL HA mode)
 // ============================================================================
 
-/// PostgreSQL-backed rate limit check (UPSERT + window reset).
+/// Database-backed rate limit check (UPSERT + window reset).
 /// Returns the current count after increment.
 pub async fn check_rate_limit_pg(
     pool: &DbPool,
     key: &str,
     window_secs: i32,
 ) -> Result<i32, sqlx::Error> {
-    sqlx::query_scalar::<_, i32>(
-        r#"
-        INSERT INTO rate_limit_counters (key, count, window_start)
-        VALUES ($1, 1, now())
-        ON CONFLICT (key) DO UPDATE SET
-            count = CASE
-                WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
-                THEN 1
-                ELSE rate_limit_counters.count + 1
-            END,
-            window_start = CASE
-                WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
-                THEN now()
-                ELSE rate_limit_counters.window_start
-            END
-        RETURNING count
-        "#,
-    )
-    .bind(key)
-    .bind(window_secs)
-    .fetch_one(pool)
-    .await
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_scalar::<_, i32>(
+            r#"
+            INSERT INTO rate_limit_counters (key, count, window_start)
+            VALUES ($1, 1, now())
+            ON CONFLICT (key) DO UPDATE SET
+                count = CASE
+                    WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
+                    THEN 1
+                    ELSE rate_limit_counters.count + 1
+                END,
+                window_start = CASE
+                    WHEN rate_limit_counters.window_start < now() - $2 * interval '1 second'
+                    THEN now()
+                    ELSE rate_limit_counters.window_start
+                END
+            RETURNING count
+            "#,
+        )
+        .bind(key)
+        .bind(window_secs)
+        .fetch_one(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        // SQLite: UPSERT with datetime arithmetic
+        sqlx::query(
+            r#"
+            INSERT INTO rate_limit_counters (key, count, window_start)
+            VALUES ($1, 1, datetime('now'))
+            ON CONFLICT (key) DO UPDATE SET
+                count = CASE
+                    WHEN rate_limit_counters.window_start < datetime('now', '-' || $2 || ' seconds')
+                    THEN 1
+                    ELSE rate_limit_counters.count + 1
+                END,
+                window_start = CASE
+                    WHEN rate_limit_counters.window_start < datetime('now', '-' || $2 || ' seconds')
+                    THEN datetime('now')
+                    ELSE rate_limit_counters.window_start
+                END
+            "#,
+        )
+        .bind(key)
+        .bind(window_secs)
+        .execute(pool)
+        .await?;
+
+        // SQLite doesn't support RETURNING — fetch the count
+        let count: i32 = sqlx::query_scalar("SELECT count FROM rate_limit_counters WHERE key = $1")
+            .bind(key)
+            .fetch_one(pool)
+            .await?;
+        Ok(count)
+    }
 }
 
 /// Cleanup expired rate limit counters (PostgreSQL).
