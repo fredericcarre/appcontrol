@@ -875,7 +875,7 @@ function Do-Help {
     Write-Host "  stop                    Stop all running processes"
     Write-Host "  status                  Show status of all components"
     Write-Host "  add-site <name> [port]  Add a new site (default gateway port: 4443)"
-    Write-Host "  import-example [name]   Import an example application map"
+    Write-Host "  import-example [name] [site]  Import an example application map"
     Write-Host "  upgrade                 Stop, update binaries+frontend, restart"
     Write-Host "  logs [file]             Show recent log output"
     Write-Host "  help                    Show this help message"
@@ -891,8 +891,9 @@ function Do-Help {
     Write-Host "  .\appcontrol.ps1 add-site Production 4443"
     Write-Host "  .\appcontrol.ps1 add-site DR-Site 4444"
     Write-Host "  .\appcontrol.ps1 status"
-    Write-Host "  .\appcontrol.ps1 import-example                   # list examples"
-    Write-Host "  .\appcontrol.ps1 import-example metrics-demo-windows"
+    Write-Host "  .\appcontrol.ps1 import-example                              # list examples"
+    Write-Host "  .\appcontrol.ps1 import-example metrics-demo-windows         # auto-select site"
+    Write-Host "  .\appcontrol.ps1 import-example metrics-demo-windows Production  # specify site"
     Write-Host "  .\appcontrol.ps1 logs gateway-Production.log"
     Write-Host "  .\appcontrol.ps1 stop"
     Write-Host "  .\appcontrol.ps1 upgrade"
@@ -994,6 +995,7 @@ function Do-ImportExample {
     Write-Info ("Importing: " + (Split-Path -Leaf $exampleFile))
 
     # Login
+    $baseUri = "http://localhost:" + $port
     try {
         $token = Login-Backend -Port $port -AdminEmail $adminEmail -AdminPassword $adminPassword
     } catch {
@@ -1001,16 +1003,76 @@ function Do-ImportExample {
         return
     }
 
-    # Read and import
+    # Get available sites
+    $sitesResult = Invoke-Api -Method "GET" -Uri ($baseUri + "/api/v1/sites") -Token $token
+    $sites = @()
+    if ($sitesResult -and $sitesResult.sites) { $sites = @($sitesResult.sites) }
+
+    if ($sites.Count -eq 0) {
+        Write-Err "No sites configured. Run 'add-site' first."
+        return
+    }
+
+    # Select site
+    $siteId = $null
+    if ($Arg2) {
+        # Site specified as argument
+        $match = $sites | Where-Object { $_.site_name -eq $Arg2 -or $_.site_code -eq $Arg2 -or $_.id -eq $Arg2 }
+        if ($match) {
+            $siteId = $match.id
+            Write-Info ("Using site: " + $match.site_name)
+        } else {
+            Write-Err ("Site not found: " + $Arg2)
+            return
+        }
+    } elseif ($sites.Count -eq 1) {
+        $siteId = $sites[0].id
+        Write-Info ("Using site: " + $sites[0].site_name)
+    } else {
+        Write-Host ""
+        Write-Host "Available sites:" -ForegroundColor Yellow
+        for ($i = 0; $i -lt $sites.Count; $i++) {
+            $s = $sites[$i]
+            $stype = if ($s.site_type) { " (" + $s.site_type + ")" } else { "" }
+            Write-Host ("  [" + ($i + 1) + "] " + $s.site_name + $stype) -ForegroundColor White
+        }
+        Write-Host ""
+        $choice = Read-Host "Select site number"
+        $idx = [int]$choice - 1
+        if ($idx -ge 0 -and $idx -lt $sites.Count) {
+            $siteId = $sites[$idx].id
+            Write-Info ("Using site: " + $sites[$idx].site_name)
+        } else {
+            Write-Err "Invalid selection."
+            return
+        }
+    }
+
+    # Get agents on this site to show which host will be used
+    $agentsResult = Invoke-Api -Method "GET" -Uri ($baseUri + "/api/v1/agents") -Token $token
+    if ($agentsResult -and $agentsResult.agents) {
+        $agentCount = @($agentsResult.agents).Count
+        Write-Info ("Agents available: " + $agentCount)
+        foreach ($a in $agentsResult.agents) {
+            Write-Host ("  - " + $a.hostname + " (" + $a.id.Substring(0, 8) + ")") -ForegroundColor DarkGray
+        }
+    }
+
+    # Read example and wrap in import envelope
     $jsonContent = Get-Content -Path $exampleFile -Raw -Encoding UTF8
-    $baseUri = "http://localhost:" + $port
+    $importBody = @{
+        json    = $jsonContent
+        site_id = $siteId
+    }
 
     try {
-        $body = $jsonContent | ConvertFrom-Json
-        $result = Invoke-Api -Method "POST" -Uri ($baseUri + "/api/v1/import/json") -Body $body -Token $token
+        $result = Invoke-Api -Method "POST" -Uri ($baseUri + "/api/v1/import/json") -Body $importBody -Token $token
         if ($result -and $result.application_id) {
             Write-Ok ("Application imported: " + $result.application_name + " (ID: " + $result.application_id + ")")
             Write-Info ("Components: " + $result.components_created + ", Dependencies: " + $result.dependencies_created)
+            if ($result.warnings -and $result.warnings.Count -gt 0) {
+                foreach ($w in $result.warnings) { Write-Warn $w }
+            }
         } else {
             Write-Ok "Import completed."
         }
