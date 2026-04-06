@@ -82,17 +82,11 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
     #[cfg(windows)]
     let child = {
         use tokio::process::Command;
-        // On Windows, use cmd /C for all commands.
-        // PowerShell detection was causing double-nesting and parsing issues.
-        // Instead, hide the console window to avoid visible shell popups.
         let mut cmd = Command::new("cmd");
         cmd.arg("/C").arg(command);
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .creation_flags(
-                windows::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP.0
-                    | windows::Win32::System::Threading::CREATE_NO_WINDOW.0,
-            );
+            .creation_flags(windows::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP.0);
         cmd.spawn()?
     };
 
@@ -195,10 +189,7 @@ where
         cmd.arg("/C").arg(command);
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .creation_flags(
-                windows::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP.0
-                    | windows::Win32::System::Threading::CREATE_NO_WINDOW.0,
-            );
+            .creation_flags(windows::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP.0);
         cmd.spawn()?
     };
 
