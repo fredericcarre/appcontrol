@@ -82,10 +82,21 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
     #[cfg(windows)]
     let child = {
         use tokio::process::Command;
-        let mut cmd = Command::new("cmd");
-        cmd.arg("/C")
-            .arg(command)
-            .stdout(Stdio::piped())
+        let mut cmd = if command
+            .trim_start()
+            .to_lowercase()
+            .starts_with("powershell")
+        {
+            // Run PowerShell commands directly to avoid CMD mangling JSON
+            let mut c = Command::new("powershell");
+            c.args(["-NoProfile", "-NonInteractive", "-Command", command]);
+            c
+        } else {
+            let mut c = Command::new("cmd");
+            c.arg("/C").arg(command);
+            c
+        };
+        cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped())
             // CREATE_NEW_PROCESS_GROUP allows us to kill the entire tree on timeout
             .creation_flags(windows::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP.0);
@@ -187,10 +198,20 @@ where
     #[cfg(windows)]
     let mut child = {
         use tokio::process::Command;
-        let mut cmd = Command::new("cmd");
-        cmd.arg("/C")
-            .arg(command)
-            .stdout(Stdio::piped())
+        let mut cmd = if command
+            .trim_start()
+            .to_lowercase()
+            .starts_with("powershell")
+        {
+            let mut c = Command::new("powershell");
+            c.args(["-NoProfile", "-NonInteractive", "-Command", command]);
+            c
+        } else {
+            let mut c = Command::new("cmd");
+            c.arg("/C").arg(command);
+            c
+        };
+        cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .creation_flags(windows::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP.0);
         cmd.spawn()?
