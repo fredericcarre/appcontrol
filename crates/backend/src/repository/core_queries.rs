@@ -576,26 +576,55 @@ pub async fn get_active_operation(
     )>,
     sqlx::Error,
 > {
-    sqlx::query_as::<
-        _,
-        (
-            String,
-            chrono::DateTime<chrono::Utc>,
-            chrono::DateTime<chrono::Utc>,
-            Uuid,
-            String,
-            Option<String>,
-        ),
-    >(
-        r#"
-        SELECT operation, started_at, last_heartbeat, user_id, status, backend_instance
-        FROM operation_locks
-        WHERE app_id = $1
-        "#,
-    )
-    .bind(crate::db::bind_id(app_id))
-    .fetch_optional(pool)
-    .await
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as::<
+            _,
+            (
+                String,
+                chrono::DateTime<chrono::Utc>,
+                chrono::DateTime<chrono::Utc>,
+                Uuid,
+                String,
+                Option<String>,
+            ),
+        >(
+            r#"
+            SELECT operation, started_at, last_heartbeat, user_id, status, backend_instance
+            FROM operation_locks
+            WHERE app_id = $1
+            "#,
+        )
+        .bind(crate::db::bind_id(app_id))
+        .fetch_optional(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                chrono::DateTime<chrono::Utc>,
+                chrono::DateTime<chrono::Utc>,
+                DbUuid,
+                String,
+                Option<String>,
+            ),
+        >(
+            r#"
+            SELECT operation, started_at, last_heartbeat, user_id, status, backend_instance
+            FROM operation_locks
+            WHERE app_id = $1
+            "#,
+        )
+        .bind(crate::db::bind_id(app_id))
+        .fetch_optional(pool)
+        .await?;
+        Ok(row.map(|(op, started, hb, uid, status, instance)| {
+            (op, started, hb, uid.into_inner(), status, instance)
+        }))
+    }
 }
 
 /// Get operation lock status for cancellation check.
@@ -731,26 +760,66 @@ pub async fn list_all_operation_locks(
     )>,
     sqlx::Error,
 > {
-    sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            chrono::DateTime<chrono::Utc>,
-            chrono::DateTime<chrono::Utc>,
-            Uuid,
-            String,
-            Option<String>,
-        ),
-    >(
-        r#"
-        SELECT app_id, operation, started_at, last_heartbeat, user_id, status, backend_instance
-        FROM operation_locks
-        ORDER BY started_at DESC
-        "#,
-    )
-    .fetch_all(pool)
-    .await
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                String,
+                chrono::DateTime<chrono::Utc>,
+                chrono::DateTime<chrono::Utc>,
+                Uuid,
+                String,
+                Option<String>,
+            ),
+        >(
+            r#"
+            SELECT app_id, operation, started_at, last_heartbeat, user_id, status, backend_instance
+            FROM operation_locks
+            ORDER BY started_at DESC
+            "#,
+        )
+        .fetch_all(pool)
+        .await
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                DbUuid,
+                String,
+                chrono::DateTime<chrono::Utc>,
+                chrono::DateTime<chrono::Utc>,
+                DbUuid,
+                String,
+                Option<String>,
+            ),
+        >(
+            r#"
+            SELECT app_id, operation, started_at, last_heartbeat, user_id, status, backend_instance
+            FROM operation_locks
+            ORDER BY started_at DESC
+            "#,
+        )
+        .fetch_all(pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(aid, op, started, hb, uid, status, instance)| {
+                (
+                    aid.into_inner(),
+                    op,
+                    started,
+                    hb,
+                    uid.into_inner(),
+                    status,
+                    instance,
+                )
+            })
+            .collect())
+    }
 }
 
 /// Update operation heartbeat (PostgreSQL).
