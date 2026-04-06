@@ -2149,7 +2149,9 @@ pub async fn get_component_for_logs(
     component_id: DbUuid,
 ) -> Result<Option<LogComponentRow>, sqlx::Error> {
     sqlx::query_as::<_, LogComponentRow>(
-        "SELECT id, application_id, organization_id, name, agent_id FROM components WHERE id = $1",
+        "SELECT c.id, c.application_id, a.organization_id, c.name, c.agent_id \
+         FROM components c JOIN applications a ON c.application_id = a.id \
+         WHERE c.id = $1",
     )
     .bind(crate::db::bind_id(component_id))
     .fetch_optional(pool)
@@ -2351,10 +2353,14 @@ pub async fn get_component_org_id(
     pool: &DbPool,
     component_id: DbUuid,
 ) -> Result<DbUuid, sqlx::Error> {
-    sqlx::query_scalar::<_, DbUuid>("SELECT organization_id FROM components WHERE id = $1")
-        .bind(crate::db::bind_id(component_id))
-        .fetch_one(pool)
-        .await
+    sqlx::query_scalar::<_, DbUuid>(
+        "SELECT a.organization_id FROM components c \
+         JOIN applications a ON c.application_id = a.id \
+         WHERE c.id = $1",
+    )
+    .bind(crate::db::bind_id(component_id))
+    .fetch_one(pool)
+    .await
 }
 
 /// Insert a log access audit record.
