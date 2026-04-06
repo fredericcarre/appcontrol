@@ -1081,6 +1081,53 @@ function Do-ImportExample {
         return
     }
 
+    # Auto-assign agent to components (like the UI import wizard does)
+    $appId = $null
+    if ($result -and $result.application_id) { $appId = $result.application_id }
+
+    if ($appId -and $agentsResult -and $agentsResult.agents) {
+        $agentsList = @($agentsResult.agents)
+        $selectedAgent = $null
+
+        if ($agentsList.Count -eq 1) {
+            $selectedAgent = $agentsList[0]
+            Write-Info ("Auto-assigning agent: " + $selectedAgent.hostname)
+        } elseif ($agentsList.Count -gt 1) {
+            Write-Host ""
+            Write-Host "Select agent to assign to all components:" -ForegroundColor Yellow
+            for ($i = 0; $i -lt $agentsList.Count; $i++) {
+                $ag = $agentsList[$i]
+                Write-Host ("  [" + ($i + 1) + "] " + $ag.hostname) -ForegroundColor White
+            }
+            Write-Host ""
+            $agChoice = Read-Host "Agent number (or Enter to skip)"
+            if ($agChoice) {
+                $agIdx = [int]$agChoice - 1
+                if ($agIdx -ge 0 -and $agIdx -lt $agentsList.Count) {
+                    $selectedAgent = $agentsList[$agIdx]
+                }
+            }
+        }
+
+        if ($selectedAgent) {
+            # Get components of the imported app
+            $appDetail = Invoke-Api -Method "GET" -Uri ($baseUri + "/api/v1/apps/" + $appId) -Token $token
+            if ($appDetail -and $appDetail.components) {
+                foreach ($comp in $appDetail.components) {
+                    try {
+                        Invoke-Api -Method "PUT" -Uri ($baseUri + "/api/v1/components/" + $comp.id) -Body @{
+                            agent_id = $selectedAgent.id
+                            host     = $selectedAgent.hostname
+                        } -Token $token | Out-Null
+                    } catch {
+                        Write-Warn ("Failed to assign agent to " + $comp.name + ": " + $_)
+                    }
+                }
+                Write-Ok ("Assigned " + $selectedAgent.hostname + " to " + @($appDetail.components).Count + " components")
+            }
+        }
+    }
+
     # Windows metrics demo: copy check.bat and run setup.ps1
     if ((Split-Path -Leaf $exampleFile) -eq "metrics-demo-windows.json") {
         $checkBat = Join-Path $examplesDir "metrics-demo-check.bat"
