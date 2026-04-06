@@ -4,6 +4,7 @@ use crate::types::ComponentState;
 ///
 /// Valid transitions:
 /// - Unknown → Running, Stopped, Failed (first check received)
+/// - Unknown → Starting, Stopping (explicit start/stop command before first check)
 /// - Stopped → Starting (start command)
 /// - Starting → Running (check OK), Failed (timeout or check KO)
 /// - Running → Degraded (exit 1), Failed (exit >= 2), Stopping (stop command)
@@ -27,8 +28,9 @@ pub fn is_valid_transition(from: ComponentState, to: ComponentState) -> bool {
 
     matches!(
         (from, to),
-        // Unknown → first check determines state
+        // Unknown → first check determines state, or explicit start/stop
         (Unknown, Running) | (Unknown, Stopped) | (Unknown, Failed) |
+        (Unknown, Starting) | (Unknown, Stopping) |
         // Stopped → Starting (explicit start) or Running (check detects external start)
         (Stopped, Starting) | (Stopped, Running) |
         // Starting → Running or Failed
@@ -244,8 +246,15 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_unknown_to_starting() {
-        assert!(!is_valid_transition(Unknown, Starting));
+    fn test_unknown_to_starting() {
+        // Start command on a component that hasn't been checked yet
+        assert!(is_valid_transition(Unknown, Starting));
+    }
+
+    #[test]
+    fn test_unknown_to_stopping() {
+        // Stop command on a component that hasn't been checked yet
+        assert!(is_valid_transition(Unknown, Stopping));
     }
 
     // ===== next_state_from_check =====
