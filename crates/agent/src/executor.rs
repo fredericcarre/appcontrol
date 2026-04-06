@@ -82,14 +82,24 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
     #[cfg(windows)]
     let child = {
         use tokio::process::Command;
-        let mut cmd = if command
-            .trim_start()
-            .to_lowercase()
-            .starts_with("powershell")
-        {
-            // Run PowerShell commands directly to avoid CMD mangling JSON
+        // Detect PowerShell commands to avoid CMD mangling JSON output.
+        // Extract the script portion after "powershell ... -Command" and run directly.
+        let trimmed = command.trim_start();
+        let lower = trimmed.to_lowercase();
+        let mut cmd = if lower.starts_with("powershell") {
             let mut c = Command::new("powershell");
-            c.args(["-NoProfile", "-NonInteractive", "-Command", command]);
+            c.args(["-NoProfile", "-NonInteractive"]);
+            // Extract the -Command argument value from the command string
+            if let Some(pos) = lower.find("-command") {
+                let after_flag = &trimmed[pos + 8..].trim_start();
+                c.args(["-Command", after_flag]);
+            } else {
+                // No -Command flag — pass everything after "powershell" as the command
+                let after_ps = trimmed[10..].trim_start(); // skip "powershell"
+                if !after_ps.is_empty() {
+                    c.args(["-Command", after_ps]);
+                }
+            }
             c
         } else {
             let mut c = Command::new("cmd");
@@ -198,13 +208,20 @@ where
     #[cfg(windows)]
     let mut child = {
         use tokio::process::Command;
-        let mut cmd = if command
-            .trim_start()
-            .to_lowercase()
-            .starts_with("powershell")
-        {
+        let trimmed = command.trim_start();
+        let lower = trimmed.to_lowercase();
+        let mut cmd = if lower.starts_with("powershell") {
             let mut c = Command::new("powershell");
-            c.args(["-NoProfile", "-NonInteractive", "-Command", command]);
+            c.args(["-NoProfile", "-NonInteractive"]);
+            if let Some(pos) = lower.find("-command") {
+                let after_flag = &trimmed[pos + 8..].trim_start();
+                c.args(["-Command", after_flag]);
+            } else {
+                let after_ps = trimmed[10..].trim_start();
+                if !after_ps.is_empty() {
+                    c.args(["-Command", after_ps]);
+                }
+            }
             c
         } else {
             let mut c = Command::new("cmd");
