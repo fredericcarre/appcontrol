@@ -927,23 +927,44 @@ function Do-ImportExample {
 
     $examplesDir = Join-Path $script:ScriptDir "examples"
 
-    # Download examples if not present
-    if (-not (Test-Path $examplesDir)) {
+    # Download examples if not present (check for actual JSON files, not just empty dir)
+    $exampleJsonFiles = Get-ChildItem -Path $examplesDir -Filter "*.json" -ErrorAction SilentlyContinue
+    if (-not $exampleJsonFiles -or $exampleJsonFiles.Count -eq 0) {
         Write-Info "Downloading examples..."
         Ensure-Dir $examplesDir
+        $downloaded = $false
         $tarFile = Join-Path $script:BinDir "examples.tar.gz"
         try {
             Download-File -Url ($script:ReleasesBase + "/examples.tar.gz") -OutPath $tarFile
-            # Extract tar.gz
+            # Extract tar.gz (tar is available on Windows 10+)
             if ($script:IsWin) {
                 tar -xzf $tarFile -C $script:ScriptDir 2>$null
             } else {
                 tar xzf $tarFile -C $script:ScriptDir
             }
             Remove-Item $tarFile -Force -ErrorAction SilentlyContinue
+            $downloaded = $true
             Write-Ok "Examples downloaded to examples/"
         } catch {
-            Write-Err "Failed to download examples: $_"
+            Write-Warn "Could not download examples from release."
+        }
+
+        # Fallback: try appcontrol-docs-scripts.zip (corporate releases)
+        if (-not $downloaded) {
+            $docsZip = Join-Path $script:BinDir "appcontrol-docs-scripts.zip"
+            try {
+                Download-File -Url ($script:ReleasesBase + "/appcontrol-docs-scripts.zip") -OutPath $docsZip
+                Expand-Archive -Path $docsZip -DestinationPath $script:ScriptDir -Force
+                Remove-Item $docsZip -Force -ErrorAction SilentlyContinue
+                $downloaded = $true
+                Write-Ok "Examples extracted from docs-scripts package."
+            } catch {
+                Write-Warn "Could not download docs-scripts package."
+            }
+        }
+
+        if (-not $downloaded) {
+            Write-Err "No examples available. Place example JSON files in examples/ manually."
             return
         }
     }
