@@ -1149,7 +1149,7 @@ function Do-ImportExample {
         }
     }
 
-    # Windows metrics demo: copy check.bat and run setup.ps1
+    # Windows metrics demo: copy check.bat, run setup.ps1, and fix check_cmd paths
     if ((Split-Path -Leaf $exampleFile) -eq "metrics-demo-windows.json") {
         $checkBat = Join-Path $examplesDir "metrics-demo-check.bat"
         $setupPs1 = Join-Path $examplesDir "metrics-demo-setup.ps1"
@@ -1158,6 +1158,27 @@ function Do-ImportExample {
             $agentDir = $script:BinDir
             Copy-Item $checkBat -Destination $agentDir -Force
             Write-Ok ("Copied metrics-demo-check.bat to " + $agentDir)
+
+            # Patch check_cmd with absolute path so the agent can find the .bat
+            $batAbsPath = Join-Path $agentDir "metrics-demo-check.bat"
+            if ($appId) {
+                $appDetail2 = Invoke-Api -Method "GET" -Uri ($baseUri + "/api/v1/apps/" + $appId) -Token $token
+                if ($appDetail2 -and $appDetail2.components) {
+                    foreach ($comp in $appDetail2.components) {
+                        if ($comp.check_cmd -and $comp.check_cmd -like "*metrics-demo-check.bat*") {
+                            $newCheckCmd = $comp.check_cmd -replace "metrics-demo-check.bat", $batAbsPath
+                            try {
+                                Invoke-Api -Method "PUT" -Uri ($baseUri + "/api/v1/components/" + $comp.id) -Body @{
+                                    check_cmd = $newCheckCmd
+                                } -Token $token | Out-Null
+                            } catch {
+                                Write-Warn ("Failed to update check_cmd for " + $comp.name)
+                            }
+                        }
+                    }
+                    Write-Ok "Updated check commands with absolute path to metrics-demo-check.bat"
+                }
+            }
         }
 
         if (Test-Path $setupPs1) {

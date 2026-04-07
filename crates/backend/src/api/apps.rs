@@ -557,6 +557,13 @@ pub async fn delete_app(
     )
     .await?;
 
+    // Clean up related records that may block deletion due to FK constraints.
+    // SQLite FK cascades can be unreliable after table recreation (V045).
+    if let Err(e) = crate::repository::misc_queries::cleanup_app_before_delete(&state.db, id).await
+    {
+        tracing::warn!(app_id = %id, "Pre-delete cleanup error (non-fatal): {}", e);
+    }
+
     let deleted = state.app_repo.delete_app(id, *user.organization_id).await?;
 
     if !deleted {

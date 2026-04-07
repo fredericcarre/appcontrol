@@ -4340,3 +4340,37 @@ pub async fn count_dependency_history(pool: &DbPool, app_id: Uuid) -> Result<i64
     .fetch_one(pool)
     .await
 }
+
+/// Clean up related records before deleting an application.
+/// SQLite FK cascades can be unreliable after table recreation (V045),
+/// so we explicitly delete child records.
+pub async fn cleanup_app_before_delete(pool: &DbPool, app_id: Uuid) -> Result<(), sqlx::Error> {
+    // Delete binding profile mappings via profiles
+    sqlx::query(
+        "DELETE FROM binding_profile_mappings WHERE profile_id IN \
+         (SELECT id FROM binding_profiles WHERE application_id = $1)",
+    )
+    .bind(crate::db::bind_id(app_id))
+    .execute(pool)
+    .await?;
+
+    // Delete binding profiles
+    sqlx::query("DELETE FROM binding_profiles WHERE application_id = $1")
+        .bind(crate::db::bind_id(app_id))
+        .execute(pool)
+        .await?;
+
+    // Delete app references (both directions)
+    sqlx::query("DELETE FROM app_references WHERE source_app_id = $1 OR target_app_id = $1")
+        .bind(crate::db::bind_id(app_id))
+        .execute(pool)
+        .await?;
+
+    // Delete operation locks
+    sqlx::query("DELETE FROM operation_locks WHERE app_id = $1")
+        .bind(crate::db::bind_id(app_id))
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
