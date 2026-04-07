@@ -291,27 +291,50 @@ impl CheckScheduler {
             let check_cmd = config.check_cmd.as_ref().unwrap();
             let cmd_hash = hash_command(check_cmd);
 
-            let (exit_code, stdout, duration_ms) = if let Some(cached) =
-                executed_cmds.get(&cmd_hash)
-            {
-                cached.clone()
-            } else {
-                let timeout = Duration::from_secs(30);
-                let start = std::time::Instant::now();
-                match crate::executor::execute_sync(check_cmd, timeout).await {
-                    Ok(result) => {
-                        let entry = (result.exit_code, result.stdout.clone(), result.duration_ms);
-                        executed_cmds.insert(cmd_hash, entry.clone());
-                        entry
+            let (exit_code, stdout, duration_ms) =
+                if let Some(cached) = executed_cmds.get(&cmd_hash) {
+                    cached.clone()
+                } else {
+                    let timeout = Duration::from_secs(30);
+                    let start = std::time::Instant::now();
+                    match crate::executor::execute_sync(check_cmd, timeout).await {
+                        Ok(result) => {
+                            // Log stderr when command fails — helps debug missing scripts
+                            if result.exit_code != 0 && !result.stderr.is_empty() {
+                                tracing::warn!(
+                                    component_id = %comp_id,
+                                    exit_code = result.exit_code,
+                                    stderr = %result.stderr.trim(),
+                                    cmd = %check_cmd,
+                                    "Check command failed"
+                                );
+                            }
+                            let stdout = if result.exit_code != 0
+                                && result.stdout.is_empty()
+                                && !result.stderr.is_empty()
+                            {
+                                // Forward stderr as stdout so it shows in the UI
+                                format!("[stderr] {}", result.stderr.trim())
+                            } else {
+                                result.stdout.clone()
+                            };
+                            let entry = (result.exit_code, stdout, result.duration_ms);
+                            executed_cmds.insert(cmd_hash, entry.clone());
+                            entry
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                component_id = %comp_id,
+                                cmd = %check_cmd,
+                                "Check command execution error: {}", e
+                            );
+                            let duration = start.elapsed().as_millis() as u32;
+                            let entry = (-1i32, format!("[error] {}", e), duration);
+                            executed_cmds.insert(cmd_hash, entry.clone());
+                            entry
+                        }
                     }
-                    Err(_) => {
-                        let duration = start.elapsed().as_millis() as u32;
-                        let entry = (-1i32, String::new(), duration);
-                        executed_cmds.insert(cmd_hash, entry.clone());
-                        entry
-                    }
-                }
-            };
+                };
 
             // Update check state, clear in_flight, and determine if we should send
             let mut state = self.check_state.write().await;
