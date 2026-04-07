@@ -524,6 +524,13 @@ pub async fn start_single_component(
         }
     };
 
+    // Skip if already running (no need to start again)
+    let current = super::fsm::get_current_state(&state.db, component_id).await?;
+    if current == ComponentState::Running {
+        tracing::debug!(component_id = %component_id, "Component already RUNNING, skipping start");
+        return Ok(());
+    }
+
     // Transition to Starting for normal components
     super::fsm::transition_component(state, component_id, ComponentState::Starting).await?;
     let timeout_secs = info.start_timeout_seconds;
