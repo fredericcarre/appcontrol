@@ -339,21 +339,20 @@ pub async fn export_app_json(
         .unwrap_or_default();
 
     // Fetch site info (with optional hosting)
-    let site_export = match crate::repository::misc_queries::get_site_for_export(&state.db, app_id)
-        .await?
-    {
-        Some(s) => Some(SiteExport {
-            name: s.name,
-            code: s.code,
-            site_type: s.site_type,
-            location: s.location,
-            hosting: s.hosting_name.map(|name| HostingExport {
-                name,
-                description: s.hosting_description,
+    let site_export =
+        match crate::repository::misc_queries::get_site_for_export(&state.db, app_id).await? {
+            Some(s) => Some(SiteExport {
+                name: s.name,
+                code: s.code,
+                site_type: s.site_type,
+                location: s.location,
+                hosting: s.hosting_name.map(|name| HostingExport {
+                    name,
+                    description: s.hosting_description,
+                }),
             }),
-        }),
-        None => None,
-    };
+            None => None,
+        };
 
     // Fetch variables
     let var_raw = crate::repository::misc_queries::get_vars_for_export(&state.db, app_id).await?;

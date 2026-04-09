@@ -123,11 +123,7 @@ pub async fn create_hosting(
 
     let hosting = state
         .hosting_repo
-        .create_hosting(
-            *user.organization_id,
-            &req.name,
-            req.description.as_deref(),
-        )
+        .create_hosting(*user.organization_id, &req.name, req.description.as_deref())
         .await?;
 
     Ok(Json(json!({

@@ -407,10 +407,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
                 .put(hostings::update_hosting)
                 .delete(hostings::delete_hosting),
         )
-        .route(
-            "/hostings/:id/sites",
-            get(hostings::list_hosting_sites),
-        )
+        .route("/hostings/:id/sites", get(hostings::list_hosting_sites))
         // Organizations (super-admin)
         .route(
             "/organizations",

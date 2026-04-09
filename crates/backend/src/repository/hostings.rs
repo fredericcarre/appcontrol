@@ -170,21 +170,19 @@ impl HostingRepository for PgHostingRepository {
     }
 
     async fn delete_hosting(&self, id: Uuid, org_id: Uuid) -> Result<bool, sqlx::Error> {
-        let result =
-            sqlx::query("DELETE FROM hostings WHERE id = $1 AND organization_id = $2")
-                .bind(id)
-                .bind(crate::db::bind_id(org_id))
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query("DELETE FROM hostings WHERE id = $1 AND organization_id = $2")
+            .bind(id)
+            .bind(crate::db::bind_id(org_id))
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
     async fn count_sites_in_hosting(&self, hosting_id: Uuid) -> Result<i64, sqlx::Error> {
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM sites WHERE hosting_id = $1")
-                .bind(crate::db::bind_id(hosting_id))
-                .fetch_one(&self.pool)
-                .await?;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sites WHERE hosting_id = $1")
+            .bind(crate::db::bind_id(hosting_id))
+            .fetch_one(&self.pool)
+            .await?;
         Ok(count)
     }
 }
@@ -304,21 +302,19 @@ impl HostingRepository for SqliteHostingRepository {
     }
 
     async fn delete_hosting(&self, id: Uuid, org_id: Uuid) -> Result<bool, sqlx::Error> {
-        let result =
-            sqlx::query("DELETE FROM hostings WHERE id = $1 AND organization_id = $2")
-                .bind(DbUuid::from(id))
-                .bind(DbUuid::from(org_id))
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query("DELETE FROM hostings WHERE id = $1 AND organization_id = $2")
+            .bind(DbUuid::from(id))
+            .bind(DbUuid::from(org_id))
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
     async fn count_sites_in_hosting(&self, hosting_id: Uuid) -> Result<i64, sqlx::Error> {
-        let count: i32 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM sites WHERE hosting_id = $1")
-                .bind(DbUuid::from(hosting_id))
-                .fetch_one(&self.pool)
-                .await?;
+        let count: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM sites WHERE hosting_id = $1")
+            .bind(DbUuid::from(hosting_id))
+            .fetch_one(&self.pool)
+            .await?;
         Ok(count as i64)
     }
 }
