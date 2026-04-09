@@ -6,6 +6,7 @@ import {
   useDeleteSite,
   type Site,
 } from '@/api/sites';
+import { useHostings } from '@/api/hostings';
 import { useAuthStore } from '@/stores/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -71,6 +72,7 @@ interface SiteFormData {
   code: string;
   site_type: string;
   location: string;
+  hosting_id: string;
 }
 
 const defaultFormData: SiteFormData = {
@@ -78,12 +80,14 @@ const defaultFormData: SiteFormData = {
   code: '',
   site_type: 'primary',
   location: '',
+  hosting_id: '',
 };
 
 export function SitesPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = user?.role === 'admin';
   const { data: sites, isLoading } = useSites();
+  const { data: hostings } = useHostings();
   const createSite = useCreateSite();
   const updateSite = useUpdateSite();
   const deleteSite = useDeleteSite();
@@ -108,6 +112,7 @@ export function SitesPage() {
       code: site.code,
       site_type: site.site_type,
       location: site.location || '',
+      hosting_id: site.hosting_id || '',
     });
     setFormError(null);
     setEditSite(site);
@@ -124,6 +129,7 @@ export function SitesPage() {
         code: formData.code.trim().toLowerCase(),
         site_type: formData.site_type,
         location: formData.location.trim() || undefined,
+        hosting_id: formData.hosting_id || undefined,
       });
       setCreateOpen(false);
     } catch (err: unknown) {
@@ -138,11 +144,17 @@ export function SitesPage() {
       return;
     }
     try {
-      await updateSite.mutateAsync({
+      const updatePayload: Parameters<typeof updateSite.mutateAsync>[0] = {
         id: editSite.id,
         name: formData.name.trim(),
         location: formData.location.trim() || undefined,
-      });
+      };
+      if (formData.hosting_id && formData.hosting_id !== editSite.hosting_id) {
+        updatePayload.hosting_id = formData.hosting_id;
+      } else if (!formData.hosting_id && editSite.hosting_id) {
+        updatePayload.unset_hosting = true;
+      }
+      await updateSite.mutateAsync(updatePayload);
       setEditSite(null);
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
@@ -406,6 +418,23 @@ export function SitesPage() {
                 onChange={(e) => setFormData({ ...formData, location: e.target.value })}
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="hosting">Hosting (optional)</Label>
+              <Select
+                value={formData.hosting_id || '_none'}
+                onValueChange={(v) => setFormData({ ...formData, hosting_id: v === '_none' ? '' : v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="No hosting" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">No hosting</SelectItem>
+                  {(hostings || []).map((h) => (
+                    <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
@@ -462,6 +491,23 @@ export function SitesPage() {
                 value={formData.location}
                 onChange={(e) => setFormData({ ...formData, location: e.target.value })}
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-hosting">Hosting (optional)</Label>
+              <Select
+                value={formData.hosting_id || '_none'}
+                onValueChange={(v) => setFormData({ ...formData, hosting_id: v === '_none' ? '' : v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="No hosting" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">No hosting</SelectItem>
+                  {(hostings || []).map((h) => (
+                    <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>
