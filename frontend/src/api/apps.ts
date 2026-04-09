@@ -375,6 +375,17 @@ export function useDeleteGroup() {
   });
 }
 
+export function useUpdateGroup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { app_id: string; group_id: string; name?: string; color?: string; description?: string }) => {
+      const { data } = await client.put(`/apps/${payload.app_id}/groups/${payload.group_id}`, payload);
+      return data;
+    },
+    onSuccess: (_, vars) => qc.invalidateQueries({ queryKey: ['apps', vars.app_id, 'groups'] }),
+  });
+}
+
 // ── Component Links ────────────────────────────────────────────
 
 export function useComponentLinks(componentId: string) {
