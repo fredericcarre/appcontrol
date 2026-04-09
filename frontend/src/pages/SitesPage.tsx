@@ -87,7 +87,7 @@ export function SitesPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = user?.role === 'admin';
   const { data: sites, isLoading } = useSites();
-  const { data: hostings } = useHostings();
+  const { data: hostings, isLoading: hostingsLoading } = useHostings();
   const createSite = useCreateSite();
   const updateSite = useUpdateSite();
   const deleteSite = useDeleteSite();
@@ -420,20 +420,28 @@ export function SitesPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="hosting">Hosting (optional)</Label>
-              <Select
-                value={formData.hosting_id || '_none'}
-                onValueChange={(v) => setFormData({ ...formData, hosting_id: v === '_none' ? '' : v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="No hosting" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_none">No hosting</SelectItem>
-                  {(hostings || []).map((h) => (
-                    <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {hostingsLoading ? (
+                <Input value="Loading hostings..." disabled />
+              ) : (
+                <Select
+                  value={formData.hosting_id || '_none'}
+                  onValueChange={(v) => setFormData({ ...formData, hosting_id: v === '_none' ? '' : v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="No hosting">
+                      {formData.hosting_id
+                        ? (hostings || []).find((h) => h.id === formData.hosting_id)?.name || 'No hosting'
+                        : 'No hosting'}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">No hosting</SelectItem>
+                    {(hostings || []).map((h) => (
+                      <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
           <DialogFooter>
@@ -494,20 +502,30 @@ export function SitesPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-hosting">Hosting (optional)</Label>
-              <Select
-                value={formData.hosting_id || '_none'}
-                onValueChange={(v) => setFormData({ ...formData, hosting_id: v === '_none' ? '' : v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="No hosting" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_none">No hosting</SelectItem>
-                  {(hostings || []).map((h) => (
-                    <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {hostingsLoading ? (
+                <Input value={editSite?.hosting_name || 'Loading hostings...'} disabled />
+              ) : (
+                <Select
+                  value={formData.hosting_id || '_none'}
+                  onValueChange={(v) => setFormData({ ...formData, hosting_id: v === '_none' ? '' : v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="No hosting">
+                      {formData.hosting_id
+                        ? (hostings || []).find((h) => h.id === formData.hosting_id)?.name
+                          || editSite?.hosting_name
+                          || 'No hosting'
+                        : 'No hosting'}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">No hosting</SelectItem>
+                    {(hostings || []).map((h) => (
+                      <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
           <DialogFooter>

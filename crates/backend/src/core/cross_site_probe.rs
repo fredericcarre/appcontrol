@@ -245,16 +245,18 @@ async fn update_passive_status(
     detected_site_id: Option<Uuid>,
     status: &str,
 ) -> Result<(), sqlx::Error> {
+    let now = chrono::Utc::now();
     sqlx::query(
         r#"UPDATE components
            SET detected_site_id = $2,
                passive_site_status = $3,
-               passive_check_at = now()
+               passive_check_at = $4
            WHERE id = $1"#,
     )
     .bind(crate::db::bind_id(component_id))
     .bind(detected_site_id.map(crate::db::bind_id))
     .bind(status)
+    .bind(now)
     .execute(pool)
     .await?;
     Ok(())
@@ -265,15 +267,17 @@ async fn clear_passive_status_if_active(
     pool: &crate::db::DbPool,
     component_id: Uuid,
 ) -> Result<(), sqlx::Error> {
+    let now = chrono::Utc::now();
     sqlx::query(
         r#"UPDATE components
            SET passive_site_status = 'inactive',
                detected_site_id = NULL,
-               passive_check_at = now()
+               passive_check_at = $2
            WHERE id = $1
              AND passive_site_status = 'active'"#,
     )
     .bind(crate::db::bind_id(component_id))
+    .bind(now)
     .execute(pool)
     .await?;
     Ok(())

@@ -53,8 +53,8 @@ export function SelectTrigger({ className, children, ...props }: { children: Rea
 
 export function SelectValue({ placeholder, children }: { placeholder?: string; children?: ReactNode }) {
   const ctx = useContext(SelectContext);
-  // If children are provided and there's a value, render children; otherwise show value or placeholder
-  if (children && ctx.value) {
+  // If children are provided, always prefer them over the raw value
+  if (children !== undefined && children !== null) {
     return <span className="truncate">{children}</span>;
   }
   return <span className="truncate">{ctx.value || placeholder}</span>;
