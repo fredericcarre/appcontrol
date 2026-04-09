@@ -4019,7 +4019,11 @@ pub async fn get_binding_profiles_for_export(
     pool: &DbPool,
     app_id: Uuid,
 ) -> Result<Vec<crate::api::export::BindingProfileRow>, sqlx::Error> {
-    sqlx::query_as::<_, crate::api::export::BindingProfileRow>(
+    // Use a simpler query compatible with both PostgreSQL and SQLite:
+    // Join via the first gateway_id in the array to resolve the site.
+    // gateway_ids is stored as UUID[] (PG) or JSON array (SQLite).
+    #[cfg(feature = "postgres")]
+    let rows = sqlx::query_as::<_, crate::api::export::BindingProfileRow>(
         r#"
         SELECT
             bp.id AS profile_id,
@@ -4048,7 +4052,38 @@ pub async fn get_binding_profiles_for_export(
     )
     .bind(crate::db::bind_id(app_id))
     .fetch_all(pool)
-    .await
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let rows = sqlx::query_as::<_, crate::api::export::BindingProfileRow>(
+        r#"
+        SELECT
+            bp.id AS profile_id,
+            bp.name,
+            bp.description,
+            bp.profile_type,
+            bp.is_active,
+            s.name AS site_name,
+            s.code AS site_code,
+            s.site_type,
+            s.location AS site_location,
+            h.name AS hosting_name,
+            h.description AS hosting_description
+        FROM binding_profiles bp
+        LEFT JOIN gateways g ON g.id = (
+            SELECT value FROM json_each(bp.gateway_ids) LIMIT 1
+        )
+        LEFT JOIN sites s ON s.id = g.site_id
+        LEFT JOIN hostings h ON h.id = s.hosting_id
+        WHERE bp.application_id = $1
+        ORDER BY bp.is_active DESC, bp.name
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
 }
 
 /// Fetch binding profile mappings for export.

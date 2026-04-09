@@ -7,6 +7,8 @@ import {
   useHostingSites,
   type Hosting,
 } from '@/api/hostings';
+import { useSites, useUpdateSite } from '@/api/sites';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +33,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -49,6 +58,8 @@ import {
   Server,
   FlaskConical,
   Code2,
+  X,
+  LinkIcon,
 } from 'lucide-react';
 
 const SITE_TYPE_INFO: Record<string, { label: string; icon: typeof Building2; color: string }> = {
@@ -68,8 +79,26 @@ const defaultFormData: HostingFormData = {
   description: '',
 };
 
-function HostingSitesRow({ hostingId }: { hostingId: string }) {
+function HostingSitesRow({ hostingId, isAdmin }: { hostingId: string; isAdmin: boolean }) {
   const { data: sites, isLoading } = useHostingSites(hostingId);
+  const { data: allSites } = useSites();
+  const updateSite = useUpdateSite();
+  const queryClient = useQueryClient();
+  const [assignSiteId, setAssignSiteId] = useState('');
+
+  const unassignedSites = (allSites || []).filter((s) => !s.hosting_id);
+
+  const handleUnassign = async (siteId: string) => {
+    await updateSite.mutateAsync({ id: siteId, unset_hosting: true });
+    queryClient.invalidateQueries({ queryKey: ['hostings', hostingId, 'sites'] });
+  };
+
+  const handleAssign = async () => {
+    if (!assignSiteId) return;
+    await updateSite.mutateAsync({ id: assignSiteId, hosting_id: hostingId });
+    queryClient.invalidateQueries({ queryKey: ['hostings', hostingId, 'sites'] });
+    setAssignSiteId('');
+  };
 
   if (isLoading) {
     return (
@@ -81,19 +110,16 @@ function HostingSitesRow({ hostingId }: { hostingId: string }) {
     );
   }
 
-  if (!sites || sites.length === 0) {
-    return (
-      <TableRow>
-        <TableCell colSpan={5} className="pl-12 text-muted-foreground text-sm italic">
-          No sites assigned to this hosting
-        </TableCell>
-      </TableRow>
-    );
-  }
-
   return (
     <>
-      {sites.map((site) => {
+      {(!sites || sites.length === 0) && (
+        <TableRow>
+          <TableCell colSpan={5} className="pl-12 text-muted-foreground text-sm italic">
+            No sites assigned to this hosting
+          </TableCell>
+        </TableRow>
+      )}
+      {(sites || []).map((site) => {
         const typeInfo = SITE_TYPE_INFO[site.site_type] || SITE_TYPE_INFO.primary;
         const TypeIcon = typeInfo.icon;
         return (
@@ -121,10 +147,68 @@ function HostingSitesRow({ hostingId }: { hostingId: string }) {
                 <Badge variant="secondary" className="text-xs">Inactive</Badge>
               )}
             </TableCell>
-            <TableCell />
+            <TableCell>
+              {isAdmin && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                  title="Unassign site from hosting"
+                  disabled={updateSite.isPending}
+                  onClick={(e) => { e.stopPropagation(); handleUnassign(site.id); }}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </TableCell>
           </TableRow>
         );
       })}
+      {isAdmin && (
+        <TableRow className="bg-muted/10">
+          <TableCell colSpan={5} className="pl-12">
+            <div className="flex items-center gap-2">
+              <LinkIcon className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Assign site:</span>
+              <div className="w-56">
+                <Select
+                  value={assignSiteId || '_placeholder'}
+                  onValueChange={(v) => setAssignSiteId(v === '_placeholder' ? '' : v)}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Select a site...">
+                      {assignSiteId
+                        ? unassignedSites.find((s) => s.id === assignSiteId)?.name || 'Select...'
+                        : 'Select a site...'}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_placeholder">Select a site...</SelectItem>
+                    {unassignedSites.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.name} ({s.code})</SelectItem>
+                    ))}
+                    {unassignedSites.length === 0 && (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground italic">
+                        No unassigned sites available
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1 text-xs"
+                disabled={!assignSiteId || updateSite.isPending}
+                onClick={(e) => { e.stopPropagation(); handleAssign(); }}
+              >
+                <Plus className="h-3 w-3" />
+                Assign
+              </Button>
+            </div>
+          </TableCell>
+        </TableRow>
+      )}
     </>
   );
 }
@@ -334,7 +418,7 @@ export function HostingsPage() {
                         )}
                       </TableRow>
                       {isExpanded && (
-                        <HostingSitesRow hostingId={hosting.id} />
+                        <HostingSitesRow hostingId={hosting.id} isAdmin={isAdmin} />
                       )}
                     </>
                   );
