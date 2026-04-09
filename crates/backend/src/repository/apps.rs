@@ -100,6 +100,7 @@ pub struct ComponentWithAgentInfo {
     pub gateway_id: Option<Uuid>,
     pub gateway_name: Option<String>,
     pub last_check_metrics: Option<Value>,
+    pub passive_site_status: Option<String>,
 }
 
 /// Simplified dependency info (id, from, to).
@@ -617,6 +618,7 @@ impl AppRepository for PgAppRepository {
             gateway_id: Option<Uuid>,
             gateway_name: Option<String>,
             last_check_metrics: Option<Value>,
+            passive_site_status: Option<String>,
         }
 
         let rows = sqlx::query_as::<_, Row>(
@@ -625,6 +627,7 @@ impl AppRepository for PgAppRepository {
                       c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
                       c.is_optional, c.current_state, c.position_x, c.position_y,
                       c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at,
+                      c.passive_site_status,
                       a.hostname as agent_hostname, a.gateway_id, g.name as gateway_name,
                       (SELECT ce.metrics FROM check_events ce
                        WHERE ce.component_id = c.id AND ce.metrics IS NOT NULL
@@ -670,6 +673,7 @@ impl AppRepository for PgAppRepository {
                 gateway_id: r.gateway_id,
                 gateway_name: r.gateway_name,
                 last_check_metrics: r.last_check_metrics,
+                passive_site_status: r.passive_site_status,
             })
             .collect())
     }
@@ -1226,6 +1230,7 @@ impl AppRepository for SqliteAppRepository {
             gateway_id: Option<DbUuid>,
             gateway_name: Option<String>,
             last_check_metrics: Option<Value>,
+            passive_site_status: Option<String>,
         }
 
         let rows = sqlx::query_as::<_, Row>(
@@ -1234,6 +1239,7 @@ impl AppRepository for SqliteAppRepository {
                       c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
                       c.is_optional, c.current_state, c.position_x, c.position_y,
                       c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at,
+                      c.passive_site_status,
                       a.hostname as agent_hostname, a.gateway_id, g.name as gateway_name,
                       (SELECT ce.metrics FROM check_events ce
                        WHERE ce.component_id = c.id AND ce.metrics IS NOT NULL
@@ -1279,6 +1285,7 @@ impl AppRepository for SqliteAppRepository {
                 gateway_id: r.gateway_id.map(|g| g.into_inner()),
                 gateway_name: r.gateway_name,
                 last_check_metrics: r.last_check_metrics,
+                passive_site_status: r.passive_site_status,
             })
             .collect())
     }

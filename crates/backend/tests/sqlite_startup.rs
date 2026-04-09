@@ -439,6 +439,7 @@ async fn start_backend(
         terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
         log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),
         pending_log_requests: appcontrol_backend::websocket::PendingLogRequests::new(),
+        probe_results: dashmap::DashMap::new(),
     });
 
     let app = appcontrol_backend::create_router(state);

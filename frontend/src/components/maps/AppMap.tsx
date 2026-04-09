@@ -318,6 +318,8 @@ function buildNodes(
         // Application reference (for application-type components)
         referencedAppId: c.referenced_app_id || undefined,
         referencedAppName: c.referenced_app_name || undefined,
+        // Cross-site probe status
+        passiveSiteStatus: c.passive_site_status || undefined,
         // Callbacks
         onStart: editable ? undefined : onStart,
         onStop: editable ? undefined : onStop,

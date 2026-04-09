@@ -231,6 +231,8 @@ Migrates an application from the primary site to the DR site in **six phases**:
 
 Each phase is logged and can be monitored in real time. Rollback is available during phases 1-3.
 
+**Cross-site detection:** Before switchover, the system checks if components are already running on the target site (via cross-site probe). If detected, a warning is displayed to the operator.
+
 ### Custom Commands
 
 Execute predefined commands on specific components: log rotation, cache clearing, configuration reload, database maintenance, or any custom operation. Commands are subject to permission checks and fully audited.
@@ -301,6 +303,30 @@ Sites are configured at setup time and used during DR switchover operations to o
 
 <!-- SCREENSHOT:sites -->
 *Sites — configure datacenters, DR sites, and environments*
+
+### Hostings
+
+A **hosting** groups related sites by physical datacenter or cloud region. For example, "Datacenter Paris" might contain sites `prod-paris` and `staging-paris`.
+
+**Key features:**
+- Create hostings and assign sites to them from the **Hostings** admin page
+- During switchover, sites are grouped by hosting so operators can identify intra-hosting vs. cross-hosting failovers
+- The hosting name appears as a badge on the Sites page and in JSON exports
+
+<!-- SCREENSHOT:hostings -->
+*Hostings — group sites by datacenter or cloud region*
+
+### Cross-Site Probe
+
+When a DR binding profile exists, AppControl automatically monitors the **passive site** to detect if a component is unexpectedly running there (e.g., started manually outside AppControl).
+
+**How it works:**
+1. Every 5 minutes, the backend sends the component's `check_cmd` to the passive site's agent
+2. If the check succeeds (exit code 0), the component is flagged as running on the wrong site
+3. A **DUAL** warning badge appears on the component in the map view
+4. A `CrossSiteAlert` WebSocket event is broadcast to connected clients
+
+This prevents "split-brain" scenarios where the same application runs on both sites simultaneously after a manual intervention.
 
 ### Enrollment Tokens
 

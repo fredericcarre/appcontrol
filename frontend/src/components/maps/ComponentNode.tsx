@@ -7,7 +7,7 @@ import {
   Play, Square, RotateCcw, Search, Skull, GitBranch, Wrench,
   Shield, Cloud, HardDrive, Cpu, Network, FileText, Zap,
   ExternalLink, ArrowUp, ArrowDown, WifiOff, Unplug, Radio,
-  BarChart3, MapPin,
+  BarChart3, MapPin, AlertTriangle,
 } from 'lucide-react';
 import { MetricsDisplay, MetricWidget } from './MetricsDisplay';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -49,6 +49,8 @@ interface ComponentNodeData {
   // Metrics from check command output
   metrics?: Record<string, unknown> | null;
   metricsWidgets?: MetricWidget[];
+  // Cross-site probe: component detected on passive/wrong site
+  passiveSiteStatus?: 'active' | 'inactive' | null;
   // Multi-site bindings (for split-panel rendering)
   primarySite?: { id: string; name: string; code: string; site_type: string } | null;
   siteBindings?: Array<{
@@ -278,6 +280,15 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
             >
               {data.state}
             </span>
+            {data.passiveSiteStatus === 'active' && (
+              <span
+                className="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 flex items-center gap-0.5"
+                title="Component detected running on passive site"
+              >
+                <AlertTriangle className="h-3 w-3" />
+                DUAL
+              </span>
+            )}
           </div>
         </div>
 

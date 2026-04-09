@@ -1,6 +1,7 @@
 pub mod auto_failover;
 pub mod branch;
 pub mod certificate_rotation;
+pub mod cross_site_probe;
 pub mod dag;
 pub mod diagnostic;
 pub mod fsm;

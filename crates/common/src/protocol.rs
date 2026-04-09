@@ -520,6 +520,20 @@ pub enum WsEvent {
         unreachable_agents: Vec<String>,
         timestamp: DateTime<Utc>,
     },
+    /// Cross-site probe detected a component running on the passive/wrong site
+    CrossSiteAlert {
+        component_id: Uuid,
+        app_id: Uuid,
+        component_name: String,
+        app_name: String,
+        /// The site where the component is expected to run (active agent's site)
+        expected_site: String,
+        /// The site where the component was detected running
+        detected_site: String,
+        /// 'active' = running on passive site, 'inactive' = cleared
+        status: String,
+        at: DateTime<Utc>,
+    },
 }
 
 /// Envelope for Backend → Gateway communication.

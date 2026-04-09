@@ -367,6 +367,7 @@ pub async fn get_app(
                 "connectivity_status": connectivity_status,
                 // Latest metrics from check command
                 "last_check_metrics": c.last_check_metrics,
+                "passive_site_status": c.passive_site_status,
             })
         })
         .collect();
