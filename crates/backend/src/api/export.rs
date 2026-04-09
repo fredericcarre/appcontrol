@@ -48,10 +48,30 @@ pub struct ApplicationExport {
     pub name: String,
     pub description: Option<String>,
     pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub site: Option<SiteExport>,
     pub variables: Vec<VariableExport>,
     pub groups: Vec<GroupExport>,
     pub components: Vec<ComponentExport>,
     pub dependencies: Vec<DependencyExport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SiteExport {
+    pub name: String,
+    pub code: String,
+    pub site_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hosting: Option<HostingExport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HostingExport {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,6 +109,26 @@ pub struct ComponentExport {
     pub start_timeout_seconds: i32,
     pub stop_timeout_seconds: i32,
     pub is_optional: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub site_overrides: Vec<ComponentSiteOverrideExport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ComponentSiteOverrideExport {
+    pub site_code: String,
+    pub site_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_host_override: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check_cmd_override: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_cmd_override: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_cmd_override: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rebuild_cmd_override: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env_vars_override: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -160,6 +200,29 @@ struct AppRow {
     name: String,
     description: Option<String>,
     tags: Option<Value>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct SiteRow {
+    pub name: String,
+    pub code: String,
+    pub site_type: String,
+    pub location: Option<String>,
+    pub hosting_name: Option<String>,
+    pub hosting_description: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct SiteOverrideRow {
+    pub component_id: DbUuid,
+    pub site_code: String,
+    pub site_name: String,
+    pub agent_host: Option<String>,
+    pub check_cmd_override: Option<String>,
+    pub start_cmd_override: Option<String>,
+    pub stop_cmd_override: Option<String>,
+    pub rebuild_cmd_override: Option<String>,
+    pub env_vars_override: Option<Value>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -275,6 +338,22 @@ pub async fn export_app_json(
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
 
+    // Fetch site info (with optional hosting)
+    let site_export =
+        match crate::repository::misc_queries::get_site_for_export(&state.db, app_id).await? {
+            Some(s) => Some(SiteExport {
+                name: s.name,
+                code: s.code,
+                site_type: s.site_type,
+                location: s.location,
+                hosting: s.hosting_name.map(|name| HostingExport {
+                    name,
+                    description: s.hosting_description,
+                }),
+            }),
+            None => None,
+        };
+
     // Fetch variables
     let var_raw = crate::repository::misc_queries::get_vars_for_export(&state.db, app_id).await?;
     let var_rows: Vec<VarRow> = var_raw
@@ -383,6 +462,29 @@ pub async fn export_app_json(
             .push(link_export);
     }
 
+    // Fetch site overrides for all components
+    let override_rows =
+        crate::repository::misc_queries::get_site_overrides_for_export(&state.db, app_id).await?;
+
+    // Group overrides by component ID
+    let mut overrides_by_comp: HashMap<DbUuid, Vec<ComponentSiteOverrideExport>> = HashMap::new();
+    for ovr in override_rows {
+        let export_ovr = ComponentSiteOverrideExport {
+            site_code: ovr.site_code,
+            site_name: ovr.site_name,
+            agent_host_override: ovr.agent_host,
+            check_cmd_override: ovr.check_cmd_override,
+            start_cmd_override: ovr.start_cmd_override,
+            stop_cmd_override: ovr.stop_cmd_override,
+            rebuild_cmd_override: ovr.rebuild_cmd_override,
+            env_vars_override: ovr.env_vars_override,
+        };
+        overrides_by_comp
+            .entry(ovr.component_id)
+            .or_default()
+            .push(export_ovr);
+    }
+
     // Build component exports
     let components: Vec<ComponentExport> = comp_rows
         .into_iter()
@@ -446,6 +548,7 @@ pub async fn export_app_json(
                 start_timeout_seconds: c.start_timeout_seconds,
                 stop_timeout_seconds: c.stop_timeout_seconds,
                 is_optional: c.is_optional,
+                site_overrides: overrides_by_comp.remove(&c.id).unwrap_or_default(),
             }
         })
         .collect();
@@ -474,12 +577,13 @@ pub async fn export_app_json(
         .collect();
 
     let export = ExportedApplication {
-        format_version: "4.0",
+        format_version: "4.1",
         exported_at: chrono::Utc::now(),
         application: ApplicationExport {
             name: app.name,
             description: app.description,
             tags,
+            site: site_export,
             variables,
             groups,
             components,

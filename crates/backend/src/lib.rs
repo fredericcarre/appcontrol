@@ -42,6 +42,7 @@ pub struct AppState {
     pub team_repo: Box<dyn repository::teams::TeamRepository>,
     pub permission_repo: Box<dyn repository::permissions::PermissionRepository>,
     pub site_repo: Box<dyn repository::sites::SiteRepository>,
+    pub hosting_repo: Box<dyn repository::hostings::HostingRepository>,
     pub enrollment_repo: Box<dyn repository::enrollment::EnrollmentRepository>,
     pub agent_repo: Box<dyn repository::agents::AgentRepository>,
     pub gateway_repo: Box<dyn repository::gateways::GatewayRepository>,

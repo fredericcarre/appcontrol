@@ -787,6 +787,286 @@ function Do-AddSite {
 }
 
 # ---------------------------------------------------------------------------
+# ADD-HOSTING
+# ---------------------------------------------------------------------------
+function Do-AddHosting {
+    $hostingName = $Arg1
+    if (-not $hostingName) {
+        Write-Err "Usage: appcontrol.ps1 add-hosting <name> [description]"
+        return
+    }
+
+    $description = $Arg2
+
+    $settings = Read-Settings
+    if (-not $settings) {
+        Write-Err "No config/settings.json found. Run install first."
+        return
+    }
+
+    $port = $settings.backend_port
+    if (-not $port) { $port = "3000" }
+
+    Write-Info ("Adding hosting '" + $hostingName + "'")
+
+    # Login
+    $adminEmail = $settings.admin_email
+    $adminPass = $settings.admin_password
+    $token = Login-Backend -Port $port -AdminEmail $adminEmail -AdminPassword $adminPass
+    Write-Ok "Authenticated"
+
+    $baseUrl = "http://localhost:" + $port + "/api/v1"
+
+    # Check if hosting already exists
+    $existingHostings = Invoke-Api -Method "GET" -Uri ($baseUrl + "/hostings") -Token $token
+    $hostingId = $null
+
+    if ($existingHostings -and $existingHostings.hostings) {
+        foreach ($h in $existingHostings.hostings) {
+            if ($h.name -eq $hostingName) {
+                $hostingId = $h.id
+                Write-Info ("Hosting '" + $hostingName + "' already exists with ID " + $hostingId)
+                break
+            }
+        }
+    }
+
+    # Create hosting if needed
+    if (-not $hostingId) {
+        $body = @{ name = $hostingName }
+        if ($description) { $body.description = $description }
+
+        $created = Invoke-Api -Method "POST" -Uri ($baseUrl + "/hostings") -Body $body -Token $token
+        if ($created -and $created.id) {
+            $hostingId = $created.id
+            Write-Ok ("Created hosting '" + $hostingName + "' with ID " + $hostingId)
+        } else {
+            Write-Err "Failed to create hosting"
+            return
+        }
+    }
+
+    # Show existing sites and offer to assign them
+    $sitesResult = Invoke-Api -Method "GET" -Uri ($baseUrl + "/sites") -Token $token
+    $sites = @()
+    if ($sitesResult -and $sitesResult.sites) { $sites = @($sitesResult.sites) }
+
+    $unassigned = @($sites | Where-Object { -not $_.hosting_id -or $_.hosting_id -ne $hostingId })
+
+    if ($unassigned.Count -gt 0) {
+        Write-Host ""
+        Write-Host "Sites not yet assigned to this hosting:" -ForegroundColor Yellow
+        for ($i = 0; $i -lt $unassigned.Count; $i++) {
+            $s = $unassigned[$i]
+            $stype = if ($s.site_type) { " (" + $s.site_type + ")" } else { "" }
+            $currentHosting = if ($s.hosting_name) { " [hosting: " + $s.hosting_name + "]" } else { "" }
+            Write-Host ("  [" + ($i + 1) + "] " + $s.name + $stype + $currentHosting) -ForegroundColor White
+        }
+        Write-Host "  [0] Skip" -ForegroundColor DarkGray
+        Write-Host ""
+        $choice = Read-Host "Assign sites to this hosting (comma-separated numbers, or 0 to skip)"
+
+        if ($choice -and $choice -ne "0") {
+            $indices = $choice -split "," | ForEach-Object { [int]$_.Trim() - 1 }
+            foreach ($idx in $indices) {
+                if ($idx -ge 0 -and $idx -lt $unassigned.Count) {
+                    $s = $unassigned[$idx]
+                    try {
+                        Invoke-Api -Method "PUT" -Uri ($baseUrl + "/sites/" + $s.id) -Body @{
+                            hosting_id = $hostingId
+                        } -Token $token | Out-Null
+                        Write-Ok ("Assigned site '" + $s.name + "' to hosting '" + $hostingName + "'")
+                    } catch {
+                        Write-Warn ("Failed to assign site '" + $s.name + "': " + $_)
+                    }
+                }
+            }
+        }
+    } else {
+        Write-Info "No unassigned sites available."
+    }
+
+    Write-Host ""
+    Write-Ok ("Hosting '" + $hostingName + "' setup complete")
+}
+
+# ---------------------------------------------------------------------------
+# IMPORT-MAP
+# ---------------------------------------------------------------------------
+function Do-ImportMap {
+    $source = $Arg1
+    if (-not $source) {
+        Write-Err "Usage: appcontrol.ps1 import-map <path-or-url> [site-name]"
+        Write-Host ""
+        Write-Host "  Import an application map from a local JSON file or a URL." -ForegroundColor DarkGray
+        Write-Host "  Examples:" -ForegroundColor DarkGray
+        Write-Host "    .\appcontrol.ps1 import-map C:\maps\myapp.json" -ForegroundColor DarkGray
+        Write-Host "    .\appcontrol.ps1 import-map https://example.com/maps/myapp.json Production" -ForegroundColor DarkGray
+        return
+    }
+
+    $settings = Read-Settings
+    if (-not $settings) {
+        Write-Err "No config/settings.json found. Run install first."
+        return
+    }
+
+    $port = $settings.backend_port
+    if (-not $port) { $port = "3000" }
+    $adminEmail = $settings.admin_email
+    if (-not $adminEmail) { $adminEmail = $Email }
+    $adminPassword = $settings.admin_password
+    if (-not $adminPassword) { $adminPassword = $Password }
+
+    # Determine if source is URL or file path
+    $jsonContent = $null
+    if ($source -match "^https?://") {
+        Write-Info ("Downloading map from: " + $source)
+        try {
+            $response = Invoke-WebRequest -Uri $source -UseBasicParsing -ErrorAction Stop
+            $jsonContent = $response.Content
+            Write-Ok "Map downloaded successfully"
+        } catch {
+            Write-Err ("Failed to download map: " + $_)
+            return
+        }
+    } else {
+        # Local file
+        if (-not (Test-Path $source)) {
+            Write-Err ("File not found: " + $source)
+            return
+        }
+        Write-Info ("Reading map from: " + $source)
+        $jsonContent = Get-Content -Path $source -Raw -Encoding UTF8
+        Write-Ok "Map file loaded"
+    }
+
+    # Validate JSON
+    try {
+        $parsed = $jsonContent | ConvertFrom-Json
+        if ($parsed.application) {
+            Write-Info ("Application: " + $parsed.application.name)
+        }
+    } catch {
+        Write-Err ("Invalid JSON: " + $_)
+        return
+    }
+
+    # Login
+    $baseUri = "http://localhost:" + $port
+    try {
+        $token = Login-Backend -Port $port -AdminEmail $adminEmail -AdminPassword $adminPassword
+    } catch {
+        Write-Err "Failed to login. Is the backend running?"
+        return
+    }
+
+    # Get available sites
+    $sitesResult = Invoke-Api -Method "GET" -Uri ($baseUri + "/api/v1/sites") -Token $token
+    $sites = @()
+    if ($sitesResult -and $sitesResult.sites) { $sites = @($sitesResult.sites) }
+
+    if ($sites.Count -eq 0) {
+        Write-Err "No sites configured. Run 'add-site' first."
+        return
+    }
+
+    # Select site
+    $siteId = $null
+    if ($Arg2) {
+        # Site specified as argument
+        $match = $sites | Where-Object { $_.name -eq $Arg2 -or $_.code -eq $Arg2 -or $_.id -eq $Arg2 }
+        if ($match) {
+            if ($match -is [array]) { $match = $match[0] }
+            $siteId = $match.id
+            Write-Info ("Using site: " + $match.name)
+        } else {
+            Write-Err ("Site not found: " + $Arg2)
+            return
+        }
+    } elseif ($sites.Count -eq 1) {
+        $siteId = $sites[0].id
+        Write-Info ("Using site: " + $sites[0].name)
+    } else {
+        Write-Host ""
+        Write-Host "Available sites:" -ForegroundColor Yellow
+        for ($i = 0; $i -lt $sites.Count; $i++) {
+            $s = $sites[$i]
+            $stype = if ($s.site_type) { " (" + $s.site_type + ")" } else { "" }
+            $hosting = if ($s.hosting_name) { " [" + $s.hosting_name + "]" } else { "" }
+            Write-Host ("  [" + ($i + 1) + "] " + $s.name + $stype + $hosting) -ForegroundColor White
+        }
+        Write-Host ""
+        $choice = Read-Host "Select site number"
+        $idx = [int]$choice - 1
+        if ($idx -ge 0 -and $idx -lt $sites.Count) {
+            $siteId = $sites[$idx].id
+            Write-Info ("Using site: " + $sites[$idx].name)
+        } else {
+            Write-Err "Invalid selection."
+            return
+        }
+    }
+
+    # Import
+    $importBody = @{
+        json    = $jsonContent
+        site_id = $siteId
+    }
+
+    try {
+        $result = Invoke-Api -Method "POST" -Uri ($baseUri + "/api/v1/import/json") -Body $importBody -Token $token
+        if ($result -and $result.application_id) {
+            Write-Ok ("Application imported: " + $result.application_name + " (ID: " + $result.application_id + ")")
+            Write-Info ("Components: " + $result.components_created + ", Dependencies: " + $result.dependencies_created)
+            if ($result.warnings -and $result.warnings.Count -gt 0) {
+                foreach ($w in $result.warnings) { Write-Warn $w }
+            }
+        } else {
+            Write-Ok "Import completed."
+        }
+    } catch {
+        Write-Err ("Import failed: " + $_)
+        return
+    }
+
+    # Auto-assign agent to components
+    $appId = $null
+    if ($result -and $result.application_id) { $appId = $result.application_id }
+
+    if ($appId) {
+        $agentsResult = Invoke-Api -Method "GET" -Uri ($baseUri + "/api/v1/agents") -Token $token
+        if ($agentsResult -and $agentsResult.agents -and @($agentsResult.agents).Count -gt 0) {
+            $agentsList = @($agentsResult.agents)
+            $selectedAgent = $agentsList[0]
+            Write-Info ("Auto-assigning agent: " + $selectedAgent.hostname + " (" + $selectedAgent.id.Substring(0, 8) + ")")
+
+            # Get components for this app
+            $compsResult = Invoke-Api -Method "GET" -Uri ($baseUri + "/api/v1/apps/" + $appId + "/components") -Token $token
+            $components = @()
+            if ($compsResult -and $compsResult.components) { $components = @($compsResult.components) }
+            elseif ($compsResult -is [array]) { $components = $compsResult }
+
+            foreach ($comp in $components) {
+                if (-not $comp.agent_id) {
+                    try {
+                        Invoke-Api -Method "PUT" -Uri ($baseUri + "/api/v1/components/" + $comp.id) -Body @{
+                            agent_id = $selectedAgent.id
+                        } -Token $token | Out-Null
+                    } catch {
+                        Write-Warn ("Failed to assign agent to " + $comp.name)
+                    }
+                }
+            }
+            Write-Ok ("Assigned agent to " + $components.Count + " components")
+        }
+    }
+
+    Write-Host ""
+    Write-Ok "Map import complete"
+}
+
+# ---------------------------------------------------------------------------
 # UPGRADE
 # ---------------------------------------------------------------------------
 function Do-Upgrade {
@@ -875,7 +1155,9 @@ function Do-Help {
     Write-Host "  stop                    Stop all running processes"
     Write-Host "  status                  Show status of all components"
     Write-Host "  add-site <name> [port]  Add a new site (default gateway port: 4443)"
+    Write-Host "  add-hosting <name> [desc]  Add a hosting (group of sites)"
     Write-Host "  import-example [name] [site]  Import an example application map"
+    Write-Host "  import-map <path|url> [site]  Import a map from file or URL"
     Write-Host "  upgrade                 Stop, update binaries+frontend, restart"
     Write-Host "  logs [file]             Show recent log output"
     Write-Host "  help                    Show this help message"
@@ -1204,7 +1486,9 @@ switch ($cmd) {
     "stop"     { Do-Stop }
     "status"   { Do-Status }
     "add-site"       { Do-AddSite }
+    "add-hosting"    { Do-AddHosting }
     "import-example" { Do-ImportExample }
+    "import-map"     { Do-ImportMap }
     "upgrade"        { Do-Upgrade }
     "logs"           { Do-Logs }
     "help"           { Do-Help }

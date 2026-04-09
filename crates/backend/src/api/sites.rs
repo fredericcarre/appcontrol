@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::error::{validate_length, validate_optional_length, ApiError, OptionExt};
+use crate::repository::misc_queries;
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -23,6 +24,8 @@ pub struct CreateSiteRequest {
     /// Site type: primary, dr, staging, development
     pub site_type: Option<String>,
     pub location: Option<String>,
+    /// Optional hosting ID to assign this site to a hosting group
+    pub hosting_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +33,10 @@ pub struct UpdateSiteRequest {
     pub name: Option<String>,
     pub location: Option<String>,
     pub is_active: Option<bool>,
+    /// Assign a hosting. Set to a hosting UUID to assign, or "unset_hosting": true to unassign.
+    pub hosting_id: Option<Uuid>,
+    /// Set to true to remove the hosting assignment.
+    pub unset_hosting: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,9 +59,17 @@ pub async fn list_sites(
         )
         .await?;
 
+    // Fetch hosting info for all sites
+    let hosting_map =
+        misc_queries::get_sites_hosting_info(&state.db, *user.organization_id).await?;
+
     let result: Vec<Value> = sites
         .into_iter()
         .map(|s| {
+            let (hosting_id, hosting_name) = hosting_map
+                .get(&s.id.to_string())
+                .cloned()
+                .unwrap_or((None, None));
             json!({
                 "id": s.id,
                 "organization_id": s.organization_id,
@@ -64,6 +79,8 @@ pub async fn list_sites(
                 "location": s.location,
                 "is_active": s.is_active,
                 "created_at": s.created_at,
+                "hosting_id": hosting_id,
+                "hosting_name": hosting_name,
             })
         })
         .collect();
@@ -82,6 +99,12 @@ pub async fn get_site(
         .await?
         .ok_or_not_found()?;
 
+    let (hosting_id, hosting_name) =
+        match misc_queries::get_site_hosting_info(&state.db, id).await? {
+            Some((hid, hname)) => (hid.map(|h| h.to_string()), hname),
+            None => (None, None),
+        };
+
     Ok(Json(json!({
         "id": site.id,
         "organization_id": site.organization_id,
@@ -91,6 +114,8 @@ pub async fn get_site(
         "location": site.location,
         "is_active": site.is_active,
         "created_at": site.created_at,
+        "hosting_id": hosting_id,
+        "hosting_name": hosting_name,
     })))
 }
 
@@ -137,6 +162,21 @@ pub async fn create_site(
         )
         .await?;
 
+    // Assign hosting if provided
+    if let Some(hosting_id) = req.hosting_id {
+        misc_queries::set_site_hosting(&state.db, site.id, Some(hosting_id)).await?;
+    }
+
+    let (hosting_id, hosting_name) = if let Some(hid) = req.hosting_id {
+        let h = state
+            .hosting_repo
+            .get_hosting(hid, *user.organization_id)
+            .await?;
+        (Some(hid.to_string()), h.map(|h| h.name))
+    } else {
+        (None, None)
+    };
+
     Ok(Json(json!({
         "id": site.id,
         "organization_id": site.organization_id,
@@ -146,6 +186,8 @@ pub async fn create_site(
         "location": site.location,
         "is_active": site.is_active,
         "created_at": site.created_at,
+        "hosting_id": hosting_id,
+        "hosting_name": hosting_name,
     })))
 }
 
@@ -186,6 +228,19 @@ pub async fn update_site(
         .await?
         .ok_or_not_found()?;
 
+    // Handle hosting assignment
+    if req.unset_hosting == Some(true) {
+        misc_queries::set_site_hosting(&state.db, id, None).await?;
+    } else if let Some(hosting_id) = req.hosting_id {
+        misc_queries::set_site_hosting(&state.db, id, Some(hosting_id)).await?;
+    }
+
+    let (hosting_id, hosting_name) =
+        match misc_queries::get_site_hosting_info(&state.db, id).await? {
+            Some((hid, hname)) => (hid.map(|h| h.to_string()), hname),
+            None => (None, None),
+        };
+
     Ok(Json(json!({
         "id": site.id,
         "organization_id": site.organization_id,
@@ -195,6 +250,8 @@ pub async fn update_site(
         "location": site.location,
         "is_active": site.is_active,
         "created_at": site.created_at,
+        "hosting_id": hosting_id,
+        "hosting_name": hosting_name,
     })))
 }
 

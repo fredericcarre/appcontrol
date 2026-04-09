@@ -146,6 +146,7 @@ async fn main() -> anyhow::Result<()> {
         team_repo: repository::teams::create_team_repository(pool.clone()),
         permission_repo: repository::permissions::create_permission_repository(pool.clone()),
         site_repo: repository::sites::create_site_repository(pool.clone()),
+        hosting_repo: repository::hostings::create_hosting_repository(pool.clone()),
         enrollment_repo: repository::enrollment::create_enrollment_repository(pool.clone()),
         agent_repo: repository::agents::create_agent_repository(pool.clone()),
         gateway_repo: repository::gateways::create_gateway_repository(pool.clone()),

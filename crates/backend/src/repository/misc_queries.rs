@@ -3808,6 +3808,51 @@ pub async fn get_app_for_export(
     .await
 }
 
+/// Fetch site info for export (with optional hosting).
+pub async fn get_site_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Option<crate::api::export::SiteRow>, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::export::SiteRow>(
+        r#"
+        SELECT s.name, s.code, s.site_type, s.location,
+               h.name AS hosting_name, h.description AS hosting_description
+        FROM applications a
+        JOIN sites s ON a.site_id = s.id
+        LEFT JOIN hostings h ON s.hosting_id = h.id
+        WHERE a.id = $1
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Fetch site overrides for all components of an application (for export).
+pub async fn get_site_overrides_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<crate::api::export::SiteOverrideRow>, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::export::SiteOverrideRow>(
+        r#"
+        SELECT so.component_id, s.code AS site_code, s.name AS site_name,
+               ag.hostname AS agent_host,
+               so.check_cmd_override, so.start_cmd_override,
+               so.stop_cmd_override, so.rebuild_cmd_override,
+               so.env_vars_override
+        FROM site_overrides so
+        JOIN components c ON c.id = so.component_id
+        JOIN sites s ON s.id = so.site_id
+        LEFT JOIN agents ag ON ag.id = so.agent_id_override
+        WHERE c.application_id = $1
+        ORDER BY c.name, s.code
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
 /// Fetch variables for export.
 pub async fn get_vars_for_export(
     pool: &DbPool,
@@ -3924,6 +3969,95 @@ pub async fn get_deps_for_export(
     .bind(crate::db::bind_id(app_id))
     .fetch_all(pool)
     .await
+}
+
+// ============================================================================
+// Hosting queries
+// ============================================================================
+
+/// List sites that belong to a specific hosting, with basic info.
+pub async fn list_sites_for_hosting(
+    pool: &DbPool,
+    hosting_id: Uuid,
+) -> Result<Vec<Value>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (DbUuid, String, String, String, Option<String>, bool)>(
+        r#"SELECT id, name, code, site_type, location, is_active
+           FROM sites WHERE hosting_id = $1
+           ORDER BY code"#,
+    )
+    .bind(crate::db::bind_id(hosting_id))
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, code, site_type, location, is_active)| {
+            serde_json::json!({
+                "id": id,
+                "name": name,
+                "code": code,
+                "site_type": site_type,
+                "location": location,
+                "is_active": is_active,
+            })
+        })
+        .collect())
+}
+
+/// Get hosting info for a site (hosting_id, hosting_name).
+pub async fn get_site_hosting_info(
+    pool: &DbPool,
+    site_id: Uuid,
+) -> Result<Option<(Option<DbUuid>, Option<String>)>, sqlx::Error> {
+    sqlx::query_as::<_, (Option<DbUuid>, Option<String>)>(
+        r#"SELECT s.hosting_id, h.name AS hosting_name
+           FROM sites s
+           LEFT JOIN hostings h ON s.hosting_id = h.id
+           WHERE s.id = $1"#,
+    )
+    .bind(crate::db::bind_id(site_id))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Get hosting info for all sites of an organization.
+pub async fn get_sites_hosting_info(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<std::collections::HashMap<String, (Option<String>, Option<String>)>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (DbUuid, Option<DbUuid>, Option<String>)>(
+        r#"SELECT s.id, s.hosting_id, h.name AS hosting_name
+           FROM sites s
+           LEFT JOIN hostings h ON s.hosting_id = h.id
+           WHERE s.organization_id = $1"#,
+    )
+    .bind(crate::db::bind_id(org_id))
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, hosting_id, hosting_name)| {
+            (
+                id.to_string(),
+                (hosting_id.map(|h| h.to_string()), hosting_name),
+            )
+        })
+        .collect())
+}
+
+/// Assign a site to a hosting (or unassign if hosting_id is None).
+pub async fn set_site_hosting(
+    pool: &DbPool,
+    site_id: Uuid,
+    hosting_id: Option<Uuid>,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("UPDATE sites SET hosting_id = $2 WHERE id = $1")
+        .bind(crate::db::bind_id(site_id))
+        .bind(crate::db::bind_opt_id(hosting_id))
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 // ============================================================================

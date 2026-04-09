@@ -159,6 +159,9 @@ fn run_service() -> anyhow::Result<()> {
                     pool.clone(),
                 ),
             site_repo: appcontrol_backend::repository::sites::create_site_repository(pool.clone()),
+            hosting_repo: appcontrol_backend::repository::hostings::create_hosting_repository(
+                pool.clone(),
+            ),
             enrollment_repo:
                 appcontrol_backend::repository::enrollment::create_enrollment_repository(
                     pool.clone(),
