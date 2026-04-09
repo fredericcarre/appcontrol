@@ -17,6 +17,10 @@ import {
   useDeleteApp,
   useSuspendApp,
   useResumeApp,
+  useComponentGroups,
+  useCreateGroup,
+  useUpdateGroup,
+  useDeleteGroup,
 } from '@/api/apps';
 import { useStartComponent, useStopComponent, useForceStopComponent, useStartWithDeps, useRestartWithDependents } from '@/api/components';
 import { usePermission } from '@/hooks/use-permission';
@@ -105,6 +109,11 @@ export function MapViewPage() {
   const resumeApp = useResumeApp();
   const { subscribe } = useWebSocket();
   const { data: siteBindingsData } = useSiteBindings(appId || '');
+  const { data: groups } = useComponentGroups(appId || '');
+  const createGroup = useCreateGroup();
+  const updateGroup = useUpdateGroup();
+  const deleteGroup = useDeleteGroup();
+  const [activeGroupFilter, setActiveGroupFilter] = useState<string | null>(null);
 
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
@@ -552,6 +561,22 @@ export function MapViewPage() {
   const handleNavigateToApp = useCallback((targetAppId: string) => {
     navigate(`/apps/${targetAppId}`);
   }, [navigate]);
+
+  // Group management handlers
+  const handleCreateGroup = useCallback(async (name: string, color: string, description?: string) => {
+    if (!appId) return;
+    await createGroup.mutateAsync({ app_id: appId, name, color, description });
+  }, [appId, createGroup]);
+
+  const handleUpdateGroup = useCallback(async (groupId: string, name: string, color: string) => {
+    if (!appId) return;
+    await updateGroup.mutateAsync({ app_id: appId, group_id: groupId, name, color });
+  }, [appId, updateGroup]);
+
+  const handleDeleteGroup = useCallback(async (groupId: string) => {
+    if (!appId) return;
+    await deleteGroup.mutateAsync({ app_id: appId, group_id: groupId });
+  }, [appId, deleteGroup]);
 
   // History mode handlers
   const handleToggleHistoryMode = useCallback(() => {
@@ -1049,6 +1074,7 @@ export function MapViewPage() {
           <AppMap
             components={components}
             dependencies={dependencies}
+            groups={groups}
             selectedComponentId={selectedComponentId}
             onSelectComponent={handleSelectComponent}
             onStartAll={handleStartAll}
@@ -1087,6 +1113,13 @@ export function MapViewPage() {
             // Multi-site data
             componentBindings={siteBindingsData?.component_bindings}
             primarySite={siteBindingsData?.primary_site}
+            // Group management
+            canEdit={canEdit}
+            onCreateGroup={handleCreateGroup}
+            onUpdateGroup={handleUpdateGroup}
+            onDeleteGroup={handleDeleteGroup}
+            activeGroupFilter={activeGroupFilter}
+            onGroupFilterChange={setActiveGroupFilter}
           />
         </div>
 

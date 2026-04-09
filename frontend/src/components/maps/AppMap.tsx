@@ -97,6 +97,13 @@ interface AppMapProps {
   // Multi-site data
   componentBindings?: ComponentSiteBindings[];
   primarySite?: SiteInfo | null;
+  // Group management
+  canEdit?: boolean;
+  onCreateGroup?: (name: string, color: string, description?: string) => Promise<void>;
+  onUpdateGroup?: (groupId: string, name: string, color: string) => Promise<void>;
+  onDeleteGroup?: (groupId: string) => Promise<void>;
+  activeGroupFilter?: string | null;
+  onGroupFilterChange?: (groupId: string | null) => void;
 }
 
 /**
@@ -242,6 +249,7 @@ function buildNodes(
   allowDrag?: boolean,
   siteBindingsMap?: Map<string, SiteBinding[]>,
   primarySite?: SiteInfo | null,
+  activeGroupFilter?: string | null,
 ): Node[] {
   const groupColorMap: Record<string, string> = {};
   if (groups) {
@@ -346,6 +354,10 @@ function buildNodes(
           has_command_overrides: b.has_command_overrides,
         })),
       },
+      // Dim nodes not matching the active group filter
+      style: activeGroupFilter && c.group_id !== activeGroupFilter
+        ? { opacity: 0.25 }
+        : undefined,
     };
   });
 }
@@ -455,6 +467,12 @@ function AppMapInner({
   isSavingLayout,
   componentBindings,
   primarySite,
+  canEdit,
+  onCreateGroup,
+  onUpdateGroup,
+  onDeleteGroup,
+  activeGroupFilter,
+  onGroupFilterChange,
 }: AppMapProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition, fitView } = useReactFlow();
@@ -536,8 +554,9 @@ function AppMapInner({
       allowDrag,
       siteBindingsMap,
       primarySite,
+      activeGroupFilter,
     ),
-    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteBindingsMap, primarySite],
+    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteBindingsMap, primarySite, activeGroupFilter],
   );
 
   const initialEdges = useMemo(
@@ -738,10 +757,18 @@ function AppMapInner({
               activityOpen={activityOpen}
               canOperate={canOperate}
               canManage={canManage}
+              canEdit={canEdit}
               onAutoLayout={handleAutoLayout}
               onSaveLayout={onSaveLayout ? handleSaveLayout : undefined}
               hasUnsavedPositions={pendingPositions.size > 0}
               isSavingLayout={isSavingLayout}
+              groups={groups}
+              components={components}
+              onCreateGroup={onCreateGroup}
+              onUpdateGroup={onUpdateGroup}
+              onDeleteGroup={onDeleteGroup}
+              activeGroupFilter={activeGroupFilter}
+              onGroupFilterChange={onGroupFilterChange}
             />
             <InfrastructureSummary
               components={components}
