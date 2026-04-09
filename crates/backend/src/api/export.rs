@@ -54,6 +54,29 @@ pub struct ApplicationExport {
     pub groups: Vec<GroupExport>,
     pub components: Vec<ComponentExport>,
     pub dependencies: Vec<DependencyExport>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub binding_profiles: Vec<BindingProfileExport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BindingProfileExport {
+    pub name: String,
+    pub profile_type: String,
+    pub is_active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The target site for this profile
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub site: Option<SiteExport>,
+    /// Component name → agent host mappings
+    pub mappings: Vec<BindingMappingExport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BindingMappingExport {
+    pub component_name: String,
+    pub host: String,
+    pub resolved_via: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -223,6 +246,30 @@ pub struct SiteOverrideRow {
     pub stop_cmd_override: Option<String>,
     pub rebuild_cmd_override: Option<String>,
     pub env_vars_override: Option<Value>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct BindingProfileRow {
+    pub profile_id: DbUuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub profile_type: String,
+    pub is_active: bool,
+    // Site info resolved from gateway_ids
+    pub site_name: Option<String>,
+    pub site_code: Option<String>,
+    pub site_type: Option<String>,
+    pub site_location: Option<String>,
+    pub hosting_name: Option<String>,
+    pub hosting_description: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct BindingMappingRow {
+    pub profile_id: DbUuid,
+    pub component_name: String,
+    pub host: String,
+    pub resolved_via: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -576,8 +623,53 @@ pub async fn export_app_json(
         })
         .collect();
 
+    // Fetch binding profiles (primary + DR sites)
+    let profile_rows =
+        crate::repository::misc_queries::get_binding_profiles_for_export(&state.db, app_id).await?;
+    let mapping_rows =
+        crate::repository::misc_queries::get_binding_mappings_for_export(&state.db, app_id).await?;
+
+    // Group mappings by profile_id
+    let mut mappings_by_profile: HashMap<DbUuid, Vec<BindingMappingExport>> = HashMap::new();
+    for m in mapping_rows {
+        mappings_by_profile
+            .entry(m.profile_id)
+            .or_default()
+            .push(BindingMappingExport {
+                component_name: m.component_name,
+                host: m.host,
+                resolved_via: m.resolved_via,
+            });
+    }
+
+    let binding_profiles: Vec<BindingProfileExport> = profile_rows
+        .into_iter()
+        .map(|p| {
+            let profile_site = p.site_name.map(|name| SiteExport {
+                name,
+                code: p.site_code.unwrap_or_default(),
+                site_type: p.site_type.unwrap_or_default(),
+                location: p.site_location,
+                hosting: p.hosting_name.map(|hn| HostingExport {
+                    name: hn,
+                    description: p.hosting_description,
+                }),
+            });
+            BindingProfileExport {
+                name: p.name,
+                profile_type: p.profile_type,
+                is_active: p.is_active,
+                description: p.description,
+                site: profile_site,
+                mappings: mappings_by_profile
+                    .remove(&p.profile_id)
+                    .unwrap_or_default(),
+            }
+        })
+        .collect();
+
     let export = ExportedApplication {
-        format_version: "4.1",
+        format_version: "4.2",
         exported_at: chrono::Utc::now(),
         application: ApplicationExport {
             name: app.name,
@@ -588,6 +680,7 @@ pub async fn export_app_json(
             groups,
             components,
             dependencies,
+            binding_profiles,
         },
     };
 

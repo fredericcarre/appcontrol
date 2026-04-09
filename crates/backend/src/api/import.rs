@@ -545,6 +545,8 @@ struct V4Application {
     components: Vec<V4Component>,
     #[serde(default)]
     dependencies: Vec<V4Dependency>,
+    #[serde(default)]
+    binding_profiles: Vec<V4BindingProfile>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -674,6 +676,41 @@ struct V4Dependency {
     from: String,
     to: String,
     dep_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct V4BindingProfile {
+    name: String,
+    #[serde(default = "default_profile_type")]
+    profile_type: String,
+    #[serde(default)]
+    is_active: bool,
+    description: Option<String>,
+    /// Target site for this profile (optional - resolved by site code/name)
+    site: Option<V4ProfileSite>,
+    #[serde(default)]
+    mappings: Vec<V4BindingMapping>,
+}
+
+#[derive(Debug, Deserialize)]
+struct V4ProfileSite {
+    name: Option<String>,
+    code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct V4BindingMapping {
+    component_name: String,
+    host: String,
+    #[serde(default = "default_resolved_via")]
+    resolved_via: String,
+}
+
+fn default_profile_type() -> String {
+    "custom".to_string()
+}
+fn default_resolved_via() -> String {
+    "manual".to_string()
 }
 
 /// POST /api/v1/import/json
@@ -955,6 +992,115 @@ pub async fn import_json_map(
         if let Err(cycle_err) = dag.topological_levels() {
             warnings.push(format!("Warning: DAG contains a cycle - {}", cycle_err));
         }
+    }
+
+    // ── Import binding profiles ────────────────────────────────────
+    let mut _profiles_created = 0;
+
+    for profile in &app_data.binding_profiles {
+        // Resolve target site from profile.site (by code or name)
+        let mut gateway_ids: Vec<Uuid> = Vec::new();
+        if let Some(ref site_ref) = profile.site {
+            // Try to find site by code first, then by name
+            let site_id: Option<Uuid> = if let Some(ref code) = site_ref.code {
+                crate::repository::import_queries::find_site_by_code(
+                    &state.db,
+                    *user.organization_id,
+                    code,
+                )
+                .await
+                .ok()
+                .flatten()
+                .map(|(id,)| id.into_inner())
+            } else if let Some(ref name) = site_ref.name {
+                crate::repository::misc_queries::find_site_by_name(
+                    &state.db,
+                    *user.organization_id,
+                    name,
+                )
+                .await
+                .ok()
+                .flatten()
+            } else {
+                None
+            };
+
+            // Find gateways for this site
+            if let Some(sid) = site_id {
+                if let Ok(gw_ids) =
+                    crate::repository::misc_queries::get_gateway_ids_for_site(&state.db, sid).await
+                {
+                    gateway_ids = gw_ids.into_iter().map(|g| g.into_inner()).collect();
+                }
+            } else {
+                warnings.push(format!(
+                    "Binding profile '{}': target site not found (code={:?}, name={:?})",
+                    profile.name, site_ref.code, site_ref.name,
+                ));
+            }
+        }
+
+        // Create the binding profile
+        let profile_id = Uuid::new_v4();
+        let gw_array = crate::db::UuidArray(gateway_ids.clone());
+        if let Err(e) = crate::repository::import_queries::create_binding_profile(
+            &state.db,
+            profile_id,
+            app_id,
+            &profile.name,
+            profile.description.as_deref(),
+            &profile.profile_type,
+            profile.is_active,
+            gw_array,
+            false, // auto_failover
+            *user.user_id,
+        )
+        .await
+        {
+            warnings.push(format!(
+                "Binding profile '{}': creation failed - {}",
+                profile.name, e
+            ));
+            continue;
+        }
+
+        // Create mappings - resolve agent_id from host
+        for mapping in &profile.mappings {
+            // Try to resolve agent_id from hostname (search across all agents in the org)
+            let agent_id = crate::repository::misc_queries::find_agent_by_hostname(
+                &state.db,
+                *user.organization_id,
+                &mapping.host,
+            )
+            .await
+            .ok()
+            .flatten();
+
+            if let Some(aid) = agent_id {
+                if let Err(e) = crate::repository::import_queries::create_binding_profile_mapping(
+                    &state.db,
+                    profile_id,
+                    &mapping.component_name,
+                    &mapping.host,
+                    aid,
+                    &mapping.resolved_via,
+                )
+                .await
+                {
+                    warnings.push(format!(
+                        "Binding profile '{}' mapping for '{}': {}",
+                        profile.name, mapping.component_name, e
+                    ));
+                }
+            } else {
+                warnings.push(format!(
+                    "Binding profile '{}' mapping for '{}': agent not found for host '{}'",
+                    profile.name, mapping.component_name, mapping.host
+                ));
+            }
+        }
+
+        _profiles_created += 1;
     }
 
     let result = ImportResult {
