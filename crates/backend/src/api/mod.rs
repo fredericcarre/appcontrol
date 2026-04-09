@@ -15,6 +15,7 @@ pub mod gateways;
 pub mod groups;
 pub mod health;
 pub mod history;
+pub mod hostings;
 pub mod import;
 pub mod import_wizard;
 pub mod links;
@@ -394,6 +395,21 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(sites::get_site)
                 .put(sites::update_site)
                 .delete(sites::delete_site),
+        )
+        // Hostings
+        .route(
+            "/hostings",
+            get(hostings::list_hostings).post(hostings::create_hosting),
+        )
+        .route(
+            "/hostings/:id",
+            get(hostings::get_hosting)
+                .put(hostings::update_hosting)
+                .delete(hostings::delete_hosting),
+        )
+        .route(
+            "/hostings/:id/sites",
+            get(hostings::list_hosting_sites),
         )
         // Organizations (super-admin)
         .route(

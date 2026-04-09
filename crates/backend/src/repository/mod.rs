@@ -18,6 +18,7 @@ pub mod discovery_queries;
 pub mod enrollment;
 pub mod gateway_queries;
 pub mod gateways;
+pub mod hostings;
 pub mod import_queries;
 pub mod misc_queries;
 pub mod org_queries;

@@ -10,6 +10,8 @@ export interface Site {
   location: string | null;
   is_active: boolean;
   created_at: string;
+  hosting_id: string | null;
+  hosting_name: string | null;
 }
 
 export function useSites() {
@@ -36,7 +38,7 @@ export function useSite(siteId: string) {
 export function useCreateSite() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: { name: string; code: string; site_type: string; location?: string }) => {
+    mutationFn: async (payload: { name: string; code: string; site_type: string; location?: string; hosting_id?: string }) => {
       const { data } = await client.post<Site>('/sites', payload);
       return data;
     },
@@ -49,7 +51,7 @@ export function useCreateSite() {
 export function useUpdateSite() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, ...payload }: { id: string; name?: string; code?: string; site_type?: string; location?: string; is_active?: boolean }) => {
+    mutationFn: async ({ id, ...payload }: { id: string; name?: string; code?: string; site_type?: string; location?: string; is_active?: boolean; hosting_id?: string; unset_hosting?: boolean }) => {
       const { data } = await client.put<Site>(`/sites/${id}`, payload);
       return data;
     },

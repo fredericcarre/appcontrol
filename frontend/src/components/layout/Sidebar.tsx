@@ -18,6 +18,7 @@ import {
   Radar,
   Monitor,
   MapPin,
+  Warehouse,
 } from 'lucide-react';
 
 const navItems = [
@@ -27,6 +28,7 @@ const navItems = [
   { to: '/teams', icon: Users, label: 'Teams' },
   { to: '/users', icon: UserCog, label: 'Users', adminOnly: true },
   { to: '/sites', icon: MapPin, label: 'Sites', adminOnly: true },
+  { to: '/hostings', icon: Warehouse, label: 'Hostings', adminOnly: true },
   { to: '/gateways', icon: Network, label: 'Gateways' },
   { to: '/agents', icon: Server, label: 'Agents' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },

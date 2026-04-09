@@ -223,6 +223,7 @@ export function SitesPage() {
                   <TableHead>Name</TableHead>
                   <TableHead>Code</TableHead>
                   <TableHead>Type</TableHead>
+                  <TableHead>Hosting</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead>Status</TableHead>
                   {isAdmin && <TableHead className="w-[50px]"></TableHead>}
@@ -245,6 +246,16 @@ export function SitesPage() {
                           <TypeIcon className="h-3 w-3" />
                           {typeInfo.label}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {site.hosting_name ? (
+                          <Badge variant="outline" className="gap-1">
+                            <Building2 className="h-3 w-3" />
+                            {site.hosting_name}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground/50">-</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {site.location || '-'}
