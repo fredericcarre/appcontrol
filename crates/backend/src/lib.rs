@@ -18,6 +18,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use dashmap::DashMap;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -32,6 +33,8 @@ pub struct AppState {
     pub terminal_sessions: terminal::TerminalSessionManager,
     pub log_subscriptions: websocket::LogSubscriptionManager,
     pub pending_log_requests: websocket::PendingLogRequests,
+    /// Cross-site probe: pending command results keyed by request_id.
+    pub probe_results: DashMap<uuid::Uuid, core::cross_site_probe::ProbeCallback>,
     /// SQLite write queue — serializes all writes to avoid "database is locked".
     /// On PostgreSQL this field doesn't exist (PostgreSQL handles concurrency natively).
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]

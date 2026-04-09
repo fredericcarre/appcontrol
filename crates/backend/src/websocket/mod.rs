@@ -997,6 +997,12 @@ async fn process_agent_message(
             sequence_id,
             ..
         } => {
+            // Check if this is a cross-site probe result
+            if crate::core::cross_site_probe::handle_probe_result(state, request_id, exit_code) {
+                tracing::debug!(request_id = %request_id, exit_code, "Cross-site probe result handled");
+                return; // Don't process further — it's not a user-initiated command
+            }
+
             tracing::info!(
                 request_id = %request_id,
                 exit_code = exit_code,

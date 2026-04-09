@@ -161,6 +161,7 @@ async fn main() -> anyhow::Result<()> {
         terminal_sessions,
         log_subscriptions,
         pending_log_requests: websocket::PendingLogRequests::new(),
+        probe_results: dashmap::DashMap::new(),
     });
 
     // Store prometheus handle in a leaked box for the metrics handler
@@ -187,6 +188,16 @@ async fn main() -> anyhow::Result<()> {
         appcontrol_backend::core::heartbeat_monitor::run_heartbeat_monitor(
             monitor_state,
             std::time::Duration::from_secs(30),
+        )
+        .await;
+    });
+
+    // Start cross-site probe background task (checks every 5 min)
+    let probe_state = state.clone();
+    tokio::spawn(async move {
+        appcontrol_backend::core::cross_site_probe::run_cross_site_probe(
+            probe_state,
+            std::time::Duration::from_secs(300),
         )
         .await;
     });

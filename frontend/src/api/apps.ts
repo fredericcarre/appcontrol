@@ -67,6 +67,8 @@ export interface Component {
   connectivity_status?: 'connected' | 'agent_disconnected' | 'gateway_disconnected' | 'no_agent';
   // Latest metrics from check command
   last_check_metrics?: Record<string, unknown> | null;
+  // Cross-site probe: component detected on passive/wrong site
+  passive_site_status?: 'active' | 'inactive' | null;
 }
 
 export interface ComponentGroup {
