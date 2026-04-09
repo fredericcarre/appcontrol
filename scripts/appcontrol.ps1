@@ -846,48 +846,82 @@ function Do-AddHosting {
         }
     }
 
-    # Show existing sites and offer to assign them
+    Write-Ok ("Hosting '" + $hostingName + "' ready (ID: " + $hostingId + ")")
+    Write-Info "Use 'assign-site-hosting <site> <hosting>' to assign sites."
+}
+
+# ---------------------------------------------------------------------------
+# ASSIGN-SITE-HOSTING
+# ---------------------------------------------------------------------------
+function Do-AssignSiteHosting {
+    $siteRef = $Arg1
+    $hostingRef = $Arg2
+    if (-not $siteRef -or -not $hostingRef) {
+        Write-Err "Usage: appcontrol.ps1 assign-site-hosting <site-name-or-code-or-id> <hosting-name-or-id>"
+        return
+    }
+
+    $settings = Read-Settings
+    if (-not $settings) {
+        Write-Err "No config/settings.json found. Run install first."
+        return
+    }
+
+    $port = $settings.backend_port
+    if (-not $port) { $port = "3000" }
+
+    # Login
+    $adminEmail = $settings.admin_email
+    $adminPass = $settings.admin_password
+    $token = Login-Backend -Port $port -AdminEmail $adminEmail -AdminPassword $adminPass
+
+    $baseUrl = "http://localhost:" + $port + "/api/v1"
+
+    # Find the site by name, code, or id
     $sitesResult = Invoke-Api -Method "GET" -Uri ($baseUrl + "/sites") -Token $token
     $sites = @()
     if ($sitesResult -and $sitesResult.sites) { $sites = @($sitesResult.sites) }
+    if ($sitesResult -and $sitesResult.data) { $sites = @($sitesResult.data) }
+    if ($sitesResult -is [array]) { $sites = $sitesResult }
 
-    $unassigned = @($sites | Where-Object { -not $_.hosting_id -or $_.hosting_id -ne $hostingId })
-
-    if ($unassigned.Count -gt 0) {
-        Write-Host ""
-        Write-Host "Sites not yet assigned to this hosting:" -ForegroundColor Yellow
-        for ($i = 0; $i -lt $unassigned.Count; $i++) {
-            $s = $unassigned[$i]
-            $stype = if ($s.site_type) { " (" + $s.site_type + ")" } else { "" }
-            $currentHosting = if ($s.hosting_name) { " [hosting: " + $s.hosting_name + "]" } else { "" }
-            Write-Host ("  [" + ($i + 1) + "] " + $s.name + $stype + $currentHosting) -ForegroundColor White
+    $matchedSite = $null
+    foreach ($s in $sites) {
+        if ($s.name -eq $siteRef -or $s.code -eq $siteRef -or $s.id -eq $siteRef) {
+            $matchedSite = $s
+            break
         }
-        Write-Host "  [0] Skip" -ForegroundColor DarkGray
-        Write-Host ""
-        $choice = Read-Host "Assign sites to this hosting (comma-separated numbers, or 0 to skip)"
-
-        if ($choice -and $choice -ne "0") {
-            $indices = $choice -split "," | ForEach-Object { [int]$_.Trim() - 1 }
-            foreach ($idx in $indices) {
-                if ($idx -ge 0 -and $idx -lt $unassigned.Count) {
-                    $s = $unassigned[$idx]
-                    try {
-                        Invoke-Api -Method "PUT" -Uri ($baseUrl + "/sites/" + $s.id) -Body @{
-                            hosting_id = $hostingId
-                        } -Token $token | Out-Null
-                        Write-Ok ("Assigned site '" + $s.name + "' to hosting '" + $hostingName + "'")
-                    } catch {
-                        Write-Warn ("Failed to assign site '" + $s.name + "': " + $_)
-                    }
-                }
-            }
-        }
-    } else {
-        Write-Info "No unassigned sites available."
+    }
+    if (-not $matchedSite) {
+        Write-Err ("Site not found: " + $siteRef)
+        return
     }
 
-    Write-Host ""
-    Write-Ok ("Hosting '" + $hostingName + "' setup complete")
+    # Find the hosting by name or id
+    $hostingsResult = Invoke-Api -Method "GET" -Uri ($baseUrl + "/hostings") -Token $token
+    $hostings = @()
+    if ($hostingsResult -and $hostingsResult.hostings) { $hostings = @($hostingsResult.hostings) }
+
+    $matchedHosting = $null
+    foreach ($h in $hostings) {
+        if ($h.name -eq $hostingRef -or $h.id -eq $hostingRef) {
+            $matchedHosting = $h
+            break
+        }
+    }
+    if (-not $matchedHosting) {
+        Write-Err ("Hosting not found: " + $hostingRef)
+        return
+    }
+
+    # Assign site to hosting
+    try {
+        Invoke-Api -Method "PUT" -Uri ($baseUrl + "/sites/" + $matchedSite.id) -Body @{
+            hosting_id = $matchedHosting.id
+        } -Token $token | Out-Null
+        Write-Ok ("Assigned site '" + $matchedSite.name + "' to hosting '" + $matchedHosting.name + "'")
+    } catch {
+        Write-Err ("Failed to assign site: " + $_)
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -1156,6 +1190,7 @@ function Do-Help {
     Write-Host "  status                  Show status of all components"
     Write-Host "  add-site <name> [port]  Add a new site (default gateway port: 4443)"
     Write-Host "  add-hosting <name> [desc]  Add a hosting (group of sites)"
+    Write-Host "  assign-site-hosting <site> <hosting>  Assign a site to a hosting"
     Write-Host "  import-example [name] [site]  Import an example application map"
     Write-Host "  import-map <path|url> [site]  Import a map from file or URL"
     Write-Host "  upgrade                 Stop, update binaries+frontend, restart"
@@ -1487,6 +1522,7 @@ switch ($cmd) {
     "status"   { Do-Status }
     "add-site"       { Do-AddSite }
     "add-hosting"    { Do-AddHosting }
+    "assign-site-hosting" { Do-AssignSiteHosting }
     "import-example" { Do-ImportExample }
     "import-map"     { Do-ImportMap }
     "upgrade"        { Do-Upgrade }
