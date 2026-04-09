@@ -3971,6 +3971,105 @@ pub async fn get_deps_for_export(
     .await
 }
 
+/// Find an agent by hostname within an organization (all sites).
+pub async fn find_agent_by_hostname(
+    pool: &DbPool,
+    org_id: Uuid,
+    hostname: &str,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    let row = sqlx::query_as::<_, (DbUuid,)>(
+        "SELECT id FROM agents WHERE organization_id = $1 AND hostname = $2 LIMIT 1",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(hostname)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(id,)| id.into_inner()))
+}
+
+/// Find a site by name within an organization.
+pub async fn find_site_by_name(
+    pool: &DbPool,
+    org_id: Uuid,
+    name: &str,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    let row = sqlx::query_as::<_, (DbUuid,)>(
+        "SELECT id FROM sites WHERE organization_id = $1 AND name = $2",
+    )
+    .bind(crate::db::bind_id(org_id))
+    .bind(name)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(id,)| id.into_inner()))
+}
+
+/// Get gateway IDs for a site.
+pub async fn get_gateway_ids_for_site(
+    pool: &DbPool,
+    site_id: Uuid,
+) -> Result<Vec<DbUuid>, sqlx::Error> {
+    sqlx::query_scalar::<_, DbUuid>("SELECT id FROM gateways WHERE site_id = $1")
+        .bind(crate::db::bind_id(site_id))
+        .fetch_all(pool)
+        .await
+}
+
+/// Fetch binding profiles for export (with site info resolved from gateways).
+pub async fn get_binding_profiles_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<crate::api::export::BindingProfileRow>, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::export::BindingProfileRow>(
+        r#"
+        SELECT
+            bp.id AS profile_id,
+            bp.name,
+            bp.description,
+            bp.profile_type,
+            bp.is_active,
+            s.name AS site_name,
+            s.code AS site_code,
+            s.site_type,
+            s.location AS site_location,
+            h.name AS hosting_name,
+            h.description AS hosting_description
+        FROM binding_profiles bp
+        LEFT JOIN LATERAL (
+            SELECT DISTINCT g.site_id
+            FROM gateways g
+            WHERE g.id = ANY(bp.gateway_ids)
+            LIMIT 1
+        ) gw ON true
+        LEFT JOIN sites s ON s.id = gw.site_id
+        LEFT JOIN hostings h ON h.id = s.hosting_id
+        WHERE bp.application_id = $1
+        ORDER BY bp.is_active DESC, bp.name
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
+/// Fetch binding profile mappings for export.
+pub async fn get_binding_mappings_for_export(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<crate::api::export::BindingMappingRow>, sqlx::Error> {
+    sqlx::query_as::<_, crate::api::export::BindingMappingRow>(
+        r#"
+        SELECT bpm.profile_id, bpm.component_name, bpm.host, bpm.resolved_via
+        FROM binding_profile_mappings bpm
+        JOIN binding_profiles bp ON bp.id = bpm.profile_id
+        WHERE bp.application_id = $1
+        ORDER BY bp.name, bpm.component_name
+        "#,
+    )
+    .bind(crate::db::bind_id(app_id))
+    .fetch_all(pool)
+    .await
+}
+
 // ============================================================================
 // Hosting queries
 // ============================================================================
