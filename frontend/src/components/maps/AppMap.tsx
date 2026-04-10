@@ -417,6 +417,7 @@ function buildEdges(
       target: d.to_component_id,
       type: 'default', // Use bezier curves for smoother lines
       animated,
+      selectable: true,
       deletable: editable,
       style: {
         stroke: edgeColor,
@@ -572,7 +573,17 @@ function AppMapInner({
   }, [initialNodes, setNodes]);
 
   useEffect(() => {
-    setEdges(initialEdges);
+    // Preserve React Flow's selection state when syncing edges from props,
+    // otherwise selecting an edge and pressing Delete would not work because
+    // the parent re-renders edges (e.g. edgeHighlight change) and the
+    // selected flag is lost.
+    setEdges((prev) => {
+      const selectedIds = new Set(prev.filter((e) => e.selected).map((e) => e.id));
+      if (selectedIds.size === 0) return initialEdges;
+      return initialEdges.map((e) =>
+        selectedIds.has(e.id) ? { ...e, selected: true } : e,
+      );
+    });
   }, [initialEdges, setEdges]);
 
   // Fit view when components change (e.g., switching apps in supervision mode)
@@ -625,14 +636,29 @@ function AppMapInner({
 
   const handleEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
+      // Intercept remove changes: delegate to confirmation dialog instead of
+      // applying immediately (which would hide the edge before the user confirms).
+      const removeIds: string[] = [];
+      const others: EdgeChange[] = [];
+      for (const change of changes) {
+        if (change.type === 'remove') {
+          removeIds.push(change.id);
+        } else {
+          others.push(change);
+        }
+      }
+
+      // Apply non-removal changes normally (select, etc.)
+      if (others.length > 0) {
+        setEdges((eds) => applyEdgeChanges(others, eds));
+      }
+
+      // Trigger deletion dialog for each removal (edge stays visible until confirmed)
       if (editable && onDeleteEdge) {
-        changes.forEach((change) => {
-          if (change.type === 'remove') {
-            onDeleteEdge(change.id);
-          }
+        removeIds.forEach((id) => {
+          onDeleteEdge(id);
         });
       }
-      setEdges((eds) => applyEdgeChanges(changes, eds));
     },
     [setEdges, editable, onDeleteEdge],
   );
