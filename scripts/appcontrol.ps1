@@ -363,9 +363,13 @@ function Do-Start {
             $agLog = Join-Path $script:LogDir ("agent-" + $siteName + ".log")
             $agErr = Join-Path $script:LogDir ("agent-" + $siteName + ".err.log")
 
+            # Set unique hostname per site so each agent gets a distinct ID on restart
+            $realHostname = [System.Net.Dns]::GetHostName()
+            $env:AGENT_HOSTNAME = ($realHostname + "-" + $siteName)
+
             if (Test-Path $agConfigFile) {
                 # Enrolled agent — use its config file
-                $agArgList = @("--config", $agConfigFile)
+                $agArgList = @("--config", "`"$agConfigFile`"")
                 $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgList -PassThru -NoNewWindow `
                     -RedirectStandardOutput $agLog -RedirectStandardError $agErr
             } else {
@@ -730,7 +734,7 @@ function Do-AddSite {
             $env:AGENT_HOSTNAME = ($realHostname + "-" + $siteName)
             $agEnrollUrl = "wss://localhost:" + $gwPort
             Write-Info ("Enrolling agent for site '" + $siteName + "' as " + $env:AGENT_HOSTNAME + "...")
-            $enrollArgList = @("--enroll", $agEnrollUrl, "--token", $agEnrollToken, "--enroll-dir", $agDataDir)
+            $enrollArgList = @("--enroll", $agEnrollUrl, "--token", $agEnrollToken, "--enroll-dir", "`"$agDataDir`"")
             $agEnrollLog = Join-Path $script:LogDir ("agent-enroll-" + $siteName + ".log")
             $agEnrollErr = Join-Path $script:LogDir ("agent-enroll-" + $siteName + ".err.log")
             Write-Info ("Enroll command: " + $agBin + " " + ($enrollArgList -join " "))
@@ -760,7 +764,7 @@ function Do-AddSite {
                 $agProc = Start-Process -FilePath $agBin -PassThru -NoNewWindow `
                     -RedirectStandardOutput $agLog -RedirectStandardError $agErr
             } else {
-                $agArgList = @("--config", $agConfigFile)
+                $agArgList = @("--config", "`"$agConfigFile`"")
                 $agLog = Join-Path $script:LogDir ("agent-" + $siteName + ".log")
                 $agErr = Join-Path $script:LogDir ("agent-" + $siteName + ".err.log")
                 $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgList -PassThru -NoNewWindow `
