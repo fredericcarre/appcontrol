@@ -29,3 +29,4 @@ tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 base64 = "0.22"
 bcrypt = "0.15"
+dashmap = "5"

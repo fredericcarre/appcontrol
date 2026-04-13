@@ -104,7 +104,8 @@ export interface ImportExecuteRequest {
   format: 'json' | 'yaml';
   site_id?: string;  // Optional - backend auto-selects default site if not provided
   profile: ProfileConfig;
-  dr_profile?: ProfileConfig;
+  dr_profile?: ProfileConfig;       // Single DR profile (backward compat)
+  dr_profiles?: ProfileConfig[];    // Multiple DR profiles (one per DR site)
   conflict_action?: ConflictAction;  // How to handle name conflicts (default: fail)
   new_name?: string;  // Required if conflict_action is 'rename'
 }
