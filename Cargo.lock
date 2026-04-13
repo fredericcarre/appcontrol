@@ -248,6 +248,7 @@ dependencies = [
  "base64 0.22.1",
  "bcrypt",
  "chrono",
+ "dashmap",
  "futures-util",
  "jsonwebtoken",
  "reqwest",
