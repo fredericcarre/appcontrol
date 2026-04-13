@@ -530,7 +530,9 @@ fn map_link_type(old_type: Option<&str>) -> &str {
 #[derive(Debug, Deserialize)]
 pub struct JsonImportRequest {
     pub json: String,
-    pub site_id: Uuid,
+    /// Site to assign components to. Optional when binding_profiles are present
+    /// in the JSON — the profiles define per-component site bindings.
+    pub site_id: Option<Uuid>,
     /// Optional: If set, import into an existing application (merge mode)
     pub merge_into_app_id: Option<Uuid>,
 }
@@ -763,6 +765,41 @@ pub async fn import_json_map(
     .await?;
 
     // Create application
+    // Resolve site_id: use explicit site_id if provided, otherwise try to resolve
+    // from the first active binding profile's site, or fall back to the first site in org.
+    let resolved_site_id = if let Some(sid) = body.site_id {
+        sid
+    } else {
+        // Try to find site from binding profiles
+        let mut found_site: Option<Uuid> = None;
+        for profile in &app_data.binding_profiles {
+            if let Some(ref site_ref) = profile.site {
+                if let Some(ref code) = site_ref.code {
+                    if let Ok(Some((db_id,))) = crate::repository::import_queries::find_site_by_code(
+                        &state.db, *user.organization_id, code,
+                    ).await {
+                        found_site = Some(*db_id);
+                        break;
+                    }
+                }
+                if found_site.is_none() {
+                    if let Some(ref name) = site_ref.name {
+                        if let Ok(Some((db_id,))) = crate::repository::import_queries::find_site_by_name(
+                            &state.db, *user.organization_id, name,
+                        ).await {
+                            found_site = Some(*db_id);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        // Last resort: use first site in org
+        found_site.unwrap_or_else(|| {
+            warnings.push("No site_id provided and could not resolve from binding profiles; using nil site".into());
+            Uuid::nil()
+        })
+    };
     let tags_json = serde_json::to_value(&app_data.tags).unwrap_or(Value::Null);
     crate::repository::import_queries::create_import_application_with_tags(
         &state.db,
@@ -770,7 +807,7 @@ pub async fn import_json_map(
         &app_data.name,
         app_data.description.as_deref(),
         *user.organization_id,
-        body.site_id,
+        resolved_site_id,
         &tags_json,
     )
     .await?;
