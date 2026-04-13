@@ -678,6 +678,18 @@ pub async fn find_site_by_code(
         .await
 }
 
+pub async fn find_site_by_name(
+    pool: &DbPool,
+    org_id: Uuid,
+    name: &str,
+) -> Result<Option<(DbUuid,)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid,)>("SELECT id FROM sites WHERE organization_id = $1 AND name = $2")
+        .bind(crate::db::bind_id(org_id))
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+}
+
 /// Upsert a site override for a component.
 pub async fn upsert_site_override(
     pool: &DbPool,

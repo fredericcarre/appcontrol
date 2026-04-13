@@ -74,6 +74,62 @@ const initialState: WizardState = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Pre-select sites from binding_profiles in the imported JSON
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface JsonBindingProfile {
+  name?: string;
+  profile_type?: string;
+  site?: { code?: string; name?: string };
+}
+
+function extractSitesFromBindingProfiles(
+  content: string,
+  format: string,
+  availableSites: SiteSummary[],
+): SelectedSite[] {
+  if (format !== 'json' || !content) return [];
+  try {
+    const parsed = JSON.parse(content);
+    const app = parsed.application ?? parsed;
+    const profiles: JsonBindingProfile[] = app?.binding_profiles;
+    if (!Array.isArray(profiles) || profiles.length === 0) return [];
+
+    const selected: SelectedSite[] = [];
+    const usedSiteIds = new Set<string>();
+
+    for (const profile of profiles) {
+      const code = profile.site?.code;
+      const name = profile.site?.name;
+      if (!code && !name) continue;
+
+      const match = availableSites.find(
+        (s) => s.site_id && ((code && s.site_code === code) || (name && s.site_name === name)),
+      );
+      if (!match?.site_id || usedSiteIds.has(match.site_id)) continue;
+
+      usedSiteIds.add(match.site_id);
+      selected.push({
+        siteId: match.site_id,
+        siteType: profile.profile_type === 'dr' ? 'dr' : 'primary',
+      });
+    }
+
+    // Ensure at most one primary
+    const primaries = selected.filter((s) => s.siteType === 'primary');
+    if (primaries.length > 1) {
+      for (let i = 1; i < primaries.length; i++) {
+        primaries[i].siteType = 'dr';
+      }
+    }
+
+    return selected;
+  } catch {
+    return [];
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Main Wizard Component
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -143,6 +199,13 @@ export default function ImportWizard() {
 
   const handleNext = async () => {
     if (step === 'upload') {
+      // Pre-select sites from binding_profiles if present in the JSON
+      if (state.selectedSites.length === 0) {
+        const preSelected = extractSitesFromBindingProfiles(state.content, state.format, sites);
+        if (preSelected.length > 0) {
+          updateState({ selectedSites: preSelected });
+        }
+      }
       setStep('sites');
     } else if (step === 'sites') {
       // Preview with all selected site gateways
