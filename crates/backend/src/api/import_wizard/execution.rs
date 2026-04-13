@@ -120,7 +120,11 @@ pub async fn execute_import(
     } else {
         "import_with_profiles"
     };
-    let dr_profile_names: Vec<&str> = body.all_dr_profiles().iter().map(|p| p.name.as_str()).collect();
+    let dr_profile_names: Vec<&str> = body
+        .all_dr_profiles()
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
     log_action(&state.db, user.user_id, action_type, "application", app_id,
         json!({"name": &app_name, "profile": &body.profile.name, "dr_profiles": dr_profile_names, "is_update": is_update}),
     ).await?;
