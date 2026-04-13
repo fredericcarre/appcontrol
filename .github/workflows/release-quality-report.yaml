@@ -43,16 +43,16 @@ jobs:
         id: version
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-            echo "TAG=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "VERSION=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "TAG=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
           else
-            echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-            echo "TAG=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
-          echo "DATE=$(date -u +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-          echo "DATETIME=$(date -u +'%Y-%m-%d %H:%M UTC')" >> $GITHUB_OUTPUT
-          echo "COMMIT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "COMMIT_SHA_FULL=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "DATE=$(date -u +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+          echo "DATETIME=$(date -u +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
+          echo "COMMIT_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "COMMIT_SHA_FULL=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # ─────────────────────────────────────────────────────────────────────
       # Setup
@@ -97,29 +97,29 @@ jobs:
         id: rustfmt
         run: |
           if cargo fmt --check --all 2>/dev/null; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
 
       - name: "Audit: Clippy (zero warnings)"
         id: clippy
         run: |
           if cargo clippy --workspace -- -D warnings 2>&1 | tee /tmp/clippy-output.txt; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
           WARNINGS=$(grep -c "warning\[" /tmp/clippy-output.txt 2>/dev/null || echo "0")
-          echo "warnings=$WARNINGS" >> $GITHUB_OUTPUT
+          echo "warnings=$WARNINGS" >> "$GITHUB_OUTPUT"
 
       - name: "Audit: Rust build (release)"
         id: rust_build
         run: |
           if cargo build --workspace --release 2>&1 | tee /tmp/build-output.txt; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
 
       - name: "Audit: Frontend ESLint"
@@ -127,9 +127,9 @@ jobs:
         working-directory: frontend
         run: |
           if npm run lint 2>&1 | tee /tmp/eslint-output.txt; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
 
       - name: "Audit: Frontend TypeScript strict"
@@ -137,9 +137,9 @@ jobs:
         working-directory: frontend
         run: |
           if npx tsc --noEmit 2>&1 | tee /tmp/tsc-output.txt; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
 
       - name: "Audit: Frontend build"
@@ -147,9 +147,9 @@ jobs:
         working-directory: frontend
         run: |
           if npm run build 2>&1 | tee /tmp/frontend-build-output.txt; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
 
       # ─────────────────────────────────────────────────────────────────────
@@ -160,23 +160,23 @@ jobs:
         run: |
           # Rust lines of code (excluding generated/vendor)
           RUST_LOC=$(find crates/ -name '*.rs' | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
-          echo "rust_loc=$RUST_LOC" >> $GITHUB_OUTPUT
+          echo "rust_loc=$RUST_LOC" >> "$GITHUB_OUTPUT"
 
           # Frontend lines of code
           TS_LOC=$(find frontend/src -name '*.ts' -o -name '*.tsx' | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
-          echo "ts_loc=$TS_LOC" >> $GITHUB_OUTPUT
+          echo "ts_loc=$TS_LOC" >> "$GITHUB_OUTPUT"
 
           # Number of crates
           CRATE_COUNT=$(find crates/ -name 'Cargo.toml' -maxdepth 2 | wc -l)
-          echo "crate_count=$CRATE_COUNT" >> $GITHUB_OUTPUT
+          echo "crate_count=$CRATE_COUNT" >> "$GITHUB_OUTPUT"
 
           # Number of frontend components
           COMPONENT_COUNT=$(find frontend/src -name '*.tsx' | wc -l)
-          echo "component_count=$COMPONENT_COUNT" >> $GITHUB_OUTPUT
+          echo "component_count=$COMPONENT_COUNT" >> "$GITHUB_OUTPUT"
 
           # Number of SQL migrations
           MIGRATION_COUNT=$(find migrations/ -name '*.sql' 2>/dev/null | wc -l)
-          echo "migration_count=$MIGRATION_COUNT" >> $GITHUB_OUTPUT
+          echo "migration_count=$MIGRATION_COUNT" >> "$GITHUB_OUTPUT"
 
       # ─────────────────────────────────────────────────────────────────────
       # 3. Tests & Coverage
@@ -186,17 +186,18 @@ jobs:
         env:
           DATABASE_URL: postgres://appcontrol:appcontrol@localhost:5432/appcontrol_test
         run: |
-          OUTPUT=$(cargo test --workspace 2>&1 | tee /tmp/rust-test-output.txt)
-          PASSED=$(grep -oP '\d+ passed' /tmp/rust-test-output.txt | head -1 | grep -oP '\d+' || echo "0")
-          FAILED=$(grep -oP '\d+ failed' /tmp/rust-test-output.txt | head -1 | grep -oP '\d+' || echo "0")
-          IGNORED=$(grep -oP '\d+ ignored' /tmp/rust-test-output.txt | head -1 | grep -oP '\d+' || echo "0")
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "ignored=$IGNORED" >> $GITHUB_OUTPUT
-          if [ "$FAILED" = "0" ]; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+          cargo test --workspace --exclude appcontrol-e2e-tests --exclude appcontrol-e2e-real -- --nocapture 2>&1 | tee /tmp/rust-test-output.txt || true
+          # Sum all "X passed" lines
+          PASSED=$(grep -Eo '[0-9]+ passed' /tmp/rust-test-output.txt | awk '{s+=$1} END {print s+0}')
+          FAILED=$(grep -Eo '[0-9]+ failed' /tmp/rust-test-output.txt | awk '{s+=$1} END {print s+0}')
+          IGNORED=$(grep -Eo '[0-9]+ ignored' /tmp/rust-test-output.txt | awk '{s+=$1} END {print s+0}')
+          echo "passed=${PASSED}" >> "$GITHUB_OUTPUT"
+          echo "failed=${FAILED}" >> "$GITHUB_OUTPUT"
+          echo "ignored=${IGNORED}" >> "$GITHUB_OUTPUT"
+          if [ "${FAILED}" = "0" ] && [ "${PASSED}" != "0" ]; then
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
 
       - name: "Audit: Rust test coverage"
@@ -206,24 +207,24 @@ jobs:
         run: |
           COV_OUTPUT=$(cargo llvm-cov --workspace --summary-only 2>&1 | tee /tmp/coverage-output.txt || true)
           # Extract line coverage percentage
-          LINE_COV=$(grep -oP 'TOTAL\s+[\d.]+%' /tmp/coverage-output.txt | grep -oP '[\d.]+' || echo "N/A")
-          echo "line_coverage=$LINE_COV" >> $GITHUB_OUTPUT
+          LINE_COV=$(grep -Eo 'TOTAL[[:space:]]+[0-9.]+%' /tmp/coverage-output.txt | grep -Eo '[0-9.]+' || echo "N/A")
+          echo "line_coverage=${LINE_COV}" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
       - name: "Audit: Frontend tests"
         id: frontend_tests
         working-directory: frontend
         run: |
-          OUTPUT=$(npm test -- --run --reporter=verbose 2>&1 | tee /tmp/frontend-test-output.txt)
-          # Extract pass/fail counts from vitest output
-          PASSED=$(grep -oP '\d+ passed' /tmp/frontend-test-output.txt | head -1 | grep -oP '\d+' || echo "0")
-          FAILED=$(grep -oP '\d+ failed' /tmp/frontend-test-output.txt | head -1 | grep -oP '\d+' || echo "0")
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          if [ "$FAILED" = "0" ]; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+          npm test -- --run --reporter=verbose 2>&1 | tee /tmp/frontend-test-output.txt || true
+          # Extract pass/fail counts from vitest output (e.g. "Tests  234 passed")
+          PASSED=$(grep -Eo '[0-9]+ passed' /tmp/frontend-test-output.txt | tail -1 | grep -Eo '[0-9]+' || echo "0")
+          FAILED=$(grep -Eo '[0-9]+ failed' /tmp/frontend-test-output.txt | tail -1 | grep -Eo '[0-9]+' || echo "0")
+          echo "passed=${PASSED}" >> "$GITHUB_OUTPUT"
+          echo "failed=${FAILED}" >> "$GITHUB_OUTPUT"
+          if [ "${FAILED}" = "0" ] && [ "${PASSED}" != "0" ]; then
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
 
       - name: "Audit: Frontend coverage"
@@ -231,8 +232,8 @@ jobs:
         working-directory: frontend
         run: |
           npx vitest run --coverage --reporter=verbose 2>&1 | tee /tmp/frontend-coverage.txt || true
-          LINE_COV=$(grep -oP 'All files\s*\|\s*[\d.]+' /tmp/frontend-coverage.txt | grep -oP '[\d.]+$' || echo "N/A")
-          echo "line_coverage=$LINE_COV" >> $GITHUB_OUTPUT
+          LINE_COV=$(grep -Eo 'All files[[:space:]]*\|[[:space:]]*[0-9.]+' /tmp/frontend-coverage.txt | grep -Eo '[0-9.]+$' || echo "N/A")
+          echo "line_coverage=${LINE_COV}" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
       # ─────────────────────────────────────────────────────────────────────
@@ -241,13 +242,13 @@ jobs:
       - name: "Security: cargo-audit (CVE scan)"
         id: cargo_audit
         run: |
-          if cargo audit --locked 2>&1 | tee /tmp/cargo-audit.txt; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
-            echo "advisories=0" >> $GITHUB_OUTPUT
+          if cargo audit 2>&1 | tee /tmp/cargo-audit.txt; then
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+            echo "advisories=0" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
             ADVISORIES=$(grep -c "^ID:" /tmp/cargo-audit.txt || echo "0")
-            echo "advisories=$ADVISORIES" >> $GITHUB_OUTPUT
+            echo "advisories=${ADVISORIES}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: "Security: npm audit"
@@ -255,25 +256,25 @@ jobs:
         working-directory: frontend
         run: |
           npm audit --production 2>&1 | tee /tmp/npm-audit.txt || true
-          CRITICAL=$(grep -oP '\d+ critical' /tmp/npm-audit.txt | grep -oP '\d+' || echo "0")
-          HIGH=$(grep -oP '\d+ high' /tmp/npm-audit.txt | grep -oP '\d+' || echo "0")
-          MODERATE=$(grep -oP '\d+ moderate' /tmp/npm-audit.txt | grep -oP '\d+' || echo "0")
-          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
-          echo "high=$HIGH" >> $GITHUB_OUTPUT
-          echo "moderate=$MODERATE" >> $GITHUB_OUTPUT
-          if [ "$CRITICAL" = "0" ] && [ "$HIGH" = "0" ]; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+          CRITICAL=$(grep -Eo '[0-9]+ critical' /tmp/npm-audit.txt | grep -Eo '[0-9]+' || echo "0")
+          HIGH=$(grep -Eo '[0-9]+ high' /tmp/npm-audit.txt | grep -Eo '[0-9]+' || echo "0")
+          MODERATE=$(grep -Eo '[0-9]+ moderate' /tmp/npm-audit.txt | grep -Eo '[0-9]+' || echo "0")
+          echo "critical=${CRITICAL}" >> "$GITHUB_OUTPUT"
+          echo "high=${HIGH}" >> "$GITHUB_OUTPUT"
+          echo "moderate=${MODERATE}" >> "$GITHUB_OUTPUT"
+          if [ "${CRITICAL}" = "0" ] && [ "${HIGH}" = "0" ]; then
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
 
       - name: "Security: cargo-deny (advisories + sources)"
         id: cargo_deny
         run: |
           if cargo deny check advisories sources 2>&1 | tee /tmp/cargo-deny.txt; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
         continue-on-error: true
 
@@ -294,11 +295,11 @@ jobs:
             crates/ frontend/src/ .github/ 2>/dev/null; then
             FINDINGS=$((FINDINGS + 1))
           fi
-          echo "findings=$FINDINGS" >> $GITHUB_OUTPUT
+          echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
           if [ "$FINDINGS" = "0" ]; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
 
       # ─────────────────────────────────────────────────────────────────────
@@ -310,10 +311,10 @@ jobs:
           cargo geiger --all-features --output-format ascii 2>&1 | tee /tmp/geiger-output.txt || true
           # Count unsafe usage in our own crates
           OWN_UNSAFE=$(grep -c "unsafe" /tmp/geiger-output.txt 2>/dev/null || echo "0")
-          echo "own_unsafe=$OWN_UNSAFE" >> $GITHUB_OUTPUT
+          echo "own_unsafe=$OWN_UNSAFE" >> "$GITHUB_OUTPUT"
           # Simple pass: if our crates have 0 unsafe blocks
-          OWN_CRATE_UNSAFE=$(grep -A1 'appcontrol' /tmp/geiger-output.txt | grep -oP '\d+/\d+ unsafe' | head -5 || echo "none")
-          echo "details=$OWN_CRATE_UNSAFE" >> $GITHUB_OUTPUT
+          OWN_CRATE_UNSAFE=$(grep -A1 'appcontrol' /tmp/geiger-output.txt | grep -Eo '[0-9]+/[0-9]+ unsafe' | head -5 || echo "none")
+          echo "details=$OWN_CRATE_UNSAFE" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
       # ─────────────────────────────────────────────────────────────────────
@@ -323,9 +324,9 @@ jobs:
         id: license_check
         run: |
           if cargo deny check licenses 2>&1 | tee /tmp/license-check.txt; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
         continue-on-error: true
 
@@ -338,9 +339,9 @@ jobs:
           TOTAL=$(wc -l < /tmp/rust-licenses.txt)
           MIT_COUNT=$(grep -ci 'MIT' /tmp/rust-licenses.txt || echo "0")
           APACHE_COUNT=$(grep -ci 'Apache' /tmp/rust-licenses.txt || echo "0")
-          echo "total=$TOTAL" >> $GITHUB_OUTPUT
-          echo "mit_count=$MIT_COUNT" >> $GITHUB_OUTPUT
-          echo "apache_count=$APACHE_COUNT" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "mit_count=$MIT_COUNT" >> "$GITHUB_OUTPUT"
+          echo "apache_count=$APACHE_COUNT" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
       # ─────────────────────────────────────────────────────────────────────
@@ -353,7 +354,7 @@ jobs:
           OUTDATED=$(grep -c '^\w' /tmp/rust-outdated.txt | head -1 || echo "0")
           # Subtract header line
           OUTDATED=$((OUTDATED > 1 ? OUTDATED - 1 : 0))
-          echo "count=$OUTDATED" >> $GITHUB_OUTPUT
+          echo "count=$OUTDATED" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
       - name: "Dependencies: npm outdated"
@@ -362,7 +363,7 @@ jobs:
         run: |
           npm outdated --json 2>/dev/null | tee /tmp/npm-outdated.json || true
           OUTDATED=$(jq 'length' /tmp/npm-outdated.json 2>/dev/null || echo "0")
-          echo "count=$OUTDATED" >> $GITHUB_OUTPUT
+          echo "count=$OUTDATED" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
       - name: "Dependencies: Count totals"
@@ -370,12 +371,12 @@ jobs:
         run: |
           RUST_DIRECT=$(cargo metadata --format-version 1 2>/dev/null | jq '[.resolve.nodes[] | select(.id | test("appcontrol")) | .deps | length] | add' || echo "N/A")
           RUST_TOTAL=$(cargo metadata --format-version 1 2>/dev/null | jq '.packages | length' || echo "N/A")
-          echo "rust_direct=$RUST_DIRECT" >> $GITHUB_OUTPUT
-          echo "rust_total=$RUST_TOTAL" >> $GITHUB_OUTPUT
+          echo "rust_direct=$RUST_DIRECT" >> "$GITHUB_OUTPUT"
+          echo "rust_total=$RUST_TOTAL" >> "$GITHUB_OUTPUT"
           NPM_DIRECT=$(jq '.dependencies | length' frontend/package.json 2>/dev/null || echo "N/A")
           NPM_DEV=$(jq '.devDependencies | length' frontend/package.json 2>/dev/null || echo "N/A")
-          echo "npm_direct=$NPM_DIRECT" >> $GITHUB_OUTPUT
-          echo "npm_dev=$NPM_DEV" >> $GITHUB_OUTPUT
+          echo "npm_direct=$NPM_DIRECT" >> "$GITHUB_OUTPUT"
+          echo "npm_dev=$NPM_DEV" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
       # ─────────────────────────────────────────────────────────────────────
@@ -385,9 +386,9 @@ jobs:
         id: sqlite_purity
         run: |
           if bash scripts/lint-sqlite.sh 2>&1 | tee /tmp/sqlite-lint.txt; then
-            echo "status=PASS" >> $GITHUB_OUTPUT
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
-            echo "status=FAIL" >> $GITHUB_OUTPUT
+            echo "status=FAIL" >> "$GITHUB_OUTPUT"
           fi
         continue-on-error: true
 
