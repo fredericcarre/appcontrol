@@ -775,18 +775,28 @@ pub async fn import_json_map(
         for profile in &app_data.binding_profiles {
             if let Some(ref site_ref) = profile.site {
                 if let Some(ref code) = site_ref.code {
-                    if let Ok(Some((db_id,))) = crate::repository::import_queries::find_site_by_code(
-                        &state.db, *user.organization_id, code,
-                    ).await {
+                    if let Ok(Some((db_id,))) =
+                        crate::repository::import_queries::find_site_by_code(
+                            &state.db,
+                            *user.organization_id,
+                            code,
+                        )
+                        .await
+                    {
                         found_site = Some(*db_id);
                         break;
                     }
                 }
                 if found_site.is_none() {
                     if let Some(ref name) = site_ref.name {
-                        if let Ok(Some((db_id,))) = crate::repository::import_queries::find_site_by_name(
-                            &state.db, *user.organization_id, name,
-                        ).await {
+                        if let Ok(Some((db_id,))) =
+                            crate::repository::import_queries::find_site_by_name(
+                                &state.db,
+                                *user.organization_id,
+                                name,
+                            )
+                            .await
+                        {
                             found_site = Some(*db_id);
                             break;
                         }
@@ -797,8 +807,11 @@ pub async fn import_json_map(
         // Last resort: use first site in org
         if found_site.is_none() {
             if let Ok(Some((db_id,))) = crate::repository::import_queries::find_first_site_in_org(
-                &state.db, *user.organization_id,
-            ).await {
+                &state.db,
+                *user.organization_id,
+            )
+            .await
+            {
                 found_site = Some(*db_id);
                 warnings.push("No site_id provided; using first site in organization".into());
             }
