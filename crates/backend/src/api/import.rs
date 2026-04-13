@@ -795,10 +795,20 @@ pub async fn import_json_map(
             }
         }
         // Last resort: use first site in org
-        found_site.unwrap_or_else(|| {
-            warnings.push("No site_id provided and could not resolve from binding profiles; using nil site".into());
-            Uuid::nil()
-        })
+        if found_site.is_none() {
+            if let Ok(Some((db_id,))) = crate::repository::import_queries::find_first_site_in_org(
+                &state.db, *user.organization_id,
+            ).await {
+                found_site = Some(*db_id);
+                warnings.push("No site_id provided; using first site in organization".into());
+            }
+        }
+        match found_site {
+            Some(sid) => sid,
+            None => {
+                return Err(ApiError::Validation("No site_id provided and no sites exist in the organization. Create a site first.".into()));
+            }
+        }
     };
     let tags_json = serde_json::to_value(&app_data.tags).unwrap_or(Value::Null);
     crate::repository::import_queries::create_import_application_with_tags(

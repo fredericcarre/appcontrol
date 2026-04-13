@@ -690,6 +690,16 @@ pub async fn find_site_by_name(
         .await
 }
 
+pub async fn find_first_site_in_org(
+    pool: &DbPool,
+    org_id: Uuid,
+) -> Result<Option<(DbUuid,)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid,)>("SELECT id FROM sites WHERE organization_id = $1 ORDER BY created_at LIMIT 1")
+        .bind(crate::db::bind_id(org_id))
+        .fetch_optional(pool)
+        .await
+}
+
 /// Upsert a site override for a component.
 pub async fn upsert_site_override(
     pool: &DbPool,
