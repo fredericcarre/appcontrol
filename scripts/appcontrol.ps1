@@ -342,7 +342,11 @@ function Do-Start {
             $env:GATEWAY_ZONE = $siteName
             $env:GATEWAY_NAME = ("gw-" + $siteName)
             if ($site.site_id) { $env:GATEWAY_SITE_ID = $site.site_id }
-            if ($site.gw_enroll_token) { $env:GATEWAY_ENROLLMENT_TOKEN = $site.gw_enroll_token }
+            # Do NOT pass enrollment token on restart — the token has limited uses
+            # and would be rejected after a few stop/start cycles.
+            # In dev mode (single org / SQLite), the backend accepts gateways without
+            # a token, so this is safe for local setups.
+            $env:GATEWAY_ENROLLMENT_TOKEN = ""
 
             $gwLog = Join-Path $script:LogDir ("gateway-" + $siteName + ".log")
             $gwErr = Join-Path $script:LogDir ("gateway-" + $siteName + ".err.log")
