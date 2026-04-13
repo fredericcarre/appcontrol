@@ -446,7 +446,12 @@ export default function ImportWizard() {
             <div className="flex items-center gap-2 text-red-700 dark:text-red-300">
               <AlertTriangle className="h-5 w-5" />
               <span>
-                {previewMutation.error?.message || executeMutation.error?.message || 'An error occurred'}
+                {(() => {
+                  const err = previewMutation.error || executeMutation.error;
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const axiosData = (err as any)?.response?.data;
+                  return axiosData?.message || err?.message || 'An error occurred';
+                })()}
               </span>
             </div>
           </CardContent>
