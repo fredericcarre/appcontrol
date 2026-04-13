@@ -242,19 +242,33 @@ export default function ImportWizard() {
                 }
               }
 
-              // DR sites: use dr_suggestions or auto-select
-              if (data.dr_suggestions && data.dr_available_agents) {
-                const suggestion = data.dr_suggestions.find((s) => s.component_name === comp.name);
+              // DR sites: use dr_suggestions or auto-select, filtered per site
+              if (data.dr_available_agents) {
+                const suggestion = data.dr_suggestions?.find((s) => s.component_name === comp.name);
                 for (const drSite of drSites) {
+                  // Filter agents belonging to this specific DR site's gateways
+                  const siteInfo = sites.find((s) => s.site_id === drSite.siteId);
+                  const siteGatewayIds = new Set(siteInfo?.gateways.map((g) => g.id) || []);
+                  const siteAgents = data.dr_available_agents.filter(
+                    (a) => a.gateway_id && siteGatewayIds.has(a.gateway_id)
+                  );
+                  const agentsForSite = siteAgents.length > 0 ? siteAgents : data.dr_available_agents;
+
+                  // Check if the suggested agent belongs to this site
                   if (suggestion?.dr_resolution?.status === 'resolved') {
+                    const suggestedAgent = agentsForSite.find(
+                      (a) => a.agent_id === (suggestion.dr_resolution as { status: 'resolved'; agent_id: string }).agent_id
+                    );
+                    if (suggestedAgent) {
+                      autoConfigs[comp.name][drSite.siteId] = {
+                        enabled: true,
+                        agentId: suggestedAgent.agent_id,
+                      };
+                    }
+                  } else if (agentsForSite.length === 1) {
                     autoConfigs[comp.name][drSite.siteId] = {
                       enabled: true,
-                      agentId: suggestion.dr_resolution.agent_id,
-                    };
-                  } else if (data.dr_available_agents.length === 1) {
-                    autoConfigs[comp.name][drSite.siteId] = {
-                      enabled: true,
-                      agentId: data.dr_available_agents[0].agent_id,
+                      agentId: agentsForSite[0].agent_id,
                     };
                   }
                 }
@@ -297,15 +311,14 @@ export default function ImportWizard() {
         sites
       );
 
-      // Build DR profile if DR sites exist
-      let drProfile = undefined;
-      if (drSites.length > 0) {
-        const firstDrSite = sites.find((s) => s.site_id === drSites[0].siteId);
-        const drGatewayIds = getAllGatewayIds(drSites.map((s) => s.siteId));
+      // Build one DR profile per DR site
+      const drProfiles = drSites.map((drSiteEntry) => {
+        const drSiteInfo = sites.find((s) => s.site_id === drSiteEntry.siteId);
+        const siteGatewayIds = getAllGatewayIds([drSiteEntry.siteId]);
 
         const drMappings: MappingConfig[] = [];
         for (const comp of state.preview?.components || []) {
-          const config = state.componentSiteConfigs[comp.name]?.[drSites[0].siteId];
+          const config = state.componentSiteConfigs[comp.name]?.[drSiteEntry.siteId];
           // Skip disabled components
           if (config?.enabled === false) continue;
           if (config?.agentId) {
@@ -317,15 +330,15 @@ export default function ImportWizard() {
           }
         }
 
-        drProfile = {
-          name: firstDrSite?.site_code?.toLowerCase() || 'dr',
-          description: `DR configuration for ${firstDrSite?.site_name || 'DR site'}`,
+        return {
+          name: drSiteInfo?.site_code?.toLowerCase() || `dr-${drSiteEntry.siteId.slice(0, 8)}`,
+          description: `DR configuration for ${drSiteInfo?.site_name || 'DR site'}`,
           profile_type: 'dr' as const,
-          gateway_ids: drGatewayIds,
+          gateway_ids: siteGatewayIds,
           auto_failover: state.autoFailover,
           mappings: drMappings,
         };
-      }
+      });
 
       executeMutation.mutate(
         {
@@ -339,7 +352,7 @@ export default function ImportWizard() {
             gateway_ids: primarySite ? getAllGatewayIds([primarySite.siteId]) : [],
             mappings: primaryMappings,
           },
-          dr_profile: drProfile,
+          dr_profiles: drProfiles.length > 0 ? drProfiles : undefined,
           conflict_action: state.preview?.existing_application ? state.conflictAction : undefined,
           new_name: state.conflictAction === 'rename' ? state.newName : undefined,
         },
@@ -732,10 +745,14 @@ function parseComponentCommands(content: string, format: string): Record<string,
     const data = JSON.parse(content);
     const app = data.application || data;
     for (const comp of app.components || []) {
+      // Support both flat format (check_cmd) and nested format (commands.check.cmd)
+      const checkCmd = comp.check_cmd || comp.commands?.check?.cmd || '';
+      const startCmd = comp.start_cmd || comp.commands?.start?.cmd || '';
+      const stopCmd = comp.stop_cmd || comp.commands?.stop?.cmd || '';
       result[comp.name] = {
-        check_cmd: comp.check_cmd || '',
-        start_cmd: comp.start_cmd || '',
-        stop_cmd: comp.stop_cmd || '',
+        check_cmd: checkCmd,
+        start_cmd: startCmd,
+        stop_cmd: stopCmd,
       };
     }
   } catch { /* ignore parse errors */ }
@@ -766,7 +783,7 @@ function ResolutionStep({
 
   const getSiteInfo = (siteId: string) => sites.find((s) => s.site_id === siteId);
 
-  // Get agents for a site
+  // Get agents for a site, filtered by site's gateways
   const getAgentsForSite = (siteId: string): AvailableAgent[] => {
     const site = getSiteInfo(siteId);
     if (!site) return [];
@@ -775,8 +792,18 @@ function ResolutionStep({
     if (siteId === primarySite?.siteId) {
       return preview.available_agents || [];
     }
-    // For DR sites, use dr_available_agents
-    return preview.dr_available_agents || [];
+
+    // For DR sites, filter dr_available_agents by this site's gateway IDs
+    const allDrAgents = preview.dr_available_agents || [];
+    const siteGatewayIds = new Set(site.gateways.map((g) => g.id));
+
+    // Filter agents that belong to this site's gateways
+    const siteAgents = allDrAgents.filter(
+      (a) => a.gateway_id && siteGatewayIds.has(a.gateway_id)
+    );
+
+    // If no agents matched by gateway (e.g. agents with null gateway_id), fall back to full list
+    return siteAgents.length > 0 ? siteAgents : allDrAgents;
   };
 
   return (

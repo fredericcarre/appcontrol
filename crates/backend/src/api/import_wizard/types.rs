@@ -103,10 +103,28 @@ pub struct ImportExecuteRequest {
     pub format: String,
     pub site_id: Option<Uuid>,
     pub profile: ProfileConfig,
+    /// Single DR profile (backward compat — prefer dr_profiles)
     pub dr_profile: Option<ProfileConfig>,
+    /// Multiple DR profiles (one per DR site)
+    #[serde(default)]
+    pub dr_profiles: Vec<ProfileConfig>,
     #[serde(default)]
     pub conflict_action: ConflictAction,
     pub new_name: Option<String>,
+}
+
+impl ImportExecuteRequest {
+    /// Returns all DR profiles: merges the legacy single `dr_profile` with `dr_profiles` vec.
+    pub fn all_dr_profiles(&self) -> Vec<&ProfileConfig> {
+        let mut result: Vec<&ProfileConfig> = self.dr_profiles.iter().collect();
+        if let Some(ref single) = self.dr_profile {
+            // Only add if not already present by name
+            if !result.iter().any(|p| p.name == single.name) {
+                result.push(single);
+            }
+        }
+        result
+    }
 }
 
 #[derive(Debug, Deserialize)]

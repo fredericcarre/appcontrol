@@ -120,8 +120,9 @@ pub async fn execute_import(
     } else {
         "import_with_profiles"
     };
+    let dr_profile_names: Vec<&str> = body.all_dr_profiles().iter().map(|p| p.name.as_str()).collect();
     log_action(&state.db, user.user_id, action_type, "application", app_id,
-        json!({"name": &app_name, "profile": &body.profile.name, "dr_profile": body.dr_profile.as_ref().map(|p| &p.name), "is_update": is_update}),
+        json!({"name": &app_name, "profile": &body.profile.name, "dr_profiles": dr_profile_names, "is_update": is_update}),
     ).await?;
 
     // Create or update application
@@ -457,8 +458,9 @@ pub async fn execute_import(
 
     let mut profiles_created = vec![body.profile.name.clone()];
 
-    // Create DR profile if specified
-    if let Some(ref dr_profile) = body.dr_profile {
+    // Create DR profiles (supports multiple DR sites)
+    let all_dr_profiles = body.all_dr_profiles();
+    for dr_profile in &all_dr_profiles {
         let dr_profile_id = Uuid::new_v4();
         repo::create_binding_profile(
             &state.db,
