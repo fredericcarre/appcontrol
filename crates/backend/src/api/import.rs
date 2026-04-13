@@ -18,7 +18,17 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Deserialize a `null` JSON value as an empty `Vec` instead of failing.
+/// This handles external tools (e.g. Panoramisk) that emit `null` for empty arrays.
+fn null_as_empty_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -535,17 +545,17 @@ struct V4Import {
 struct V4Application {
     name: String,
     description: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     tags: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     variables: Vec<V4Variable>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     groups: Vec<V4Group>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     components: Vec<V4Component>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     dependencies: Vec<V4Dependency>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     binding_profiles: Vec<V4BindingProfile>,
 }
 
@@ -579,9 +589,9 @@ struct V4Component {
     host: Option<String>,
     #[serde(default)]
     commands: V4Commands,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     custom_commands: Vec<V4CustomCommand>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     links: Vec<V4Link>,
     position_x: Option<f32>,
     position_y: Option<f32>,
@@ -635,7 +645,7 @@ struct V4CustomCommand {
     description: Option<String>,
     #[serde(default)]
     requires_confirmation: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     parameters: Vec<V4CommandParam>,
 }
 
@@ -688,7 +698,7 @@ struct V4BindingProfile {
     description: Option<String>,
     /// Target site for this profile (optional - resolved by site code/name)
     site: Option<V4ProfileSite>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
     mappings: Vec<V4BindingMapping>,
 }
 
