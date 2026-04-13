@@ -536,7 +536,8 @@ impl ConnectionManager {
         // Send registration message with hostname, detected IPs, system info, and cert fingerprint
         let register = AgentMessage::Register {
             agent_id: self.agent_id,
-            hostname: crate::platform::gethostname(),
+            hostname: std::env::var("AGENT_HOSTNAME")
+                .unwrap_or_else(|_| crate::platform::gethostname()),
             ip_addresses: crate::platform::get_ip_addresses(),
             labels: serde_json::json!(self.labels),
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -823,7 +824,8 @@ impl ConnectionManager {
                 let agent_id = self.agent_id;
                 let msg_tx = self.msg_tx.clone();
                 tokio::spawn(async move {
-                    let hostname = crate::platform::gethostname();
+                    let hostname = std::env::var("AGENT_HOSTNAME")
+                        .unwrap_or_else(|_| crate::platform::gethostname());
                     let report = crate::discovery::scan(agent_id, &hostname);
                     if let Err(e) = msg_tx.send(report) {
                         tracing::error!("Failed to send discovery report: {}", e);
