@@ -161,8 +161,34 @@ pub(crate) struct ApplicationData {
     pub components: Vec<ComponentData>,
     #[serde(default)]
     pub dependencies: Vec<DependencyData>,
+    #[serde(default)]
+    pub binding_profiles: Vec<WizardBindingProfile>,
     #[serde(flatten)]
     pub _extra: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)]
+pub(crate) struct WizardBindingProfile {
+    pub name: Option<String>,
+    #[serde(default)]
+    pub profile_type: Option<String>,
+    pub site: Option<WizardProfileSite>,
+    #[serde(default)]
+    pub mappings: Vec<WizardBindingMapping>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct WizardProfileSite {
+    pub code: Option<String>,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WizardBindingMapping {
+    pub component_name: Option<String>,
+    pub host: Option<String>,
 }
 
 fn deserialize_tags<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>

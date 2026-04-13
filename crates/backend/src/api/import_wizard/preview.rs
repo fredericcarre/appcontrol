@@ -64,6 +64,27 @@ pub async fn preview_import(
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to list agents: {}", e)))?;
 
+    // Build a lookup of component_name → host from primary binding_profiles
+    let mut primary_host_lookup: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for profile in &import_data.application.binding_profiles {
+        let is_primary = profile
+            .profile_type
+            .as_deref()
+            .map(|t| t != "dr")
+            .unwrap_or(true);
+        if !is_primary {
+            continue;
+        }
+        for mapping in &profile.mappings {
+            if let (Some(name), Some(host)) =
+                (mapping.component_name.as_ref(), mapping.host.as_ref())
+            {
+                primary_host_lookup.insert(name.clone(), host.clone());
+            }
+        }
+    }
+
     // Resolve each component
     let mut components = Vec::new();
     let mut all_resolved = true;
@@ -75,7 +96,13 @@ pub async fn preview_import(
             .clone()
             .unwrap_or_else(|| "service".to_string());
 
-        let resolution = if let Some(ref host) = comp.host {
+        // Use host from primary binding_profile mapping if available, else comp.host
+        let effective_host = primary_host_lookup
+            .get(&comp_name)
+            .cloned()
+            .or_else(|| comp.host.clone());
+
+        let resolution = if let Some(ref host) = effective_host {
             let result =
                 resolve_host_with_options(&state.db, host, &body.gateway_ids, user.organization_id)
                     .await
@@ -137,8 +164,87 @@ pub async fn preview_import(
     // Generate DR suggestions if DR gateways specified
     let dr_suggestions = if let Some(ref dr_gw_ids) = body.dr_gateway_ids {
         if !dr_gw_ids.is_empty() {
+            // Build a lookup of component_name → host from DR binding_profiles
+            let mut dr_host_lookup: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            for profile in &import_data.application.binding_profiles {
+                let is_dr = profile
+                    .profile_type
+                    .as_deref()
+                    .map(|t| t == "dr")
+                    .unwrap_or(false);
+                if !is_dr {
+                    continue;
+                }
+                for mapping in &profile.mappings {
+                    if let (Some(name), Some(host)) =
+                        (mapping.component_name.as_ref(), mapping.host.as_ref())
+                    {
+                        dr_host_lookup.insert(name.clone(), host.clone());
+                    }
+                }
+            }
+
             let mut suggestions = Vec::new();
             for comp in &import_data.application.components {
+                let comp_name = comp.name.clone().unwrap_or_default();
+                // Prefer DR host from binding_profiles, fallback to component host
+                let primary_host = comp.host.clone().unwrap_or_default();
+                let dr_host_from_profile = dr_host_lookup.get(&comp_name);
+
+                if let Some(dr_host) = dr_host_from_profile {
+                    // Resolve the DR host directly against DR gateways
+                    let result = resolve_host_with_options(
+                        &state.db,
+                        dr_host,
+                        dr_gw_ids,
+                        user.organization_id,
+                    )
+                    .await
+                    .map_err(|e| ApiError::Internal(format!("DR resolution failed: {}", e)))?;
+
+                    let dr_resolution = match result {
+                        ResolutionResult::Resolved {
+                            agent_id,
+                            agent_hostname,
+                            gateway_id,
+                            gateway_name,
+                            resolved_via,
+                        } => Some(ComponentResolutionStatus::Resolved {
+                            agent_id,
+                            agent_hostname,
+                            gateway_id: gateway_id.map(|g| g.into_inner()),
+                            gateway_name,
+                            resolved_via: resolved_via.to_string(),
+                        }),
+                        ResolutionResult::Multiple { candidates } => {
+                            Some(ComponentResolutionStatus::Multiple {
+                                candidates: candidates
+                                    .into_iter()
+                                    .map(|c| AgentCandidateDto {
+                                        agent_id: *c.agent_id,
+                                        hostname: c.hostname,
+                                        gateway_id: c.gateway_id.map(|g| *g),
+                                        gateway_name: c.gateway_name,
+                                        ip_addresses: c.ip_addresses,
+                                        matched_via: c.matched_via.to_string(),
+                                    })
+                                    .collect(),
+                            })
+                        }
+                        ResolutionResult::Unresolved => Some(ComponentResolutionStatus::Unresolved),
+                    };
+
+                    suggestions.push(DrSuggestion {
+                        component_name: comp_name,
+                        primary_host: primary_host.clone(),
+                        suggested_dr_host: Some(dr_host.clone()),
+                        dr_resolution,
+                    });
+                    continue;
+                }
+
+                // Fallback: use pattern-based DR resolution from primary host
                 if let Some(ref host) = comp.host {
                     let dr_result =
                         resolve_dr_agent(&state.db, user.organization_id, dr_gw_ids, host)
