@@ -5,7 +5,7 @@
 **Version:** v1.9.9
 **Build date:** 2026-04-14 05:27 UTC
 **Commit:** `b491fd30af43a48f65feaaf0dc11a305b950e622`
-**Repository:** fredericcarre/appcontrol
+**Repository:** xcomponent/appcontrol
 **Pipeline:** GitHub Actions (release-quality-report)
 
 ---

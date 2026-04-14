@@ -270,7 +270,7 @@ jobs:
           **Version:** $TAG
           **Build date:** $DATETIME
           **Commit:** \`$COMMIT_FULL\`
-          **Repository:** fredericcarre/appcontrol
+          **Repository:** xcomponent/appcontrol
           **Pipeline:** GitHub Actions (release-quality-report)
 
           ---
