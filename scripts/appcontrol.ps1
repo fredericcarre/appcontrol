@@ -1147,7 +1147,7 @@ function Do-ImportMap {
             $primaryMappings += @{
                 component_name = $comp.name
                 agent_id       = $first.agent_id
-                resolved_via   = "auto_first"
+                resolved_via   = "wizard"
             }
             Write-Warn ("  " + $comp.name + ": multiple agents, using " + $first.hostname)
         } elseif ($preview.available_agents -and @($preview.available_agents).Count -eq 1) {
@@ -1155,7 +1155,7 @@ function Do-ImportMap {
             $primaryMappings += @{
                 component_name = $comp.name
                 agent_id       = $preview.available_agents[0].agent_id
-                resolved_via   = "auto_single"
+                resolved_via   = "wizard"
             }
         } else {
             $unresolvedCount++
@@ -1165,7 +1165,7 @@ function Do-ImportMap {
                 $primaryMappings += @{
                     component_name = $comp.name
                     agent_id       = $preview.available_agents[0].agent_id
-                    resolved_via   = "fallback"
+                    resolved_via   = "wizard"
                 }
             }
         }
@@ -1210,7 +1210,7 @@ function Do-ImportMap {
                     $drMappings += @{
                         component_name = $comp.name
                         agent_id       = $suggestedId
-                        resolved_via   = "dr_suggestion"
+                        resolved_via   = "wizard"
                     }
                     continue
                 }
@@ -1220,7 +1220,7 @@ function Do-ImportMap {
                 $drMappings += @{
                     component_name = $comp.name
                     agent_id       = $drAgents[0].agent_id
-                    resolved_via   = "dr_auto"
+                    resolved_via   = "wizard"
                 }
             }
         }
