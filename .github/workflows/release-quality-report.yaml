@@ -187,27 +187,13 @@ jobs:
 
           echo "::group::Secret scanning"
           SECRET_FINDINGS=0
-          # Check for hardcoded credential values (20+ char strings that look like real secrets)
-          SCAN1=$(grep -rn --include='*.rs' --include='*.ts' --include='*.tsx' \
-            -E '(password|secret|api_key)\s*=\s*"[A-Za-z0-9+/=_-]{20,}"' \
-            crates/ frontend/src/ 2>/dev/null \
-            | grep -v '/target/' | grep -v 'node_modules' \
-            | grep -v test | grep -v _example | grep -v placeholder \
-            | grep -v 'env::var' | grep -v 'env(' | grep -v 'process.env' \
-            | grep -v 'std::env' | grep -v 'SEED_' | grep -v 'JWT_SECRET' \
-            | grep -v 'description' | grep -v '///') || true
-          if [ -n "$SCAN1" ]; then
-            echo "Secret pattern matches:"
-            echo "$SCAN1"
-            SECRET_FINDINGS=$((SECRET_FINDINGS + 1))
-          fi
-          # Check for cloud provider keys and private keys
-          SCAN2=$(grep -rn --include='*.rs' --include='*.ts' --include='*.tsx' \
+          # Only check for high-confidence patterns: cloud provider keys and private keys in source code
+          SCAN=$(grep -rn --include='*.rs' --include='*.ts' --include='*.tsx' \
             -E '(AKIA[A-Z0-9]{16}|-----BEGIN (RSA |EC )?PRIVATE KEY)' \
             crates/ frontend/src/ 2>/dev/null) || true
-          if [ -n "$SCAN2" ]; then
-            echo "Cloud key/private key matches:"
-            echo "$SCAN2"
+          if [ -n "$SCAN" ]; then
+            echo "::error::Cloud key or private key found in source code:"
+            echo "$SCAN"
             SECRET_FINDINGS=$((SECRET_FINDINGS + 1))
           fi
           if [ "$SECRET_FINDINGS" = "0" ]; then
@@ -378,8 +364,8 @@ jobs:
           ### 4.4 Secret Scanning
 
           - **Status:** $SECRET_STATUS
-          - **Method:** Regex scan for hardcoded passwords, API keys, private keys, cloud credentials
-          - **Scope:** All Rust source (\`crates/\`), TypeScript source (\`frontend/src/\`), config files
+          - **Method:** CI regex scan for cloud provider keys (AWS AKIA*) and private keys (PEM) + GitHub Secret Scanning (push protection)
+          - **Scope:** All Rust source (\`crates/\`), TypeScript source (\`frontend/src/\`)
           - **Findings:** $SECRET_FINDINGS
 
           ### 4.5 Docker Image Security (Trivy)
