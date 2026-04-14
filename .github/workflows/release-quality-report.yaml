@@ -491,7 +491,7 @@ jobs:
           mkdir -p report-artifacts
 
           # Create a clean Markdown version (strip LaTeX front matter for GitHub readability)
-          sed '/^---$/,/^---$/d' /tmp/QUALITY-REPORT.md > "report-artifacts/QUALITY-REPORT-${TAG}.md"
+          awk 'BEGIN{skip=0; count=0} /^---$/{count++; if(count<=2){skip=!skip; next}} !skip' /tmp/QUALITY-REPORT.md > "report-artifacts/QUALITY-REPORT-${TAG}.md"
 
           if [ -f /tmp/QUALITY-REPORT.pdf ]; then
             cp /tmp/QUALITY-REPORT.pdf "report-artifacts/QUALITY-REPORT-${TAG}.pdf"
@@ -509,7 +509,7 @@ jobs:
 
           mkdir -p docs/quality-reports
           # Strip LaTeX front matter for clean GitHub rendering
-          sed '/^---$/,/^---$/d' /tmp/QUALITY-REPORT.md > "docs/quality-reports/QUALITY-REPORT-${TAG}.md"
+          awk 'BEGIN{skip=0; count=0} /^---$/{count++; if(count<=2){skip=!skip; next}} !skip' /tmp/QUALITY-REPORT.md > "docs/quality-reports/QUALITY-REPORT-${TAG}.md"
 
           git add "docs/quality-reports/QUALITY-REPORT-${TAG}.md"
           git diff --staged --quiet && echo "No changes" || {
