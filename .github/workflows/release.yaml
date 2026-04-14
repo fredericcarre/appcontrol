@@ -75,32 +75,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu musl-tools
-          # For aarch64-musl, we need cross to handle the compilation
-          cargo install cross --git https://github.com/cross-rs/cross
+          # Install cross via binary (much faster than compiling from source)
+          curl -fsSL https://github.com/cross-rs/cross/releases/latest/download/cross-x86_64-unknown-linux-gnu.tar.gz | tar xz -C /usr/local/bin
           echo "USE_CROSS=true" >> $GITHUB_ENV
 
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.target }}-release-
+          key: ${{ matrix.target }}-release
+          shared-key: release
 
       - name: Build release binaries
         run: |
-          # Build backend with PostgreSQL support (default for Docker/server deployments)
-          if [ "${USE_CROSS:-}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --bin appcontrol-backend --features postgres
-            cross build --release --target ${{ matrix.target }} --bin appcontrol-gateway --bin appcontrol-agent --bin appctl
-          else
-            cargo build --release --target ${{ matrix.target }} --bin appcontrol-backend --features postgres
-            cargo build --release --target ${{ matrix.target }} --bin appcontrol-gateway --bin appcontrol-agent --bin appctl
-          fi
+          BUILD_CMD="${USE_CROSS:+cross}${USE_CROSS:-cargo}"
+          # Build all workspace binaries + postgres backend in one pass
+          $BUILD_CMD build --release --target ${{ matrix.target }} \
+            --bin appcontrol-backend --bin appcontrol-gateway --bin appcontrol-agent --bin appctl \
+            --features postgres
           # Copy PostgreSQL backend for packaging
           mkdir -p target/${{ matrix.target }}/release/postgres
           cp target/${{ matrix.target }}/release/appcontrol-backend* target/${{ matrix.target }}/release/postgres/ 2>/dev/null || true
@@ -118,13 +109,10 @@ jobs:
           # This bug took 6 releases to fix (v1.3.4 → v1.3.9). See docs/SQLITE_IMPLEMENTATION.md
           # for full explanation and verification steps.
           # ============================================================================
+          BUILD_CMD="${USE_CROSS:+cross}${USE_CROSS:-cargo}"
           export CARGO_TARGET_DIR=$PWD/target-sqlite
           cd crates/backend
-          if [ "${USE_CROSS:-}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --no-default-features --features sqlite
-          else
-            cargo build --release --target ${{ matrix.target }} --no-default-features --features sqlite
-          fi
+          $BUILD_CMD build --release --target ${{ matrix.target }} --no-default-features --features sqlite
           cd ../..
           unset CARGO_TARGET_DIR
           # Copy SQLite backend for packaging - fail if file doesn't exist
