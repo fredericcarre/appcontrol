@@ -941,6 +941,8 @@ function Do-ImportMap {
         Write-Err "Usage: appcontrol.ps1 import-map <path-or-url> [site-name]"
         Write-Host ""
         Write-Host "  Import an application map from a local JSON file or a URL." -ForegroundColor DarkGray
+        Write-Host "  If the JSON contains binding_profiles with site references," -ForegroundColor DarkGray
+        Write-Host "  sites and agents are resolved automatically." -ForegroundColor DarkGray
         Write-Host "  Examples:" -ForegroundColor DarkGray
         Write-Host "    .\appcontrol.ps1 import-map C:\maps\myapp.json" -ForegroundColor DarkGray
         Write-Host "    .\appcontrol.ps1 import-map https://example.com/maps/myapp.json Production" -ForegroundColor DarkGray
@@ -984,11 +986,11 @@ function Do-ImportMap {
     }
 
     # Validate JSON
+    $parsed = $null
     try {
         $parsed = $jsonContent | ConvertFrom-Json
-        if ($parsed.application) {
-            Write-Info ("Application: " + $parsed.application.name)
-        }
+        $appData = if ($parsed.application) { $parsed.application } else { $parsed }
+        Write-Info ("Application: " + $appData.name)
     } catch {
         Write-Err ("Invalid JSON: " + $_)
         return
@@ -1003,64 +1005,264 @@ function Do-ImportMap {
         return
     }
 
-    # Get available sites
-    $sitesResult = Invoke-Api -Method "GET" -Uri ($baseUri + "/api/v1/sites") -Token $token
-    $sites = @()
-    if ($sitesResult -and $sitesResult.sites) { $sites = @($sitesResult.sites) }
+    # Get available sites with their gateways
+    $gatewayResult = Invoke-Api -Method "GET" -Uri ($baseUri + "/api/v1/gateways") -Token $token
+    $availableSites = @()
+    if ($gatewayResult -and $gatewayResult.sites) { $availableSites = @($gatewayResult.sites) }
 
-    if ($sites.Count -eq 0) {
-        Write-Err "No sites configured. Run 'add-site' first."
+    if ($availableSites.Count -eq 0) {
+        Write-Err "No sites with connected gateways found. Run 'add-site' first."
         return
     }
 
-    # Select site
-    $siteId = $null
-    if ($Arg2) {
-        # Site specified as argument
-        $match = $sites | Where-Object { $_.name -eq $Arg2 -or $_.code -eq $Arg2 -or $_.id -eq $Arg2 }
-        if ($match) {
-            if ($match -is [array]) { $match = $match[0] }
-            $siteId = $match.id
-            Write-Info ("Using site: " + $match.name)
-        } else {
-            Write-Err ("Site not found: " + $Arg2)
-            return
-        }
-    } elseif ($sites.Count -eq 1) {
-        $siteId = $sites[0].id
-        Write-Info ("Using site: " + $sites[0].name)
-    } else {
-        Write-Host ""
-        Write-Host "Available sites:" -ForegroundColor Yellow
-        for ($i = 0; $i -lt $sites.Count; $i++) {
-            $s = $sites[$i]
-            $stype = if ($s.site_type) { " (" + $s.site_type + ")" } else { "" }
-            $hosting = if ($s.hosting_name) { " [" + $s.hosting_name + "]" } else { "" }
-            Write-Host ("  [" + ($i + 1) + "] " + $s.name + $stype + $hosting) -ForegroundColor White
-        }
-        Write-Host ""
-        $choice = Read-Host "Select site number"
-        $idx = [int]$choice - 1
-        if ($idx -ge 0 -and $idx -lt $sites.Count) {
-            $siteId = $sites[$idx].id
-            Write-Info ("Using site: " + $sites[$idx].name)
-        } else {
-            Write-Err "Invalid selection."
-            return
+    # Extract binding_profiles from JSON to auto-detect sites
+    $appData = if ($parsed.application) { $parsed.application } else { $parsed }
+    $bindingProfiles = @()
+    if ($appData.binding_profiles) { $bindingProfiles = @($appData.binding_profiles) }
+
+    # Match binding_profiles to available sites
+    $primarySite = $null
+    $drSites = @()
+
+    if ($bindingProfiles.Count -gt 0) {
+        Write-Info ("Found " + $bindingProfiles.Count + " binding profile(s) in JSON")
+        foreach ($bp in $bindingProfiles) {
+            $siteCode = if ($bp.site -and $bp.site.code) { $bp.site.code } else { $null }
+            $siteName = if ($bp.site -and $bp.site.name) { $bp.site.name } else { $null }
+            if (-not $siteCode -and -not $siteName) { continue }
+
+            $match = $availableSites | Where-Object {
+                ($siteCode -and $_.site_code -eq $siteCode) -or ($siteName -and $_.site_name -eq $siteName)
+            }
+            if ($match) {
+                if ($match -is [array]) { $match = $match[0] }
+                $profileType = if ($bp.profile_type) { $bp.profile_type } else { "primary" }
+                if ($profileType -ne "dr" -and -not $primarySite) {
+                    $primarySite = $match
+                    Write-Info ("  Primary site: " + $match.site_name + " (" + $match.site_code + ")")
+                } else {
+                    $drSites += $match
+                    Write-Info ("  DR site: " + $match.site_name + " (" + $match.site_code + ")")
+                }
+            } else {
+                $label = if ($siteCode) { $siteCode } else { $siteName }
+                Write-Warn ("  Binding profile references site '$label' — not found locally, skipping")
+            }
         }
     }
 
-    # Import
-    $importBody = @{
-        json    = $jsonContent
-        site_id = $siteId
+    # If no primary site from binding_profiles, fall back to manual selection or argument
+    if (-not $primarySite) {
+        if ($Arg2) {
+            $match = $availableSites | Where-Object { $_.site_name -eq $Arg2 -or $_.site_code -eq $Arg2 -or $_.site_id -eq $Arg2 }
+            if ($match) {
+                if ($match -is [array]) { $match = $match[0] }
+                $primarySite = $match
+                Write-Info ("Using site: " + $match.site_name)
+            } else {
+                Write-Err ("Site not found: " + $Arg2)
+                return
+            }
+        } elseif ($availableSites.Count -eq 1) {
+            $primarySite = $availableSites[0]
+            Write-Info ("Using site: " + $primarySite.site_name)
+        } else {
+            Write-Host ""
+            Write-Host "No binding_profiles found in JSON. Select primary site:" -ForegroundColor Yellow
+            for ($i = 0; $i -lt $availableSites.Count; $i++) {
+                $s = $availableSites[$i]
+                $gwCount = if ($s.gateways) { @($s.gateways).Count } else { 0 }
+                Write-Host ("  [" + ($i + 1) + "] " + $s.site_name + " (" + $s.site_code + ") — " + $gwCount + " gateway(s)") -ForegroundColor White
+            }
+            Write-Host ""
+            $choice = Read-Host "Select site number"
+            $idx = [int]$choice - 1
+            if ($idx -ge 0 -and $idx -lt $availableSites.Count) {
+                $primarySite = $availableSites[$idx]
+                Write-Info ("Using site: " + $primarySite.site_name)
+            } else {
+                Write-Err "Invalid selection."
+                return
+            }
+        }
     }
 
+    # Collect gateway IDs for primary and DR sites
+    $primaryGatewayIds = @()
+    if ($primarySite.gateways) {
+        $primaryGatewayIds = @($primarySite.gateways | ForEach-Object { $_.id })
+    }
+    $drGatewayIds = @()
+    foreach ($dr in $drSites) {
+        if ($dr.gateways) {
+            $drGatewayIds += @($dr.gateways | ForEach-Object { $_.id })
+        }
+    }
+
+    Write-Info ("Primary gateways: " + $primaryGatewayIds.Count + ", DR gateways: " + $drGatewayIds.Count)
+
+    # Step 1: Preview — resolve agents
+    $previewBody = @{
+        content     = $jsonContent
+        format      = "json"
+        gateway_ids = $primaryGatewayIds
+    }
+    if ($drGatewayIds.Count -gt 0) {
+        $previewBody["dr_gateway_ids"] = $drGatewayIds
+    }
+
+    Write-Info "Resolving agents..."
+    $preview = $null
     try {
-        $result = Invoke-Api -Method "POST" -Uri ($baseUri + "/api/v1/import/json") -Body $importBody -Token $token
+        $preview = Invoke-Api -Method "POST" -Uri ($baseUri + "/api/v1/import/preview") -Body $previewBody -Token $token
+    } catch {
+        Write-Err ("Preview failed: " + $_)
+        return
+    }
+
+    if (-not $preview -or -not $preview.components) {
+        Write-Err "Preview returned no components."
+        return
+    }
+
+    Write-Info ("Application: " + $preview.application_name + " (" + $preview.component_count + " components)")
+
+    if ($preview.existing_application) {
+        Write-Warn ("Application '" + $preview.existing_application.name + "' already exists — will update")
+    }
+
+    # Build primary profile mappings from preview resolution
+    $primaryMappings = @()
+    $unresolvedCount = 0
+    foreach ($comp in $preview.components) {
+        if ($comp.resolution.status -eq "resolved") {
+            $primaryMappings += @{
+                component_name = $comp.name
+                agent_id       = $comp.resolution.agent_id
+                resolved_via   = $comp.resolution.resolved_via
+            }
+        } elseif ($comp.resolution.status -eq "multiple") {
+            # Pick first candidate
+            $first = $comp.resolution.candidates[0]
+            $primaryMappings += @{
+                component_name = $comp.name
+                agent_id       = $first.agent_id
+                resolved_via   = "auto_first"
+            }
+            Write-Warn ("  " + $comp.name + ": multiple agents, using " + $first.hostname)
+        } elseif ($preview.available_agents -and @($preview.available_agents).Count -eq 1) {
+            # Only one agent available — auto-assign
+            $primaryMappings += @{
+                component_name = $comp.name
+                agent_id       = $preview.available_agents[0].agent_id
+                resolved_via   = "auto_single"
+            }
+        } else {
+            $unresolvedCount++
+            Write-Warn ("  " + $comp.name + ": no agent resolved (host: " + $comp.host + ")")
+            # If there are available agents, pick the first as fallback
+            if ($preview.available_agents -and @($preview.available_agents).Count -gt 0) {
+                $primaryMappings += @{
+                    component_name = $comp.name
+                    agent_id       = $preview.available_agents[0].agent_id
+                    resolved_via   = "fallback"
+                }
+            }
+        }
+    }
+
+    if ($primaryMappings.Count -eq 0) {
+        Write-Err "No component-to-agent mappings could be resolved. Are agents connected?"
+        return
+    }
+
+    if ($unresolvedCount -gt 0) {
+        Write-Warn ("$unresolvedCount component(s) could not be resolved by hostname — used fallback agent")
+    }
+
+    # Build DR profiles (one per DR site)
+    $drProfiles = @()
+    foreach ($dr in $drSites) {
+        $drSiteGwIds = @()
+        if ($dr.gateways) { $drSiteGwIds = @($dr.gateways | ForEach-Object { $_.id }) }
+        $drAgents = @()
+        if ($preview.dr_available_agents) {
+            # Filter agents belonging to this DR site's gateways
+            $gwSet = @{}
+            foreach ($gid in $drSiteGwIds) { $gwSet[$gid] = $true }
+            $drAgents = @($preview.dr_available_agents | Where-Object { $gwSet[$_.gateway_id] })
+            if ($drAgents.Count -eq 0) { $drAgents = @($preview.dr_available_agents) }
+        }
+
+        $drMappings = @()
+        foreach ($comp in $preview.components) {
+            # Try DR suggestion first
+            $suggestion = $null
+            if ($preview.dr_suggestions) {
+                $suggestion = $preview.dr_suggestions | Where-Object { $_.component_name -eq $comp.name }
+                if ($suggestion -is [array]) { $suggestion = $suggestion[0] }
+            }
+            if ($suggestion -and $suggestion.dr_resolution -and $suggestion.dr_resolution.status -eq "resolved") {
+                # Check if suggested agent belongs to this site
+                $suggestedId = $suggestion.dr_resolution.agent_id
+                $inSite = $drAgents | Where-Object { $_.agent_id -eq $suggestedId }
+                if ($inSite) {
+                    $drMappings += @{
+                        component_name = $comp.name
+                        agent_id       = $suggestedId
+                        resolved_via   = "dr_suggestion"
+                    }
+                    continue
+                }
+            }
+            # Fallback: use first DR agent for this site
+            if ($drAgents.Count -gt 0) {
+                $drMappings += @{
+                    component_name = $comp.name
+                    agent_id       = $drAgents[0].agent_id
+                    resolved_via   = "dr_auto"
+                }
+            }
+        }
+
+        $drProfileName = if ($dr.site_code) { $dr.site_code.ToLower() } else { "dr" }
+        $drProfiles += @{
+            name         = $drProfileName
+            description  = ("DR configuration for " + $dr.site_name)
+            profile_type = "dr"
+            gateway_ids  = $drSiteGwIds
+            auto_failover = $false
+            mappings     = $drMappings
+        }
+        Write-Info ("DR profile '" + $drProfileName + "': " + $drMappings.Count + " mappings")
+    }
+
+    # Step 2: Execute import
+    $profileName = if ($primarySite.site_code) { $primarySite.site_code.ToLower() } else { "primary" }
+    $executeBody = @{
+        content    = $jsonContent
+        format     = "json"
+        site_id    = $primarySite.site_id
+        profile    = @{
+            name         = $profileName
+            description  = ("Primary configuration for " + $primarySite.site_name)
+            profile_type = "primary"
+            gateway_ids  = $primaryGatewayIds
+            mappings     = $primaryMappings
+        }
+        conflict_action = if ($preview.existing_application) { "update" } else { "fail" }
+    }
+    if ($drProfiles.Count -gt 0) {
+        $executeBody["dr_profiles"] = $drProfiles
+    }
+
+    Write-Info "Importing application..."
+    try {
+        $result = Invoke-Api -Method "POST" -Uri ($baseUri + "/api/v1/import/execute") -Body $executeBody -Token $token
         if ($result -and $result.application_id) {
             Write-Ok ("Application imported: " + $result.application_name + " (ID: " + $result.application_id + ")")
-            Write-Info ("Components: " + $result.components_created + ", Dependencies: " + $result.dependencies_created)
+            Write-Info ("Components: " + $result.components_created + ", Profiles: " + ($result.profiles_created -join ", "))
+            Write-Info ("Active profile: " + $result.active_profile)
             if ($result.warnings -and $result.warnings.Count -gt 0) {
                 foreach ($w in $result.warnings) { Write-Warn $w }
             }
@@ -1070,38 +1272,6 @@ function Do-ImportMap {
     } catch {
         Write-Err ("Import failed: " + $_)
         return
-    }
-
-    # Auto-assign agent to components
-    $appId = $null
-    if ($result -and $result.application_id) { $appId = $result.application_id }
-
-    if ($appId) {
-        $agentsResult = Invoke-Api -Method "GET" -Uri ($baseUri + "/api/v1/agents") -Token $token
-        if ($agentsResult -and $agentsResult.agents -and @($agentsResult.agents).Count -gt 0) {
-            $agentsList = @($agentsResult.agents)
-            $selectedAgent = $agentsList[0]
-            Write-Info ("Auto-assigning agent: " + $selectedAgent.hostname + " (" + $selectedAgent.id.Substring(0, 8) + ")")
-
-            # Get components for this app
-            $compsResult = Invoke-Api -Method "GET" -Uri ($baseUri + "/api/v1/apps/" + $appId + "/components") -Token $token
-            $components = @()
-            if ($compsResult -and $compsResult.components) { $components = @($compsResult.components) }
-            elseif ($compsResult -is [array]) { $components = $compsResult }
-
-            foreach ($comp in $components) {
-                if (-not $comp.agent_id) {
-                    try {
-                        Invoke-Api -Method "PUT" -Uri ($baseUri + "/api/v1/components/" + $comp.id) -Body @{
-                            agent_id = $selectedAgent.id
-                        } -Token $token | Out-Null
-                    } catch {
-                        Write-Warn ("Failed to assign agent to " + $comp.name)
-                    }
-                }
-            }
-            Write-Ok ("Assigned agent to " + $components.Count + " components")
-        }
     }
 
     Write-Host ""
