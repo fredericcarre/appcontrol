@@ -342,7 +342,7 @@ function Do-Start {
             $env:GATEWAY_ZONE = $siteName
             $env:GATEWAY_NAME = ("gw-" + $siteName)
             if ($site.site_id) { $env:GATEWAY_SITE_ID = $site.site_id }
-            # Do NOT pass enrollment token on restart — the token has limited uses
+            # Do NOT pass enrollment token on restart -- the token has limited uses
             # and would be rejected after a few stop/start cycles.
             # In dev mode (single org / SQLite), the backend accepts gateways without
             # a token, so this is safe for local setups.
@@ -372,12 +372,12 @@ function Do-Start {
             $env:AGENT_HOSTNAME = ($realHostname + "-" + $siteName)
 
             if (Test-Path $agConfigFile) {
-                # Enrolled agent — use its config file
+                # Enrolled agent -- use its config file
                 $agArgList = @("--config", "`"$agConfigFile`"")
                 $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgList -PassThru -NoNewWindow `
                     -RedirectStandardOutput $agLog -RedirectStandardError $agErr
             } else {
-                # Fallback: no enrollment yet — connect directly
+                # Fallback: no enrollment yet -- connect directly
                 Write-Warn ("Agent for '" + $siteName + "' not enrolled. Run add-site again to enroll.")
                 $env:GATEWAY_URL = "wss://localhost:" + $gwPort
                 Ensure-Dir $agDataDir
@@ -1046,7 +1046,7 @@ function Do-ImportMap {
                 }
             } else {
                 $label = if ($siteCode) { $siteCode } else { $siteName }
-                Write-Warn ("  Binding profile references site '$label' — not found locally, skipping")
+                Write-Warn ("  Binding profile references site '$label' -- not found locally, skipping")
             }
         }
     }
@@ -1072,7 +1072,7 @@ function Do-ImportMap {
             for ($i = 0; $i -lt $availableSites.Count; $i++) {
                 $s = $availableSites[$i]
                 $gwCount = if ($s.gateways) { @($s.gateways).Count } else { 0 }
-                Write-Host ("  [" + ($i + 1) + "] " + $s.site_name + " (" + $s.site_code + ") — " + $gwCount + " gateway(s)") -ForegroundColor White
+                Write-Host ("  [" + ($i + 1) + "] " + $s.site_name + " (" + $s.site_code + ") -- " + $gwCount + " gateway(s)") -ForegroundColor White
             }
             Write-Host ""
             $choice = Read-Host "Select site number"
@@ -1101,7 +1101,7 @@ function Do-ImportMap {
 
     Write-Info ("Primary gateways: " + $primaryGatewayIds.Count + ", DR gateways: " + $drGatewayIds.Count)
 
-    # Step 1: Preview — resolve agents
+    # Step 1: Preview -- resolve agents
     $previewBody = @{
         content     = $jsonContent
         format      = "json"
@@ -1128,7 +1128,7 @@ function Do-ImportMap {
     Write-Info ("Application: " + $preview.application_name + " (" + $preview.component_count + " components)")
 
     if ($preview.existing_application) {
-        Write-Warn ("Application '" + $preview.existing_application.name + "' already exists — will update")
+        Write-Warn ("Application '" + $preview.existing_application.name + "' already exists -- will update")
     }
 
     # Build primary profile mappings from preview resolution
@@ -1151,7 +1151,7 @@ function Do-ImportMap {
             }
             Write-Warn ("  " + $comp.name + ": multiple agents, using " + $first.hostname)
         } elseif ($preview.available_agents -and @($preview.available_agents).Count -eq 1) {
-            # Only one agent available — auto-assign
+            # Only one agent available -- auto-assign
             $primaryMappings += @{
                 component_name = $comp.name
                 agent_id       = $preview.available_agents[0].agent_id
@@ -1177,7 +1177,7 @@ function Do-ImportMap {
     }
 
     if ($unresolvedCount -gt 0) {
-        Write-Warn ("$unresolvedCount component(s) could not be resolved by hostname — used fallback agent")
+        Write-Warn ("$unresolvedCount component(s) could not be resolved by hostname -- used fallback agent")
     }
 
     # Build DR profiles (one per DR site)
