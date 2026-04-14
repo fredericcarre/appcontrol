@@ -25,6 +25,7 @@ import { SitesPage } from '@/pages/SitesPage';
 import { HostingsPage } from '@/pages/HostingsPage';
 import { useUiStore } from '@/stores/ui';
 import { cn } from '@/lib/utils';
+import { Toaster } from 'sonner';
 
 function AuthLayout({ children }: { children: React.ReactNode }) {
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
@@ -67,6 +68,7 @@ export default function App() {
 
   return (
     <TooltipProvider delayDuration={300}>
+      <Toaster position="bottom-right" richColors closeButton duration={3000} />
       <Routes>
         <Route path="/" element={<AuthLayout><DashboardPage /></AuthLayout>} />
         <Route path="/discovery" element={<AuthLayout><DiscoveryPage /></AuthLayout>} />

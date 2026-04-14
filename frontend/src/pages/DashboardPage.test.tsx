@@ -130,7 +130,8 @@ describe('DashboardPage', () => {
     // Verify stat labels exist
     expect(screen.getByText('Total Apps')).toBeInTheDocument();
     expect(screen.getByText('Running')).toBeInTheDocument();
-    expect(screen.getByText('Degraded / Stopped')).toBeInTheDocument();
+    expect(screen.getByText('Degraded')).toBeInTheDocument();
+    expect(screen.getByText('Stopped')).toBeInTheDocument();
     expect(screen.getByText('Failed')).toBeInTheDocument();
 
     // Find the stat values next to their labels
@@ -143,9 +144,9 @@ describe('DashboardPage', () => {
     // Note: No apps have global_state='RUNNING' in the test data, so 0
     expect(runningValue?.textContent).toBe('0');
 
-    const degradedLabel = screen.getByText('Degraded / Stopped');
+    const degradedLabel = screen.getByText('Degraded');
     const degradedValue = degradedLabel.parentElement?.querySelector('p.text-2xl');
-    // Note: No apps have global_state='DEGRADED' or 'STOPPED' in the test data
+    // Note: No apps have global_state='DEGRADED' in the test data
     expect(degradedValue?.textContent).toBe('0');
 
     const failedLabel = screen.getByText('Failed');

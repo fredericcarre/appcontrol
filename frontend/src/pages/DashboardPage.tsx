@@ -4,14 +4,16 @@ import { useApps, useStartApp, useStopApp, useCancelOperation } from '@/api/apps
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useWebSocketStore } from '@/stores/websocket';
+import { cn } from '@/lib/utils';
 import {
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   Plus, Activity, AlertTriangle, CheckCircle, XCircle,
   Play, Square, Loader2, ArrowRight, Terminal, Wifi, WifiOff,
-  RefreshCw, Command, Ban,
+  RefreshCw, Command, Ban, Search, ArrowUpDown, X, Tag,
 } from 'lucide-react';
 import { WsMessage } from '@/stores/websocket';
 
@@ -46,6 +48,34 @@ function getStateColor(state: string) {
     default: return 'text-gray-400';
   }
 }
+
+type SortKey = 'name' | 'state' | 'weather' | 'updated';
+type StateFilter = 'RUNNING' | 'FAILED' | 'DEGRADED' | 'STOPPED' | 'TRANSITIONING';
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'name', label: 'Name (A-Z)' },
+  { key: 'state', label: 'State (critical first)' },
+  { key: 'weather', label: 'Health (worst first)' },
+  { key: 'updated', label: 'Recently updated' },
+];
+
+const STATE_PRIORITY: Record<string, number> = {
+  FAILED: 0,
+  DEGRADED: 1,
+  STARTING: 2,
+  STOPPING: 3,
+  STOPPED: 4,
+  RUNNING: 5,
+  UNKNOWN: 6,
+};
+
+const WEATHER_PRIORITY: Record<string, number> = {
+  stormy: 0,
+  rainy: 1,
+  cloudy: 2,
+  fair: 3,
+  sunny: 4,
+};
 
 /** Format a WebSocket event for display in Live Events */
 function formatEvent(ev: WsMessage): { icon: React.ReactNode; text: string; color: string; context?: string } {
@@ -153,6 +183,24 @@ function formatEvent(ev: WsMessage): { icon: React.ReactNode; text: string; colo
   }
 }
 
+/** Highlight matching text in a string */
+function HighlightMatch({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  const parts = text.split(regex);
+  return (
+    <>
+      {parts.map((part, i) =>
+        regex.test(part) ? (
+          <mark key={i} className="bg-yellow-200 dark:bg-yellow-800 rounded px-0.5">{part}</mark>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 export function DashboardPage() {
   const { data: apps, isLoading, refetch } = useApps();
   const startApp = useStartApp();
@@ -164,6 +212,26 @@ export function DashboardPage() {
   // Track which app is being operated on
   const [operatingAppId, setOperatingAppId] = useState<string | null>(null);
   const [operationType, setOperationType] = useState<'start' | 'stop' | null>(null);
+
+  // Search, filter, sort state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [stateFilters, setStateFilters] = useState<Set<StateFilter>>(new Set());
+  const [tagFilters, setTagFilters] = useState<Set<string>>(new Set());
+  const [sortKey, setSortKey] = useState<SortKey>('state');
+
+  // Collect all unique tags across all apps
+  const allTags = useMemo(() => {
+    if (!apps) return [];
+    const tagSet = new Set<string>();
+    for (const app of apps) {
+      if (app.tags) {
+        for (const tag of app.tags) {
+          tagSet.add(tag);
+        }
+      }
+    }
+    return Array.from(tagSet).sort();
+  }, [apps]);
 
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -183,15 +251,121 @@ export function DashboardPage() {
   });
 
   const stats = useMemo(() => {
-    if (!apps) return { total: 0, running: 0, transitioning: 0, degraded: 0, failed: 0 };
+    if (!apps) return { total: 0, running: 0, transitioning: 0, degraded: 0, stopped: 0, failed: 0 };
     return {
       total: apps.length,
       running: apps.filter((a) => a.global_state === 'RUNNING').length,
       transitioning: apps.filter((a) => a.global_state === 'STARTING' || a.global_state === 'STOPPING').length,
-      degraded: apps.filter((a) => a.global_state === 'DEGRADED' || a.global_state === 'STOPPED').length,
+      degraded: apps.filter((a) => a.global_state === 'DEGRADED').length,
+      stopped: apps.filter((a) => a.global_state === 'STOPPED').length,
       failed: apps.filter((a) => a.global_state === 'FAILED').length,
     };
   }, [apps]);
+
+  const toggleFilter = useCallback((filter: StateFilter) => {
+    setStateFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(filter)) {
+        next.delete(filter);
+      } else {
+        next.add(filter);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearFilters = useCallback(() => {
+    setStateFilters(new Set());
+    setTagFilters(new Set());
+    setSearchQuery('');
+  }, []);
+
+  const toggleTagFilter = useCallback((tag: string) => {
+    setTagFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) {
+        next.delete(tag);
+      } else {
+        next.add(tag);
+      }
+      return next;
+    });
+  }, []);
+
+  // Cycle through sort options
+  const cycleSort = useCallback(() => {
+    setSortKey((prev) => {
+      const idx = SORT_OPTIONS.findIndex((o) => o.key === prev);
+      return SORT_OPTIONS[(idx + 1) % SORT_OPTIONS.length].key;
+    });
+  }, []);
+
+  // Filter and sort apps
+  const filteredApps = useMemo(() => {
+    if (!apps) return [];
+
+    let result = [...apps];
+
+    // Search filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (a) =>
+          a.name.toLowerCase().includes(q) ||
+          (a.description && a.description.toLowerCase().includes(q)),
+      );
+    }
+
+    // State filters
+    if (stateFilters.size > 0) {
+      result = result.filter((a) => {
+        const state = a.global_state || 'UNKNOWN';
+        if (stateFilters.has('RUNNING') && state === 'RUNNING') return true;
+        if (stateFilters.has('FAILED') && state === 'FAILED') return true;
+        if (stateFilters.has('DEGRADED') && state === 'DEGRADED') return true;
+        if (stateFilters.has('STOPPED') && state === 'STOPPED') return true;
+        if (stateFilters.has('TRANSITIONING') && (state === 'STARTING' || state === 'STOPPING')) return true;
+        return false;
+      });
+    }
+
+    // Tag filters (app must have ALL selected tags)
+    if (tagFilters.size > 0) {
+      result = result.filter((a) => {
+        const appTags = new Set(a.tags || []);
+        for (const tag of tagFilters) {
+          if (!appTags.has(tag)) return false;
+        }
+        return true;
+      });
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      switch (sortKey) {
+        case 'name':
+          return a.name.localeCompare(b.name);
+        case 'state': {
+          const pa = STATE_PRIORITY[a.global_state] ?? 6;
+          const pb = STATE_PRIORITY[b.global_state] ?? 6;
+          return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
+        }
+        case 'weather': {
+          const wa = WEATHER_PRIORITY[a.weather] ?? 2;
+          const wb = WEATHER_PRIORITY[b.weather] ?? 2;
+          return wa !== wb ? wa - wb : a.name.localeCompare(b.name);
+        }
+        case 'updated':
+          return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+        default:
+          return 0;
+      }
+    });
+
+    return result;
+  }, [apps, searchQuery, stateFilters, tagFilters, sortKey]);
+
+  const hasActiveFilters = stateFilters.size > 0 || tagFilters.size > 0 || searchQuery.trim().length > 0;
 
   const handleStart = useCallback((e: React.MouseEvent, appId: string, appName: string) => {
     e.stopPropagation();
@@ -282,8 +456,15 @@ export function DashboardPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card>
+      {/* Stats cards - clickable as filters */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <Card
+          className={cn(
+            'cursor-pointer transition-all hover:shadow-md',
+            stateFilters.size === 0 && 'ring-2 ring-primary',
+          )}
+          onClick={clearFilters}
+        >
           <CardContent className="p-4 flex items-center gap-3">
             <Activity className="h-8 w-8 text-primary" />
             <div>
@@ -292,7 +473,13 @@ export function DashboardPage() {
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className={cn(
+            'cursor-pointer transition-all hover:shadow-md',
+            stateFilters.has('RUNNING') && 'ring-2 ring-green-500',
+          )}
+          onClick={() => toggleFilter('RUNNING')}
+        >
           <CardContent className="p-4 flex items-center gap-3">
             <CheckCircle className="h-8 w-8 text-green-600" />
             <div>
@@ -301,27 +488,58 @@ export function DashboardPage() {
             </div>
           </CardContent>
         </Card>
-        {stats.transitioning > 0 && (
-          <Card>
-            <CardContent className="p-4 flex items-center gap-3">
-              <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
-              <div>
-                <p className="text-2xl font-bold">{stats.transitioning}</p>
-                <p className="text-xs text-muted-foreground">In Transition</p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-        <Card>
+        <Card
+          className={cn(
+            'cursor-pointer transition-all hover:shadow-md',
+            stateFilters.has('TRANSITIONING') && 'ring-2 ring-blue-500',
+          )}
+          onClick={() => toggleFilter('TRANSITIONING')}
+        >
+          <CardContent className="p-4 flex items-center gap-3">
+            <Loader2 className={cn('h-8 w-8 text-blue-500', stats.transitioning > 0 && 'animate-spin')} />
+            <div>
+              <p className="text-2xl font-bold">{stats.transitioning}</p>
+              <p className="text-xs text-muted-foreground">In Transition</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card
+          className={cn(
+            'cursor-pointer transition-all hover:shadow-md',
+            stateFilters.has('DEGRADED') && 'ring-2 ring-amber-500',
+          )}
+          onClick={() => toggleFilter('DEGRADED')}
+        >
           <CardContent className="p-4 flex items-center gap-3">
             <AlertTriangle className="h-8 w-8 text-amber-500" />
             <div>
               <p className="text-2xl font-bold">{stats.degraded}</p>
-              <p className="text-xs text-muted-foreground">Degraded / Stopped</p>
+              <p className="text-xs text-muted-foreground">Degraded</p>
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className={cn(
+            'cursor-pointer transition-all hover:shadow-md',
+            stateFilters.has('STOPPED') && 'ring-2 ring-gray-400',
+          )}
+          onClick={() => toggleFilter('STOPPED')}
+        >
+          <CardContent className="p-4 flex items-center gap-3">
+            <Square className="h-8 w-8 text-gray-400" />
+            <div>
+              <p className="text-2xl font-bold">{stats.stopped}</p>
+              <p className="text-xs text-muted-foreground">Stopped</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card
+          className={cn(
+            'cursor-pointer transition-all hover:shadow-md',
+            stateFilters.has('FAILED') && 'ring-2 ring-red-500',
+          )}
+          onClick={() => toggleFilter('FAILED')}
+        >
           <CardContent className="p-4 flex items-center gap-3">
             <XCircle className="h-8 w-8 text-red-600" />
             <div>
@@ -335,109 +553,210 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Applications</CardTitle>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">Applications</CardTitle>
+                {hasActiveFilters && (
+                  <Button variant="ghost" size="sm" className="text-xs h-7" onClick={clearFilters}>
+                    <X className="h-3 w-3 mr-1" />
+                    Clear filters
+                  </Button>
+                )}
+              </div>
+              {/* Search and sort bar */}
+              <div className="flex items-center gap-2 mt-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search applications..."
+                    className="pl-9 h-9"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  {searchQuery && (
+                    <button
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setSearchQuery('')}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 text-xs gap-1.5 shrink-0"
+                  onClick={cycleSort}
+                  title={`Sort: ${SORT_OPTIONS.find((o) => o.key === sortKey)?.label}`}
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">
+                    {SORT_OPTIONS.find((o) => o.key === sortKey)?.label}
+                  </span>
+                </Button>
+              </div>
+              {/* Tag filter chips */}
+              {allTags.length > 0 && (
+                <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                  <Tag className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  {allTags.map((tag) => (
+                    <button
+                      key={tag}
+                      className={cn(
+                        'text-xs px-2 py-0.5 rounded-full border transition-colors',
+                        tagFilters.has(tag)
+                          ? 'bg-indigo-100 border-indigo-400 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300'
+                          : 'bg-muted border-transparent text-muted-foreground hover:border-border',
+                      )}
+                      onClick={() => toggleTagFilter(tag)}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              )}
             </CardHeader>
             <CardContent>
               {!apps?.length ? (
                 <p className="text-sm text-muted-foreground py-8 text-center">
                   No applications yet. Create one to get started.
                 </p>
-              ) : (
-                <div className="space-y-2">
-                  {apps.map((app) => (
-                    <div
-                      key={app.id}
-                      onClick={() => navigate(`/apps/${app.id}`)}
-                      className="w-full flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-accent transition-colors cursor-pointer"
-                    >
-                      <WeatherIcon weather={app.weather || 'cloudy'} className="h-6 w-6 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">{app.name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{app.description}</p>
-                      </div>
-
-                      {/* Component counts */}
-                      <div className="hidden sm:flex items-center gap-2 text-xs">
-                        {app.running_count > 0 && (
-                          <span className="text-green-600">{app.running_count} running</span>
-                        )}
-                        {(app.starting_count ?? 0) > 0 && (
-                          <span className="text-blue-600 animate-pulse">{app.starting_count} starting</span>
-                        )}
-                        {(app.stopping_count ?? 0) > 0 && (
-                          <span className="text-blue-600 animate-pulse">{app.stopping_count} stopping</span>
-                        )}
-                        {app.stopped_count > 0 && (
-                          <span className="text-gray-500">{app.stopped_count} stopped</span>
-                        )}
-                        {app.failed_count > 0 && (
-                          <span className="text-red-600">{app.failed_count} failed</span>
-                        )}
-                        {(app.unreachable_count ?? 0) > 0 && (
-                          <span className="text-gray-700">{app.unreachable_count} unreachable</span>
-                        )}
-                      </div>
-
-                      {/* Global state badge */}
-                      <Badge variant={getWeatherVariant(app.weather || 'cloudy')} className="shrink-0">
-                        {app.global_state || 'UNKNOWN'}
-                      </Badge>
-
-                      {/* Action buttons */}
-                      <div className="flex items-center gap-1 shrink-0">
-                        {/* Show spinner/cancel when:
-                            1. Local API call in progress (operatingAppId)
-                            2. OR app is in transitional state (STARTING/STOPPING) */}
-                        {(operatingAppId === app.id || app.global_state === 'STARTING' || app.global_state === 'STOPPING') ? (
-                          <div className="flex items-center gap-2">
-                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground px-2">
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              <span>
-                                {operatingAppId === app.id
-                                  ? (operationType === 'start' ? 'Starting...' : 'Stopping...')
-                                  : (app.global_state === 'STARTING' ? 'Starting...' : 'Stopping...')}
-                              </span>
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-red-600 hover:bg-red-50"
-                              onClick={(e) => handleCancel(e, app.id)}
-                              title="Cancel operation"
-                            >
-                              <Ban className="h-3.5 w-3.5 mr-1" />
-                              Cancel
-                            </Button>
-                          </div>
-                        ) : (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={(e) => handleStart(e, app.id, app.name)}
-                              disabled={startApp.isPending || stopApp.isPending}
-                              title="Start all components"
-                            >
-                              <Play className="h-4 w-4 text-green-600" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={(e) => handleStop(e, app.id, app.name)}
-                              disabled={startApp.isPending || stopApp.isPending}
-                              title="Stop all components"
-                            >
-                              <Square className="h-4 w-4 text-red-600" />
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+              ) : filteredApps.length === 0 ? (
+                <div className="text-center py-8">
+                  <Search className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">
+                    No applications match your filters
+                  </p>
+                  <Button variant="ghost" size="sm" className="mt-2 text-xs" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
                 </div>
+              ) : (
+                <>
+                  {hasActiveFilters && (
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Showing {filteredApps.length} of {apps.length} applications
+                    </p>
+                  )}
+                  <ScrollArea className={apps.length > 10 ? 'h-[600px]' : undefined}>
+                    <div className="space-y-2">
+                      {filteredApps.map((app) => (
+                        <div
+                          key={app.id}
+                          onClick={() => navigate(`/apps/${app.id}`)}
+                          className="w-full flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-accent transition-colors cursor-pointer"
+                        >
+                          <WeatherIcon weather={app.weather || 'cloudy'} className="h-6 w-6 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm truncate">
+                              <HighlightMatch text={app.name} query={searchQuery} />
+                            </p>
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-xs text-muted-foreground truncate">
+                                {app.description ? (
+                                  <HighlightMatch text={app.description} query={searchQuery} />
+                                ) : null}
+                              </p>
+                              {app.tags && app.tags.length > 0 && (
+                                <div className="hidden sm:flex items-center gap-1 shrink-0">
+                                  {app.tags.slice(0, 3).map((tag) => (
+                                    <span
+                                      key={tag}
+                                      className="text-[10px] px-1.5 py-0 rounded-full bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300"
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                  {app.tags.length > 3 && (
+                                    <span className="text-[10px] text-muted-foreground">
+                                      +{app.tags.length - 3}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Component counts */}
+                          <div className="hidden sm:flex items-center gap-2 text-xs">
+                            {app.running_count > 0 && (
+                              <span className="text-green-600">{app.running_count} running</span>
+                            )}
+                            {(app.starting_count ?? 0) > 0 && (
+                              <span className="text-blue-600 animate-pulse">{app.starting_count} starting</span>
+                            )}
+                            {(app.stopping_count ?? 0) > 0 && (
+                              <span className="text-blue-600 animate-pulse">{app.stopping_count} stopping</span>
+                            )}
+                            {app.stopped_count > 0 && (
+                              <span className="text-gray-500">{app.stopped_count} stopped</span>
+                            )}
+                            {app.failed_count > 0 && (
+                              <span className="text-red-600">{app.failed_count} failed</span>
+                            )}
+                            {(app.unreachable_count ?? 0) > 0 && (
+                              <span className="text-gray-700">{app.unreachable_count} unreachable</span>
+                            )}
+                          </div>
+
+                          {/* Global state badge */}
+                          <Badge variant={getWeatherVariant(app.weather || 'cloudy')} className="shrink-0">
+                            {app.global_state || 'UNKNOWN'}
+                          </Badge>
+
+                          {/* Action buttons */}
+                          <div className="flex items-center gap-1 shrink-0">
+                            {(operatingAppId === app.id || app.global_state === 'STARTING' || app.global_state === 'STOPPING') ? (
+                              <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1.5 text-xs text-muted-foreground px-2">
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  <span>
+                                    {operatingAppId === app.id
+                                      ? (operationType === 'start' ? 'Starting...' : 'Stopping...')
+                                      : (app.global_state === 'STARTING' ? 'Starting...' : 'Stopping...')}
+                                  </span>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-red-600 hover:bg-red-50"
+                                  onClick={(e) => handleCancel(e, app.id)}
+                                  title="Cancel operation"
+                                >
+                                  <Ban className="h-3.5 w-3.5 mr-1" />
+                                  Cancel
+                                </Button>
+                              </div>
+                            ) : (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={(e) => handleStart(e, app.id, app.name)}
+                                  disabled={startApp.isPending || stopApp.isPending}
+                                  title="Start all components"
+                                >
+                                  <Play className="h-4 w-4 text-green-600" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={(e) => handleStop(e, app.id, app.name)}
+                                  disabled={startApp.isPending || stopApp.isPending}
+                                  title="Stop all components"
+                                >
+                                  <Square className="h-4 w-4 text-red-600" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </>
               )}
             </CardContent>
           </Card>
