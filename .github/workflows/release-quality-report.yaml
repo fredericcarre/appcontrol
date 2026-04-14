@@ -169,7 +169,7 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::npm audit"
-          (cd frontend && npm audit --production 2>&1) | tee /tmp/npm-audit.txt || true
+          (cd frontend && npm audit --omit=dev 2>&1) | tee /tmp/npm-audit.txt || true
           NPM_CRITICAL=$(grep -Eo '[0-9]+ critical' /tmp/npm-audit.txt | grep -Eo '[0-9]+' || echo 0)
           NPM_HIGH=$(grep -Eo '[0-9]+ high' /tmp/npm-audit.txt | grep -Eo '[0-9]+' || echo 0)
           NPM_MODERATE=$(grep -Eo '[0-9]+ moderate' /tmp/npm-audit.txt | grep -Eo '[0-9]+' || echo 0)
@@ -231,6 +231,14 @@ jobs:
           # ── 7. SQLite purity ──
           SQLITE_STATUS="PASS"
           bash scripts/lint-sqlite.sh 2>&1 || SQLITE_STATUS="FAIL"
+
+          # ── Export statuses to GITHUB_ENV for quality gate step ──
+          echo "CARGO_AUDIT_STATUS=$CARGO_AUDIT_STATUS" >> "$GITHUB_ENV"
+          echo "NPM_AUDIT_STATUS=$NPM_AUDIT_STATUS" >> "$GITHUB_ENV"
+          echo "SECRET_STATUS=$SECRET_STATUS" >> "$GITHUB_ENV"
+          echo "RUST_TEST_STATUS=$RUST_TEST_STATUS" >> "$GITHUB_ENV"
+          echo "FE_TEST_STATUS=$FE_TEST_STATUS" >> "$GITHUB_ENV"
+          echo "CLIPPY_STATUS=$CLIPPY_STATUS" >> "$GITHUB_ENV"
 
           # ═══════════════════════════════════════════════════════════════════
           # Generate Markdown Report
@@ -455,6 +463,54 @@ jobs:
           *It reflects the state of the codebase at commit \`$COMMIT_FULL\` on $DATETIME.*
           *This document cannot be modified after generation.*
           EOF
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Quality gate — fail the build if critical issues found
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Quality gate: enforce zero critical findings"
+        run: |
+          GATE_FAIL=0
+
+          if [ "$CARGO_AUDIT_STATUS" = "FAIL" ]; then
+            echo "::error::QUALITY GATE FAILED: Rust dependency vulnerabilities detected (cargo-audit)"
+            GATE_FAIL=1
+          fi
+
+          if [ "$NPM_AUDIT_STATUS" = "FAIL" ]; then
+            echo "::error::QUALITY GATE FAILED: npm dependency vulnerabilities detected (critical/high)"
+            GATE_FAIL=1
+          fi
+
+          if [ "$SECRET_STATUS" = "FAIL" ]; then
+            echo "::error::QUALITY GATE FAILED: Hardcoded secrets detected in source code"
+            GATE_FAIL=1
+          fi
+
+          if [ "$RUST_TEST_STATUS" = "FAIL" ]; then
+            echo "::error::QUALITY GATE FAILED: Rust tests failed"
+            GATE_FAIL=1
+          fi
+
+          if [ "$FE_TEST_STATUS" = "FAIL" ]; then
+            echo "::error::QUALITY GATE FAILED: Frontend tests failed"
+            GATE_FAIL=1
+          fi
+
+          if [ "$CLIPPY_STATUS" = "FAIL" ]; then
+            echo "::error::QUALITY GATE FAILED: Clippy warnings detected"
+            GATE_FAIL=1
+          fi
+
+          if [ "$GATE_FAIL" = "1" ]; then
+            echo ""
+            echo "============================================="
+            echo "  QUALITY GATE FAILED — Release blocked"
+            echo "============================================="
+            echo "Fix the issues above before releasing."
+            exit 1
+          fi
+
+          echo "Quality gate PASSED — all checks green"
 
       # ─────────────────────────────────────────────────────────────────────
       # Generate PDF
