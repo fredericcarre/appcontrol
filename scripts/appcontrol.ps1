@@ -1131,7 +1131,21 @@ function Do-ImportMap {
         Write-Warn ("Application '" + $preview.existing_application.name + "' already exists -- will update")
     }
 
-    # Build primary profile mappings from preview resolution
+    # Build host lookup from primary binding_profiles in JSON
+    $bpHostLookup = @{}
+    foreach ($bp in $bindingProfiles) {
+        $profileType = if ($bp.profile_type) { $bp.profile_type } else { "primary" }
+        if ($profileType -eq "dr") { continue }
+        if ($bp.mappings) {
+            foreach ($m in @($bp.mappings)) {
+                if ($m.component_name -and $m.host) {
+                    $bpHostLookup[$m.component_name] = $m.host
+                }
+            }
+        }
+    }
+
+    # Build primary profile mappings from preview resolution + binding_profile fallback
     $primaryMappings = @()
     $unresolvedCount = 0
     foreach ($comp in $preview.components) {
@@ -1142,7 +1156,6 @@ function Do-ImportMap {
                 resolved_via   = $comp.resolution.resolved_via
             }
         } elseif ($comp.resolution.status -eq "multiple") {
-            # Pick first candidate
             $first = $comp.resolution.candidates[0]
             $primaryMappings += @{
                 component_name = $comp.name
@@ -1150,22 +1163,40 @@ function Do-ImportMap {
                 resolved_via   = "wizard"
             }
             Write-Warn ("  " + $comp.name + ": multiple agents, using " + $first.hostname)
-        } elseif ($preview.available_agents -and @($preview.available_agents).Count -eq 1) {
-            # Only one agent available -- auto-assign
-            $primaryMappings += @{
-                component_name = $comp.name
-                agent_id       = $preview.available_agents[0].agent_id
-                resolved_via   = "wizard"
-            }
         } else {
-            $unresolvedCount++
-            Write-Warn ("  " + $comp.name + ": no agent resolved (host: " + $comp.host + ")")
-            # If there are available agents, pick the first as fallback
-            if ($preview.available_agents -and @($preview.available_agents).Count -gt 0) {
+            # Try to resolve from binding_profile host mapping
+            $bpHost = $bpHostLookup[$comp.name]
+            $matchedAgent = $null
+            if ($bpHost -and $preview.available_agents) {
+                $matchedAgent = @($preview.available_agents) | Where-Object {
+                    $_.hostname -eq $bpHost -or
+                    $_.hostname -like "$bpHost.*" -or
+                    $bpHost -like "$($_.hostname).*"
+                } | Select-Object -First 1
+            }
+            if ($matchedAgent) {
+                $primaryMappings += @{
+                    component_name = $comp.name
+                    agent_id       = $matchedAgent.agent_id
+                    resolved_via   = "wizard"
+                }
+                Write-Info ("  " + $comp.name + ": resolved via binding_profile host '" + $bpHost + "' -> " + $matchedAgent.hostname)
+            } elseif ($preview.available_agents -and @($preview.available_agents).Count -eq 1) {
                 $primaryMappings += @{
                     component_name = $comp.name
                     agent_id       = $preview.available_agents[0].agent_id
                     resolved_via   = "wizard"
+                }
+            } else {
+                $unresolvedCount++
+                $hostInfo = if ($bpHost) { $bpHost } else { $comp.host }
+                Write-Warn ("  " + $comp.name + ": no agent resolved (host: " + $hostInfo + ")")
+                if ($preview.available_agents -and @($preview.available_agents).Count -gt 0) {
+                    $primaryMappings += @{
+                        component_name = $comp.name
+                        agent_id       = $preview.available_agents[0].agent_id
+                        resolved_via   = "wizard"
+                    }
                 }
             }
         }
@@ -1180,6 +1211,23 @@ function Do-ImportMap {
         Write-Warn ("$unresolvedCount component(s) could not be resolved by hostname -- used fallback agent")
     }
 
+    # Build DR host lookups from binding_profiles
+    $drBpHostLookups = @{}
+    foreach ($bp in $bindingProfiles) {
+        if ($bp.profile_type -ne "dr") { continue }
+        $siteCode = if ($bp.site -and $bp.site.code) { $bp.site.code } else { $null }
+        if (-not $siteCode) { continue }
+        $lookup = @{}
+        if ($bp.mappings) {
+            foreach ($m in @($bp.mappings)) {
+                if ($m.component_name -and $m.host) {
+                    $lookup[$m.component_name] = $m.host
+                }
+            }
+        }
+        $drBpHostLookups[$siteCode] = $lookup
+    }
+
     # Build DR profiles (one per DR site)
     $drProfiles = @()
     foreach ($dr in $drSites) {
@@ -1187,36 +1235,57 @@ function Do-ImportMap {
         if ($dr.gateways) { $drSiteGwIds = @($dr.gateways | ForEach-Object { $_.id }) }
         $drAgents = @()
         if ($preview.dr_available_agents) {
-            # Filter agents belonging to this DR site's gateways
             $gwSet = @{}
             foreach ($gid in $drSiteGwIds) { $gwSet[$gid] = $true }
             $drAgents = @($preview.dr_available_agents | Where-Object { $gwSet[$_.gateway_id] })
             if ($drAgents.Count -eq 0) { $drAgents = @($preview.dr_available_agents) }
         }
 
+        # Get host lookup for this DR site
+        $drHostLookup = $drBpHostLookups[$dr.site_code]
+
         $drMappings = @()
         foreach ($comp in $preview.components) {
-            # Try DR suggestion first
-            $suggestion = $null
+            $mapped = $false
+
+            # 1. Try DR suggestion from preview
             if ($preview.dr_suggestions) {
                 $suggestion = $preview.dr_suggestions | Where-Object { $_.component_name -eq $comp.name }
                 if ($suggestion -is [array]) { $suggestion = $suggestion[0] }
-            }
-            if ($suggestion -and $suggestion.dr_resolution -and $suggestion.dr_resolution.status -eq "resolved") {
-                # Check if suggested agent belongs to this site
-                $suggestedId = $suggestion.dr_resolution.agent_id
-                $inSite = $drAgents | Where-Object { $_.agent_id -eq $suggestedId }
-                if ($inSite) {
-                    $drMappings += @{
-                        component_name = $comp.name
-                        agent_id       = $suggestedId
-                        resolved_via   = "wizard"
+                if ($suggestion -and $suggestion.dr_resolution -and $suggestion.dr_resolution.status -eq "resolved") {
+                    $suggestedId = $suggestion.dr_resolution.agent_id
+                    $inSite = $drAgents | Where-Object { $_.agent_id -eq $suggestedId }
+                    if ($inSite) {
+                        $drMappings += @{
+                            component_name = $comp.name
+                            agent_id       = $suggestedId
+                            resolved_via   = "wizard"
+                        }
+                        $mapped = $true
                     }
-                    continue
                 }
             }
-            # Fallback: use first DR agent for this site
-            if ($drAgents.Count -gt 0) {
+
+            # 2. Try binding_profile host mapping
+            if (-not $mapped -and $drHostLookup -and $drHostLookup[$comp.name]) {
+                $drHost = $drHostLookup[$comp.name]
+                $matchedAgent = @($drAgents) | Where-Object {
+                    $_.hostname -eq $drHost -or
+                    $_.hostname -like "$drHost.*" -or
+                    $drHost -like "$($_.hostname).*"
+                } | Select-Object -First 1
+                if ($matchedAgent) {
+                    $drMappings += @{
+                        component_name = $comp.name
+                        agent_id       = $matchedAgent.agent_id
+                        resolved_via   = "wizard"
+                    }
+                    $mapped = $true
+                }
+            }
+
+            # 3. Fallback: first DR agent for this site
+            if (-not $mapped -and $drAgents.Count -gt 0) {
                 $drMappings += @{
                     component_name = $comp.name
                     agent_id       = $drAgents[0].agent_id
