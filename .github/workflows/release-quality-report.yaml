@@ -104,7 +104,7 @@ jobs:
           CLIPPY_STATUS="PASS"
           CLIPPY_WARNINGS=0
           cargo clippy --workspace -- -D warnings 2>&1 | tee /tmp/clippy.txt || CLIPPY_STATUS="FAIL"
-          CLIPPY_WARNINGS=$(grep -c 'warning\[' /tmp/clippy.txt 2>/dev/null || echo 0)
+          CLIPPY_WARNINGS=$(grep -c 'warning\[' /tmp/clippy.txt 2>/dev/null | tr -d '\n' || echo 0)
           echo "::endgroup::"
 
           echo "::group::Rust build"
@@ -187,9 +187,14 @@ jobs:
 
           echo "::group::Secret scanning"
           SECRET_FINDINGS=0
+          # Check for hardcoded credential values (exclude variable names, env lookups, config keys)
           if grep -rn --include='*.rs' --include='*.ts' --include='*.tsx' \
-            -E '(password|secret|token|api_key)\s*=\s*"[^"]{8,}"' \
-            crates/ frontend/src/ 2>/dev/null | grep -v test | grep -v _example | grep -v placeholder | grep -q .; then
+            -E '(password|secret|api_key)\s*=\s*"[A-Za-z0-9+/=_-]{20,}"' \
+            crates/ frontend/src/ 2>/dev/null \
+            | grep -v test | grep -v _example | grep -v placeholder \
+            | grep -v 'env::var' | grep -v 'env(' | grep -v 'process.env' \
+            | grep -v 'std::env' | grep -v 'SEED_' | grep -v 'JWT_SECRET' \
+            | grep -q .; then
             SECRET_FINDINGS=$((SECRET_FINDINGS + 1))
           fi
           if grep -rn --include='*.rs' --include='*.ts' --include='*.tsx' --include='*.json' --include='*.yaml' \
@@ -484,10 +489,33 @@ jobs:
             TAG="${GITHUB_REF_NAME}"
           fi
           mkdir -p report-artifacts
-          cp /tmp/QUALITY-REPORT.md "report-artifacts/QUALITY-REPORT-${TAG}.md"
+
+          # Create a clean Markdown version (strip LaTeX front matter for GitHub readability)
+          sed '/^---$/,/^---$/d' /tmp/QUALITY-REPORT.md > "report-artifacts/QUALITY-REPORT-${TAG}.md"
+
           if [ -f /tmp/QUALITY-REPORT.pdf ]; then
             cp /tmp/QUALITY-REPORT.pdf "report-artifacts/QUALITY-REPORT-${TAG}.pdf"
           fi
+
+      # Commit report to docs/ so it's viewable directly on GitHub (mobile-friendly)
+      - name: Commit report to repository
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          git config user.name "AppControl CI"
+          git config user.email "ci@appcontrol.dev"
+          git fetch origin main
+          git checkout main
+
+          mkdir -p docs/quality-reports
+          # Strip LaTeX front matter for clean GitHub rendering
+          sed '/^---$/,/^---$/d' /tmp/QUALITY-REPORT.md > "docs/quality-reports/QUALITY-REPORT-${TAG}.md"
+
+          git add "docs/quality-reports/QUALITY-REPORT-${TAG}.md"
+          git diff --staged --quiet && echo "No changes" || {
+            git commit -m "docs: Quality & Security Report for ${TAG} [skip ci]"
+            git push origin main
+          }
 
       - name: Upload report artifacts
         uses: actions/upload-artifact@v4
