@@ -3,8 +3,8 @@ pub mod agents;
 pub mod api_keys;
 pub mod approvals;
 pub mod apps;
-pub mod catalog;
 pub mod break_glass;
+pub mod catalog;
 pub mod command_params;
 pub mod components;
 pub mod diagnostic;
@@ -583,10 +583,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/catalog/component-types/import",
             post(catalog::import_catalog),
         )
-        .route(
-            "/catalog/component-types/seed",
-            post(catalog::seed_catalog),
-        )
+        .route("/catalog/component-types/seed", post(catalog::seed_catalog))
         .route(
             "/catalog/component-types/:id",
             put(catalog::update_catalog_entry).delete(catalog::delete_catalog_entry),

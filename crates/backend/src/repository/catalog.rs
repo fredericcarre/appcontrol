@@ -101,10 +101,7 @@ const SELECT_COLS: &str = "\
 // ============================================================================
 
 /// List all catalog entries for an organization (builtin + custom), ordered.
-pub async fn list_catalog(
-    pool: &DbPool,
-    org_id: Uuid,
-) -> Result<Vec<CatalogEntry>, sqlx::Error> {
+pub async fn list_catalog(pool: &DbPool, org_id: Uuid) -> Result<Vec<CatalogEntry>, sqlx::Error> {
     let sql = format!(
         "SELECT {} FROM component_catalog WHERE org_id = $1 ORDER BY display_order, category, label",
         SELECT_COLS
@@ -348,19 +345,80 @@ pub async fn delete_catalog_entry(
 }
 
 /// Seed built-in types for an organization (idempotent — skips existing).
-pub async fn seed_builtin_types(
-    pool: &DbPool,
-    org_id: Uuid,
-) -> Result<u64, sqlx::Error> {
+pub async fn seed_builtin_types(pool: &DbPool, org_id: Uuid) -> Result<u64, sqlx::Error> {
     let builtins = [
-        ("database",    "Database",    "SQL, NoSQL, or data stores",         "database", "#1565C0", "database",   0),
-        ("middleware",  "Middleware",   "Message queues, cache, ESB",         "layers",   "#6A1B9A", "middleware",  1),
-        ("appserver",   "App Server",  "Application servers, backends",      "server",   "#2E7D32", "application", 2),
-        ("webfront",    "Web Front",   "Web servers, load balancers",        "globe",    "#E65100", "access",      3),
-        ("service",     "Service",     "Microservices, APIs",                "cog",      "#37474F", "application", 4),
-        ("batch",       "Batch",       "Scheduled jobs, ETL",                "clock",    "#4E342E", "scheduler",   5),
-        ("custom",      "Custom",      "Other component types",              "box",      "#455A64", "other",       6),
-        ("application", "Application", "Reference to another app (synthetic)", "folder",  "#3B82F6", "composite",   7),
+        (
+            "database",
+            "Database",
+            "SQL, NoSQL, or data stores",
+            "database",
+            "#1565C0",
+            "database",
+            0,
+        ),
+        (
+            "middleware",
+            "Middleware",
+            "Message queues, cache, ESB",
+            "layers",
+            "#6A1B9A",
+            "middleware",
+            1,
+        ),
+        (
+            "appserver",
+            "App Server",
+            "Application servers, backends",
+            "server",
+            "#2E7D32",
+            "application",
+            2,
+        ),
+        (
+            "webfront",
+            "Web Front",
+            "Web servers, load balancers",
+            "globe",
+            "#E65100",
+            "access",
+            3,
+        ),
+        (
+            "service",
+            "Service",
+            "Microservices, APIs",
+            "cog",
+            "#37474F",
+            "application",
+            4,
+        ),
+        (
+            "batch",
+            "Batch",
+            "Scheduled jobs, ETL",
+            "clock",
+            "#4E342E",
+            "scheduler",
+            5,
+        ),
+        (
+            "custom",
+            "Custom",
+            "Other component types",
+            "box",
+            "#455A64",
+            "other",
+            6,
+        ),
+        (
+            "application",
+            "Application",
+            "Reference to another app (synthetic)",
+            "folder",
+            "#3B82F6",
+            "composite",
+            7,
+        ),
     ];
 
     let mut inserted: u64 = 0;
