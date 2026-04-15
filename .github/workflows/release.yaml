@@ -499,56 +499,47 @@ jobs:
             echo ""
             echo "---"
             echo ""
-            cat <<INSTALL_EOF
-### Installation
-
-**Docker Compose (recommended):**
-\`\`\`bash
-gh release download ${TAG} --repo ${{ github.repository }} --pattern 'docker-compose.release.yaml'
-APPCONTROL_VERSION=${VERSION} docker compose -f docker-compose.release.yaml up -d
-\`\`\`
-
-**CLI binary:**
-\`\`\`bash
-# Linux (amd64)
-gh release download ${TAG} --repo ${{ github.repository }} --pattern 'appctl-linux-amd64' --dir /usr/local/bin
-chmod +x /usr/local/bin/appctl-linux-amd64 && mv /usr/local/bin/appctl-linux-amd64 /usr/local/bin/appctl
-
-# macOS (Apple Silicon)
-gh release download ${TAG} --repo ${{ github.repository }} --pattern 'appctl-darwin-arm64' --dir /usr/local/bin
-chmod +x /usr/local/bin/appctl-darwin-arm64 && mv /usr/local/bin/appctl-darwin-arm64 /usr/local/bin/appctl
-\`\`\`
-
-**Windows (PowerShell):**
-\`\`\`powershell
-gh release download ${TAG} --repo ${{ github.repository }} --pattern 'appctl-windows-amd64.exe' --dir \$env:LOCALAPPDATA\\appcontrol
-Rename-Item "\$env:LOCALAPPDATA\\appcontrol\\appctl-windows-amd64.exe" "appctl.exe"
-\`\`\`
-
-**Docker images:**
-\`\`\`bash
-docker pull ghcr.io/fredericcarre/appcontrol-backend:${VERSION}
-docker pull ghcr.io/fredericcarre/appcontrol-frontend:${VERSION}
-docker pull ghcr.io/fredericcarre/appcontrol-gateway:${VERSION}
-docker pull ghcr.io/fredericcarre/appcontrol-agent:${VERSION}
-docker pull ghcr.io/fredericcarre/appcontrol-init-certs:${VERSION}
-\`\`\`
-
-### Assets
-
-| Asset | Description |
-|-------|-------------|
-| \`appctl-{os}-{arch}[.exe]\` | CLI binary (Linux, macOS, Windows) |
-| \`appcontrol-agent-{os}-{arch}[.exe]\` | Agent binary |
-| \`appcontrol-backend-{os}-{arch}[.exe]\` | Backend API server binary |
-| \`appcontrol-gateway-{os}-{arch}[.exe]\` | Gateway binary |
-| \`appcontrol-frontend.zip\` | Frontend static files |
-| \`appcontrol.ps1\` | Standalone deployment script (Windows/Linux) |
-| \`docker-compose.release.yaml\` | Docker Compose config |
-| \`examples.tar.gz\` | Example application maps |
-| \`appcontrol-*.tgz\` | Helm chart |
-| \`checksums-sha256.txt\` | SHA-256 checksums for all assets |
-INSTALL_EOF
+            echo "### Installation"
+            echo ""
+            echo "**Docker Compose (recommended):**"
+            echo '```bash'
+            echo "gh release download ${TAG} --repo ${{ github.repository }} --pattern 'docker-compose.release.yaml'"
+            echo "APPCONTROL_VERSION=${VERSION} docker compose -f docker-compose.release.yaml up -d"
+            echo '```'
+            echo ""
+            echo "**CLI binary:**"
+            echo '```bash'
+            echo "# Linux (amd64)"
+            echo "gh release download ${TAG} --repo ${{ github.repository }} --pattern 'appctl-linux-amd64' --dir /usr/local/bin"
+            echo "chmod +x /usr/local/bin/appctl-linux-amd64 && mv /usr/local/bin/appctl-linux-amd64 /usr/local/bin/appctl"
+            echo ""
+            echo "# macOS (Apple Silicon)"
+            echo "gh release download ${TAG} --repo ${{ github.repository }} --pattern 'appctl-darwin-arm64' --dir /usr/local/bin"
+            echo "chmod +x /usr/local/bin/appctl-darwin-arm64 && mv /usr/local/bin/appctl-darwin-arm64 /usr/local/bin/appctl"
+            echo '```'
+            echo ""
+            echo "**Docker images:**"
+            echo '```bash'
+            echo "docker pull ghcr.io/fredericcarre/appcontrol-backend:${VERSION}"
+            echo "docker pull ghcr.io/fredericcarre/appcontrol-frontend:${VERSION}"
+            echo "docker pull ghcr.io/fredericcarre/appcontrol-gateway:${VERSION}"
+            echo "docker pull ghcr.io/fredericcarre/appcontrol-agent:${VERSION}"
+            echo "docker pull ghcr.io/fredericcarre/appcontrol-init-certs:${VERSION}"
+            echo '```'
+            echo ""
+            echo "### Assets"
+            echo ""
+            echo "| Asset | Description |"
+            echo "|-------|-------------|"
+            echo "| appctl-{os}-{arch} | CLI binary (Linux, macOS, Windows) |"
+            echo "| appcontrol-agent-{os}-{arch} | Agent binary |"
+            echo "| appcontrol-backend-{os}-{arch} | Backend API server binary |"
+            echo "| appcontrol-gateway-{os}-{arch} | Gateway binary |"
+            echo "| appcontrol-frontend.zip | Frontend static files |"
+            echo "| appcontrol.ps1 | Standalone deployment script |"
+            echo "| docker-compose.release.yaml | Docker Compose config |"
+            echo "| examples.tar.gz | Example application maps |"
+            echo "| checksums-sha256.txt | SHA-256 checksums for all assets |"
           } > /tmp/release-notes.md
 
       - name: Create or update release
