@@ -259,6 +259,25 @@ function Do-Install {
 function Do-Start {
     Write-Info "Starting AppControl..."
 
+    # Kill any stale processes from a previous run to avoid port conflicts
+    # and sled DB lock errors (WSAEADDRINUSE / "Le processus ne peut pas accéder au fichier")
+    $staleNames = @("appcontrol-backend-sqlite", "appcontrol-backend", "appcontrol-gateway", "appcontrol-agent")
+    $foundStale = $false
+    foreach ($name in $staleNames) {
+        $procs = Get-Process -Name $name -ErrorAction SilentlyContinue
+        if ($procs) {
+            $foundStale = $true
+            foreach ($p in $procs) {
+                Write-Warn ("Killing stale process: " + $name + " PID " + $p.Id)
+                Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    if ($foundStale) {
+        Write-Info "Waiting for stale processes to release ports and file locks..."
+        Start-Sleep -Seconds 3
+    }
+
     $settings = Read-Settings
     if (-not $settings) {
         Write-Err "No config/settings.json found. Run install first."
@@ -455,6 +474,28 @@ function Do-Stop {
     }
 
     Do-StopFallback
+
+    # Wait for all processes to actually terminate and release ports/file locks
+    Write-Info "Waiting for processes to terminate..."
+    $maxWait = 10
+    for ($i = 0; $i -lt $maxWait; $i++) {
+        $names = @("appcontrol-backend-sqlite", "appcontrol-backend", "appcontrol-gateway", "appcontrol-agent")
+        $stillRunning = $false
+        foreach ($name in $names) {
+            if (Get-Process -Name $name -ErrorAction SilentlyContinue) {
+                $stillRunning = $true
+                break
+            }
+        }
+        if (-not $stillRunning) { break }
+        Start-Sleep -Seconds 1
+    }
+    if ($stillRunning) {
+        Write-Warn "Some processes still running after ${maxWait}s — force killing"
+        Do-StopFallback
+        Start-Sleep -Seconds 2
+    }
+
     Write-Ok "All processes stopped"
 }
 
