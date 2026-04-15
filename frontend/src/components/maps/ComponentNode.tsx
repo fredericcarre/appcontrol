@@ -186,7 +186,17 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         }}
       >
       {/* Source at top: sends edges to bases above */}
-      <Handle type="source" position={Position.Top} className="!bg-gray-400 !w-2 !h-2" />
+      <Handle
+        type="source"
+        position={Position.Top}
+        className={cn(
+          'transition-all duration-200',
+          data.editable
+            ? '!bg-indigo-500 !w-3 !h-3 !border-2 !border-white hover:!w-4 hover:!h-4 hover:!bg-indigo-600 !shadow-md hover:!shadow-lg'
+            : '!bg-gray-400 !w-2 !h-2'
+        )}
+        title={data.editable ? 'Drag to create dependency' : undefined}
+      />
 
       {/* Branch indicator badge */}
       {isHighlighted && !isImpactHighlight && (
@@ -394,7 +404,17 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
       </div>
 
         {/* Target at bottom: receives edges from dependents below */}
-        <Handle type="target" position={Position.Bottom} className="!bg-gray-400 !w-2 !h-2" />
+        <Handle
+          type="target"
+          position={Position.Bottom}
+          className={cn(
+            'transition-all duration-200',
+            data.editable
+              ? '!bg-indigo-500 !w-3 !h-3 !border-2 !border-white hover:!w-4 hover:!h-4 hover:!bg-indigo-600 !shadow-md hover:!shadow-lg'
+              : '!bg-gray-400 !w-2 !h-2'
+          )}
+          title={data.editable ? 'Drop here to link' : undefined}
+        />
       </div>
     </div>
   );

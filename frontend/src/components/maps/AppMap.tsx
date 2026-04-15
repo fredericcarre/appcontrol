@@ -20,9 +20,12 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Dagre from '@dagrejs/dagre';
+import { toast } from 'sonner';
 import { ComponentNode } from './ComponentNode';
 import { MapToolbar } from './MapToolbar';
 import { InfrastructureSummary } from './InfrastructureSummary';
+import { EdgeToolbar } from './EdgeToolbar';
+import { MapContextMenu, MapContextMenuProps } from './MapContextMenu';
 import { Component, Dependency, ComponentGroup } from '@/api/apps';
 import { SiteBinding, SiteInfo, ComponentSiteBindings, groupBindingsByComponent } from '@/api/site-overrides';
 import { ComponentState, ComponentType, STATE_COLORS } from '@/lib/colors';
@@ -478,6 +481,12 @@ function AppMapInner({
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition, fitView } = useReactFlow();
 
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<MapContextMenuProps | null>(null);
+
+  // "Connect to..." mode: when set, next node click completes the connection
+  const [connectFromNodeId, setConnectFromNodeId] = useState<string | null>(null);
+
   // Infrastructure highlight (when hovering over agents/gateways in summary)
   const [infraHighlight, setInfraHighlight] = useState<Set<string> | null>(null);
 
@@ -663,21 +672,56 @@ function AppMapInner({
     [setEdges, editable, onDeleteEdge],
   );
 
+  // Helper to get component name by id
+  const getComponentName = useCallback(
+    (id: string) => components.find((c) => c.id === id)?.name || id.slice(0, 8),
+    [components],
+  );
+
   const handleConnect = useCallback(
     (connection: Connection) => {
       if (!editable || !onConnect) return;
       if (connection.source && connection.target) {
+        if (connection.source === connection.target) {
+          toast.error('Cannot connect a component to itself');
+          return;
+        }
+        // Check for duplicate
+        const exists = dependencies.some(
+          (d) => d.from_component_id === connection.source && d.to_component_id === connection.target,
+        );
+        if (exists) {
+          toast.warning('This dependency already exists');
+          return;
+        }
         onConnect(connection.source, connection.target);
+        toast.success(`Dependency created: ${getComponentName(connection.source)} → ${getComponentName(connection.target)}`);
       }
     },
-    [editable, onConnect],
+    [editable, onConnect, dependencies, getComponentName],
   );
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
+      // If in "Connect to..." mode, complete the connection
+      if (connectFromNodeId && editable && onConnect) {
+        if (connectFromNodeId !== node.id) {
+          const exists = dependencies.some(
+            (d) => d.from_component_id === connectFromNodeId && d.to_component_id === node.id,
+          );
+          if (exists) {
+            toast.warning('This dependency already exists');
+          } else {
+            onConnect(connectFromNodeId, node.id);
+            toast.success(`Dependency created: ${getComponentName(connectFromNodeId)} → ${getComponentName(node.id)}`);
+          }
+        }
+        setConnectFromNodeId(null);
+        return;
+      }
       onSelectComponent(node.id);
     },
-    [onSelectComponent],
+    [onSelectComponent, connectFromNodeId, editable, onConnect, dependencies, getComponentName],
   );
 
   const handleEdgeClick = useCallback(
@@ -700,6 +744,8 @@ function AppMapInner({
 
   const onPaneClick = useCallback(() => {
     onSelectComponent(null);
+    setContextMenu(null);
+    setConnectFromNodeId(null);
   }, [onSelectComponent]);
 
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
@@ -725,6 +771,52 @@ function AppMapInner({
     [editable, onDrop, screenToFlowPosition],
   );
 
+  // Right-click context menu for edges
+  const handleEdgeContextMenu = useCallback(
+    (event: React.MouseEvent, edge: Edge) => {
+      if (!editable) return;
+      event.preventDefault();
+      setContextMenu({
+        type: 'edge',
+        position: { x: event.clientX, y: event.clientY },
+        edgeId: edge.id,
+        sourceName: getComponentName(edge.source),
+        targetName: getComponentName(edge.target),
+        onDelete: (id: string) => {
+          if (onDeleteEdge) onDeleteEdge(id);
+        },
+        onClose: () => setContextMenu(null),
+      });
+    },
+    [editable, getComponentName, onDeleteEdge],
+  );
+
+  // Right-click context menu for nodes
+  const handleNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      if (!editable) return;
+      event.preventDefault();
+      setContextMenu({
+        type: 'node',
+        position: { x: event.clientX, y: event.clientY },
+        nodeId: node.id,
+        nodeName: getComponentName(node.id),
+        onDelete: (id: string) => {
+          if (onDeleteNode) onDeleteNode(id);
+        },
+        onEdit: (id: string) => {
+          if (onNodeDoubleClick) onNodeDoubleClick(id);
+        },
+        onStartConnect: (id: string) => {
+          setConnectFromNodeId(id);
+          toast.info(`Click another component to connect from "${getComponentName(id)}"`);
+        },
+        onClose: () => setContextMenu(null),
+      });
+    },
+    [editable, getComponentName, onDeleteNode, onNodeDoubleClick],
+  );
+
   // Determine highlight color for minimap
   const getNodeColor = useCallback((node: Node): string => {
     const state = (node.data?.state as ComponentState) || 'UNKNOWN';
@@ -737,6 +829,18 @@ function AppMapInner({
 
   return (
     <div className="w-full h-full relative" ref={reactFlowWrapper}>
+      {/* "Connect to..." mode indicator banner */}
+      {connectFromNodeId && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-50 bg-indigo-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm flex items-center gap-2 animate-in fade-in-0 slide-in-from-top-2">
+          <span>Click a component to connect from <strong>{getComponentName(connectFromNodeId)}</strong></span>
+          <button
+            className="ml-2 text-xs bg-white/20 hover:bg-white/30 rounded px-2 py-0.5 transition-colors"
+            onClick={() => { setConnectFromNodeId(null); toast.dismiss(); }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -749,6 +853,8 @@ function AppMapInner({
         onPaneClick={onPaneClick}
         onDragOver={onDragOver}
         onDrop={handleDrop}
+        onEdgeContextMenu={handleEdgeContextMenu}
+        onNodeContextMenu={handleNodeContextMenu}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.2 }}
@@ -771,7 +877,7 @@ function AppMapInner({
           maskColor="rgba(0,0,0,0.1)"
           className="!bg-card !border-border"
         />
-        {!editable && (
+        {!editable ? (
           <>
             <MapToolbar
               onStartAll={onStartAll}
@@ -802,8 +908,34 @@ function AppMapInner({
               onClearHighlight={handleClearHighlight}
             />
           </>
+        ) : (
+          /* Edit-mode toolbar: group management + layout */
+          <MapToolbar
+            canEdit
+            onAutoLayout={handleAutoLayout}
+            groups={groups}
+            components={components}
+            onCreateGroup={onCreateGroup}
+            onUpdateGroup={onUpdateGroup}
+            onDeleteGroup={onDeleteGroup}
+            activeGroupFilter={activeGroupFilter}
+            onGroupFilterChange={onGroupFilterChange}
+          />
+        )}
+        {/* Edge toolbar: visible delete button when an edge is selected in edit mode */}
+        {editable && edgeHighlight && onDeleteEdge && (
+          <EdgeToolbar
+            edgeId={edgeHighlight.edgeId}
+            sourceId={edgeHighlight.sourceId}
+            targetId={edgeHighlight.targetId}
+            sourceName={getComponentName(edgeHighlight.sourceId)}
+            targetName={getComponentName(edgeHighlight.targetId)}
+            onDelete={onDeleteEdge}
+          />
         )}
       </ReactFlow>
+      {/* Context menu (rendered outside ReactFlow to use fixed positioning) */}
+      {contextMenu && <MapContextMenu {...contextMenu} />}
     </div>
   );
 }

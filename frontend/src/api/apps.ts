@@ -17,6 +17,7 @@ export interface Application {
   stopped_count: number;
   failed_count: number;
   unreachable_count?: number;
+  tags?: string[];
   is_suspended?: boolean;
   suspended_at?: string | null;
   suspended_by?: string | null;
@@ -154,7 +155,7 @@ export function useCreateApp() {
 export function useUpdateApp() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, ...payload }: { id: string; name?: string; description?: string }) => {
+    mutationFn: async ({ id, ...payload }: { id: string; name?: string; description?: string; tags?: string[] }) => {
       const { data } = await client.put<Application>(`/apps/${id}`, payload);
       return data;
     },
