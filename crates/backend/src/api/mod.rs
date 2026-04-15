@@ -207,6 +207,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(teams::list_members).post(teams::add_member),
         )
         .route("/teams/:id/members/:user_id", delete(teams::remove_member))
+        .route("/teams/:id/apps", get(teams::list_team_apps))
         // Switchover
         .route(
             "/apps/:app_id/switchover",

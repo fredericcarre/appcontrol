@@ -290,3 +290,54 @@ pub async fn search_teams(
 
     Ok(Json(json!({ "teams": results })))
 }
+
+/// List applications that a team has been granted access to.
+pub async fn list_team_apps(
+    State(state): State<Arc<AppState>>,
+    Extension(_user): Extension<AuthUser>,
+    Path(team_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    use crate::db::DbPool;
+
+    let pool: &DbPool = &state.db;
+
+    #[cfg(feature = "postgres")]
+    let rows: Vec<(Uuid, String, String, Option<String>)> = sqlx::query_as(
+        r#"SELECT a.id, a.name, apt.permission_level, a.description
+           FROM app_permissions_teams apt
+           JOIN applications a ON a.id = apt.application_id
+           WHERE apt.team_id = $1
+             AND (apt.expires_at IS NULL OR apt.expires_at > now())
+           ORDER BY a.name"#,
+    )
+    .bind(team_id)
+    .fetch_all(pool)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let rows: Vec<(crate::db::DbUuid, String, String, Option<String>)> = sqlx::query_as(
+        r#"SELECT a.id, a.name, apt.permission_level, a.description
+           FROM app_permissions_teams apt
+           JOIN applications a ON a.id = apt.application_id
+           WHERE apt.team_id = $1
+             AND (apt.expires_at IS NULL OR apt.expires_at > datetime('now'))
+           ORDER BY a.name"#,
+    )
+    .bind(crate::db::DbUuid::from(team_id))
+    .fetch_all(pool)
+    .await?;
+
+    let apps: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, name, level, description)| {
+            json!({
+                "id": id,
+                "name": name,
+                "permission_level": level,
+                "description": description,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "apps": apps })))
+}

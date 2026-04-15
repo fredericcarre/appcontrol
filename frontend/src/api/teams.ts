@@ -88,6 +88,24 @@ export interface TeamSearchResult {
   description: string | null;
 }
 
+export interface TeamApp {
+  id: string;
+  name: string;
+  permission_level: string;
+  description: string | null;
+}
+
+export function useTeamApps(teamId: string) {
+  return useQuery({
+    queryKey: ['teams', teamId, 'apps'],
+    queryFn: async () => {
+      const { data } = await client.get<{ apps: TeamApp[] }>(`/teams/${teamId}/apps`);
+      return data.apps;
+    },
+    enabled: !!teamId,
+  });
+}
+
 export function useSearchTeams(query: string) {
   return useQuery({
     queryKey: ['teams', 'search', query],
