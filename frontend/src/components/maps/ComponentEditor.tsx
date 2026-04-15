@@ -24,7 +24,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useComponentTypes } from '@/hooks/use-component-types';
-import { AlertCircle, Shield, Trash2, Plus, MapPin, Search } from 'lucide-react';
+import { AlertCircle, Shield, Trash2, Plus, MapPin, Search, Folder, Server } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ICON_MAP } from '@/lib/icons';
 
