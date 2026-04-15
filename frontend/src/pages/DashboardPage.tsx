@@ -451,9 +451,73 @@ export function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Dashboard</h1>
-        <Button onClick={() => navigate('/onboarding')}>
-          <Plus className="h-4 w-4 mr-2" /> New Application
-        </Button>
+        <div className="flex items-center gap-2">
+          {filteredApps.length > 0 && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                onClick={() => {
+                  const stoppedApps = filteredApps.filter(
+                    (a) => a.global_state !== 'RUNNING' && a.global_state !== 'STARTING',
+                  );
+                  if (stoppedApps.length === 0) return;
+                  setConfirmDialog({
+                    open: true,
+                    title: 'Start All Applications',
+                    description: `Start ${stoppedApps.length} application${stoppedApps.length > 1 ? 's' : ''}${hasActiveFilters ? ' (filtered)' : ''}?`,
+                    confirmLabel: 'Start All',
+                    variant: 'default',
+                    onConfirm: () => {
+                      for (const app of stoppedApps) {
+                        startApp.mutate(app.id);
+                      }
+                      setTimeout(() => refetch(), 2000);
+                    },
+                  });
+                }}
+                disabled={startApp.isPending || stopApp.isPending}
+                title="Start all visible applications"
+              >
+                <Play className="h-4 w-4 text-green-600" />
+                <span className="hidden sm:inline">Start All</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                onClick={() => {
+                  const runningApps = filteredApps.filter(
+                    (a) => a.global_state !== 'STOPPED' && a.global_state !== 'STOPPING',
+                  );
+                  if (runningApps.length === 0) return;
+                  setConfirmDialog({
+                    open: true,
+                    title: 'Stop All Applications',
+                    description: `Stop ${runningApps.length} application${runningApps.length > 1 ? 's' : ''}${hasActiveFilters ? ' (filtered)' : ''}?`,
+                    confirmLabel: 'Stop All',
+                    variant: 'destructive',
+                    onConfirm: () => {
+                      for (const app of runningApps) {
+                        stopApp.mutate(app.id);
+                      }
+                      setTimeout(() => refetch(), 2000);
+                    },
+                  });
+                }}
+                disabled={startApp.isPending || stopApp.isPending}
+                title="Stop all visible applications"
+              >
+                <Square className="h-4 w-4 text-red-600" />
+                <span className="hidden sm:inline">Stop All</span>
+              </Button>
+            </>
+          )}
+          <Button onClick={() => navigate('/onboarding')}>
+            <Plus className="h-4 w-4 mr-2" /> New Application
+          </Button>
+        </div>
       </div>
 
       {/* Stats cards - clickable as filters */}
