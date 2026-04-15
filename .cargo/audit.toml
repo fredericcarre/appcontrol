@@ -30,4 +30,9 @@ ignore = [
     # This old version is only used for the sqlx PostgreSQL/SQLite TLS layer,
     # which connects to local/trusted database servers, not arbitrary URIs.
     "RUSTSEC-2026-0098",
+
+    # rustls-webpki 0.101.7 — wildcard name constraint bypass
+    # Same transitive dependency as above (sqlx-core 0.7.4 → rustls 0.21.12).
+    # Only used for DB TLS connections to trusted local servers.
+    "RUSTSEC-2026-0099",
 ]
