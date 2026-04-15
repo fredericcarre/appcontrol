@@ -81,3 +81,20 @@ export function useRemoveTeamMember() {
     onSuccess: (_, vars) => qc.invalidateQueries({ queryKey: ['teams', vars.team_id, 'members'] }),
   });
 }
+
+export interface TeamSearchResult {
+  id: string;
+  name: string;
+  description: string | null;
+}
+
+export function useSearchTeams(query: string) {
+  return useQuery({
+    queryKey: ['teams', 'search', query],
+    queryFn: async () => {
+      const { data } = await client.get<{ teams: TeamSearchResult[] }>(`/teams/search?q=${encodeURIComponent(query)}`);
+      return data.teams;
+    },
+    enabled: query.length >= 1,
+  });
+}

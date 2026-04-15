@@ -260,3 +260,33 @@ pub async fn remove_member(
 
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[derive(Debug, Deserialize)]
+pub struct SearchTeamsQuery {
+    pub q: Option<String>,
+}
+
+/// Search teams by name (for pickers/autocomplete).
+pub async fn search_teams(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    axum::extract::Query(params): axum::extract::Query<SearchTeamsQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let teams = state.team_repo.list_teams(*user.organization_id).await?;
+
+    let query = params.q.unwrap_or_default().to_lowercase();
+    let results: Vec<Value> = teams
+        .into_iter()
+        .filter(|t| query.is_empty() || t.name.to_lowercase().contains(&query))
+        .take(20)
+        .map(|t| {
+            json!({
+                "id": t.id,
+                "name": t.name,
+                "description": t.description,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "teams": results })))
+}

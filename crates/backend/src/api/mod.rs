@@ -195,6 +195,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         // Teams
         .route("/teams", get(teams::list_teams).post(teams::create_team))
+        .route("/teams/search", get(teams::search_teams))
         .route(
             "/teams/:id",
             get(teams::get_team)

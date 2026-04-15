@@ -1,0 +1,32 @@
+{
+  "users": [
+    { "email": "alice@corp.com",   "name": "Alice Martin",   "role": "operator", "password": "changeme" },
+    { "email": "bob@corp.com",     "name": "Bob Dupont",     "role": "operator", "password": "changeme" },
+    { "email": "charlie@corp.com", "name": "Charlie Durand", "role": "operator", "password": "changeme" },
+    { "email": "diana@corp.com",   "name": "Diana Moreau",   "role": "viewer",   "password": "changeme" }
+  ],
+  "teams": [
+    {
+      "name": "Equipe Prod",
+      "description": "Production operations team",
+      "members": ["alice@corp.com", "bob@corp.com"]
+    },
+    {
+      "name": "Equipe DBA",
+      "description": "Database administration team",
+      "members": ["charlie@corp.com", "alice@corp.com"]
+    },
+    {
+      "name": "Equipe Support",
+      "description": "Support and monitoring team (read-only)",
+      "members": ["diana@corp.com"]
+    }
+  ],
+  "permissions": [
+    { "app": "Core Banking System", "team": "Equipe Prod", "level": "operate" },
+    { "app": "Core Banking System", "team": "Equipe DBA",  "level": "manage" },
+    { "app": "Core Banking System", "team": "Equipe Support", "level": "view" },
+    { "app": "Data Pipeline",       "team": "Equipe Prod", "level": "operate" },
+    { "app": "Data Pipeline",       "team": "Equipe Support", "level": "view" }
+  ]
+}
