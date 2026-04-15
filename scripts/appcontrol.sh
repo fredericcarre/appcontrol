@@ -18,6 +18,10 @@
 #   init-catalog    Seed built-in component types into the catalog
 #   import-catalog  Import custom component types from a JSON file
 #   list-catalog    List all component types in the catalog
+#   start-app       Start an application (DAG-ordered)
+#   stop-app        Stop an application (reverse DAG-ordered)
+#   status-app      Show application and component status
+#   wait-running    Wait for an application to reach RUNNING state
 #
 # Environment:
 #   APPCONTROL_URL      Backend URL (default: http://localhost:3001)
@@ -244,6 +248,139 @@ cmd_list_apps() {
     | column -t -s $'\t' -N "NAME,STATE,COMPONENTS"
 }
 
+# ── Application Operations ──────────────────────────────────────────────────
+
+cmd_start_app() {
+  local app="" dry_run=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --app)     app="$2"; shift 2 ;;
+      --dry-run) dry_run="true"; shift ;;
+      *)         app="$1"; shift ;;
+    esac
+  done
+  [ -n "$app" ] || die "Missing app. Usage: start-app --app APP_NAME [--dry-run]"
+  ensure_login
+
+  local app_id
+  app_id=$(find_app_id "$app") || true
+  [ -n "$app_id" ] || die "Application '${app}' not found"
+
+  local body="{}"
+  [ -n "$dry_run" ] && body='{"dry_run":true}'
+
+  info "Starting application '${app}'..."
+  local resp
+  resp=$(api_post "${API_BASE}/apps/${app_id}/start" "$body") \
+    || die "Failed to start application '${app}'"
+  ok "Start command sent for '${app}'"
+  echo "$resp" | jq '.' 2>/dev/null
+}
+
+cmd_stop_app() {
+  local app=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --app) app="$2"; shift 2 ;;
+      *)     app="$1"; shift ;;
+    esac
+  done
+  [ -n "$app" ] || die "Missing app. Usage: stop-app --app APP_NAME"
+  ensure_login
+
+  local app_id
+  app_id=$(find_app_id "$app") || true
+  [ -n "$app_id" ] || die "Application '${app}' not found"
+
+  info "Stopping application '${app}'..."
+  local resp
+  resp=$(api_post "${API_BASE}/apps/${app_id}/stop" "{}") \
+    || die "Failed to stop application '${app}'"
+  ok "Stop command sent for '${app}'"
+  echo "$resp" | jq '.' 2>/dev/null
+}
+
+cmd_status_app() {
+  local app=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --app) app="$2"; shift 2 ;;
+      *)     app="$1"; shift ;;
+    esac
+  done
+  [ -n "$app" ] || die "Missing app. Usage: status-app --app APP_NAME"
+  ensure_login
+
+  local app_id
+  app_id=$(find_app_id "$app") || true
+  [ -n "$app_id" ] || die "Application '${app}' not found"
+
+  local resp
+  resp=$(api_get "${API_BASE}/apps/${app_id}") \
+    || die "Failed to get status for '${app}'"
+
+  echo "$resp" | jq '{
+    name: .name,
+    global_state: .global_state,
+    component_count: .component_count,
+    running: .running_count,
+    stopped: .stopped_count,
+    failed: .failed_count,
+    unreachable: .unreachable_count
+  }' 2>/dev/null
+
+  # Show per-component status
+  local components
+  components=$(api_get "${API_BASE}/apps/${app_id}/components") || true
+  if [ -n "$components" ]; then
+    echo ""
+    echo "$components" | jq -r '.components[] | "\(.name)\t\(.current_state)\t\(.host // "-")"' 2>/dev/null \
+      | column -t -s $'\t' -N "COMPONENT,STATE,HOST"
+  fi
+}
+
+cmd_wait_running() {
+  local app="" timeout_secs=300
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --app)     app="$2"; shift 2 ;;
+      --timeout) timeout_secs="$2"; shift 2 ;;
+      *)         app="$1"; shift ;;
+    esac
+  done
+  [ -n "$app" ] || die "Missing app. Usage: wait-running --app APP_NAME [--timeout 300]"
+  ensure_login
+
+  local app_id
+  app_id=$(find_app_id "$app") || true
+  [ -n "$app_id" ] || die "Application '${app}' not found"
+
+  info "Waiting for '${app}' to reach RUNNING state (timeout: ${timeout_secs}s)..."
+  local start_time elapsed state
+  start_time=$(date +%s)
+
+  while true; do
+    state=$(api_get "${API_BASE}/apps/${app_id}" | jq -r '.global_state // "UNKNOWN"' 2>/dev/null)
+    elapsed=$(( $(date +%s) - start_time ))
+
+    case "$state" in
+      RUNNING)
+        ok "Application '${app}' is RUNNING (${elapsed}s)"
+        return 0 ;;
+      FAILED)
+        die "Application '${app}' is FAILED after ${elapsed}s" ;;
+      DEGRADED)
+        warn "Application '${app}' is DEGRADED (${elapsed}s) — some components failed"
+        return 0 ;;
+      *)
+        if [ "$elapsed" -ge "$timeout_secs" ]; then
+          die "Timeout: application '${app}' is still '${state}' after ${timeout_secs}s"
+        fi
+        sleep 3 ;;
+    esac
+  done
+}
+
 cmd_import_map() {
   local file=""
   while [[ $# -gt 0 ]]; do
@@ -453,6 +590,10 @@ Commands:
   init-catalog    Seed built-in component types into the catalog
   import-catalog  --file catalog.json  Import custom component types
   list-catalog    List all component types in the catalog
+  start-app       --app APP_NAME [--dry-run]
+  stop-app        --app APP_NAME
+  status-app      --app APP_NAME
+  wait-running    --app APP_NAME [--timeout 300]
 
 Permission levels: view, operate, edit, manage, owner
 
@@ -480,6 +621,17 @@ Examples:
 
   # Import custom component types from a JSON file
   appcontrol.sh import-catalog --file my-types.json
+
+  # Start/stop an application
+  appcontrol.sh start-app --app "Core Banking"
+  appcontrol.sh stop-app --app "Core Banking"
+
+  # Wait for an app to be running (useful in scheduler scripts)
+  appcontrol.sh start-app --app "Core Banking"
+  appcontrol.sh wait-running --app "Core Banking" --timeout 600
+
+  # Check application status
+  appcontrol.sh status-app --app "Core Banking"
 USAGE
 }
 
@@ -501,6 +653,10 @@ case "$command" in
   init-catalog)   cmd_init_catalog "$@" ;;
   import-catalog) cmd_import_catalog "$@" ;;
   list-catalog)   cmd_list_catalog "$@" ;;
+  start-app)      cmd_start_app "$@" ;;
+  stop-app)       cmd_stop_app "$@" ;;
+  status-app)     cmd_status_app "$@" ;;
+  wait-running)   cmd_wait_running "$@" ;;
   help|--help|-h) usage ;;
   *) die "Unknown command: $command. Run 'appcontrol.sh help' for usage." ;;
 esac
