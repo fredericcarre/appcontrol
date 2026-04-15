@@ -1970,6 +1970,7 @@ pub async fn set_component_unreachable(
 }
 
 /// Fetch stale components (whose agents have exceeded heartbeat timeout) — SQLite.
+/// Excludes components whose application has an active operation lock (start/stop in progress).
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 pub async fn fetch_stale_components<
     T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
@@ -1994,6 +1995,10 @@ pub async fn fetch_stale_components<
             (a.is_active = 0)
             OR
             (g.id IS NOT NULL AND g.is_active = 0)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM operation_locks ol
+            WHERE ol.app_id = c.application_id
           )
         "#,
     )
@@ -2131,6 +2136,7 @@ pub async fn update_operation_schedule_after_run(
 }
 
 /// Fetch stale components (whose agents have exceeded heartbeat timeout) — PostgreSQL only.
+/// Excludes components whose application has an active operation lock (start/stop in progress).
 #[cfg(feature = "postgres")]
 pub async fn fetch_stale_components<
     T: for<'r> sqlx::FromRow<'r, crate::db::DbRow> + Send + Unpin,
@@ -2155,6 +2161,10 @@ pub async fn fetch_stale_components<
             (a.is_active = false)
             OR
             (g.id IS NOT NULL AND g.is_active = false)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM operation_locks ol
+            WHERE ol.app_id = c.application_id
           )
         "#,
     )
