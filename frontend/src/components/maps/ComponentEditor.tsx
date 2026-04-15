@@ -23,10 +23,10 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useComponentTypes, COMPONENT_TYPES } from './ComponentPalette';
+import { useComponentTypes } from '@/hooks/use-component-types';
 import { AlertCircle, Shield, Trash2, Plus, MapPin, Search } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { resolveIcon, ICON_MAP } from '@/lib/icons';
+import { ICON_MAP } from '@/lib/icons';
 
 const ICONS = ICON_MAP;
 

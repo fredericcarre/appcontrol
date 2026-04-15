@@ -366,6 +366,7 @@ impl TestContext {
             log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),
             pending_log_requests: appcontrol_backend::websocket::PendingLogRequests::new(),
             probe_results: dashmap::DashMap::new(),
+            write_queue: appcontrol_backend::db::WriteQueue::new(pool.clone()),
         });
 
         let app = appcontrol_backend::create_router(state);
@@ -524,6 +525,7 @@ impl TestContext {
             log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),
             pending_log_requests: appcontrol_backend::websocket::PendingLogRequests::new(),
             probe_results: dashmap::DashMap::new(),
+            write_queue: appcontrol_backend::db::WriteQueue::new(pool.clone()),
         });
 
         let app = appcontrol_backend::create_router(state);

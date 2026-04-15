@@ -455,6 +455,102 @@ Access via the `/supervision` route or press `F11` from any page.
 <!-- SCREENSHOT:supervision -->
 *Supervision Mode — full-screen NOC display for operations centers*
 
+### Component Catalog
+
+The Component Catalog allows you to define **custom component types** specific to your organization. Each catalog entry includes an icon, color, category, and optional default commands that are pre-filled when a user creates a component of that type.
+
+**Built-in types:** database, middleware, appserver, webfront, service, batch, custom, application
+
+#### Initializing the Catalog
+
+Use the CLI to seed the built-in types and import custom ones:
+
+```bash
+# Seed the 8 built-in component types (idempotent)
+appcontrol.sh init-catalog
+
+# Import custom types from a JSON file
+appcontrol.sh import-catalog --file catalog.json
+
+# List all types in the catalog
+appcontrol.sh list-catalog
+```
+
+#### Catalog Import Format
+
+The import file is a JSON object with an `entries` array:
+
+```json
+{
+  "entries": [
+    {
+      "type_key": "oracle-rac",
+      "label": "Oracle RAC Cluster",
+      "description": "Oracle Real Application Clusters",
+      "icon": "database",
+      "color": "#F80000",
+      "category": "database",
+      "default_check_cmd": "srvctl status database -d ${DB_NAME}",
+      "default_start_cmd": "srvctl start database -d ${DB_NAME}",
+      "default_stop_cmd": "srvctl stop database -d ${DB_NAME}"
+    },
+    {
+      "type_key": "controlm-job",
+      "label": "Control-M Job",
+      "icon": "calendar",
+      "color": "#E31837",
+      "category": "scheduler",
+      "default_check_cmd": "ctmpsm -LISTALL | grep ${JOB_NAME}"
+    }
+  ]
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `type_key` | yes | Unique slug identifier (e.g., `oracle-rac`, `kafka-connect`) |
+| `label` | yes | Display name shown in the UI |
+| `description` | no | Tooltip description |
+| `icon` | no | Lucide icon name: `database`, `layers`, `server`, `globe`, `cog`, `clock`, `zap`, `shield`, `network`, `calendar`, `terminal`, `box` (default) |
+| `color` | no | Hex color for the icon (default: `#455A64`) |
+| `category` | no | Grouping in the palette (e.g., `database`, `middleware`, `scheduler`) |
+| `default_check_cmd` | no | Pre-filled check command when this type is selected |
+| `default_start_cmd` | no | Pre-filled start command |
+| `default_stop_cmd` | no | Pre-filled stop command |
+| `default_env_vars` | no | Default environment variables as JSON object |
+| `display_order` | no | Sort order in the palette (default: 0) |
+
+Duplicate `type_key` values are skipped during import (not overwritten).
+
+#### REST API
+
+```bash
+# List catalog entries
+GET /api/v1/catalog/component-types
+
+# Create a custom type (admin only)
+POST /api/v1/catalog/component-types
+
+# Update a type (admin only)
+PUT /api/v1/catalog/component-types/:id
+
+# Delete a custom type (admin only, built-in types cannot be deleted)
+DELETE /api/v1/catalog/component-types/:id
+
+# Bulk import (admin only)
+POST /api/v1/catalog/component-types/import
+
+# Seed built-in types (admin only, idempotent)
+POST /api/v1/catalog/component-types/seed
+```
+
+#### UI Integration
+
+Once catalog entries are loaded, they appear in:
+
+- **Component Palette** (drag & drop): dynamically populated with search/filter when more than 8 types, grouped by category
+- **Component Editor** (type selector): searchable dropdown with icon previews, category labels, and automatic pre-fill of default commands
+
 ---
 
 ## Scheduler Integration

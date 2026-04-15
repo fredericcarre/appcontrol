@@ -3,9 +3,9 @@ import { Handle, Position, NodeProps } from '@xyflow/react';
 import { cn } from '@/lib/utils';
 import { STATE_COLORS, COMPONENT_TYPE_ICONS, ComponentState, ComponentType } from '@/lib/colors';
 import {
-  Database, Layers, Server, Globe, Cog, Clock, Box,
+  Box,
   Play, Square, RotateCcw, Search, Skull, GitBranch, Wrench,
-  Shield, Cloud, HardDrive, Cpu, Network, FileText, Zap,
+  Server,
   ExternalLink, ArrowUp, ArrowDown, WifiOff, Unplug, Radio,
   BarChart3, MapPin, AlertTriangle,
 } from 'lucide-react';
