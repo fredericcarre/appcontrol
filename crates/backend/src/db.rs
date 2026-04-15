@@ -249,7 +249,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DbJson {
     fn encode_by_ref(
         &self,
         args: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
-    ) -> sqlx::encode::IsNull {
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         let wrapper = sqlx::types::Json(&self.0);
         <sqlx::types::Json<&serde_json::Value> as sqlx::Encode<sqlx::Sqlite>>::encode(wrapper, args)
     }
@@ -751,7 +751,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for UuidArray {
     fn encode_by_ref(
         &self,
         args: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
-    ) -> sqlx::encode::IsNull {
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         let json = serde_json::to_string(&self.0).unwrap_or_else(|_| "[]".to_string());
         <String as sqlx::Encode<sqlx::Sqlite>>::encode(json, args)
     }
@@ -986,7 +986,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for IntArray {
     fn encode_by_ref(
         &self,
         args: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
-    ) -> sqlx::encode::IsNull {
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         let json = serde_json::to_string(&self.0).unwrap_or_else(|_| "[]".to_string());
         <String as sqlx::Encode<sqlx::Sqlite>>::encode(json, args)
     }

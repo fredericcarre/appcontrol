@@ -3,36 +3,12 @@
 
 [advisories]
 ignore = [
-    # rsa 0.9.10 — Marvin Attack timing sidechannel (CVSS 5.9 medium)
-    # No fix available upstream. Pulled in transitively by sqlx-mysql 0.7.4
-    # via sqlx-macros-core. We only use PostgreSQL, never MySQL, so this
-    # RSA padding oracle attack surface is not reachable in our codebase.
-    # Will be resolved when upgrading to sqlx 0.8+ (which drops rsa dep).
+    # rsa 0.9.10 — Marvin Attack timing sidechannel (no fix available upstream)
+    # Pulled in by sqlx-mysql via sqlx-macros-core. We never use MySQL —
+    # only PostgreSQL and SQLite. The RSA code path is unreachable.
     "RUSTSEC-2023-0071",
 
-    # sqlx 0.7.4 — Binary Protocol Misinterpretation via truncating casts
-    # Fix requires sqlx >= 0.8.1 which is a breaking API change.
-    # Tracked for upgrade; risk is limited to malicious DB server responses
-    # which is not applicable in our controlled PostgreSQL environment.
-    "RUSTSEC-2024-0363",
-
-    # quinn-proto 0.11.13 — QUIC protocol vulnerability
-    # Pulled in transitively by reqwest via its HTTP/3 support.
-    # We don't use HTTP/3 (QUIC) in our internal communications;
-    # all traffic is HTTP/1.1 or HTTP/2 over TLS.
-    # Will be resolved when reqwest updates to a fixed quinn version.
+    # quinn-proto — QUIC protocol vulnerability
+    # Pulled in by reqwest via HTTP/3 support. We only use HTTP/1.1 + HTTP/2.
     "RUSTSEC-2026-0037",
-
-    # rustls-webpki 0.101.7 — URI name constraint validation bypass
-    # Pulled in transitively by sqlx-core 0.7.4 via rustls 0.21.12.
-    # Cannot be upgraded without migrating to sqlx 0.8+ (breaking change).
-    # The direct dependency (rustls-webpki 0.103.x) has been patched to 0.103.12.
-    # This old version is only used for the sqlx PostgreSQL/SQLite TLS layer,
-    # which connects to local/trusted database servers, not arbitrary URIs.
-    "RUSTSEC-2026-0098",
-
-    # rustls-webpki 0.101.7 — wildcard name constraint bypass
-    # Same transitive dependency as above (sqlx-core 0.7.4 → rustls 0.21.12).
-    # Only used for DB TLS connections to trusted local servers.
-    "RUSTSEC-2026-0099",
 ]
