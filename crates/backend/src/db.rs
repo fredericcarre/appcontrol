@@ -109,7 +109,10 @@ impl sqlx::Type<sqlx::Postgres> for DbUuid {
 
 #[cfg(feature = "postgres")]
 impl<'q> sqlx::Encode<'q, sqlx::Postgres> for DbUuid {
-    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         <Uuid as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
     }
 }
@@ -219,7 +222,10 @@ impl sqlx::Type<sqlx::Postgres> for DbJson {
 
 #[cfg(feature = "postgres")]
 impl<'q> sqlx::Encode<'q, sqlx::Postgres> for DbJson {
-    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         <serde_json::Value as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
     }
 }
@@ -718,7 +724,10 @@ impl sqlx::Type<sqlx::Postgres> for UuidArray {
 
 #[cfg(feature = "postgres")]
 impl<'q> sqlx::Encode<'q, sqlx::Postgres> for UuidArray {
-    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         <Vec<Uuid> as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
     }
 }
@@ -956,7 +965,10 @@ impl sqlx::Type<sqlx::Postgres> for IntArray {
 
 #[cfg(feature = "postgres")]
 impl<'q> sqlx::Encode<'q, sqlx::Postgres> for IntArray {
-    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         <Vec<i32> as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
     }
 }
