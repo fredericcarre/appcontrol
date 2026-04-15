@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.11.0). Must exist on remote."
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,6 +17,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   REGISTRY: ghcr.io/fredericcarre
+  # Resolve tag: from push event or manual workflow_dispatch input
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -50,11 +58,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Set version from tag
         shell: bash
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
+          VERSION=${RELEASE_TAG#v}
           echo "Setting workspace version to $VERSION"
           sed -i.bak 's/^version = ".*"/version = "'"$VERSION"'"/' Cargo.toml
           rm -f Cargo.toml.bak
@@ -167,10 +177,12 @@ jobs:
     needs: [build-binaries]  # wait for binaries to be built
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${RELEASE_TAG#v}" >> $GITHUB_OUTPUT
 
       - name: Download Linux amd64 binaries
         uses: actions/download-artifact@v4
@@ -298,10 +310,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${RELEASE_TAG#v}" >> $GITHUB_OUTPUT
 
       - name: Install Helm
         uses: azure/setup-helm@v4
@@ -324,6 +338,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -361,10 +377,14 @@ jobs:
     needs: [build-binaries, build-docker, helm-package, build-frontend]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${RELEASE_TAG#v}" >> $GITHUB_OUTPUT
 
       - name: Download all binary artifacts
         uses: actions/download-artifact@v4
@@ -403,7 +423,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
 
           # ── Find previous tag to compute changelog range ──
           PREV_TAG=$(git tag --list 'v*' --sort=-version:refname | grep -v "^${TAG}$" | head -1 || true)
@@ -535,17 +555,17 @@ INSTALL_EOF
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
-            echo "Release ${{ github.ref_name }} already exists — uploading assets"
-            gh release upload "${{ github.ref_name }}" \
+          if gh release view "${{ env.RELEASE_TAG }}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "Release ${{ env.RELEASE_TAG }} already exists — uploading assets"
+            gh release upload "${{ env.RELEASE_TAG }}" \
               --repo "${{ github.repository }}" \
               --clobber \
               artifacts/*
           else
-            echo "Creating release ${{ github.ref_name }}"
-            gh release create "${{ github.ref_name }}" \
+            echo "Creating release ${{ env.RELEASE_TAG }}"
+            gh release create "${{ env.RELEASE_TAG }}" \
               --repo "${{ github.repository }}" \
-              --title "AppControl ${{ github.ref_name }}" \
+              --title "AppControl ${{ env.RELEASE_TAG }}" \
               --notes-file /tmp/release-notes.md \
               --latest \
               artifacts/*
@@ -560,10 +580,12 @@ INSTALL_EOF
     needs: [github-release]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${RELEASE_TAG#v}" >> $GITHUB_OUTPUT
 
       - name: Download all binary artifacts
         uses: actions/download-artifact@v4
@@ -651,7 +673,7 @@ INSTALL_EOF
           # Commit and push
           git add -A
           git diff --staged --quiet && echo "No changes to push" || {
-            git commit -m "Release ${{ github.ref_name }} — docs, scripts, examples"
+            git commit -m "Release ${{ env.RELEASE_TAG }} — docs, scripts, examples"
             git push origin main
           }
           cd ..
@@ -676,13 +698,13 @@ INSTALL_EOF
       - name: Generate corp release notes
         run: |
           cat > /tmp/corp-release-notes.md <<'NOTES_EOF'
-          ## AppControl ${{ github.ref_name }}
+          ## AppControl ${{ env.RELEASE_TAG }}
 
           ### Quick Start
 
           **Docker Compose (recommended):**
           ```bash
-          gh release download ${{ github.ref_name }} --repo xcomponent/appcontrol-release --pattern 'docker-compose.release.yaml'
+          gh release download ${{ env.RELEASE_TAG }} --repo xcomponent/appcontrol-release --pattern 'docker-compose.release.yaml'
           APPCONTROL_VERSION=${{ steps.version.outputs.VERSION }} docker compose -f docker-compose.release.yaml up -d
           ```
 
@@ -690,7 +712,7 @@ INSTALL_EOF
           ```powershell
           mkdir AppControl; cd AppControl
           # Download the unified script
-          Invoke-WebRequest -Uri "https://github.com/xcomponent/appcontrol-release/releases/download/${{ github.ref_name }}/appcontrol.ps1" -OutFile appcontrol.ps1
+          Invoke-WebRequest -Uri "https://github.com/xcomponent/appcontrol-release/releases/download/${{ env.RELEASE_TAG }}/appcontrol.ps1" -OutFile appcontrol.ps1
           .\appcontrol.ps1 install
           .\appcontrol.ps1 start
           .\appcontrol.ps1 add-site Production
@@ -698,7 +720,7 @@ INSTALL_EOF
 
           **CLI binary:**
           ```bash
-          gh release download ${{ github.ref_name }} --repo xcomponent/appcontrol-release --pattern 'appctl-linux-amd64' --dir /usr/local/bin
+          gh release download ${{ env.RELEASE_TAG }} --repo xcomponent/appcontrol-release --pattern 'appctl-linux-amd64' --dir /usr/local/bin
           chmod +x /usr/local/bin/appctl-linux-amd64 && mv /usr/local/bin/appctl-linux-amd64 /usr/local/bin/appctl
           ```
 
@@ -709,17 +731,17 @@ INSTALL_EOF
         env:
           GH_TOKEN: ${{ secrets.CORP_GITHUB_TOKEN }}
         run: |
-          if gh release view "${{ github.ref_name }}" --repo xcomponent/appcontrol-release > /dev/null 2>&1; then
+          if gh release view "${{ env.RELEASE_TAG }}" --repo xcomponent/appcontrol-release > /dev/null 2>&1; then
             echo "Release exists — uploading assets"
-            gh release upload "${{ github.ref_name }}" \
+            gh release upload "${{ env.RELEASE_TAG }}" \
               --repo xcomponent/appcontrol-release \
               --clobber \
               artifacts/*
           else
-            echo "Creating release ${{ github.ref_name }}"
-            gh release create "${{ github.ref_name }}" \
+            echo "Creating release ${{ env.RELEASE_TAG }}"
+            gh release create "${{ env.RELEASE_TAG }}" \
               --repo xcomponent/appcontrol-release \
-              --title "AppControl ${{ github.ref_name }}" \
+              --title "AppControl ${{ env.RELEASE_TAG }}" \
               --notes-file /tmp/corp-release-notes.md \
               --latest \
               artifacts/*
