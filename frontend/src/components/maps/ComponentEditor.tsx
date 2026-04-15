@@ -256,11 +256,11 @@ export function ComponentEditor({
           <Tabs defaultValue="general" className="w-full">
             <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="general">General</TabsTrigger>
-              <TabsTrigger value="commands">Commands</TabsTrigger>
-              <TabsTrigger value="failover" disabled={isCreating}>
-                <Shield className="h-3 w-3 mr-1" />
-                Failover
+              <TabsTrigger value="infra" disabled={formData.component_type === 'application'}>
+                <MapPin className="h-3 w-3 mr-1" />
+                Infrastructure
               </TabsTrigger>
+              <TabsTrigger value="commands">Commands</TabsTrigger>
               <TabsTrigger value="advanced">Advanced</TabsTrigger>
             </TabsList>
 
@@ -421,47 +421,6 @@ export function ComponentEditor({
                 </div>
               )}
 
-              {/* Host selection - not shown for application type (status is derived from referenced app) */}
-              {formData.component_type !== 'application' && (
-                <div className="space-y-2">
-                  <Label htmlFor="host">Host</Label>
-                  <Select
-                    value={formData.host || '_manual'}
-                    onValueChange={(v) => {
-                      if (v === '_manual') {
-                        handleChange('host', '');
-                      } else {
-                        handleChange('host', v);
-                      }
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select agent host" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="_manual">Enter manually...</SelectItem>
-                      {agents?.map((a) => (
-                        <SelectItem key={a.id} value={a.hostname}>
-                          <div className="flex items-center gap-2">
-                            <div
-                              className={`w-2 h-2 rounded-full ${a.status === 'active' ? 'bg-green-500' : 'bg-gray-400'}`}
-                            />
-                            {a.hostname}
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {(formData.host === '' || !agents?.find((a) => a.hostname === formData.host)) && (
-                    <Input
-                      value={formData.host}
-                      onChange={(e) => handleChange('host', e.target.value)}
-                      placeholder="hostname or IP address"
-                      className="mt-2"
-                    />
-                  )}
-                </div>
-              )}
             </TabsContent>
 
             <TabsContent value="commands" className="space-y-4 mt-4">
@@ -584,29 +543,126 @@ export function ComponentEditor({
               )}
             </TabsContent>
 
-            <TabsContent value="failover" className="space-y-4 mt-4">
-              {/* Failover / DR Site Configuration */}
-              <Alert>
-                <Shield className="h-4 w-4" />
-                <AlertDescription>
-                  <p className="font-medium mb-1">Site Overrides (DR Failover)</p>
-                  <p className="text-sm text-muted-foreground">
-                    Configure alternate agents and commands for each site. When the application runs on a different site (e.g., DR), these overrides are used instead of the default configuration.
-                  </p>
-                </AlertDescription>
-              </Alert>
+            <TabsContent value="infra" className="space-y-4 mt-4">
+              {/* Primary Agent Selection */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Server className="h-4 w-4 text-blue-500" />
+                  <h4 className="font-medium text-sm">Primary Agent</h4>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Select the agent that will execute commands for this component on the primary site.
+                </p>
+                <Select
+                  value={formData.host || '_manual'}
+                  onValueChange={(v) => {
+                    if (v === '_manual') {
+                      handleChange('host', '');
+                    } else {
+                      handleChange('host', v);
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select agent..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_manual">Enter manually...</SelectItem>
+                    {(() => {
+                      // Group agents by gateway for clarity
+                      type AgentItem = NonNullable<typeof agents>[number];
+                      const grouped = new Map<string, AgentItem[]>();
+                      const ungrouped: AgentItem[] = [];
+                      for (const a of agents || []) {
+                        if (a.gateway_name) {
+                          const key = a.gateway_name;
+                          if (!grouped.has(key)) grouped.set(key, []);
+                          grouped.get(key)!.push(a);
+                        } else {
+                          ungrouped.push(a);
+                        }
+                      }
+                      const items: React.ReactNode[] = [];
+                      for (const [gwName, gwAgents] of grouped) {
+                        items.push(
+                          <div key={`gw-${gwName}`} className="px-2 py-1.5 text-xs font-semibold text-muted-foreground border-t first:border-t-0">
+                            {gwName} {gwAgents[0]?.gateway_zone ? `(${gwAgents[0].gateway_zone})` : ''}
+                          </div>
+                        );
+                        for (const a of gwAgents) {
+                          items.push(
+                            <SelectItem key={a.id} value={a.hostname}>
+                              <div className="flex items-center gap-2 pl-2">
+                                <div className={`w-2 h-2 rounded-full ${a.connected ? 'bg-green-500' : a.is_active ? 'bg-yellow-500' : 'bg-gray-400'}`} />
+                                {a.hostname}
+                              </div>
+                            </SelectItem>
+                          );
+                        }
+                      }
+                      if (ungrouped.length > 0) {
+                        if (grouped.size > 0) {
+                          items.push(
+                            <div key="gw-none" className="px-2 py-1.5 text-xs font-semibold text-muted-foreground border-t">
+                              No gateway
+                            </div>
+                          );
+                        }
+                        for (const a of ungrouped) {
+                          items.push(
+                            <SelectItem key={a.id} value={a.hostname}>
+                              <div className="flex items-center gap-2">
+                                <div className={`w-2 h-2 rounded-full ${a.connected ? 'bg-green-500' : 'bg-gray-400'}`} />
+                                {a.hostname}
+                              </div>
+                            </SelectItem>
+                          );
+                        }
+                      }
+                      return items;
+                    })()}
+                  </SelectContent>
+                </Select>
+                {(formData.host === '' || !agents?.find((a) => a.hostname === formData.host)) && (
+                  <Input
+                    value={formData.host}
+                    onChange={(e) => handleChange('host', e.target.value)}
+                    placeholder="hostname or IP address"
+                  />
+                )}
+                {/* Show resolved agent info */}
+                {formData.host && agents?.find((a) => a.hostname === formData.host) && (() => {
+                  const agent = agents.find((a) => a.hostname === formData.host)!;
+                  return (
+                    <div className="rounded-md border p-2 bg-muted/30 text-xs flex items-center gap-3">
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${agent.connected ? 'bg-green-500' : 'bg-gray-400'}`} />
+                      <span className="font-mono">{agent.hostname}</span>
+                      {agent.gateway_name && (
+                        <>
+                          <span className="text-muted-foreground">via</span>
+                          <span>{agent.gateway_name}</span>
+                        </>
+                      )}
+                      {agent.gateway_zone && (
+                        <span className="text-muted-foreground">({agent.gateway_zone})</span>
+                      )}
+                      <span className={agent.connected ? 'text-green-600' : 'text-gray-500'}>
+                        {agent.connected ? 'Connected' : 'Disconnected'}
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
 
-              {/* Current host info */}
-              <div className="rounded-lg border p-3 bg-muted/30">
-                <div className="flex items-center gap-2 mb-2">
-                  <MapPin className="h-4 w-4 text-blue-500" />
-                  <span className="font-medium text-sm">Default Configuration</span>
+              {/* DR Site Overrides */}
+              <div className="border-t pt-4 mt-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-orange-500" />
+                  <h4 className="font-medium text-sm">DR Site Overrides</h4>
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  <span className="font-mono">{formData.host || 'No host assigned'}</span>
-                  <span className="mx-2">•</span>
-                  <span>Used when running on the primary site</span>
-                </div>
+                <p className="text-xs text-muted-foreground">
+                  Configure alternate agents and commands for failover sites. When the application runs on a DR site, these overrides replace the primary configuration.
+                </p>
               </div>
 
               {/* Site overrides list */}
