@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { Trash2, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -25,19 +25,18 @@ export function EdgeToolbar({
   onDelete,
 }: EdgeToolbarProps) {
   const { getNodes } = useReactFlow();
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
-  const toolbarRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const position = useMemo(() => {
     const nodes = getNodes();
     const sourceNode = nodes.find((n) => n.id === sourceId);
     const targetNode = nodes.find((n) => n.id === targetId);
     if (sourceNode && targetNode) {
-      // Position at midpoint between the two nodes
-      const midX = (sourceNode.position.x + targetNode.position.x) / 2 + 90;
-      const midY = (sourceNode.position.y + targetNode.position.y) / 2;
-      setPosition({ x: midX, y: midY });
+      return {
+        x: (sourceNode.position.x + targetNode.position.x) / 2 + 90,
+        y: (sourceNode.position.y + targetNode.position.y) / 2,
+      };
     }
+    return null;
   }, [getNodes, sourceId, targetId]);
 
   const handleDelete = useCallback(() => {
@@ -48,7 +47,6 @@ export function EdgeToolbar({
 
   return (
     <div
-      ref={toolbarRef}
       className="absolute z-50 pointer-events-auto"
       style={{
         transform: `translate(${position.x}px, ${position.y}px) translate(-50%, -100%)`,
