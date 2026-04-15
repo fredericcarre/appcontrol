@@ -178,6 +178,13 @@ pub async fn list_apps(
 
     use crate::repository::apps::ListAppsParams;
 
+    // Admin sees all apps; non-admin only sees apps they have permission on
+    let user_id_filter = if user.is_admin() {
+        None
+    } else {
+        Some(*user.user_id)
+    };
+
     let apps = state
         .app_repo
         .list_apps(ListAppsParams {
@@ -186,6 +193,7 @@ pub async fn list_apps(
             site_id: params.site_id,
             limit,
             offset,
+            user_id: user_id_filter,
         })
         .await?;
 

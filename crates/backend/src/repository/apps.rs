@@ -55,6 +55,9 @@ pub struct ListAppsParams {
     pub site_id: Option<Uuid>,
     pub limit: i64,
     pub offset: i64,
+    /// When set, filter to apps the user has permission on (direct or via teams).
+    /// Admin users should pass `None` to see all apps.
+    pub user_id: Option<Uuid>,
 }
 
 /// Parameters for creating an app.
@@ -311,6 +314,9 @@ struct PgAppRow {
 #[async_trait]
 impl AppRepository for PgAppRepository {
     async fn list_apps(&self, params: ListAppsParams) -> Result<Vec<AppSummary>, sqlx::Error> {
+        // When user_id is provided, filter to apps the user can access:
+        // - Direct permission via app_permissions_users
+        // - Team permission via app_permissions_teams + team_members
         let rows = sqlx::query_as::<_, PgAppSummaryRow>(
             r#"SELECT
                 a.id, a.name, a.description, a.organization_id, a.site_id, a.tags,
@@ -327,6 +333,16 @@ impl AppRepository for PgAppRepository {
             WHERE a.organization_id = $1
               AND ($2::text IS NULL OR a.name ILIKE '%' || $2 || '%')
               AND ($3::uuid IS NULL OR a.site_id = $3)
+              AND ($6::uuid IS NULL OR EXISTS (
+                SELECT 1 FROM app_permissions_users apu
+                WHERE apu.application_id = a.id AND apu.user_id = $6
+                  AND (apu.expires_at IS NULL OR apu.expires_at > now())
+              ) OR EXISTS (
+                SELECT 1 FROM app_permissions_teams apt
+                JOIN team_members tm ON tm.team_id = apt.team_id
+                WHERE apt.application_id = a.id AND tm.user_id = $6
+                  AND (apt.expires_at IS NULL OR apt.expires_at > now())
+              ))
             GROUP BY a.id
             ORDER BY a.name
             LIMIT $4 OFFSET $5"#,
@@ -336,6 +352,7 @@ impl AppRepository for PgAppRepository {
         .bind(params.site_id)
         .bind(params.limit)
         .bind(params.offset)
+        .bind(params.user_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -929,6 +946,9 @@ struct SqliteAppRow {
 #[async_trait]
 impl AppRepository for SqliteAppRepository {
     async fn list_apps(&self, params: ListAppsParams) -> Result<Vec<AppSummary>, sqlx::Error> {
+        // When user_id is provided, filter to apps the user can access:
+        // - Direct permission via app_permissions_users
+        // - Team permission via app_permissions_teams + team_members
         let rows = sqlx::query_as::<_, SqliteAppSummaryRow>(
             r#"SELECT
                 a.id, a.name, a.description, a.organization_id, a.site_id, a.tags,
@@ -945,6 +965,16 @@ impl AppRepository for SqliteAppRepository {
             WHERE a.organization_id = $1
               AND ($2 IS NULL OR a.name LIKE '%' || $2 || '%')
               AND ($3 IS NULL OR a.site_id = $3)
+              AND ($6 IS NULL OR EXISTS (
+                SELECT 1 FROM app_permissions_users apu
+                WHERE apu.application_id = a.id AND apu.user_id = $6
+                  AND (apu.expires_at IS NULL OR apu.expires_at > datetime('now'))
+              ) OR EXISTS (
+                SELECT 1 FROM app_permissions_teams apt
+                JOIN team_members tm ON tm.team_id = apt.team_id
+                WHERE apt.application_id = a.id AND tm.user_id = $6
+                  AND (apt.expires_at IS NULL OR apt.expires_at > datetime('now'))
+              ))
             GROUP BY a.id
             ORDER BY a.name
             LIMIT $4 OFFSET $5"#,
@@ -954,6 +984,7 @@ impl AppRepository for SqliteAppRepository {
         .bind(params.site_id.map(DbUuid::from))
         .bind(params.limit)
         .bind(params.offset)
+        .bind(params.user_id.map(DbUuid::from))
         .fetch_all(&self.pool)
         .await?;
 
