@@ -23,20 +23,12 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { COMPONENT_TYPES } from './ComponentPalette';
-import { Database, Layers, Server, Globe, Cog, Clock, Box, Folder, AlertCircle, Shield, Trash2, Plus, MapPin } from 'lucide-react';
+import { useComponentTypes, COMPONENT_TYPES } from './ComponentPalette';
+import { AlertCircle, Shield, Trash2, Plus, MapPin, Search } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { resolveIcon, ICON_MAP } from '@/lib/icons';
 
-const ICONS: Record<string, React.ElementType> = {
-  database: Database,
-  layers: Layers,
-  server: Server,
-  globe: Globe,
-  cog: Cog,
-  clock: Clock,
-  box: Box,
-  folder: Folder,
-};
+const ICONS = ICON_MAP;
 
 export interface ComponentFormData {
   name: string;
@@ -80,6 +72,7 @@ export function ComponentEditor({
   isCreating = false,
   initialType,
 }: ComponentEditorProps) {
+  const { types: catalogTypes } = useComponentTypes();
   const { data: groups } = useComponentGroups(appId);
   const { data: agents } = useAgents();
   const { data: existingApps } = useApps();
@@ -128,7 +121,7 @@ export function ComponentEditor({
       };
     }
     if (initialType) {
-      const typeInfo = COMPONENT_TYPES.find((t) => t.type === initialType);
+      const typeInfo = catalogTypes.find((t) => t.type === initialType);
       return {
         name: '',
         display_name: '',
@@ -137,9 +130,9 @@ export function ComponentEditor({
         icon: typeInfo?.iconName || 'box',
         host: '',
         group_id: null,
-        check_cmd: '',
-        start_cmd: '',
-        stop_cmd: '',
+        check_cmd: typeInfo?.defaultCheckCmd || '',
+        start_cmd: typeInfo?.defaultStartCmd || '',
+        stop_cmd: typeInfo?.defaultStopCmd || '',
         check_interval_seconds: 30,
         start_timeout_seconds: 120,
         stop_timeout_seconds: 60,
@@ -168,7 +161,7 @@ export function ComponentEditor({
       cluster_size: null,
       cluster_nodes: [],
     };
-  }, [component, initialType]);
+  }, [component, initialType, catalogTypes]);
 
   // Use key to reset form state when component/initialType changes
   const formKey = component?.id || initialType || 'new';
@@ -313,20 +306,57 @@ export function ComponentEditor({
                       if (v !== 'application') {
                         handleChange('referenced_app_id', null);
                       }
+                      // Pre-fill default commands from catalog (only when creating or fields are empty)
+                      const catalogType = catalogTypes.find((t) => t.type === v);
+                      if (catalogType) {
+                        handleChange('icon', catalogType.iconName);
+                        setFormData((prev) => ({
+                          ...prev,
+                          component_type: v,
+                          icon: catalogType.iconName,
+                          check_cmd: prev.check_cmd || catalogType.defaultCheckCmd || '',
+                          start_cmd: prev.start_cmd || catalogType.defaultStartCmd || '',
+                          stop_cmd: prev.stop_cmd || catalogType.defaultStopCmd || '',
+                        }));
+                      }
                     }}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select type" />
                     </SelectTrigger>
                     <SelectContent>
-                      {COMPONENT_TYPES.map((t) => (
-                        <SelectItem key={t.type} value={t.type}>
-                          <div className="flex items-center gap-2">
-                            <t.icon className="h-4 w-4" style={{ color: t.color }} />
-                            {t.label}
-                          </div>
-                        </SelectItem>
-                      ))}
+                      <div className="px-2 pb-2">
+                        <div className="relative">
+                          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                          <input
+                            className="h-8 w-full rounded-md border border-input bg-background pl-7 pr-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+                            placeholder="Search types..."
+                            onChange={(e) => {
+                              // Filter is handled by SelectContent search
+                              const input = e.target;
+                              input.dataset.search = e.target.value;
+                              // Force re-render of items
+                              input.dispatchEvent(new Event('input', { bubbles: true }));
+                            }}
+                          />
+                        </div>
+                      </div>
+                      {catalogTypes.map((t) => {
+                        const Icon = t.icon;
+                        return (
+                          <SelectItem key={t.type} value={t.type}>
+                            <div className="flex items-center gap-2">
+                              <Icon className="h-4 w-4" style={{ color: t.color }} />
+                              <span>{t.label}</span>
+                              {t.category && (
+                                <span className="text-[10px] text-muted-foreground ml-auto">
+                                  {t.category}
+                                </span>
+                              )}
+                            </div>
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>

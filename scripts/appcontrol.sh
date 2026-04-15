@@ -15,6 +15,9 @@
 #   list-apps       List all applications
 #   import-map      Import an application map (JSON/YAML)
 #   provision       Bulk provision from a JSON file (users, teams, permissions)
+#   init-catalog    Seed built-in component types into the catalog
+#   import-catalog  Import custom component types from a JSON file
+#   list-catalog    List all component types in the catalog
 #
 # Environment:
 #   APPCONTROL_URL      Backend URL (default: http://localhost:3001)
@@ -263,6 +266,73 @@ cmd_import_map() {
   ok "Imported application: ${app_name}"
 }
 
+# ── Component Catalog ────────────────────────────────────────────────────────
+
+# Seed the built-in component types into the catalog for the current org.
+cmd_init_catalog() {
+  ensure_login
+  info "Seeding built-in component types..."
+  local resp
+  resp=$(api_post "${API_BASE}/catalog/component-types/seed" "{}") \
+    || die "Failed to seed catalog"
+  local seeded
+  seeded=$(echo "$resp" | jq -r '.seeded // 0')
+  ok "Catalog initialized (${seeded} types seeded)"
+}
+
+# Import custom component types from a JSON file.
+#
+# Expected format:
+# {
+#   "entries": [
+#     {
+#       "type_key": "oracle-rac",
+#       "label": "Oracle RAC Cluster",
+#       "description": "Oracle Real Application Clusters",
+#       "icon": "database",
+#       "color": "#F80000",
+#       "category": "database",
+#       "default_check_cmd": "srvctl status database -d ${DB_NAME}",
+#       "default_start_cmd": "srvctl start database -d ${DB_NAME}",
+#       "default_stop_cmd": "srvctl stop database -d ${DB_NAME}"
+#     }
+#   ]
+# }
+cmd_import_catalog() {
+  local file=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --file) file="$2"; shift 2 ;;
+      *)      file="$1"; shift ;;
+    esac
+  done
+  [ -n "$file" ] || die "Missing file. Usage: import-catalog --file catalog.json"
+  [ -f "$file" ] || die "File not found: $file"
+  ensure_login
+
+  info "Importing catalog from ${file}..."
+  local resp
+  resp=$(curl -sf -X POST -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d @"$file" "${API_BASE}/catalog/component-types/import" 2>/dev/null) \
+    || die "Failed to import catalog from '${file}'"
+
+  local created skipped total
+  created=$(echo "$resp" | jq -r '.created // 0')
+  skipped=$(echo "$resp" | jq -r '.skipped // 0')
+  total=$(echo "$resp" | jq -r '.total // 0')
+  ok "Catalog imported: ${created} created, ${skipped} skipped (${total} total)"
+}
+
+# List component types in the catalog.
+cmd_list_catalog() {
+  ensure_login
+  local resp
+  resp=$(api_get "${API_BASE}/catalog/component-types") || die "Failed to list catalog"
+  echo "$resp" | jq -r '.entries[] | "\(.type_key)\t\(.label)\t\(.icon)\t\(.color)\t\(.category // "-")\t\(.is_builtin)"' 2>/dev/null \
+    | column -t -s $'\t' -N "TYPE_KEY,LABEL,ICON,COLOR,CATEGORY,BUILTIN"
+}
+
 # ── Provision (bulk) ─────────────────────────────────────────────────────────
 # Reads a JSON file with users, teams, and permissions and applies them all.
 #
@@ -380,6 +450,9 @@ Commands:
   list-apps       List all applications
   import-map      --file MAP.json
   provision       --file setup.json  (bulk: users + teams + permissions)
+  init-catalog    Seed built-in component types into the catalog
+  import-catalog  --file catalog.json  Import custom component types
+  list-catalog    List all component types in the catalog
 
 Permission levels: view, operate, edit, manage, owner
 
@@ -401,6 +474,12 @@ Examples:
 
   # Bulk provision from JSON
   appcontrol.sh provision --file setup.json
+
+  # Initialize the component catalog with built-in types
+  appcontrol.sh init-catalog
+
+  # Import custom component types from a JSON file
+  appcontrol.sh import-catalog --file my-types.json
 USAGE
 }
 
@@ -410,15 +489,18 @@ USAGE
 
 command="$1"; shift
 case "$command" in
-  create-user)   cmd_create_user "$@" ;;
-  create-team)   cmd_create_team "$@" ;;
-  add-member)    cmd_add_member "$@" ;;
-  grant-access)  cmd_grant_access "$@" ;;
-  list-users)    cmd_list_users "$@" ;;
-  list-teams)    cmd_list_teams "$@" ;;
-  list-apps)     cmd_list_apps "$@" ;;
-  import-map)    cmd_import_map "$@" ;;
-  provision)     cmd_provision "$@" ;;
+  create-user)    cmd_create_user "$@" ;;
+  create-team)    cmd_create_team "$@" ;;
+  add-member)     cmd_add_member "$@" ;;
+  grant-access)   cmd_grant_access "$@" ;;
+  list-users)     cmd_list_users "$@" ;;
+  list-teams)     cmd_list_teams "$@" ;;
+  list-apps)      cmd_list_apps "$@" ;;
+  import-map)     cmd_import_map "$@" ;;
+  provision)      cmd_provision "$@" ;;
+  init-catalog)   cmd_init_catalog "$@" ;;
+  import-catalog) cmd_import_catalog "$@" ;;
+  list-catalog)   cmd_list_catalog "$@" ;;
   help|--help|-h) usage ;;
   *) die "Unknown command: $command. Run 'appcontrol.sh help' for usage." ;;
 esac

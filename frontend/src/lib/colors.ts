@@ -42,6 +42,21 @@ export const COMPONENT_TYPE_ICONS: Record<string, { icon: string; color: string 
   messaging: { icon: 'Layers', color: '#6A1B9A' },
 };
 
+/**
+ * Merge catalog entries into the runtime icon map.
+ * Call this after loading catalog from API to ensure ComponentNode
+ * can resolve custom types.
+ */
+export function mergeCatalogIntoIcons(
+  entries: Array<{ type_key: string; icon: string; color: string }>,
+): void {
+  for (const e of entries) {
+    if (!COMPONENT_TYPE_ICONS[e.type_key]) {
+      COMPONENT_TYPE_ICONS[e.type_key] = { icon: e.icon, color: e.color };
+    }
+  }
+}
+
 export const ERROR_BRANCH_COLORS = {
   bg: '#FFE0E6',
   border: '#FF6B8A',

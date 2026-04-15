@@ -12,6 +12,7 @@
 pub mod agents;
 pub mod apps;
 pub mod auth_queries;
+pub mod catalog;
 pub mod components;
 pub mod core_queries;
 pub mod discovery_queries;

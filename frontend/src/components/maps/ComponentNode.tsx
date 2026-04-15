@@ -12,14 +12,7 @@ import {
 import { MetricsDisplay, MetricWidget } from './MetricsDisplay';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-const iconMap: Record<string, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
-  Database, Layers, Server, Globe, Cog, Clock, Box,
-  Shield, Cloud, HardDrive, Cpu, Network, FileText, Zap,
-  database: Database, layers: Layers, server: Server, globe: Globe,
-  cog: Cog, clock: Clock, box: Box, shield: Shield, cloud: Cloud,
-  'hard-drive': HardDrive, cpu: Cpu, network: Network,
-  'file-text': FileText, zap: Zap,
-};
+import { ICON_MAP as iconMap } from '@/lib/icons';
 
 interface ComponentNodeData {
   label: string;

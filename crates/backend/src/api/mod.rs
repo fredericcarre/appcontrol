@@ -3,6 +3,7 @@ pub mod agents;
 pub mod api_keys;
 pub mod approvals;
 pub mod apps;
+pub mod catalog;
 pub mod break_glass;
 pub mod command_params;
 pub mod components;
@@ -573,6 +574,23 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(schedules::list_schedule_executions),
         )
         .route("/schedules/presets", get(schedules::list_presets))
+        // Component Catalog
+        .route(
+            "/catalog/component-types",
+            get(catalog::list_catalog).post(catalog::create_catalog_entry),
+        )
+        .route(
+            "/catalog/component-types/import",
+            post(catalog::import_catalog),
+        )
+        .route(
+            "/catalog/component-types/seed",
+            post(catalog::seed_catalog),
+        )
+        .route(
+            "/catalog/component-types/:id",
+            put(catalog::update_catalog_entry).delete(catalog::delete_catalog_entry),
+        )
         // Air-gap agent update
         .route(
             "/admin/agent-binaries",
