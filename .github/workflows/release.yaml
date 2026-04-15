@@ -87,7 +87,7 @@ jobs:
 
       - name: Build release binaries
         run: |
-          BUILD_CMD="${USE_CROSS:+cross}${USE_CROSS:-cargo}"
+          if [ "${USE_CROSS}" = "true" ]; then BUILD_CMD=cross; else BUILD_CMD=cargo; fi
           # Build all workspace binaries + postgres backend in one pass
           $BUILD_CMD build --release --target ${{ matrix.target }} \
             --bin appcontrol-backend --bin appcontrol-gateway --bin appcontrol-agent --bin appctl \
@@ -109,7 +109,7 @@ jobs:
           # This bug took 6 releases to fix (v1.3.4 → v1.3.9). See docs/SQLITE_IMPLEMENTATION.md
           # for full explanation and verification steps.
           # ============================================================================
-          BUILD_CMD="${USE_CROSS:+cross}${USE_CROSS:-cargo}"
+          if [ "${USE_CROSS}" = "true" ]; then BUILD_CMD=cross; else BUILD_CMD=cargo; fi
           export CARGO_TARGET_DIR=$PWD/target-sqlite
           cd crates/backend
           $BUILD_CMD build --release --target ${{ matrix.target }} --no-default-features --features sqlite
