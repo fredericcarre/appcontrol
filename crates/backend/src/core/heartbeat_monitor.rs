@@ -59,6 +59,21 @@ const GATEWAY_HEARTBEAT_TIMEOUT_SECS: i64 = 120;
 async fn check_stale_gateways(state: &Arc<AppState>) -> Result<(), sqlx::Error> {
     // Find gateways with stale heartbeats that are still marked as 'active'
     // Mark them as 'suspended' (the valid status for unavailable gateways)
+    //
+    // On SQLite, route writes through the write queue to avoid contention with
+    // FSM transitions from the sequencer (which also serialize through write_queue).
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let stale_count = {
+        let db = state.db.clone();
+        let timeout = GATEWAY_HEARTBEAT_TIMEOUT_SECS;
+        state
+            .write_queue
+            .execute(move |_| async move {
+                crate::repository::core_queries::mark_stale_gateways_suspended(&db, timeout).await
+            })
+            .await?
+    };
+    #[cfg(feature = "postgres")]
     let stale_count = crate::repository::core_queries::mark_stale_gateways_suspended(
         &state.db,
         GATEWAY_HEARTBEAT_TIMEOUT_SECS,
@@ -74,6 +89,18 @@ async fn check_stale_gateways(state: &Arc<AppState>) -> Result<(), sqlx::Error> 
     }
 
     // Also update gateways that reconnect (have recent heartbeat but are marked suspended)
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let reconnected_count = {
+        let db = state.db.clone();
+        let timeout = GATEWAY_HEARTBEAT_TIMEOUT_SECS;
+        state
+            .write_queue
+            .execute(move |_| async move {
+                crate::repository::core_queries::reactivate_reconnected_gateways(&db, timeout).await
+            })
+            .await?
+    };
+    #[cfg(feature = "postgres")]
     let reconnected_count = crate::repository::core_queries::reactivate_reconnected_gateways(
         &state.db,
         GATEWAY_HEARTBEAT_TIMEOUT_SECS,
@@ -159,21 +186,60 @@ async fn transition_to_unreachable(
     current_state: ComponentState,
     trigger: &str,
 ) -> Result<(), crate::core::fsm::FsmError> {
-    // Insert state transition (append-only)
-    crate::repository::core_queries::insert_unreachable_transition(
-        &state.db,
-        comp.component_id,
-        &current_state.to_string(),
-        &comp.agent_id.to_string(),
-        trigger,
-    )
-    .await
-    .map_err(|e| crate::core::fsm::FsmError::Database(e.to_string()))?;
+    // Insert state transition (append-only) + update cached current_state.
+    //
+    // On SQLite, route writes through the write queue to avoid contention with
+    // concurrent FSM transitions from the sequencer. Without this, starting
+    // multiple applications simultaneously causes "database is locked" errors
+    // that cascade into false UNREACHABLE states.
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let db = state.db.clone();
+        let comp_id = comp.component_id;
+        let from_str = current_state.to_string();
+        let agent_str = comp.agent_id.to_string();
+        let trigger_str = trigger.to_string();
+        state
+            .write_queue
+            .execute(move |_| async move {
+                if let Err(e) = crate::repository::core_queries::insert_unreachable_transition(
+                    &db,
+                    comp_id,
+                    &from_str,
+                    &agent_str,
+                    &trigger_str,
+                )
+                .await
+                {
+                    tracing::warn!(component_id = %comp_id, "Failed to insert UNREACHABLE transition: {e}");
+                }
+                if let Err(e) =
+                    crate::repository::core_queries::set_component_unreachable(&db, comp_id).await
+                {
+                    tracing::warn!(component_id = %comp_id, "Failed to set component UNREACHABLE: {e}");
+                }
+            })
+            .await;
+    }
 
-    // Update cached current_state on the component
-    crate::repository::core_queries::set_component_unreachable(&state.db, comp.component_id)
+    #[cfg(feature = "postgres")]
+    {
+        // Insert state transition (append-only)
+        crate::repository::core_queries::insert_unreachable_transition(
+            &state.db,
+            comp.component_id,
+            &current_state.to_string(),
+            &comp.agent_id.to_string(),
+            trigger,
+        )
         .await
         .map_err(|e| crate::core::fsm::FsmError::Database(e.to_string()))?;
+
+        // Update cached current_state on the component
+        crate::repository::core_queries::set_component_unreachable(&state.db, comp.component_id)
+            .await
+            .map_err(|e| crate::core::fsm::FsmError::Database(e.to_string()))?;
+    }
 
     metrics::counter!(
         "state_transitions_total",
