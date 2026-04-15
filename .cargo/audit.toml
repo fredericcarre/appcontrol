@@ -22,4 +22,12 @@ ignore = [
     # all traffic is HTTP/1.1 or HTTP/2 over TLS.
     # Will be resolved when reqwest updates to a fixed quinn version.
     "RUSTSEC-2026-0037",
+
+    # rustls-webpki 0.101.7 — URI name constraint validation bypass
+    # Pulled in transitively by sqlx-core 0.7.4 via rustls 0.21.12.
+    # Cannot be upgraded without migrating to sqlx 0.8+ (breaking change).
+    # The direct dependency (rustls-webpki 0.103.x) has been patched to 0.103.12.
+    # This old version is only used for the sqlx PostgreSQL/SQLite TLS layer,
+    # which connects to local/trusted database servers, not arbitrary URIs.
+    "RUSTSEC-2026-0098",
 ]
