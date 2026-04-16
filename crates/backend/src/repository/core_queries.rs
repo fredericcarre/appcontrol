@@ -1979,7 +1979,8 @@ pub async fn fetch_stale_components<
 ) -> Result<Vec<T>, sqlx::Error> {
     sqlx::query_as::<_, T>(
         r#"
-        SELECT c.id AS component_id, c.name AS component_name, c.agent_id, c.application_id,
+        SELECT c.id AS component_id, c.name AS component_name,
+               c.agent_id AS agent_id, c.application_id AS application_id,
                app.name AS app_name, NOT a.is_active AS agent_blocked
         FROM components c
         JOIN agents a ON a.id = c.agent_id
@@ -2145,7 +2146,8 @@ pub async fn fetch_stale_components<
 ) -> Result<Vec<T>, sqlx::Error> {
     sqlx::query_as::<_, T>(
         r#"
-        SELECT c.id AS component_id, c.name AS component_name, c.agent_id, c.application_id,
+        SELECT c.id AS component_id, c.name AS component_name,
+               c.agent_id AS agent_id, c.application_id AS application_id,
                app.name AS app_name, NOT a.is_active AS agent_blocked
         FROM components c
         JOIN agents a ON a.id = c.agent_id
