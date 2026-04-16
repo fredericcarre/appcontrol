@@ -5,6 +5,9 @@
 //! agent_ids and flushes a single `UPDATE ... WHERE id = ANY($1)` every flush interval.
 //!
 //! At 10K+ agents this reduces PostgreSQL write load by ~99.6%.
+//!
+//! On SQLite, writes are routed through the WriteQueue to avoid contention with
+//! FSM state transitions from the sequencer (SQLite = single writer).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -33,26 +36,56 @@ impl HeartbeatBatcher {
     }
 
     /// Background flush loop. Call via `tokio::spawn`.
+    #[cfg(feature = "postgres")]
     pub async fn run(&self, db: crate::db::DbPool) {
         let mut interval = tokio::time::interval(Duration::from_secs(FLUSH_INTERVAL_SECS));
 
         loop {
             interval.tick().await;
 
-            // Swap out the pending set atomically
             let agent_ids: Vec<Uuid> = {
                 let mut pending = self.pending.lock().await;
                 if pending.is_empty() {
                     continue;
                 }
-                let ids: Vec<Uuid> = pending.drain().collect();
-                ids
+                pending.drain().collect()
             };
 
             let count = agent_ids.len();
-
-            // Single UPDATE for all agents in the batch
             if let Err(e) = batch_update_heartbeats(&db, &agent_ids).await {
+                tracing::warn!(count, "Failed to batch-update heartbeats: {}", e);
+            } else {
+                tracing::trace!(count, "Flushed heartbeat batch");
+            }
+        }
+    }
+
+    /// Background flush loop for SQLite — routes writes through the write_queue
+    /// to avoid contention with FSM state transitions from the sequencer.
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    pub async fn run(&self, db: crate::db::DbPool, write_queue: Arc<crate::db::WriteQueue>) {
+        let mut interval = tokio::time::interval(Duration::from_secs(FLUSH_INTERVAL_SECS));
+
+        loop {
+            interval.tick().await;
+
+            let agent_ids: Vec<Uuid> = {
+                let mut pending = self.pending.lock().await;
+                if pending.is_empty() {
+                    continue;
+                }
+                pending.drain().collect()
+            };
+
+            let count = agent_ids.len();
+            let db_clone = db.clone();
+            let result: Result<(), sqlx::Error> = write_queue
+                .execute(move |_| async move {
+                    batch_update_heartbeats(&db_clone, &agent_ids).await
+                })
+                .await;
+
+            if let Err(e) = result {
                 tracing::warn!(count, "Failed to batch-update heartbeats: {}", e);
             } else {
                 tracing::trace!(count, "Flushed heartbeat batch");

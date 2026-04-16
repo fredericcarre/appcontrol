@@ -174,12 +174,26 @@ async fn main() -> anyhow::Result<()> {
     let app = create_router(state.clone());
 
     // Start heartbeat batcher flush loop (flushes every 5s)
+    // On SQLite, route writes through write_queue to avoid contention with FSM transitions.
     let batcher_state = state.clone();
     tokio::spawn(async move {
-        batcher_state
-            .heartbeat_batcher
-            .run(batcher_state.db.clone())
-            .await;
+        #[cfg(feature = "postgres")]
+        {
+            batcher_state
+                .heartbeat_batcher
+                .run(batcher_state.db.clone())
+                .await;
+        }
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        {
+            batcher_state
+                .heartbeat_batcher
+                .run(
+                    batcher_state.db.clone(),
+                    Arc::new(db::WriteQueue::new(batcher_state.db.clone())),
+                )
+                .await;
+        }
     });
 
     // Start heartbeat monitor background task (checks every 30s)
