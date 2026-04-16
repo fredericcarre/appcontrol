@@ -958,6 +958,14 @@ async fn process_agent_message(
     msg: appcontrol_common::AgentMessage,
     source_gateway_id: Option<uuid::Uuid>,
 ) {
+    // Any message received from an agent is proof of life — refresh
+    // `last_heartbeat_at` so the heartbeat_monitor doesn't flap components
+    // to UNREACHABLE while the agent keeps streaming check/command results
+    // between explicit Heartbeats (sent only every 60s).
+    if let Some(agent_id) = msg.agent_id() {
+        state.heartbeat_batcher.record(agent_id).await;
+    }
+
     match msg {
         appcontrol_common::AgentMessage::CheckResult(cr) => {
             tracing::debug!(
@@ -966,6 +974,14 @@ async fn process_agent_message(
                 has_metrics = cr.metrics.is_some(),
                 "Processing check result"
             );
+
+            // Refresh liveness from the component → agent mapping.
+            if let Some(agent_id) =
+                crate::repository::core_queries::get_component_agent_id(&state.db, cr.component_id)
+                    .await
+            {
+                state.heartbeat_batcher.record(*agent_id).await;
+            }
 
             // Process FSM transition first (priority: state must update fast)
             if let Err(e) =
@@ -1012,6 +1028,11 @@ async fn process_agent_message(
             sequence_id,
             ..
         } => {
+            // Refresh liveness from the request → agent mapping recorded at dispatch.
+            if let Some(agent_id) = state.ws_hub.resolve_request_agent(request_id) {
+                state.heartbeat_batcher.record(agent_id).await;
+            }
+
             // Check if this is a cross-site probe result
             if crate::core::cross_site_probe::handle_probe_result(state, request_id, exit_code) {
                 tracing::debug!(request_id = %request_id, exit_code, "Cross-site probe result handled");
@@ -1159,9 +1180,8 @@ async fn process_agent_message(
                 });
             }
 
-            // Batch heartbeat update — flushed every 5s instead of 1 SQL per heartbeat.
-            // At 2500 agents this reduces PostgreSQL writes from 2500/min to ~12/min.
-            state.heartbeat_batcher.record(agent_id).await;
+            // Liveness already recorded at the top of process_agent_message via
+            // AgentMessage::agent_id(); no need to record again here.
 
             // Store metrics for time-series graphing (sample every heartbeat)
             if let Err(e) =
