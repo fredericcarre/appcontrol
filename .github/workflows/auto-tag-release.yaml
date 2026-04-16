@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_PAT || secrets.CORP_GITHUB_TOKEN || github.token }}
 
       - name: Create and push tag
         run: |
