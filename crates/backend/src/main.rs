@@ -89,6 +89,9 @@ async fn main() -> anyhow::Result<()> {
     let ws_hub = websocket::Hub::new();
 
     let heartbeat_batcher = appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
+    let gateway_heartbeat_batcher =
+        appcontrol_backend::core::heartbeat_batcher::GatewayHeartbeatBatcher::new();
+    let latency_tracker = appcontrol_backend::core::latency_tracker::LatencyTracker::new();
 
     // Seed a default organization and admin user if none exist.
     // Controlled by SEED_ENABLED (default: true in dev, false in prod).
@@ -125,6 +128,10 @@ async fn main() -> anyhow::Result<()> {
     metrics::describe_counter!("state_transitions_total", "Total FSM state transitions");
     metrics::describe_counter!("commands_executed_total", "Total commands executed");
     metrics::describe_gauge!("db_pool_connections", "Database pool active connections");
+    metrics::describe_histogram!(
+        "agent_message_latency_ms",
+        "End-to-end latency between agent-emitted timestamp and backend processing time (ms)"
+    );
 
     let shutdown_timeout_secs = config.shutdown_timeout_secs;
     let retention_action_log_days = config.retention_action_log_days;
@@ -157,6 +164,8 @@ async fn main() -> anyhow::Result<()> {
         config,
         rate_limiter: middleware::rate_limit::RateLimitState::new(),
         heartbeat_batcher,
+        gateway_heartbeat_batcher,
+        latency_tracker,
         operation_lock,
         terminal_sessions,
         log_subscriptions,
@@ -196,6 +205,29 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Gateway heartbeat batcher — mirrors the agent batcher so every
+    // GatewayMessage counts as proof of life for the gateway itself.
+    let gw_batcher_state = state.clone();
+    tokio::spawn(async move {
+        #[cfg(feature = "postgres")]
+        {
+            gw_batcher_state
+                .gateway_heartbeat_batcher
+                .run(gw_batcher_state.db.clone())
+                .await;
+        }
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        {
+            gw_batcher_state
+                .gateway_heartbeat_batcher
+                .run(
+                    gw_batcher_state.db.clone(),
+                    Arc::new(db::WriteQueue::new(gw_batcher_state.db.clone())),
+                )
+                .await;
+        }
+    });
+
     // Start heartbeat monitor background task (checks every 30s)
     let monitor_state = state.clone();
     tokio::spawn(async move {
@@ -204,6 +236,32 @@ async fn main() -> anyhow::Result<()> {
             std::time::Duration::from_secs(30),
         )
         .await;
+    });
+
+    // Periodic latency summary: once a minute, log p50/p95/max per
+    // message_type so operators see pile-ups without needing Prometheus.
+    let latency_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        interval.tick().await; // skip first immediate tick
+        loop {
+            interval.tick().await;
+            let snap = latency_state.latency_tracker.snapshot();
+            if snap.is_empty() {
+                continue;
+            }
+            for b in &snap {
+                tracing::info!(
+                    message_type = %b.message_type,
+                    count = b.count,
+                    p50_ms = b.p50_ms,
+                    p95_ms = b.p95_ms,
+                    max_ms = b.max_ms,
+                    window_s = b.window_seconds,
+                    "Agent→backend latency summary"
+                );
+            }
+        }
     });
 
     // Start cross-site probe background task (checks every 5 min)

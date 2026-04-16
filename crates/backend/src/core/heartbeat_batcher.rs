@@ -107,6 +107,98 @@ impl Default for HeartbeatBatcher {
     }
 }
 
+/// Collects gateway heartbeat timestamps and flushes them in bulk.
+///
+/// Mirrors `HeartbeatBatcher` for gateways. Every incoming `GatewayMessage`
+/// (agent forwards, logs, heartbeats) counts as proof of life, so the
+/// gateway's own `last_heartbeat_at` stays fresh even when SQLite write
+/// contention delays the explicit 60s Heartbeat update.
+pub struct GatewayHeartbeatBatcher {
+    pending: Arc<Mutex<HashSet<Uuid>>>,
+}
+
+impl GatewayHeartbeatBatcher {
+    pub fn new() -> Self {
+        Self {
+            pending: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    /// Record a gateway heartbeat. O(1), non-blocking.
+    pub async fn record(&self, gateway_id: Uuid) {
+        self.pending.lock().await.insert(gateway_id);
+    }
+
+    /// Background flush loop (PostgreSQL).
+    #[cfg(feature = "postgres")]
+    pub async fn run(&self, db: crate::db::DbPool) {
+        let mut interval = tokio::time::interval(Duration::from_secs(FLUSH_INTERVAL_SECS));
+
+        loop {
+            interval.tick().await;
+
+            let gateway_ids: Vec<Uuid> = {
+                let mut pending = self.pending.lock().await;
+                if pending.is_empty() {
+                    continue;
+                }
+                pending.drain().collect()
+            };
+
+            let count = gateway_ids.len();
+            if let Err(e) =
+                crate::repository::queries::batch_update_gateway_heartbeats(&db, &gateway_ids).await
+            {
+                tracing::warn!(count, "Failed to batch-update gateway heartbeats: {}", e);
+            } else {
+                tracing::trace!(count, "Flushed gateway heartbeat batch");
+            }
+        }
+    }
+
+    /// Background flush loop for SQLite — routes writes through write_queue.
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    pub async fn run(&self, db: crate::db::DbPool, write_queue: Arc<crate::db::WriteQueue>) {
+        let mut interval = tokio::time::interval(Duration::from_secs(FLUSH_INTERVAL_SECS));
+
+        loop {
+            interval.tick().await;
+
+            let gateway_ids: Vec<Uuid> = {
+                let mut pending = self.pending.lock().await;
+                if pending.is_empty() {
+                    continue;
+                }
+                pending.drain().collect()
+            };
+
+            let count = gateway_ids.len();
+            let db_clone = db.clone();
+            let result: Result<(), sqlx::Error> = write_queue
+                .execute(move |_| async move {
+                    crate::repository::queries::batch_update_gateway_heartbeats(
+                        &db_clone,
+                        &gateway_ids,
+                    )
+                    .await
+                })
+                .await;
+
+            if let Err(e) = result {
+                tracing::warn!(count, "Failed to batch-update gateway heartbeats: {}", e);
+            } else {
+                tracing::trace!(count, "Flushed gateway heartbeat batch");
+            }
+        }
+    }
+}
+
+impl Default for GatewayHeartbeatBatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -794,3 +794,35 @@ pub async fn batch_update_agent_heartbeats(
     }
     Ok(())
 }
+
+/// Batch update gateway heartbeats.
+pub async fn batch_update_gateway_heartbeats(
+    pool: &DbPool,
+    gateway_ids: &[Uuid],
+) -> Result<(), sqlx::Error> {
+    if gateway_ids.is_empty() {
+        return Ok(());
+    }
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query("UPDATE gateways SET last_heartbeat_at = now() WHERE id = ANY($1)")
+            .bind(gateway_ids)
+            .execute(pool)
+            .await?;
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let placeholders: Vec<String> =
+            (1..=gateway_ids.len()).map(|i| format!("${}", i)).collect();
+        let query = format!(
+            "UPDATE gateways SET last_heartbeat_at = datetime('now') WHERE id IN ({})",
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query(&query);
+        for id in gateway_ids {
+            q = q.bind(id.to_string());
+        }
+        q.execute(pool).await?;
+    }
+    Ok(())
+}

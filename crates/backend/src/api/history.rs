@@ -348,7 +348,7 @@ async fn get_events(
     }
 
     // Sort all events by timestamp
-    events.sort_by(|a, b| a.at.cmp(&b.at));
+    events.sort_by_key(|a| a.at);
 
     // Truncate to limit
     events.truncate(limit as usize);

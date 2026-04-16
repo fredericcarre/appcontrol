@@ -435,6 +435,9 @@ async fn start_backend(
         config,
         rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
         heartbeat_batcher: appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new(),
+        gateway_heartbeat_batcher:
+            appcontrol_backend::core::heartbeat_batcher::GatewayHeartbeatBatcher::new(),
+        latency_tracker: appcontrol_backend::core::latency_tracker::LatencyTracker::new(),
         operation_lock,
         terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
         log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),

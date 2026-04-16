@@ -222,6 +222,33 @@ impl AgentMessage {
             AgentMessage::DiagnosticCommandResult { .. } => MessagePriority::High,
         }
     }
+
+    /// Returns the agent_id if it is carried directly in the message payload.
+    /// Used by the backend to refresh liveness (last_heartbeat_at) on any
+    /// incoming message — not only explicit Heartbeats — so an agent that
+    /// keeps sending check/command results isn't mistakenly flagged stale.
+    ///
+    /// Messages identified indirectly (via `request_id` or `component_id`)
+    /// return None here; the backend resolves them separately.
+    pub fn agent_id(&self) -> Option<Uuid> {
+        match self {
+            AgentMessage::Heartbeat { agent_id, .. } => Some(*agent_id),
+            AgentMessage::Register { agent_id, .. } => Some(*agent_id),
+            AgentMessage::CertificateRenewal { agent_id, .. } => Some(*agent_id),
+            AgentMessage::DiscoveryReport { agent_id, .. } => Some(*agent_id),
+            AgentMessage::UpdateProgress { agent_id, .. } => Some(*agent_id),
+            AgentMessage::LogEntries { agent_id, .. } => Some(*agent_id),
+            AgentMessage::CheckResult(_)
+            | AgentMessage::CommandResult { .. }
+            | AgentMessage::CommandOutputChunk { .. }
+            | AgentMessage::TerminalOutput { .. }
+            | AgentMessage::TerminalExit { .. }
+            | AgentMessage::ComponentLogs { .. }
+            | AgentMessage::FileLogs { .. }
+            | AgentMessage::EventLogs { .. }
+            | AgentMessage::DiagnosticCommandResult { .. } => None,
+        }
+    }
 }
 
 /// Messages sent from Backend to Agent (via Gateway).
@@ -1149,6 +1176,56 @@ mod tests {
 
         assert!(heartbeat.priority() < cmd_result.priority());
         assert!(cmd_result.priority() < register.priority());
+    }
+
+    #[test]
+    fn test_agent_id_is_exposed_for_liveness_refresh() {
+        let id = Uuid::new_v4();
+        let heartbeat = AgentMessage::Heartbeat {
+            agent_id: id,
+            cpu: 0.0,
+            memory: 0.0,
+            disk: None,
+            at: Utc::now(),
+        };
+        let register = AgentMessage::Register {
+            agent_id: id,
+            hostname: "h".to_string(),
+            ip_addresses: vec![],
+            labels: serde_json::json!({}),
+            version: "0.1.0".to_string(),
+            os_name: None,
+            os_version: None,
+            cpu_arch: None,
+            cpu_cores: None,
+            total_memory_mb: None,
+            disk_total_gb: None,
+            cert_fingerprint: None,
+        };
+        let cmd_result = AgentMessage::CommandResult {
+            request_id: Uuid::new_v4(),
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+            duration_ms: 0,
+            sequence_id: None,
+        };
+        let check_result = AgentMessage::CheckResult(CheckResult {
+            component_id: Uuid::new_v4(),
+            check_type: CheckType::Health,
+            exit_code: 0,
+            stdout: None,
+            duration_ms: 0,
+            metrics: None,
+            at: Utc::now(),
+        });
+
+        assert_eq!(heartbeat.agent_id(), Some(id));
+        assert_eq!(register.agent_id(), Some(id));
+        // Request-scoped messages resolve agent via ws_hub, not here.
+        assert_eq!(cmd_result.agent_id(), None);
+        // Component-scoped messages resolve agent via DB lookup, not here.
+        assert_eq!(check_result.agent_id(), None);
     }
 
     #[test]

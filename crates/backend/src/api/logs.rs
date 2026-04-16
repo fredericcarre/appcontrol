@@ -208,21 +208,15 @@ pub async fn create_log_source(
 
     // Validate required fields based on type
     match req.source_type.as_str() {
-        "file" => {
-            if req.file_path.is_none()
-                || req.file_path.as_ref().map(|s| s.is_empty()).unwrap_or(true)
-            {
-                return Err(ApiError::Validation(
-                    "file_path is required for file source".into(),
-                ));
-            }
+        "file" if req.file_path.as_deref().unwrap_or("").is_empty() => {
+            return Err(ApiError::Validation(
+                "file_path is required for file source".into(),
+            ));
         }
-        "command" => {
-            if req.command.is_none() || req.command.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
-                return Err(ApiError::Validation(
-                    "command is required for command source".into(),
-                ));
-            }
+        "command" if req.command.as_deref().unwrap_or("").is_empty() => {
+            return Err(ApiError::Validation(
+                "command is required for command source".into(),
+            ));
         }
         _ => {}
     }

@@ -564,6 +564,21 @@ async fn process_gateway_message(
     gw_tx: &tokio::sync::mpsc::UnboundedSender<String>,
     msg: appcontrol_common::GatewayMessage,
 ) {
+    // Any message forwarded or emitted by the gateway is proof that its
+    // WebSocket link is alive — refresh `last_heartbeat_at` via the batched
+    // path so check_stale_gateways doesn't flip an actively-forwarding
+    // gateway to "suspended" just because the explicit 60s Heartbeat got
+    // delayed by SQLite write contention.
+    //
+    // Register is skipped: the gateway_id_cell isn't set yet on the first
+    // message, and Register's own upsert writes last_heartbeat_at = now().
+    {
+        let gw_id = { *gateway_id_cell.lock().unwrap() };
+        if let Some(id) = gw_id {
+            state.gateway_heartbeat_batcher.record(id).await;
+        }
+    }
+
     match msg {
         appcontrol_common::GatewayMessage::Register {
             gateway_id,
@@ -914,28 +929,8 @@ async fn process_gateway_message(
                 "Gateway heartbeat received"
             );
 
-            // Update gateway's last heartbeat timestamp
-            // On SQLite, route through write_queue to avoid contention with FSM transitions
-            #[cfg(feature = "postgres")]
-            if let Err(e) = ws_repo::update_gateway_heartbeat_ts(&state.db, gateway_id).await {
-                tracing::warn!(
-                    gateway_id = %gateway_id,
-                    "Failed to update gateway heartbeat: {}", e
-                );
-            }
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            {
-                let db = state.db.clone();
-                let gw_id = gateway_id;
-                state.write_queue.fire_and_forget(move |_| async move {
-                    if let Err(e) = ws_repo::update_gateway_heartbeat_ts(&db, gw_id).await {
-                        tracing::warn!(
-                            gateway_id = %gw_id,
-                            "Failed to update gateway heartbeat: {}", e
-                        );
-                    }
-                });
-            }
+            // `last_heartbeat_at` is already refreshed at the top of
+            // process_gateway_message via gateway_heartbeat_batcher.
 
             // Log warning if gateway has buffered messages (backend was unreachable)
             if buffer_messages > 0 {
@@ -950,6 +945,52 @@ async fn process_gateway_message(
     }
 }
 
+/// Warn threshold: beyond this end-to-end delay we emit a tracing warn!
+/// in addition to the histogram sample, so the cause can be tracked in
+/// logs without relying on metrics being scraped.
+const AGENT_MESSAGE_LATENCY_WARN_MS: i64 = 10_000;
+
+/// Record end-to-end latency (agent-emitted timestamp → backend process time)
+/// for messages that carry their own `at` field.
+///
+/// Messages without a timestamp (CommandResult, terminal output, etc.) are
+/// skipped: there's no reliable emission time to compare against.
+fn observe_message_latency(state: &Arc<AppState>, msg: &appcontrol_common::AgentMessage) {
+    use appcontrol_common::AgentMessage;
+
+    let (kind, emitted_at): (&'static str, _) = match msg {
+        AgentMessage::Heartbeat { at, .. } => ("heartbeat", *at),
+        AgentMessage::CheckResult(cr) => ("check_result", cr.at),
+        AgentMessage::DiscoveryReport { scanned_at, .. } => ("discovery_report", *scanned_at),
+        _ => return,
+    };
+
+    let delta_ms = chrono::Utc::now()
+        .signed_duration_since(emitted_at)
+        .num_milliseconds();
+
+    // Negative deltas mean clock skew between agent and backend; clamp to 0
+    // for the histogram but still warn so operators notice.
+    let sample_ms = delta_ms.max(0) as f64;
+    metrics::histogram!("agent_message_latency_ms", "message_type" => kind).record(sample_ms);
+    state.latency_tracker.record(kind, delta_ms);
+
+    if delta_ms >= AGENT_MESSAGE_LATENCY_WARN_MS {
+        tracing::warn!(
+            message_type = kind,
+            latency_ms = delta_ms,
+            threshold_ms = AGENT_MESSAGE_LATENCY_WARN_MS,
+            "High agent → backend message latency (possible gateway buffer or write_queue pile-up)"
+        );
+    } else if delta_ms < -5_000 {
+        tracing::warn!(
+            message_type = kind,
+            skew_ms = delta_ms,
+            "Agent timestamp is ahead of backend clock (possible clock skew)"
+        );
+    }
+}
+
 /// Process an incoming agent message: update FSM, record events, broadcast.
 /// The optional gateway_id is used for auto-registration when receiving heartbeats
 /// from agents that aren't in the routing table (e.g., after gateway reconnect).
@@ -958,6 +999,20 @@ async fn process_agent_message(
     msg: appcontrol_common::AgentMessage,
     source_gateway_id: Option<uuid::Uuid>,
 ) {
+    // Any message received from an agent is proof of life — refresh
+    // `last_heartbeat_at` so the heartbeat_monitor doesn't flap components
+    // to UNREACHABLE while the agent keeps streaming check/command results
+    // between explicit Heartbeats (sent only every 60s).
+    if let Some(agent_id) = msg.agent_id() {
+        state.heartbeat_batcher.record(agent_id).await;
+    }
+
+    // Surface end-to-end latency: if an agent message carries its own
+    // emission timestamp, compare it to the backend's processing time.
+    // A sustained gap indicates pile-up somewhere on the path (gateway
+    // buffer, backend backpressure, SQLite write_queue contention).
+    observe_message_latency(state, &msg);
+
     match msg {
         appcontrol_common::AgentMessage::CheckResult(cr) => {
             tracing::debug!(
@@ -966,6 +1021,14 @@ async fn process_agent_message(
                 has_metrics = cr.metrics.is_some(),
                 "Processing check result"
             );
+
+            // Refresh liveness from the component → agent mapping.
+            if let Some(agent_id) =
+                crate::repository::core_queries::get_component_agent_id(&state.db, cr.component_id)
+                    .await
+            {
+                state.heartbeat_batcher.record(*agent_id).await;
+            }
 
             // Process FSM transition first (priority: state must update fast)
             if let Err(e) =
@@ -1012,6 +1075,11 @@ async fn process_agent_message(
             sequence_id,
             ..
         } => {
+            // Refresh liveness from the request → agent mapping recorded at dispatch.
+            if let Some(agent_id) = state.ws_hub.resolve_request_agent(request_id) {
+                state.heartbeat_batcher.record(agent_id).await;
+            }
+
             // Check if this is a cross-site probe result
             if crate::core::cross_site_probe::handle_probe_result(state, request_id, exit_code) {
                 tracing::debug!(request_id = %request_id, exit_code, "Cross-site probe result handled");
@@ -1159,9 +1227,8 @@ async fn process_agent_message(
                 });
             }
 
-            // Batch heartbeat update — flushed every 5s instead of 1 SQL per heartbeat.
-            // At 2500 agents this reduces PostgreSQL writes from 2500/min to ~12/min.
-            state.heartbeat_batcher.record(agent_id).await;
+            // Liveness already recorded at the top of process_agent_message via
+            // AgentMessage::agent_id(); no need to record again here.
 
             // Store metrics for time-series graphing (sample every heartbeat)
             if let Err(e) =
