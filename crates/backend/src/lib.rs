@@ -30,6 +30,7 @@ pub struct AppState {
     pub rate_limiter: middleware::rate_limit::RateLimitState,
     pub heartbeat_batcher: core::heartbeat_batcher::HeartbeatBatcher,
     pub gateway_heartbeat_batcher: core::heartbeat_batcher::GatewayHeartbeatBatcher,
+    pub latency_tracker: core::latency_tracker::LatencyTracker,
     pub operation_lock: core::operation_lock::OperationLock,
     pub terminal_sessions: terminal::TerminalSessionManager,
     pub log_subscriptions: websocket::LogSubscriptionManager,
@@ -184,6 +185,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
     let router = Router::new()
         .route("/health", get(api::health::health))
+        .route("/health/latency", get(api::health::latency))
         .route("/ready", get(api::health::ready))
         .route("/metrics", get(api::health::metrics))
         .route("/openapi.json", get(api::health::openapi_spec))

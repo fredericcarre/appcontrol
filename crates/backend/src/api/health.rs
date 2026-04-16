@@ -23,6 +23,17 @@ pub async fn ready(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Ap
     Ok(Json(json!({ "status": "ready" })))
 }
 
+/// Agent → backend message latency snapshot (rolling 5-min window).
+/// Lets operators check pile-up without Prometheus / Grafana.
+pub async fn latency(State(state): State<Arc<AppState>>) -> Json<Value> {
+    let buckets = state.latency_tracker.snapshot();
+    Json(json!({
+        "window_seconds": 300,
+        "warn_threshold_ms": 10_000,
+        "buckets": buckets,
+    }))
+}
+
 /// Global handle set once at startup.
 static PROMETHEUS_HANDLE: std::sync::OnceLock<
     &'static metrics_exporter_prometheus::PrometheusHandle,

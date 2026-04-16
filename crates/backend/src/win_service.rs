@@ -146,6 +146,8 @@ fn run_service() -> anyhow::Result<()> {
             appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
         let gateway_heartbeat_batcher =
             appcontrol_backend::core::heartbeat_batcher::GatewayHeartbeatBatcher::new();
+        let latency_tracker =
+            appcontrol_backend::core::latency_tracker::LatencyTracker::new();
 
         let operation_lock =
             appcontrol_backend::core::operation_lock::OperationLock::new(pool.clone());
@@ -182,6 +184,7 @@ fn run_service() -> anyhow::Result<()> {
             rate_limiter: appcontrol_backend::middleware::rate_limit::RateLimitState::new(),
             heartbeat_batcher,
             gateway_heartbeat_batcher,
+            latency_tracker,
             operation_lock,
             terminal_sessions: appcontrol_backend::terminal::TerminalSessionManager::new(),
             log_subscriptions: appcontrol_backend::websocket::LogSubscriptionManager::new(),

@@ -955,10 +955,10 @@ const AGENT_MESSAGE_LATENCY_WARN_MS: i64 = 10_000;
 ///
 /// Messages without a timestamp (CommandResult, terminal output, etc.) are
 /// skipped: there's no reliable emission time to compare against.
-fn observe_message_latency(msg: &appcontrol_common::AgentMessage) {
+fn observe_message_latency(state: &Arc<AppState>, msg: &appcontrol_common::AgentMessage) {
     use appcontrol_common::AgentMessage;
 
-    let (kind, emitted_at) = match msg {
+    let (kind, emitted_at): (&'static str, _) = match msg {
         AgentMessage::Heartbeat { at, .. } => ("heartbeat", *at),
         AgentMessage::CheckResult(cr) => ("check_result", cr.at),
         AgentMessage::DiscoveryReport { scanned_at, .. } => ("discovery_report", *scanned_at),
@@ -973,6 +973,7 @@ fn observe_message_latency(msg: &appcontrol_common::AgentMessage) {
     // for the histogram but still warn so operators notice.
     let sample_ms = delta_ms.max(0) as f64;
     metrics::histogram!("agent_message_latency_ms", "message_type" => kind).record(sample_ms);
+    state.latency_tracker.record(kind, delta_ms);
 
     if delta_ms >= AGENT_MESSAGE_LATENCY_WARN_MS {
         tracing::warn!(
@@ -1010,7 +1011,7 @@ async fn process_agent_message(
     // emission timestamp, compare it to the backend's processing time.
     // A sustained gap indicates pile-up somewhere on the path (gateway
     // buffer, backend backpressure, SQLite write_queue contention).
-    observe_message_latency(&msg);
+    observe_message_latency(state, &msg);
 
     match msg {
         appcontrol_common::AgentMessage::CheckResult(cr) => {

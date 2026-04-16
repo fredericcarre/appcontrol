@@ -7,6 +7,7 @@ pub mod diagnostic;
 pub mod fsm;
 pub mod heartbeat_batcher;
 pub mod heartbeat_monitor;
+pub mod latency_tracker;
 pub mod notifications;
 pub mod operation_lock;
 pub mod operation_scheduler;

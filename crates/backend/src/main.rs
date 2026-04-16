@@ -91,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
     let heartbeat_batcher = appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
     let gateway_heartbeat_batcher =
         appcontrol_backend::core::heartbeat_batcher::GatewayHeartbeatBatcher::new();
+    let latency_tracker = appcontrol_backend::core::latency_tracker::LatencyTracker::new();
 
     // Seed a default organization and admin user if none exist.
     // Controlled by SEED_ENABLED (default: true in dev, false in prod).
@@ -164,6 +165,7 @@ async fn main() -> anyhow::Result<()> {
         rate_limiter: middleware::rate_limit::RateLimitState::new(),
         heartbeat_batcher,
         gateway_heartbeat_batcher,
+        latency_tracker,
         operation_lock,
         terminal_sessions,
         log_subscriptions,
@@ -234,6 +236,32 @@ async fn main() -> anyhow::Result<()> {
             std::time::Duration::from_secs(30),
         )
         .await;
+    });
+
+    // Periodic latency summary: once a minute, log p50/p95/max per
+    // message_type so operators see pile-ups without needing Prometheus.
+    let latency_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        interval.tick().await; // skip first immediate tick
+        loop {
+            interval.tick().await;
+            let snap = latency_state.latency_tracker.snapshot();
+            if snap.is_empty() {
+                continue;
+            }
+            for b in &snap {
+                tracing::info!(
+                    message_type = %b.message_type,
+                    count = b.count,
+                    p50_ms = b.p50_ms,
+                    p95_ms = b.p95_ms,
+                    max_ms = b.max_ms,
+                    window_s = b.window_seconds,
+                    "Agent→backend latency summary"
+                );
+            }
+        }
     });
 
     // Start cross-site probe background task (checks every 5 min)
