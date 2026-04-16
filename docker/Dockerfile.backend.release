@@ -2,7 +2,8 @@
 # Used by CI release workflow for faster builds
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates libssl3 curl && rm -rf /var/lib/apt/lists/*
+RUN for i in 1 2 3; do apt-get update && break || sleep 5; done && \
+    apt-get install -y ca-certificates libssl3 curl && rm -rf /var/lib/apt/lists/*
 RUN groupadd -r appcontrol && useradd -r -g appcontrol -s /sbin/nologin appcontrol
 
 # Binary is copied from CI artifacts
