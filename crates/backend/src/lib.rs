@@ -29,6 +29,7 @@ pub struct AppState {
     pub config: config::AppConfig,
     pub rate_limiter: middleware::rate_limit::RateLimitState,
     pub heartbeat_batcher: core::heartbeat_batcher::HeartbeatBatcher,
+    pub gateway_heartbeat_batcher: core::heartbeat_batcher::GatewayHeartbeatBatcher,
     pub operation_lock: core::operation_lock::OperationLock,
     pub terminal_sessions: terminal::TerminalSessionManager,
     pub log_subscriptions: websocket::LogSubscriptionManager,

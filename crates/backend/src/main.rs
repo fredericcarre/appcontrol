@@ -89,6 +89,8 @@ async fn main() -> anyhow::Result<()> {
     let ws_hub = websocket::Hub::new();
 
     let heartbeat_batcher = appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
+    let gateway_heartbeat_batcher =
+        appcontrol_backend::core::heartbeat_batcher::GatewayHeartbeatBatcher::new();
 
     // Seed a default organization and admin user if none exist.
     // Controlled by SEED_ENABLED (default: true in dev, false in prod).
@@ -157,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
         config,
         rate_limiter: middleware::rate_limit::RateLimitState::new(),
         heartbeat_batcher,
+        gateway_heartbeat_batcher,
         operation_lock,
         terminal_sessions,
         log_subscriptions,
@@ -191,6 +194,29 @@ async fn main() -> anyhow::Result<()> {
                 .run(
                     batcher_state.db.clone(),
                     Arc::new(db::WriteQueue::new(batcher_state.db.clone())),
+                )
+                .await;
+        }
+    });
+
+    // Gateway heartbeat batcher — mirrors the agent batcher so every
+    // GatewayMessage counts as proof of life for the gateway itself.
+    let gw_batcher_state = state.clone();
+    tokio::spawn(async move {
+        #[cfg(feature = "postgres")]
+        {
+            gw_batcher_state
+                .gateway_heartbeat_batcher
+                .run(gw_batcher_state.db.clone())
+                .await;
+        }
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        {
+            gw_batcher_state
+                .gateway_heartbeat_batcher
+                .run(
+                    gw_batcher_state.db.clone(),
+                    Arc::new(db::WriteQueue::new(gw_batcher_state.db.clone())),
                 )
                 .await;
         }

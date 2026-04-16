@@ -564,6 +564,21 @@ async fn process_gateway_message(
     gw_tx: &tokio::sync::mpsc::UnboundedSender<String>,
     msg: appcontrol_common::GatewayMessage,
 ) {
+    // Any message forwarded or emitted by the gateway is proof that its
+    // WebSocket link is alive — refresh `last_heartbeat_at` via the batched
+    // path so check_stale_gateways doesn't flip an actively-forwarding
+    // gateway to "suspended" just because the explicit 60s Heartbeat got
+    // delayed by SQLite write contention.
+    //
+    // Register is skipped: the gateway_id_cell isn't set yet on the first
+    // message, and Register's own upsert writes last_heartbeat_at = now().
+    {
+        let gw_id = { *gateway_id_cell.lock().unwrap() };
+        if let Some(id) = gw_id {
+            state.gateway_heartbeat_batcher.record(id).await;
+        }
+    }
+
     match msg {
         appcontrol_common::GatewayMessage::Register {
             gateway_id,
@@ -914,28 +929,8 @@ async fn process_gateway_message(
                 "Gateway heartbeat received"
             );
 
-            // Update gateway's last heartbeat timestamp
-            // On SQLite, route through write_queue to avoid contention with FSM transitions
-            #[cfg(feature = "postgres")]
-            if let Err(e) = ws_repo::update_gateway_heartbeat_ts(&state.db, gateway_id).await {
-                tracing::warn!(
-                    gateway_id = %gateway_id,
-                    "Failed to update gateway heartbeat: {}", e
-                );
-            }
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-            {
-                let db = state.db.clone();
-                let gw_id = gateway_id;
-                state.write_queue.fire_and_forget(move |_| async move {
-                    if let Err(e) = ws_repo::update_gateway_heartbeat_ts(&db, gw_id).await {
-                        tracing::warn!(
-                            gateway_id = %gw_id,
-                            "Failed to update gateway heartbeat: {}", e
-                        );
-                    }
-                });
-            }
+            // `last_heartbeat_at` is already refreshed at the top of
+            // process_gateway_message via gateway_heartbeat_batcher.
 
             // Log warning if gateway has buffered messages (backend was unreachable)
             if buffer_messages > 0 {
