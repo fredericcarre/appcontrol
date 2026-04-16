@@ -80,9 +80,9 @@ impl HeartbeatBatcher {
             let count = agent_ids.len();
             let db_clone = db.clone();
             let result: Result<(), sqlx::Error> = write_queue
-                .execute(move |_| async move {
-                    batch_update_heartbeats(&db_clone, &agent_ids).await
-                })
+                .execute(
+                    move |_| async move { batch_update_heartbeats(&db_clone, &agent_ids).await },
+                )
                 .await;
 
             if let Err(e) = result {

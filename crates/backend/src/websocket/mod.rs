@@ -915,11 +915,26 @@ async fn process_gateway_message(
             );
 
             // Update gateway's last heartbeat timestamp
+            // On SQLite, route through write_queue to avoid contention with FSM transitions
+            #[cfg(feature = "postgres")]
             if let Err(e) = ws_repo::update_gateway_heartbeat_ts(&state.db, gateway_id).await {
                 tracing::warn!(
                     gateway_id = %gateway_id,
                     "Failed to update gateway heartbeat: {}", e
                 );
+            }
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            {
+                let db = state.db.clone();
+                let gw_id = gateway_id;
+                state.write_queue.fire_and_forget(move |_| async move {
+                    if let Err(e) = ws_repo::update_gateway_heartbeat_ts(&db, gw_id).await {
+                        tracing::warn!(
+                            gateway_id = %gw_id,
+                            "Failed to update gateway heartbeat: {}", e
+                        );
+                    }
+                });
             }
 
             // Log warning if gateway has buffered messages (backend was unreachable)
