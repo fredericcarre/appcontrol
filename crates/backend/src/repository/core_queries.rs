@@ -1993,9 +1993,9 @@ pub async fn fetch_stale_components<
              AND a.last_heartbeat_at IS NOT NULL
              AND a.last_heartbeat_at < datetime('now', '-' || o.heartbeat_timeout_seconds || ' seconds'))
             OR
-            (a.is_active = 0)
-            OR
-            (g.id IS NOT NULL AND g.is_active = 0)
+            (a.is_active = 0
+             AND (a.last_heartbeat_at IS NULL
+                  OR a.last_heartbeat_at < datetime('now', '-' || o.heartbeat_timeout_seconds || ' seconds')))
           )
           AND NOT EXISTS (
             SELECT 1 FROM operation_locks ol
@@ -2160,9 +2160,9 @@ pub async fn fetch_stale_components<
              AND a.last_heartbeat_at IS NOT NULL
              AND a.last_heartbeat_at < now() - (o.heartbeat_timeout_seconds || ' seconds')::interval)
             OR
-            (a.is_active = false)
-            OR
-            (g.id IS NOT NULL AND g.is_active = false)
+            (a.is_active = false
+             AND (a.last_heartbeat_at IS NULL
+                  OR a.last_heartbeat_at < now() - (o.heartbeat_timeout_seconds || ' seconds')::interval))
           )
           AND NOT EXISTS (
             SELECT 1 FROM operation_locks ol
