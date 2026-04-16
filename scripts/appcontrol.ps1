@@ -260,7 +260,7 @@ function Do-Start {
     Write-Info "Starting AppControl..."
 
     # Kill any stale processes from a previous run to avoid port conflicts
-    # and sled DB lock errors (WSAEADDRINUSE / "Le processus ne peut pas accéder au fichier")
+    # and sled DB lock errors (WSAEADDRINUSE / "Le processus ne peut pas acceder au fichier")
     $staleNames = @("appcontrol-backend-sqlite", "appcontrol-backend", "appcontrol-gateway", "appcontrol-agent")
     $foundStale = $false
     foreach ($name in $staleNames) {
@@ -491,7 +491,7 @@ function Do-Stop {
         Start-Sleep -Seconds 1
     }
     if ($stillRunning) {
-        Write-Warn "Some processes still running after ${maxWait}s — force killing"
+        Write-Warn "Some processes still running after ${maxWait}s -- force killing"
         Do-StopFallback
         Start-Sleep -Seconds 2
     }

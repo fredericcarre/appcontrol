@@ -379,7 +379,7 @@ echo [1/2] Starting Gateway...
 start "" /b bin\appcontrol-gateway.exe > logs\gateway.log 2>&1
 echo Gateway started
 
-REM Start Backend (foreground — keeps console open, logs visible)
+REM Start Backend (foreground -- keeps console open, logs visible)
 echo [2/2] Starting Backend...
 echo.
 echo ========================================
