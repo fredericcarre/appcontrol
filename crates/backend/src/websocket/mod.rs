@@ -945,6 +945,51 @@ async fn process_gateway_message(
     }
 }
 
+/// Warn threshold: beyond this end-to-end delay we emit a tracing warn!
+/// in addition to the histogram sample, so the cause can be tracked in
+/// logs without relying on metrics being scraped.
+const AGENT_MESSAGE_LATENCY_WARN_MS: i64 = 10_000;
+
+/// Record end-to-end latency (agent-emitted timestamp → backend process time)
+/// for messages that carry their own `at` field.
+///
+/// Messages without a timestamp (CommandResult, terminal output, etc.) are
+/// skipped: there's no reliable emission time to compare against.
+fn observe_message_latency(msg: &appcontrol_common::AgentMessage) {
+    use appcontrol_common::AgentMessage;
+
+    let (kind, emitted_at) = match msg {
+        AgentMessage::Heartbeat { at, .. } => ("heartbeat", *at),
+        AgentMessage::CheckResult(cr) => ("check_result", cr.at),
+        AgentMessage::DiscoveryReport { scanned_at, .. } => ("discovery_report", *scanned_at),
+        _ => return,
+    };
+
+    let delta_ms = chrono::Utc::now()
+        .signed_duration_since(emitted_at)
+        .num_milliseconds();
+
+    // Negative deltas mean clock skew between agent and backend; clamp to 0
+    // for the histogram but still warn so operators notice.
+    let sample_ms = delta_ms.max(0) as f64;
+    metrics::histogram!("agent_message_latency_ms", "message_type" => kind).record(sample_ms);
+
+    if delta_ms >= AGENT_MESSAGE_LATENCY_WARN_MS {
+        tracing::warn!(
+            message_type = kind,
+            latency_ms = delta_ms,
+            threshold_ms = AGENT_MESSAGE_LATENCY_WARN_MS,
+            "High agent → backend message latency (possible gateway buffer or write_queue pile-up)"
+        );
+    } else if delta_ms < -5_000 {
+        tracing::warn!(
+            message_type = kind,
+            skew_ms = delta_ms,
+            "Agent timestamp is ahead of backend clock (possible clock skew)"
+        );
+    }
+}
+
 /// Process an incoming agent message: update FSM, record events, broadcast.
 /// The optional gateway_id is used for auto-registration when receiving heartbeats
 /// from agents that aren't in the routing table (e.g., after gateway reconnect).
@@ -960,6 +1005,12 @@ async fn process_agent_message(
     if let Some(agent_id) = msg.agent_id() {
         state.heartbeat_batcher.record(agent_id).await;
     }
+
+    // Surface end-to-end latency: if an agent message carries its own
+    // emission timestamp, compare it to the backend's processing time.
+    // A sustained gap indicates pile-up somewhere on the path (gateway
+    // buffer, backend backpressure, SQLite write_queue contention).
+    observe_message_latency(&msg);
 
     match msg {
         appcontrol_common::AgentMessage::CheckResult(cr) => {

@@ -127,6 +127,10 @@ async fn main() -> anyhow::Result<()> {
     metrics::describe_counter!("state_transitions_total", "Total FSM state transitions");
     metrics::describe_counter!("commands_executed_total", "Total commands executed");
     metrics::describe_gauge!("db_pool_connections", "Database pool active connections");
+    metrics::describe_histogram!(
+        "agent_message_latency_ms",
+        "End-to-end latency between agent-emitted timestamp and backend processing time (ms)"
+    );
 
     let shutdown_timeout_secs = config.shutdown_timeout_secs;
     let retention_action_log_days = config.retention_action_log_days;
