@@ -1462,6 +1462,270 @@ function Do-Logs {
 }
 
 # ---------------------------------------------------------------------------
+# Provisioning helpers: find IDs by name
+# ---------------------------------------------------------------------------
+
+function Find-UserId {
+    param([string]$BaseUrl, [string]$Token, [string]$UserEmail)
+    $result = Invoke-Api -Method "GET" -Uri ($BaseUrl + "/users") -Token $Token
+    $users = @()
+    if ($result -and $result.users) { $users = @($result.users) }
+    foreach ($u in $users) {
+        if ($u.email -eq $UserEmail) { return $u.id }
+    }
+    return $null
+}
+
+function Find-TeamId {
+    param([string]$BaseUrl, [string]$Token, [string]$TeamName)
+    $result = Invoke-Api -Method "GET" -Uri ($BaseUrl + "/teams") -Token $Token
+    $teams = @()
+    if ($result -and $result.teams) { $teams = @($result.teams) }
+    foreach ($t in $teams) {
+        if ($t.name -eq $TeamName) { return $t.id }
+    }
+    return $null
+}
+
+function Find-AppId {
+    param([string]$BaseUrl, [string]$Token, [string]$AppName)
+    $result = Invoke-Api -Method "GET" -Uri ($BaseUrl + "/apps") -Token $Token
+    $apps = @()
+    if ($result -and $result.apps) { $apps = @($result.apps) }
+    foreach ($a in $apps) {
+        if ($a.name -eq $AppName) { return $a.id }
+    }
+    return $null
+}
+
+# ---------------------------------------------------------------------------
+# CREATE-USER
+# ---------------------------------------------------------------------------
+function Do-CreateUser {
+    $userEmail = $Arg1
+    if (-not $userEmail) {
+        Write-Err "Usage: appcontrol.ps1 create-user <email> [display-name]"
+        Write-Host "  Creates a user account. Password defaults to 'changeme'."
+        Write-Host "  Examples:"
+        Write-Host "    .\appcontrol.ps1 create-user alice@corp.com ""Alice Martin"""
+        return
+    }
+
+    $displayName = $Arg2
+    if (-not $displayName) { $displayName = $userEmail.Split("@")[0] }
+
+    $settings = Read-Settings
+    if (-not $settings) { Write-Err "No config/settings.json found. Run install first."; return }
+    $port = $settings.backend_port
+    if (-not $port) { $port = "3000" }
+
+    $token = Login-Backend -Port $port -AdminEmail $settings.admin_email -AdminPassword $settings.admin_password
+    $baseUrl = "http://localhost:" + $port + "/api/v1"
+
+    # Check if user already exists
+    $existingId = Find-UserId -BaseUrl $baseUrl -Token $token -UserEmail $userEmail
+    if ($existingId) {
+        Write-Info ("User '" + $userEmail + "' already exists (id: " + $existingId + ")")
+        return
+    }
+
+    $body = @{
+        email        = $userEmail
+        display_name = $displayName
+        role         = "operator"
+        password     = "changeme"
+    }
+    $created = Invoke-Api -Method "POST" -Uri ($baseUrl + "/users") -Body $body -Token $token
+    if ($created -and $created.id) {
+        Write-Ok ("User created: " + $userEmail + " (id: " + $created.id + ")")
+    } else {
+        Write-Err ("Failed to create user '" + $userEmail + "'")
+    }
+}
+
+# ---------------------------------------------------------------------------
+# CREATE-TEAM
+# ---------------------------------------------------------------------------
+function Do-CreateTeam {
+    $teamName = $Arg1
+    if (-not $teamName) {
+        Write-Err "Usage: appcontrol.ps1 create-team <name> [description]"
+        return
+    }
+
+    $description = $Arg2
+
+    $settings = Read-Settings
+    if (-not $settings) { Write-Err "No config/settings.json found. Run install first."; return }
+    $port = $settings.backend_port
+    if (-not $port) { $port = "3000" }
+
+    $token = Login-Backend -Port $port -AdminEmail $settings.admin_email -AdminPassword $settings.admin_password
+    $baseUrl = "http://localhost:" + $port + "/api/v1"
+
+    # Check if team already exists
+    $existingId = Find-TeamId -BaseUrl $baseUrl -Token $token -TeamName $teamName
+    if ($existingId) {
+        Write-Info ("Team '" + $teamName + "' already exists (id: " + $existingId + ")")
+        return
+    }
+
+    $body = @{ name = $teamName }
+    if ($description) { $body.description = $description }
+
+    $created = Invoke-Api -Method "POST" -Uri ($baseUrl + "/teams") -Body $body -Token $token
+    if ($created -and $created.id) {
+        Write-Ok ("Team created: " + $teamName + " (id: " + $created.id + ")")
+    } else {
+        Write-Err ("Failed to create team '" + $teamName + "'")
+    }
+}
+
+# ---------------------------------------------------------------------------
+# ADD-MEMBER (add user to team)
+# ---------------------------------------------------------------------------
+function Do-AddMember {
+    $teamName = $Arg1
+    $userEmail = $Arg2
+    if (-not $teamName -or -not $userEmail) {
+        Write-Err "Usage: appcontrol.ps1 add-member <team-name> <user-email>"
+        Write-Host "  Adds a user to a team."
+        Write-Host "  Example: .\appcontrol.ps1 add-member ""Equipe Prod"" alice@corp.com"
+        return
+    }
+
+    $settings = Read-Settings
+    if (-not $settings) { Write-Err "No config/settings.json found. Run install first."; return }
+    $port = $settings.backend_port
+    if (-not $port) { $port = "3000" }
+
+    $token = Login-Backend -Port $port -AdminEmail $settings.admin_email -AdminPassword $settings.admin_password
+    $baseUrl = "http://localhost:" + $port + "/api/v1"
+
+    $teamId = Find-TeamId -BaseUrl $baseUrl -Token $token -TeamName $teamName
+    if (-not $teamId) { Write-Err ("Team not found: " + $teamName); return }
+
+    $userId = Find-UserId -BaseUrl $baseUrl -Token $token -UserEmail $userEmail
+    if (-not $userId) { Write-Err ("User not found: " + $userEmail); return }
+
+    $body = @{ user_id = $userId; role = "member" }
+    try {
+        Invoke-Api -Method "POST" -Uri ($baseUrl + "/teams/" + $teamId + "/members") -Body $body -Token $token | Out-Null
+        Write-Ok ("Added " + $userEmail + " to team " + $teamName)
+    } catch {
+        Write-Warn ("Failed to add member (may already be in team): " + $_)
+    }
+}
+
+# ---------------------------------------------------------------------------
+# GRANT-ACCESS (grant team or user permission on an app)
+# ---------------------------------------------------------------------------
+function Do-GrantAccess {
+    $appName = $Arg1
+    $targetName = $Arg2
+    if (-not $appName -or -not $targetName) {
+        Write-Err "Usage: appcontrol.ps1 grant-access <app-name> <team-or-user>"
+        Write-Host "  Grants 'operate' permission on an application to a team or user."
+        Write-Host "  The command auto-detects whether the target is a team name or user email."
+        Write-Host "  Examples:"
+        Write-Host "    .\appcontrol.ps1 grant-access ""Core Banking"" ""Equipe Prod"""
+        Write-Host "    .\appcontrol.ps1 grant-access ""Core Banking"" alice@corp.com"
+        return
+    }
+
+    $settings = Read-Settings
+    if (-not $settings) { Write-Err "No config/settings.json found. Run install first."; return }
+    $port = $settings.backend_port
+    if (-not $port) { $port = "3000" }
+
+    $token = Login-Backend -Port $port -AdminEmail $settings.admin_email -AdminPassword $settings.admin_password
+    $baseUrl = "http://localhost:" + $port + "/api/v1"
+
+    $appId = Find-AppId -BaseUrl $baseUrl -Token $token -AppName $appName
+    if (-not $appId) { Write-Err ("Application not found: " + $appName); return }
+
+    $level = "operate"
+
+    # Auto-detect: if target contains '@' it's a user email, otherwise it's a team name
+    if ($targetName -match "@") {
+        $userId = Find-UserId -BaseUrl $baseUrl -Token $token -UserEmail $targetName
+        if (-not $userId) { Write-Err ("User not found: " + $targetName); return }
+        $body = @{ user_id = $userId; permission_level = $level }
+        try {
+            Invoke-Api -Method "POST" -Uri ($baseUrl + "/apps/" + $appId + "/permissions/users") -Body $body -Token $token | Out-Null
+            Write-Ok ("Granted " + $level + " on '" + $appName + "' to user " + $targetName)
+        } catch {
+            Write-Warn ("Failed to grant permission: " + $_)
+        }
+    } else {
+        $teamId = Find-TeamId -BaseUrl $baseUrl -Token $token -TeamName $targetName
+        if (-not $teamId) { Write-Err ("Team not found: " + $targetName); return }
+        $body = @{ team_id = $teamId; permission_level = $level }
+        try {
+            Invoke-Api -Method "POST" -Uri ($baseUrl + "/apps/" + $appId + "/permissions/teams") -Body $body -Token $token | Out-Null
+            Write-Ok ("Granted " + $level + " on '" + $appName + "' to team " + $targetName)
+        } catch {
+            Write-Warn ("Failed to grant permission: " + $_)
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# LIST-USERS
+# ---------------------------------------------------------------------------
+function Do-ListUsers {
+    $settings = Read-Settings
+    if (-not $settings) { Write-Err "No config/settings.json found. Run install first."; return }
+    $port = $settings.backend_port
+    if (-not $port) { $port = "3000" }
+
+    $token = Login-Backend -Port $port -AdminEmail $settings.admin_email -AdminPassword $settings.admin_password
+    $baseUrl = "http://localhost:" + $port + "/api/v1"
+
+    $result = Invoke-Api -Method "GET" -Uri ($baseUrl + "/users") -Token $token
+    $users = @()
+    if ($result -and $result.users) { $users = @($result.users) }
+
+    Write-Host ""
+    Write-Host ("  " + $users.Count + " user(s)") -ForegroundColor Cyan
+    Write-Host ""
+    foreach ($u in $users) {
+        $active = if ($u.is_active) { "active" } else { "disabled" }
+        Write-Host ("  " + $u.email) -ForegroundColor White -NoNewline
+        Write-Host ("  " + $u.display_name + "  " + $u.role + "  " + $active) -ForegroundColor DarkGray
+    }
+    Write-Host ""
+}
+
+# ---------------------------------------------------------------------------
+# LIST-TEAMS
+# ---------------------------------------------------------------------------
+function Do-ListTeams {
+    $settings = Read-Settings
+    if (-not $settings) { Write-Err "No config/settings.json found. Run install first."; return }
+    $port = $settings.backend_port
+    if (-not $port) { $port = "3000" }
+
+    $token = Login-Backend -Port $port -AdminEmail $settings.admin_email -AdminPassword $settings.admin_password
+    $baseUrl = "http://localhost:" + $port + "/api/v1"
+
+    $result = Invoke-Api -Method "GET" -Uri ($baseUrl + "/teams") -Token $token
+    $teams = @()
+    if ($result -and $result.teams) { $teams = @($result.teams) }
+
+    Write-Host ""
+    Write-Host ("  " + $teams.Count + " team(s)") -ForegroundColor Cyan
+    Write-Host ""
+    foreach ($t in $teams) {
+        $desc = if ($t.description) { $t.description } else { "-" }
+        $members = if ($t.member_count) { [string]$t.member_count + " members" } else { "0 members" }
+        Write-Host ("  " + $t.name) -ForegroundColor White -NoNewline
+        Write-Host ("  " + $desc + "  " + $members) -ForegroundColor DarkGray
+    }
+    Write-Host ""
+}
+
+# ---------------------------------------------------------------------------
 # HELP
 # ---------------------------------------------------------------------------
 function Do-Help {
@@ -1481,6 +1745,16 @@ function Do-Help {
     Write-Host "  assign-site-hosting <site> <hosting>  Assign a site to a hosting"
     Write-Host "  import-example [name] [site]  Import an example application map"
     Write-Host "  import-map <path|url> [site]  Import a map from file or URL"
+    Write-Host ""
+    Write-Host "  Provisioning:" -ForegroundColor Yellow
+    Write-Host "  create-user <email> [name]      Create a user account"
+    Write-Host "  create-team <name> [desc]       Create a team"
+    Write-Host "  add-member <team> <email>       Add a user to a team"
+    Write-Host "  grant-access <app> <team|email> Grant operate permission on an app"
+    Write-Host "  list-users                      List all users"
+    Write-Host "  list-teams                      List all teams"
+    Write-Host ""
+    Write-Host "  Maintenance:" -ForegroundColor Yellow
     Write-Host "  upgrade                 Stop, update binaries+frontend, restart"
     Write-Host "  logs [file]             Show recent log output"
     Write-Host "  help                    Show this help message"
@@ -1813,6 +2087,12 @@ switch ($cmd) {
     "assign-site-hosting" { Do-AssignSiteHosting }
     "import-example" { Do-ImportExample }
     "import-map"     { Do-ImportMap }
+    "create-user"    { Do-CreateUser }
+    "create-team"    { Do-CreateTeam }
+    "add-member"     { Do-AddMember }
+    "grant-access"   { Do-GrantAccess }
+    "list-users"     { Do-ListUsers }
+    "list-teams"     { Do-ListTeams }
     "upgrade"        { Do-Upgrade }
     "logs"           { Do-Logs }
     "help"           { Do-Help }
