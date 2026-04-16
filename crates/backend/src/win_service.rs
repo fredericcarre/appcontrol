@@ -146,8 +146,7 @@ fn run_service() -> anyhow::Result<()> {
             appcontrol_backend::core::heartbeat_batcher::HeartbeatBatcher::new();
         let gateway_heartbeat_batcher =
             appcontrol_backend::core::heartbeat_batcher::GatewayHeartbeatBatcher::new();
-        let latency_tracker =
-            appcontrol_backend::core::latency_tracker::LatencyTracker::new();
+        let latency_tracker = appcontrol_backend::core::latency_tracker::LatencyTracker::new();
 
         let operation_lock =
             appcontrol_backend::core::operation_lock::OperationLock::new(pool.clone());
