@@ -1726,6 +1726,96 @@ function Do-ListTeams {
 }
 
 # ---------------------------------------------------------------------------
+# CATALOG — manage the per-org component catalog (type_key templates for
+# check/start/stop commands used when creating components in the UI).
+# Backed by /api/v1/catalog/component-types (see crates/backend/src/api/catalog.rs).
+# Names and semantics mirror `scripts/appcontrol.sh`.
+# ---------------------------------------------------------------------------
+function Get-CatalogContext {
+    $settings = Read-Settings
+    $port = $BackendPort
+    if ($settings.backend_port) { $port = $settings.backend_port }
+    $token = Login-Backend -Port $port -AdminEmail $Email -AdminPassword $Password
+    if (-not $token) { throw "Login failed. Check -Email/-Password." }
+    return [PSCustomObject]@{
+        Token = $token
+        Base  = "http://localhost:" + $port + "/api/v1/catalog/component-types"
+    }
+}
+
+function Do-InitCatalog {
+    $ctx = Get-CatalogContext
+    $resp = Invoke-Api -Method POST -Uri ($ctx.Base + "/seed") -Token $ctx.Token -Body @{}
+    $count = 0
+    if ($resp -and $resp.seeded) { $count = $resp.seeded }
+    Write-Ok ("Catalog initialized (" + $count + " builtin entries seeded)")
+}
+
+function Do-ListCatalog {
+    $ctx = Get-CatalogContext
+    $resp = Invoke-Api -Method GET -Uri $ctx.Base -Token $ctx.Token
+    if (-not $resp -or -not $resp.entries) { Write-Info "Catalog is empty."; return }
+    Write-Host ""
+    Write-Host ("{0,-24} {1,-30} {2,-14} {3,-8} {4}" -f "type_key","label","category","builtin","id") -ForegroundColor Cyan
+    foreach ($e in $resp.entries) {
+        $builtin = "no"
+        if ($e.is_builtin) { $builtin = "yes" }
+        Write-Host ("{0,-24} {1,-30} {2,-14} {3,-8} {4}" -f `
+            $e.type_key, $e.label, ($e.category -as [string]), $builtin, $e.id)
+    }
+    Write-Host ""
+    Write-Ok ("Total: " + $resp.entries.Count + " entries")
+}
+
+function Do-GetCatalog {
+    if (-not $Arg1) { Write-Err "Usage: get-catalog <type_key>"; return }
+    $ctx = Get-CatalogContext
+    $resp = Invoke-Api -Method GET -Uri $ctx.Base -Token $ctx.Token
+    $match = $null
+    if ($resp -and $resp.entries) {
+        $match = $resp.entries | Where-Object { $_.type_key -eq $Arg1 } | Select-Object -First 1
+    }
+    if (-not $match) { Write-Err ("No catalog entry with type_key '" + $Arg1 + "'"); return }
+    $match | ConvertTo-Json -Depth 10
+}
+
+function Do-CreateCatalog {
+    if (-not $Arg1) { Write-Err "Usage: create-catalog <file.json>"; return }
+    if (-not (Test-Path $Arg1)) { Write-Err ("File not found: " + $Arg1); return }
+    $ctx = Get-CatalogContext
+    $body = Get-Content -Raw -Path $Arg1 | ConvertFrom-Json
+    $resp = Invoke-Api -Method POST -Uri $ctx.Base -Token $ctx.Token -Body $body
+    Write-Ok ("Created: " + $resp.type_key + " (id=" + $resp.id + ")")
+}
+
+function Do-DeleteCatalog {
+    if (-not $Arg1) { Write-Err "Usage: delete-catalog <type_key>"; return }
+    $ctx = Get-CatalogContext
+    $listResp = Invoke-Api -Method GET -Uri $ctx.Base -Token $ctx.Token
+    $entry = $listResp.entries | Where-Object { $_.type_key -eq $Arg1 } | Select-Object -First 1
+    if (-not $entry) { Write-Err ("No catalog entry with type_key '" + $Arg1 + "'"); return }
+    if ($entry.is_builtin) { Write-Err "Cannot delete a builtin entry."; return }
+    Invoke-Api -Method DELETE -Uri ($ctx.Base + "/" + $entry.id) -Token $ctx.Token | Out-Null
+    Write-Ok ("Deleted: " + $Arg1)
+}
+
+function Do-ImportCatalog {
+    if (-not $Arg1) { Write-Err "Usage: import-catalog <file.json>  (root key: entries)"; return }
+    if (-not (Test-Path $Arg1)) { Write-Err ("File not found: " + $Arg1); return }
+    $ctx = Get-CatalogContext
+    $body = Get-Content -Raw -Path $Arg1 | ConvertFrom-Json
+    if (-not $body.entries) { Write-Err "Import file must have a top-level 'entries' array."; return }
+    $resp = Invoke-Api -Method POST -Uri ($ctx.Base + "/import") -Token $ctx.Token -Body $body
+    $created = 0
+    $skipped = 0
+    if ($resp) {
+        if ($resp.created) { $created = $resp.created }
+        if ($resp.skipped) { $skipped = $resp.skipped }
+    }
+    Write-Ok ("Catalog imported: " + $created + " created, " + $skipped + " skipped")
+}
+
+# ---------------------------------------------------------------------------
 # HELP
 # ---------------------------------------------------------------------------
 function Do-Help {
@@ -1753,6 +1843,14 @@ function Do-Help {
     Write-Host "  grant-access <app> <team|email> Grant operate permission on an app"
     Write-Host "  list-users                      List all users"
     Write-Host "  list-teams                      List all teams"
+    Write-Host ""
+    Write-Host "  Component catalog:" -ForegroundColor Yellow
+    Write-Host "  init-catalog                    Seed builtin component types"
+    Write-Host "  list-catalog                    List catalog entries"
+    Write-Host "  get-catalog <type_key>          Show one entry as JSON"
+    Write-Host "  create-catalog <file.json>      Create an entry from JSON"
+    Write-Host "  delete-catalog <type_key>       Delete a custom entry"
+    Write-Host "  import-catalog <file.json>      Bulk import (root key: entries)"
     Write-Host ""
     Write-Host "  Maintenance:" -ForegroundColor Yellow
     Write-Host "  upgrade                 Stop, update binaries+frontend, restart"
@@ -2093,6 +2191,12 @@ switch ($cmd) {
     "grant-access"   { Do-GrantAccess }
     "list-users"     { Do-ListUsers }
     "list-teams"     { Do-ListTeams }
+    "init-catalog"   { Do-InitCatalog }
+    "list-catalog"   { Do-ListCatalog }
+    "get-catalog"    { Do-GetCatalog }
+    "create-catalog" { Do-CreateCatalog }
+    "delete-catalog" { Do-DeleteCatalog }
+    "import-catalog" { Do-ImportCatalog }
     "upgrade"        { Do-Upgrade }
     "logs"           { Do-Logs }
     "help"           { Do-Help }

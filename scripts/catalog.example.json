@@ -1,0 +1,43 @@
+{
+  "_comment": "Bulk-import payload for appcontrol catalog. Use: appcontrol.ps1 import-catalog scripts/catalog.example.json  (or: appcontrol.sh import-catalog --file scripts/catalog.example.json). Each entry becomes a reusable component type_key that preloads default check/start/stop commands when a user adds a component in the map editor. Delete the fields you don't need — only `type_key` and `label` are required.",
+  "entries": [
+    {
+      "type_key": "windows-service",
+      "label": "Windows Service",
+      "description": "A Windows service managed via sc/net commands.",
+      "category": "system",
+      "icon": "server",
+      "color": "#2563eb",
+      "default_check_cmd": "sc query %SERVICE_NAME% | find \"RUNNING\"",
+      "default_start_cmd": "net start %SERVICE_NAME%",
+      "default_stop_cmd": "net stop %SERVICE_NAME%",
+      "default_env_vars": { "SERVICE_NAME": "MyService" },
+      "display_order": 10
+    },
+    {
+      "type_key": "systemd-unit",
+      "label": "systemd Unit",
+      "description": "A systemd-managed service on Linux.",
+      "category": "system",
+      "icon": "server",
+      "color": "#16a34a",
+      "default_check_cmd": "systemctl is-active --quiet ${UNIT}",
+      "default_start_cmd": "systemctl start ${UNIT}",
+      "default_stop_cmd": "systemctl stop ${UNIT}",
+      "default_env_vars": { "UNIT": "my-service.service" },
+      "display_order": 20
+    },
+    {
+      "type_key": "file-watch",
+      "label": "File Presence",
+      "description": "Alive if a marker file exists.",
+      "category": "custom",
+      "icon": "file",
+      "color": "#a855f7",
+      "default_check_cmd": "if exist \"%TEMP%\\marker.txt\" (exit 0) else (exit 1)",
+      "default_start_cmd": "echo running > \"%TEMP%\\marker.txt\"",
+      "default_stop_cmd": "del /F /Q \"%TEMP%\\marker.txt\"",
+      "display_order": 30
+    }
+  ]
+}
