@@ -16,8 +16,11 @@
 #   import-map      Import an application map (JSON/YAML)
 #   provision       Bulk provision from a JSON file (users, teams, permissions)
 #   init-catalog    Seed built-in component types into the catalog
-#   import-catalog  Import custom component types from a JSON file
+#   import-catalog  Bulk import custom component types from a JSON file
 #   list-catalog    List all component types in the catalog
+#   get-catalog     Show a single catalog entry as JSON
+#   create-catalog  Create one catalog entry from a JSON file
+#   delete-catalog  Delete a custom catalog entry by type_key
 #   start-app       Start an application (DAG-ordered)
 #   stop-app        Stop an application (reverse DAG-ordered)
 #   status-app      Show application and component status
@@ -470,6 +473,63 @@ cmd_list_catalog() {
     | column -t -s $'\t' -N "TYPE_KEY,LABEL,ICON,COLOR,CATEGORY,BUILTIN"
 }
 
+# Show one catalog entry as JSON.
+cmd_get_catalog() {
+  local type_key="${1:-}"
+  [ -n "$type_key" ] || die "Usage: get-catalog <type_key>"
+  ensure_login
+  local resp
+  resp=$(api_get "${API_BASE}/catalog/component-types") || die "Failed to list catalog"
+  local entry
+  entry=$(echo "$resp" | jq -r --arg k "$type_key" '.entries[] | select(.type_key == $k)')
+  [ -n "$entry" ] || die "No catalog entry with type_key '${type_key}'"
+  echo "$entry" | jq .
+}
+
+# Create a single catalog entry from a JSON file (body = one entry object).
+cmd_create_catalog() {
+  local file=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --file) file="$2"; shift 2 ;;
+      *)      file="$1"; shift ;;
+    esac
+  done
+  [ -n "$file" ] || die "Usage: create-catalog <file.json>"
+  [ -f "$file" ] || die "File not found: $file"
+  ensure_login
+
+  info "Creating catalog entry from ${file}..."
+  local resp
+  resp=$(curl -sf -X POST -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d @"$file" "${API_BASE}/catalog/component-types" 2>/dev/null) \
+    || die "Failed to create catalog entry"
+  local key id
+  key=$(echo "$resp" | jq -r '.type_key')
+  id=$(echo "$resp" | jq -r '.id')
+  ok "Created: ${key} (id=${id})"
+}
+
+# Delete a custom catalog entry. Builtin entries cannot be deleted.
+cmd_delete_catalog() {
+  local type_key="${1:-}"
+  [ -n "$type_key" ] || die "Usage: delete-catalog <type_key>"
+  ensure_login
+  local resp
+  resp=$(api_get "${API_BASE}/catalog/component-types") || die "Failed to list catalog"
+  local id is_builtin
+  id=$(echo "$resp" | jq -r --arg k "$type_key" '.entries[] | select(.type_key == $k) | .id')
+  is_builtin=$(echo "$resp" | jq -r --arg k "$type_key" '.entries[] | select(.type_key == $k) | .is_builtin')
+  [ -n "$id" ] || die "No catalog entry with type_key '${type_key}'"
+  [ "$is_builtin" != "true" ] || die "Cannot delete a builtin entry."
+
+  curl -sf -X DELETE -H "Authorization: Bearer ${TOKEN}" \
+    "${API_BASE}/catalog/component-types/${id}" >/dev/null 2>&1 \
+    || die "Failed to delete catalog entry"
+  ok "Deleted: ${type_key}"
+}
+
 # ── Provision (bulk) ─────────────────────────────────────────────────────────
 # Reads a JSON file with users, teams, and permissions and applies them all.
 #
@@ -588,8 +648,11 @@ Commands:
   import-map      --file MAP.json
   provision       --file setup.json  (bulk: users + teams + permissions)
   init-catalog    Seed built-in component types into the catalog
-  import-catalog  --file catalog.json  Import custom component types
+  import-catalog  --file catalog.json  Bulk import custom component types
   list-catalog    List all component types in the catalog
+  get-catalog     <type_key>           Show one catalog entry as JSON
+  create-catalog  <file.json>          Create one entry from a JSON file
+  delete-catalog  <type_key>           Delete a custom catalog entry
   start-app       --app APP_NAME [--dry-run]
   stop-app        --app APP_NAME
   status-app      --app APP_NAME
@@ -653,6 +716,9 @@ case "$command" in
   init-catalog)   cmd_init_catalog "$@" ;;
   import-catalog) cmd_import_catalog "$@" ;;
   list-catalog)   cmd_list_catalog "$@" ;;
+  get-catalog)    cmd_get_catalog "$@" ;;
+  create-catalog) cmd_create_catalog "$@" ;;
+  delete-catalog) cmd_delete_catalog "$@" ;;
   start-app)      cmd_start_app "$@" ;;
   stop-app)       cmd_stop_app "$@" ;;
   status-app)     cmd_status_app "$@" ;;
