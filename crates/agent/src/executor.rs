@@ -83,7 +83,11 @@ pub async fn execute_sync(command: &str, timeout: Duration) -> anyhow::Result<Ex
     let child = {
         use tokio::process::Command;
         let mut cmd = Command::new("cmd");
-        cmd.arg("/C").arg(command);
+        // raw_arg: pass /C and the user command without Windows CRT
+        // argument escaping. This preserves literal quotes, `&`, `|`, `>`,
+        // etc., so user-authored check/start/stop commands with quoted
+        // paths (e.g. `dir "%TEMP%\a&b.txt"`) reach cmd.exe intact.
+        cmd.raw_arg("/C").raw_arg(command);
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .creation_flags(windows::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP.0);
@@ -186,7 +190,8 @@ where
     let mut child = {
         use tokio::process::Command;
         let mut cmd = Command::new("cmd");
-        cmd.arg("/C").arg(command);
+        // See execute_sync: raw_arg keeps the user command unescaped.
+        cmd.raw_arg("/C").raw_arg(command);
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .creation_flags(windows::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP.0);
@@ -488,12 +493,17 @@ pub fn execute_async_detached(command: &str) -> anyhow::Result<u32> {
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
 
-    let child = std::process::Command::new("cmd")
-        .args(["/C", command])
+    // raw_arg preserves quotes, `&`, `|`, `>` in the user command so
+    // detached start/stop/rebuild commands with quoted paths survive
+    // CRT argument escaping.
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.raw_arg("/C")
+        .raw_arg(command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB)
+        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
+    let child = cmd
         .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to spawn detached process: {}", e))?;
 
@@ -641,5 +651,47 @@ mod tests {
         assert!(pid > 0);
         // We can't easily check if the process is running without OpenProcess,
         // but if we got a PID back, the launch succeeded.
+    }
+
+    /// Regression test for the `raw_arg` fix (see executor.rs:82-95 +
+    /// :186-199 + :486-508). Without raw_arg, Rust's CRT escaping mangles
+    /// quotes and redirection so that `dir "%TEMP%\a&b.txt"` reaches
+    /// cmd.exe as `dir \"%TEMP%\\a&b.txt\"` — the `>` then redirects to a
+    /// file whose literal name contains quotes, and user-authored commands
+    /// silently misbehave. This asserts that redirection inside quoted
+    /// paths and `&`/`|` inside the filename survive end-to-end.
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_execute_sync_preserves_quotes_and_special_chars() {
+        use std::path::PathBuf;
+
+        // Pick a temp filename that contains characters cmd.exe would
+        // normally treat as operators outside quotes: `&` and `^`.
+        let temp = std::env::var("TEMP").unwrap_or_else(|_| "C:\\Windows\\Temp".to_string());
+        let fname = "appcontrol raw_arg test & check^ok.txt";
+        let path = PathBuf::from(&temp).join(fname);
+        let _ = std::fs::remove_file(&path);
+        let path_str = path.display().to_string();
+
+        // 1) Write via cmd.exe redirection with quotes around the path.
+        let write_cmd = format!("echo hello>\"{}\"", path_str);
+        let res = execute_sync(&write_cmd, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(res.exit_code, 0, "write failed: stderr={}", res.stderr);
+        assert!(
+            path.exists(),
+            "expected file to exist at {} after redirected echo; raw_arg probably not applied",
+            path_str
+        );
+
+        // 2) Check via `if exist` with the quoted path.
+        let check_cmd = format!("if exist \"{}\" (exit 0) else (exit 1)", path_str);
+        let res = execute_sync(&check_cmd, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(res.exit_code, 0, "check failed: stderr={}", res.stderr);
+
+        let _ = std::fs::remove_file(&path);
     }
 }
