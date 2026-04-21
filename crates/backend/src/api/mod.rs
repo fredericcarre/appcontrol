@@ -154,6 +154,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/components/:id/members/actions/stop",
             post(cluster_members::batch_stop),
         )
+        .route(
+            "/components/:id/cluster-config",
+            put(cluster_members::update_cluster_config),
+        )
         // Component site overrides (failover configuration)
         .route(
             "/components/:id/site-overrides",

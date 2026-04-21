@@ -547,3 +547,136 @@ pub async fn batch_stop(
     });
     batch_action(state, user, component_id, "stop", body).await
 }
+
+// ============================================================================
+// Cluster configuration (mode + policy + threshold)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateClusterConfigRequest {
+    #[serde(default)]
+    pub cluster_mode: Option<String>,
+    #[serde(default)]
+    pub cluster_health_policy: Option<String>,
+    #[serde(default)]
+    pub cluster_min_healthy_pct: Option<i16>,
+}
+
+/// PUT /api/v1/components/:id/cluster-config
+///
+/// Toggles the component's cluster mode (aggregate ↔ fan_out) and/or updates
+/// the health aggregation policy without touching the rest of the component.
+pub async fn update_cluster_config(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(component_id): Path<Uuid>,
+    Json(body): Json<UpdateClusterConfigRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let component = state
+        .component_repo
+        .get_component(component_id, *user.organization_id)
+        .await?
+        .ok_or_not_found()?;
+
+    let perm = effective_permission(
+        &state.db,
+        user.user_id,
+        component.application_id,
+        user.is_admin(),
+    )
+    .await;
+    if perm < PermissionLevel::Edit {
+        return Err(ApiError::Forbidden);
+    }
+
+    // Validate values before hitting the DB.
+    if let Some(ref mode) = body.cluster_mode {
+        if mode != "aggregate" && mode != "fan_out" {
+            return Err(ApiError::Validation(
+                "cluster_mode must be 'aggregate' or 'fan_out'".to_string(),
+            ));
+        }
+    }
+    if let Some(ref policy) = body.cluster_health_policy {
+        if !matches!(
+            policy.as_str(),
+            "all_healthy" | "any_healthy" | "quorum" | "threshold_pct"
+        ) {
+            return Err(ApiError::Validation(
+                "cluster_health_policy must be one of all_healthy, any_healthy, quorum, threshold_pct"
+                    .to_string(),
+            ));
+        }
+    }
+    if let Some(pct) = body.cluster_min_healthy_pct {
+        if !(1..=100).contains(&pct) {
+            return Err(ApiError::Validation(
+                "cluster_min_healthy_pct must be between 1 and 100".to_string(),
+            ));
+        }
+    }
+
+    log_action(
+        &state.db,
+        user.user_id,
+        "update_cluster_config",
+        "component",
+        component_id,
+        json!({
+            "cluster_mode": body.cluster_mode,
+            "cluster_health_policy": body.cluster_health_policy,
+            "cluster_min_healthy_pct": body.cluster_min_healthy_pct,
+        }),
+    )
+    .await
+    .ok();
+
+    // Build the UPDATE dynamically via COALESCE — works identically on PG/SQLite.
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query(
+            "UPDATE components SET \
+                cluster_mode = COALESCE($2, cluster_mode), \
+                cluster_health_policy = COALESCE($3, cluster_health_policy), \
+                cluster_min_healthy_pct = COALESCE($4, cluster_min_healthy_pct), \
+                updated_at = now() \
+             WHERE id = $1",
+        )
+        .bind(crate::db::bind_id(component_id))
+        .bind(body.cluster_mode.as_deref())
+        .bind(body.cluster_health_policy.as_deref())
+        .bind(body.cluster_min_healthy_pct)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query(
+            "UPDATE components SET \
+                cluster_mode = COALESCE($2, cluster_mode), \
+                cluster_health_policy = COALESCE($3, cluster_health_policy), \
+                cluster_min_healthy_pct = COALESCE($4, cluster_min_healthy_pct), \
+                updated_at = datetime('now') \
+             WHERE id = $1",
+        )
+        .bind(crate::db::DbUuid::from(component_id))
+        .bind(body.cluster_mode.as_deref())
+        .bind(body.cluster_health_policy.as_deref())
+        .bind(body.cluster_min_healthy_pct)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
+
+    // If there's an assigned agent, push updated config so scheduler picks up
+    // fan-out vs aggregate right away.
+    if let Some(agent_id) = component.agent_id {
+        crate::websocket::send_config_to_agent(&state, agent_id).await;
+    }
+
+    Ok(Json(json!({
+        "id": component_id,
+        "status": "updated",
+    })))
+}

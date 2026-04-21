@@ -51,6 +51,14 @@ export interface ComponentFormData {
   // Cluster configuration
   cluster_size?: number | null;
   cluster_nodes?: string[];
+  // Fan-out cluster mode + aggregation policy (v4.3+)
+  cluster_mode?: 'aggregate' | 'fan_out';
+  cluster_health_policy?:
+    | 'all_healthy'
+    | 'any_healthy'
+    | 'quorum'
+    | 'threshold_pct';
+  cluster_min_healthy_pct?: number;
 }
 
 interface ComponentEditorProps {
@@ -118,6 +126,15 @@ export function ComponentEditor({
         referenced_app_id: (component as Component & { referenced_app_id?: string }).referenced_app_id || null,
         cluster_size: component.cluster_size ?? null,
         cluster_nodes: component.cluster_nodes ?? [],
+        cluster_mode: (component.cluster_mode as 'aggregate' | 'fan_out' | undefined) ?? 'aggregate',
+        cluster_health_policy:
+          (component.cluster_health_policy as
+            | 'all_healthy'
+            | 'any_healthy'
+            | 'quorum'
+            | 'threshold_pct'
+            | undefined) ?? 'all_healthy',
+        cluster_min_healthy_pct: component.cluster_min_healthy_pct ?? 100,
       };
     }
     if (initialType) {
@@ -140,6 +157,9 @@ export function ComponentEditor({
         referenced_app_id: null,
         cluster_size: null,
         cluster_nodes: [],
+        cluster_mode: 'aggregate',
+        cluster_health_policy: 'all_healthy',
+        cluster_min_healthy_pct: 100,
       };
     }
     return {
@@ -160,6 +180,9 @@ export function ComponentEditor({
       referenced_app_id: null,
       cluster_size: null,
       cluster_nodes: [],
+      cluster_mode: 'aggregate',
+      cluster_health_policy: 'all_healthy',
+      cluster_min_healthy_pct: 100,
     };
   }, [component, initialType, catalogTypes]);
 
@@ -1110,6 +1133,7 @@ export function ComponentEditor({
                           ...prev,
                           cluster_size: null,
                           cluster_nodes: [],
+                          cluster_mode: 'aggregate',
                         }));
                       } else {
                         setFormData((prev) => ({
@@ -1125,46 +1149,153 @@ export function ComponentEditor({
                 {formData.cluster_size && formData.cluster_size >= 2 && (
                   <>
                     <div className="space-y-2">
-                      <Label htmlFor="cluster_size">Number of Nodes</Label>
-                      <Input
-                        id="cluster_size"
-                        type="number"
-                        min={2}
-                        max={100}
-                        value={formData.cluster_size}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value, 10);
+                      <Label htmlFor="cluster_mode_select">Cluster Type</Label>
+                      <Select
+                        value={formData.cluster_mode || 'aggregate'}
+                        onValueChange={(v) =>
                           setFormData((prev) => ({
                             ...prev,
-                            cluster_size: isNaN(val) ? 2 : Math.max(2, val),
-                          }));
-                        }}
-                      />
+                            cluster_mode: v as 'aggregate' | 'fan_out',
+                          }))
+                        }
+                      >
+                        <SelectTrigger id="cluster_mode_select">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="aggregate">
+                            <div className="flex flex-col items-start">
+                              <span className="font-medium">Aggregate (external)</span>
+                              <span className="text-xs text-muted-foreground">
+                                One check_cmd that consolidates (F5, JMX, RAC…)
+                              </span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="fan_out">
+                            <div className="flex flex-col items-start">
+                              <span className="font-medium">Fan-out (per-node)</span>
+                              <span className="text-xs text-muted-foreground">
+                                Each node monitored and operated individually
+                              </span>
+                            </div>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="cluster_nodes">Server List (optional)</Label>
-                      <Textarea
-                        id="cluster_nodes"
-                        placeholder="srv1.prod&#10;srv2.prod&#10;srv3.prod"
-                        value={(formData.cluster_nodes || []).join('\n')}
-                        onChange={(e) => {
-                          const nodes = e.target.value
-                            .split('\n')
-                            .map((s) => s.trim())
-                            .filter(Boolean);
-                          setFormData((prev) => ({
-                            ...prev,
-                            cluster_nodes: nodes,
-                          }));
-                        }}
-                        rows={3}
-                        className="font-mono text-sm"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        One server per line. The first entry is the primary node where commands are executed.
-                      </p>
-                    </div>
+                    {formData.cluster_mode !== 'fan_out' && (
+                      <div className="space-y-2">
+                        <Label htmlFor="cluster_size">Number of Nodes</Label>
+                        <Input
+                          id="cluster_size"
+                          type="number"
+                          min={2}
+                          max={1000}
+                          value={formData.cluster_size}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            setFormData((prev) => ({
+                              ...prev,
+                              cluster_size: isNaN(val) ? 2 : Math.max(2, val),
+                            }));
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    {formData.cluster_mode !== 'fan_out' && (
+                      <div className="space-y-2">
+                        <Label htmlFor="cluster_nodes">Server List (optional)</Label>
+                        <Textarea
+                          id="cluster_nodes"
+                          placeholder="srv1.prod&#10;srv2.prod&#10;srv3.prod"
+                          value={(formData.cluster_nodes || []).join('\n')}
+                          onChange={(e) => {
+                            const nodes = e.target.value
+                              .split('\n')
+                              .map((s) => s.trim())
+                              .filter(Boolean);
+                            setFormData((prev) => ({
+                              ...prev,
+                              cluster_nodes: nodes,
+                            }));
+                          }}
+                          rows={3}
+                          className="font-mono text-sm"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          One server per line. The first entry is the primary node where commands are executed.
+                        </p>
+                      </div>
+                    )}
+
+                    {formData.cluster_mode === 'fan_out' && (
+                      <div className="space-y-3 rounded-md border border-dashed p-3">
+                        <p className="text-xs text-muted-foreground">
+                          Fan-out mode runs check/start/stop on every member independently.
+                          Manage members (hostname, agent, overrides) from the Members panel
+                          on the component detail view after saving.
+                        </p>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="cluster_health_policy">Health Policy</Label>
+                          <Select
+                            value={formData.cluster_health_policy || 'all_healthy'}
+                            onValueChange={(v) =>
+                              setFormData((prev) => ({
+                                ...prev,
+                                cluster_health_policy: v as typeof prev.cluster_health_policy,
+                              }))
+                            }
+                          >
+                            <SelectTrigger id="cluster_health_policy">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all_healthy">
+                                All members RUNNING (strict)
+                              </SelectItem>
+                              <SelectItem value="any_healthy">
+                                Any member RUNNING (lenient)
+                              </SelectItem>
+                              <SelectItem value="quorum">
+                                Majority (quorum)
+                              </SelectItem>
+                              <SelectItem value="threshold_pct">
+                                Percentage threshold
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {formData.cluster_health_policy === 'threshold_pct' && (
+                          <div className="space-y-2">
+                            <Label htmlFor="cluster_min_healthy_pct">
+                              Min Healthy % for RUNNING
+                            </Label>
+                            <Input
+                              id="cluster_min_healthy_pct"
+                              type="number"
+                              min={1}
+                              max={100}
+                              value={formData.cluster_min_healthy_pct ?? 100}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                setFormData((prev) => ({
+                                  ...prev,
+                                  cluster_min_healthy_pct: isNaN(val)
+                                    ? 100
+                                    : Math.max(1, Math.min(100, val)),
+                                }));
+                              }}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Between this threshold and 50% → DEGRADED. Below 50% → FAILED.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
