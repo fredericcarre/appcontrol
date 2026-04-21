@@ -244,11 +244,7 @@ pub async fn get_member(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let member = state
-        .cluster_member_repo
-        .get(id)
-        .await?
-        .ok_or_not_found()?;
+    let member = state.cluster_member_repo.get(id).await?.ok_or_not_found()?;
     let component = state
         .component_repo
         .get_component(member.component_id, *user.organization_id)
@@ -276,11 +272,7 @@ pub async fn update_member(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateMemberRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let existing = state
-        .cluster_member_repo
-        .get(id)
-        .await?
-        .ok_or_not_found()?;
+    let existing = state.cluster_member_repo.get(id).await?.ok_or_not_found()?;
     let component = state
         .component_repo
         .get_component(existing.component_id, *user.organization_id)
@@ -344,11 +336,7 @@ pub async fn delete_member(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let existing = state
-        .cluster_member_repo
-        .get(id)
-        .await?
-        .ok_or_not_found()?;
+    let existing = state.cluster_member_repo.get(id).await?.ok_or_not_found()?;
     let component = state
         .component_repo
         .get_component(existing.component_id, *user.organization_id)

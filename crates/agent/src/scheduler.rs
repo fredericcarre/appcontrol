@@ -105,8 +105,7 @@ impl CheckScheduler {
         // Collect the set of live CheckKeys from the new config.
         // - For non-fan-out components: (component_id, None)
         // - For fan-out components: (component_id, Some(member_id)) for each member
-        let mut live_keys: std::collections::HashSet<CheckKey> =
-            std::collections::HashSet::new();
+        let mut live_keys: std::collections::HashSet<CheckKey> = std::collections::HashSet::new();
         for c in &configs {
             if c.cluster_members.is_empty() {
                 live_keys.insert((c.component_id, None));
@@ -804,11 +803,7 @@ mod tests {
         scheduler
             .update_components(vec![make_fan_out_config(
                 comp,
-                vec![
-                    (m1, "echo ok1"),
-                    (m2, "echo ok2"),
-                    (m3, "echo ok3"),
-                ],
+                vec![(m1, "echo ok1"), (m2, "echo ok2"), (m3, "echo ok3")],
                 1,
             )])
             .await;

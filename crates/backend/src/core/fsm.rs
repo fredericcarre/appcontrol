@@ -363,11 +363,10 @@ pub async fn process_member_check_result(
         .map_err(|e| FsmError::Database(e.to_string()))?;
 
     // Load the component's health policy + threshold.
-    let (policy, min_pct) =
-        core_queries::fetch_cluster_policy(&state.db, component_id)
-            .await
-            .map_err(|e| FsmError::Database(e.to_string()))?
-            .unwrap_or_else(|| ("all_healthy".to_string(), 100));
+    let (policy, min_pct) = core_queries::fetch_cluster_policy(&state.db, component_id)
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?
+        .unwrap_or_else(|| ("all_healthy".to_string(), 100));
 
     // Snapshot all enabled members' states and derive the aggregated one.
     let member_states = state

@@ -143,10 +143,7 @@ pub trait ClusterMemberRepository: Send + Sync {
 
     /// Load all members assigned to `agent_id` for fan-out components,
     /// grouped by component_id with commands resolved (override or inherited).
-    async fn load_for_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Vec<AgentMemberConfig>, sqlx::Error>;
+    async fn load_for_agent(&self, agent_id: Uuid) -> Result<Vec<AgentMemberConfig>, sqlx::Error>;
 
     /// Upsert the member's cached state after a check result.
     async fn upsert_state(
@@ -256,10 +253,8 @@ impl ClusterMemberRepository for PgClusterMemberRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let state_map: std::collections::HashMap<Uuid, _> = states
-            .into_iter()
-            .map(|s| (s.0, (s.1, s.2, s.3)))
-            .collect();
+        let state_map: std::collections::HashMap<Uuid, _> =
+            states.into_iter().map(|s| (s.0, (s.1, s.2, s.3))).collect();
 
         Ok(members
             .into_iter()
@@ -392,10 +387,7 @@ impl ClusterMemberRepository for PgClusterMemberRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn load_for_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Vec<AgentMemberConfig>, sqlx::Error> {
+    async fn load_for_agent(&self, agent_id: Uuid) -> Result<Vec<AgentMemberConfig>, sqlx::Error> {
         // Only members of components in fan_out mode on non-suspended apps.
         // Commands are resolved: override → inherit from component.
         let sql = r#"
@@ -414,7 +406,15 @@ impl ClusterMemberRepository for PgClusterMemberRepository {
         "#;
         let rows = sqlx::query_as::<
             _,
-            (Uuid, Uuid, String, Option<String>, Option<String>, Option<String>, Value),
+            (
+                Uuid,
+                Uuid,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Value,
+            ),
         >(sql)
         .bind(crate::db::bind_id(agent_id))
         .fetch_all(&self.pool)
@@ -757,10 +757,7 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn load_for_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Vec<AgentMemberConfig>, sqlx::Error> {
+    async fn load_for_agent(&self, agent_id: Uuid) -> Result<Vec<AgentMemberConfig>, sqlx::Error> {
         let sql = r#"
             SELECT cm.id, c.id, cm.hostname,
                    COALESCE(cm.check_cmd_override, c.check_cmd) AS check_cmd,
