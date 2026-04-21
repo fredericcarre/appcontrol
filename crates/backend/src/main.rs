@@ -150,6 +150,9 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         app_repo: repository::apps::create_app_repository(pool.clone()),
         component_repo: repository::components::create_component_repository(pool.clone()),
+        cluster_member_repo: repository::cluster_members::create_cluster_member_repository(
+            pool.clone(),
+        ),
         team_repo: repository::teams::create_team_repository(pool.clone()),
         permission_repo: repository::permissions::create_permission_repository(pool.clone()),
         site_repo: repository::sites::create_site_repository(pool.clone()),

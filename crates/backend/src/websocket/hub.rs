@@ -529,6 +529,7 @@ mod tests {
             command: "start".to_string(),
             timeout_seconds: 30,
             exec_mode: "sync".to_string(),
+            cluster_member_id: None,
         };
         hub.send_to_agent(agent_id, cmd);
 
@@ -566,6 +567,7 @@ mod tests {
             command: "start".to_string(),
             timeout_seconds: 30,
             exec_mode: "sync".to_string(),
+            cluster_member_id: None,
         };
         hub.send_to_agent(agent_id, cmd);
 
