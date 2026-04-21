@@ -5,6 +5,7 @@ pub mod approvals;
 pub mod apps;
 pub mod break_glass;
 pub mod catalog;
+pub mod cluster_members;
 pub mod command_params;
 pub mod components;
 pub mod diagnostic;
@@ -133,6 +134,25 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/components/:id/logs/command/:name",
             post(logs::run_diagnostic_command),
+        )
+        // Fan-out cluster members
+        .route(
+            "/components/:id/members",
+            get(cluster_members::list_members).post(cluster_members::create_member),
+        )
+        .route(
+            "/members/:id",
+            get(cluster_members::get_member)
+                .put(cluster_members::update_member)
+                .delete(cluster_members::delete_member),
+        )
+        .route(
+            "/components/:id/members/actions/start",
+            post(cluster_members::batch_start),
+        )
+        .route(
+            "/components/:id/members/actions/stop",
+            post(cluster_members::batch_stop),
         )
         // Component site overrides (failover configuration)
         .route(

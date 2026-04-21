@@ -2775,3 +2775,35 @@ pub async fn cancel_rotation_tx(
     tx.commit().await?;
     Ok(())
 }
+
+// ============================================================================
+// Cluster aggregation queries (core/fsm.rs::process_member_check_result)
+// ============================================================================
+
+/// Fetch (cluster_health_policy, cluster_min_healthy_pct) for a component.
+/// Returns None if the component does not exist.
+pub async fn fetch_cluster_policy(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<Option<(String, i16)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        let row: Option<(String, i16)> = sqlx::query_as(
+            "SELECT cluster_health_policy, cluster_min_healthy_pct FROM components WHERE id = $1",
+        )
+        .bind(crate::db::bind_id(component_id))
+        .fetch_optional(pool)
+        .await?;
+        Ok(row)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let row: Option<(String, i16)> = sqlx::query_as(
+            "SELECT cluster_health_policy, cluster_min_healthy_pct FROM components WHERE id = $1",
+        )
+        .bind(DbUuid::from(component_id))
+        .fetch_optional(pool)
+        .await?;
+        Ok(row)
+    }
+}

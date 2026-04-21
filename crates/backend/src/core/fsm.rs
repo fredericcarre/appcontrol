@@ -322,6 +322,73 @@ pub async fn process_check_result(
     }
 }
 
+/// Process a check result attributed to a fan-out cluster member.
+///
+/// Unlike `process_check_result`, this does not drive the parent component's
+/// FSM directly via `next_state_from_check`: each member has its own state,
+/// stored in `cluster_member_state`. After updating the member, we compute the
+/// aggregated component state from the configured health policy and issue a
+/// component-level transition only when the aggregate changed.
+///
+/// `exit_code` maps to a per-member state:
+/// - 0    → RUNNING
+/// - 1    → DEGRADED
+/// - ≥ 2  → FAILED
+/// - other (e.g., -1 execution error) → UNREACHABLE
+pub async fn process_member_check_result(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+    member_id: Uuid,
+    exit_code: i32,
+    duration_ms: u32,
+    stdout: Option<&str>,
+) -> Result<(), FsmError> {
+    let member_state_str = match exit_code {
+        0 => "RUNNING",
+        1 => "DEGRADED",
+        c if c >= 2 => "FAILED",
+        _ => "UNREACHABLE",
+    };
+
+    state
+        .cluster_member_repo
+        .upsert_state(
+            member_id,
+            member_state_str,
+            exit_code as i16,
+            duration_ms as i32,
+            stdout,
+        )
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    // Load the component's health policy + threshold.
+    let (policy, min_pct) =
+        core_queries::fetch_cluster_policy(&state.db, component_id)
+            .await
+            .map_err(|e| FsmError::Database(e.to_string()))?
+            .unwrap_or_else(|| ("all_healthy".to_string(), 100));
+
+    // Snapshot all enabled members' states and derive the aggregated one.
+    let member_states = state
+        .cluster_member_repo
+        .get_states_for_component(component_id)
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    if let Some(derived) =
+        crate::repository::cluster_members::derive_component_state(&member_states, &policy, min_pct)
+    {
+        let current = get_current_state(&state.db, component_id).await?;
+        let desired = parse_state(derived)?;
+        if current != desired && is_valid_transition(current, desired) {
+            transition_component(state, component_id, desired).await?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Store a check result in check_events with optional metrics.
 pub async fn store_check_event(
     pool: &crate::db::DbPool,
