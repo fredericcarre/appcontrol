@@ -543,6 +543,7 @@ pub async fn start_single_component(
         command: start_cmd,
         timeout_seconds: timeout_secs as u32,
         exec_mode: "detached".to_string(),
+        cluster_member_id: None,
     };
 
     // Record dispatch in command_executions for audit trail
@@ -711,6 +712,7 @@ pub async fn stop_single_component(
         command: stop_cmd,
         timeout_seconds: timeout_secs as u32,
         exec_mode: "detached".to_string(),
+        cluster_member_id: None,
     };
 
     // Record dispatch in command_executions for audit trail
@@ -1038,6 +1040,7 @@ async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), 
             command: cmd,
             timeout_seconds: dinfo.stop_timeout_seconds as u32,
             exec_mode: "detached".to_string(),
+            cluster_member_id: None,
         };
 
         crate::repository::core_queries::record_command_dispatch(
@@ -1270,6 +1273,7 @@ pub async fn force_stop_single_component(
             command: cmd,
             timeout_seconds: timeout_secs as u32,
             exec_mode: "detached".to_string(),
+            cluster_member_id: None,
         };
 
         crate::repository::core_queries::record_command_dispatch(

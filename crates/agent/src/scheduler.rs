@@ -377,6 +377,7 @@ impl CheckScheduler {
                     duration_ms,
                     at: now,
                     metrics,
+                    cluster_member_id: None,
                 }));
             }
         }
@@ -467,6 +468,7 @@ mod tests {
             start_timeout_seconds: 120,
             stop_timeout_seconds: 60,
             env_vars: serde_json::json!({}),
+            cluster_members: vec![],
         }
     }
 

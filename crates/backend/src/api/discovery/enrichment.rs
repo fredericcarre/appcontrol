@@ -416,6 +416,7 @@ pub async fn read_file_content(
         command: command.clone(),
         timeout_seconds: 30,
         exec_mode: "sync".to_string(),
+        cluster_member_id: None,
     };
 
     let sent = state.ws_hub.send_to_agent(body.agent_id, msg);

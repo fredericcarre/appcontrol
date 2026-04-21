@@ -214,6 +214,7 @@ pub async fn execute_rebuild(
                         command: infra_cmd.clone(),
                         timeout_seconds: INFRA_CMD_TIMEOUT_SECS as u32,
                         exec_mode: "sync".to_string(),
+                        cluster_member_id: None,
                     };
 
                     // Record dispatch
@@ -268,6 +269,7 @@ pub async fn execute_rebuild(
                         command: rebuild_cmd.clone(),
                         timeout_seconds: REBUILD_CMD_TIMEOUT_SECS as u32,
                         exec_mode: "sync".to_string(),
+                        cluster_member_id: None,
                     };
 
                     super::sequencer::record_command_dispatch_public(
