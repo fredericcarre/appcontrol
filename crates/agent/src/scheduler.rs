@@ -7,6 +7,11 @@ use uuid::Uuid;
 
 use appcontrol_common::{AgentMessage, CheckResult, CheckType, ComponentConfig};
 
+/// Scheduler key: a component's component-level check, or a specific cluster member's check.
+/// - `(component_id, None)`: the component runs its own check_cmd (regular or aggregate cluster).
+/// - `(component_id, Some(member_id))`: a fan-out cluster member runs its resolved check_cmd.
+type CheckKey = (Uuid, Option<Uuid>);
+
 /// Staleness timeout: force-send a check result even if exit code hasn't changed
 /// after this many seconds. Ensures the backend always has a recent data point
 /// for each component, even if the health status never flips.
@@ -54,8 +59,9 @@ pub struct CheckScheduler {
     agent_id: Uuid,
     msg_tx: mpsc::UnboundedSender<AgentMessage>,
     components: tokio::sync::RwLock<HashMap<Uuid, ComponentConfig>>,
-    /// Per-component state: tracks last check time, last exit code, last send time.
-    check_state: tokio::sync::RwLock<HashMap<Uuid, ComponentCheckState>>,
+    /// Per-(component, optional member) state: tracks last check time, last exit code, last send time.
+    /// A fan-out cluster member has `Some(member_id)`; regular checks have `None`.
+    check_state: tokio::sync::RwLock<HashMap<CheckKey, ComponentCheckState>>,
 }
 
 impl CheckScheduler {
@@ -91,28 +97,41 @@ impl CheckScheduler {
     }
 
     /// Replace the current component list with a new configuration from the backend.
-    /// Cleans up check state for removed components.
+    /// Cleans up check state for components and fan-out members no longer in the config.
     pub async fn update_components(&self, configs: Vec<ComponentConfig>) {
         let mut components = self.components.write().await;
         let mut check_state = self.check_state.write().await;
 
-        // Collect new component IDs
-        let new_ids: std::collections::HashSet<Uuid> =
-            configs.iter().map(|c| c.component_id).collect();
+        // Collect the set of live CheckKeys from the new config.
+        // - For non-fan-out components: (component_id, None)
+        // - For fan-out components: (component_id, Some(member_id)) for each member
+        let mut live_keys: std::collections::HashSet<CheckKey> =
+            std::collections::HashSet::new();
+        for c in &configs {
+            if c.cluster_members.is_empty() {
+                live_keys.insert((c.component_id, None));
+            } else {
+                for m in &c.cluster_members {
+                    live_keys.insert((c.component_id, Some(m.member_id)));
+                }
+            }
+        }
 
-        // Remove stale check state for components no longer in the config
-        check_state.retain(|id, _| new_ids.contains(id));
+        // Remove stale check state for keys no longer in the config
+        check_state.retain(|k, _| live_keys.contains(k));
 
         // Replace component configs
         let with_check_cmd = configs.iter().filter(|c| c.check_cmd.is_some()).count();
+        let member_count: usize = configs.iter().map(|c| c.cluster_members.len()).sum();
         components.clear();
         for config in configs {
             components.insert(config.component_id, config);
         }
         tracing::info!(
-            "Scheduler updated: {} total components, {} with check_cmd",
+            "Scheduler updated: {} components (with check_cmd: {}), {} fan-out members",
             components.len(),
-            with_check_cmd
+            with_check_cmd,
+            member_count,
         );
     }
 
@@ -184,12 +203,9 @@ impl CheckScheduler {
 
     /// Evaluate which components are due for a check and run them.
     ///
-    /// Anti-drift and anti-piling guarantees:
-    /// - `last_checked_at` is set at check *start* (not completion), so a check
-    ///   that takes 5s with a 30s interval fires next at t=30s, not t=35s.
-    /// - `in_flight` flag prevents double-execution: if a check takes longer
-    ///   than its interval, the scheduler skips that component until it finishes.
-    /// - Command hash dedup: identical commands execute only once per cycle.
+    /// A "target" is either a plain component (aggregate mode) or a single
+    /// fan-out cluster member; both honor the same anti-drift + anti-piling
+    /// + command-hash-dedup + delta-dedup rules.
     async fn run_due_checks(&self) {
         let now = chrono::Utc::now();
         let components = self.components.read().await;
@@ -203,93 +219,96 @@ impl CheckScheduler {
             return;
         }
 
-        // Determine which components are due for a check
-        let mut due_components: Vec<(Uuid, &ComponentConfig)> = Vec::new();
+        // Flatten components into check targets.
+        // Aggregate component → one target with key (comp_id, None).
+        // Fan-out component → one target per member with key (comp_id, Some(member_id)).
+        struct CheckTarget<'a> {
+            key: CheckKey,
+            check_cmd: &'a str,
+            interval_secs: i64,
+        }
+        let mut targets: Vec<CheckTarget<'_>> = Vec::new();
+        for (comp_id, config) in components.iter() {
+            let interval_secs = if config.check_interval_seconds > 0 {
+                config.check_interval_seconds as i64
+            } else {
+                30
+            };
 
+            if config.cluster_members.is_empty() {
+                // Regular / aggregate component
+                if let Some(cmd) = config.check_cmd.as_ref() {
+                    targets.push(CheckTarget {
+                        key: (*comp_id, None),
+                        check_cmd: cmd.as_str(),
+                        interval_secs,
+                    });
+                }
+            } else {
+                // Fan-out: one target per member with its resolved check_cmd
+                for m in &config.cluster_members {
+                    if let Some(cmd) = m.check_cmd.as_ref() {
+                        targets.push(CheckTarget {
+                            key: (*comp_id, Some(m.member_id)),
+                            check_cmd: cmd.as_str(),
+                            interval_secs,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Determine which targets are due
+        let mut due_targets: Vec<CheckTarget<'_>> = Vec::new();
         {
             let check_state = self.check_state.read().await;
-            for (comp_id, config) in components.iter() {
-                if config.check_cmd.is_none() {
-                    tracing::debug!("Component {} has no check_cmd, skipping", comp_id);
-                    continue;
-                }
-
-                let interval_secs = if config.check_interval_seconds > 0 {
-                    config.check_interval_seconds as i64
-                } else {
-                    30 // default to 30s per spec
-                };
-
-                let is_due = match check_state.get(comp_id) {
+            for t in targets {
+                let is_due = match check_state.get(&t.key) {
                     Some(state) => {
-                        // Skip if already in flight (prevents piling)
                         if state.in_flight {
-                            tracing::debug!("Component {} in flight, skipping", comp_id);
                             continue;
                         }
                         match state.last_checked_at {
-                            Some(last) => {
-                                let elapsed = (now - last).num_seconds();
-                                let due = elapsed >= interval_secs;
-                                tracing::debug!(
-                                    "Component {} last_checked {}s ago, interval {}s, due={}",
-                                    comp_id,
-                                    elapsed,
-                                    interval_secs,
-                                    due
-                                );
-                                due
-                            }
-                            None => {
-                                tracing::debug!("Component {} never checked, due=true", comp_id);
-                                true
-                            }
+                            Some(last) => (now - last).num_seconds() >= t.interval_secs,
+                            None => true,
                         }
                     }
-                    None => {
-                        tracing::debug!("Component {} no check state yet, due=true", comp_id);
-                        true
-                    }
+                    None => true,
                 };
-
                 if is_due {
-                    due_components.push((*comp_id, config));
+                    due_targets.push(t);
                 }
             }
-        } // drop read lock
+        }
 
-        if due_components.is_empty() {
-            tracing::info!("No components due for check this tick");
+        if due_targets.is_empty() {
+            tracing::info!("No targets due for check this tick");
             return;
         }
 
-        tracing::info!("Running checks for {} due components", due_components.len());
+        tracing::info!("Running checks for {} due targets", due_targets.len());
 
-        // Mark all due components as in_flight and set last_checked_at to NOW
-        // (start time, not completion time — prevents drift)
+        // Mark due targets as in_flight (start time, not completion time — prevents drift)
         {
             let mut state = self.check_state.write().await;
-            for (comp_id, _) in &due_components {
-                let cs = state
-                    .entry(*comp_id)
-                    .or_insert_with(|| ComponentCheckState {
-                        last_checked_at: None,
-                        last_exit_code: None,
-                        last_sent_at: None,
-                        in_flight: false,
-                    });
+            for t in &due_targets {
+                let cs = state.entry(t.key).or_insert_with(|| ComponentCheckState {
+                    last_checked_at: None,
+                    last_exit_code: None,
+                    last_sent_at: None,
+                    in_flight: false,
+                });
                 cs.in_flight = true;
                 cs.last_checked_at = Some(now);
             }
         }
 
-        // Execute checks with command hash deduplication.
-        // If multiple components share the same check_cmd, execute once and share the result.
+        // Execute checks with command hash deduplication across this cycle.
         let mut executed_cmds: HashMap<String, (i32, String, u32)> = HashMap::new();
 
-        for (comp_id, config) in &due_components {
-            let check_cmd = config.check_cmd.as_ref().unwrap();
-            let cmd_hash = hash_command(check_cmd);
+        for t in &due_targets {
+            let cmd_hash = hash_command(t.check_cmd);
+            let (comp_id, member_id) = t.key;
 
             let (exit_code, stdout, duration_ms) =
                 if let Some(cached) = executed_cmds.get(&cmd_hash) {
@@ -297,15 +316,15 @@ impl CheckScheduler {
                 } else {
                     let timeout = Duration::from_secs(30);
                     let start = std::time::Instant::now();
-                    match crate::executor::execute_sync(check_cmd, timeout).await {
+                    match crate::executor::execute_sync(t.check_cmd, timeout).await {
                         Ok(result) => {
-                            // Log stderr when command fails — helps debug missing scripts
                             if result.exit_code != 0 && !result.stderr.is_empty() {
                                 tracing::warn!(
                                     component_id = %comp_id,
+                                    member_id = ?member_id,
                                     exit_code = result.exit_code,
                                     stderr = %result.stderr.trim(),
-                                    cmd = %check_cmd,
+                                    cmd = %t.check_cmd,
                                     "Check command failed"
                                 );
                             }
@@ -313,7 +332,6 @@ impl CheckScheduler {
                                 && result.stdout.is_empty()
                                 && !result.stderr.is_empty()
                             {
-                                // Forward stderr as stdout so it shows in the UI
                                 format!("[stderr] {}", result.stderr.trim())
                             } else {
                                 result.stdout.clone()
@@ -325,7 +343,8 @@ impl CheckScheduler {
                         Err(e) => {
                             tracing::error!(
                                 component_id = %comp_id,
-                                cmd = %check_cmd,
+                                member_id = ?member_id,
+                                cmd = %t.check_cmd,
                                 "Check command execution error: {}", e
                             );
                             let duration = start.elapsed().as_millis() as u32;
@@ -336,20 +355,15 @@ impl CheckScheduler {
                     }
                 };
 
-            // Update check state, clear in_flight, and determine if we should send
             let mut state = self.check_state.write().await;
-            let cs = state
-                .entry(*comp_id)
-                .or_insert_with(|| ComponentCheckState {
-                    last_checked_at: None,
-                    last_exit_code: None,
-                    last_sent_at: None,
-                    in_flight: false,
-                });
-
+            let cs = state.entry(t.key).or_insert_with(|| ComponentCheckState {
+                last_checked_at: None,
+                last_exit_code: None,
+                last_sent_at: None,
+                in_flight: false,
+            });
             cs.in_flight = false;
 
-            // Delta check: send if exit code changed OR staleness timeout exceeded
             let exit_code_changed = cs.last_exit_code != Some(exit_code);
             let stale = cs
                 .last_sent_at
@@ -358,26 +372,18 @@ impl CheckScheduler {
             if exit_code_changed || stale {
                 cs.last_exit_code = Some(exit_code);
                 cs.last_sent_at = Some(now);
+                drop(state); // release lock before potentially slow send
 
-                tracing::debug!(
-                    component_id = %comp_id,
-                    exit_code = exit_code,
-                    reason = if exit_code_changed { "changed" } else { "stale" },
-                    "Sending CheckResult"
-                );
-
-                // Extract generic metrics from stdout (any valid JSON)
                 let metrics = extract_metrics_from_stdout(&stdout);
-
                 let _ = self.msg_tx.send(AgentMessage::CheckResult(CheckResult {
-                    component_id: *comp_id,
+                    component_id: comp_id,
                     check_type: CheckType::Health,
                     exit_code,
                     stdout: Some(stdout.clone()),
                     duration_ms,
                     at: now,
                     metrics,
-                    cluster_member_id: None,
+                    cluster_member_id: member_id,
                 }));
             }
         }
@@ -472,6 +478,41 @@ mod tests {
         }
     }
 
+    fn make_fan_out_config(
+        comp_id: Uuid,
+        members: Vec<(Uuid, &str)>,
+        interval: u32,
+    ) -> ComponentConfig {
+        ComponentConfig {
+            component_id: comp_id,
+            name: "fan_out_test".to_string(),
+            check_cmd: None,
+            start_cmd: None,
+            stop_cmd: None,
+            integrity_check_cmd: None,
+            post_start_check_cmd: None,
+            infra_check_cmd: None,
+            rebuild_cmd: None,
+            rebuild_infra_cmd: None,
+            check_interval_seconds: interval,
+            start_timeout_seconds: 120,
+            stop_timeout_seconds: 60,
+            env_vars: serde_json::json!({}),
+            cluster_members: members
+                .into_iter()
+                .enumerate()
+                .map(|(i, (mid, cmd))| appcontrol_common::ClusterMemberConfig {
+                    member_id: mid,
+                    hostname: format!("srv-{i:03}"),
+                    check_cmd: Some(cmd.to_string()),
+                    start_cmd: None,
+                    stop_cmd: None,
+                    env_vars: serde_json::json!({}),
+                })
+                .collect(),
+        }
+    }
+
     #[test]
     fn test_hash_command_deterministic() {
         let h1 = hash_command("pgrep nginx");
@@ -535,7 +576,7 @@ mod tests {
         {
             let mut state = scheduler.check_state.write().await;
             state.insert(
-                id1,
+                (id1, None),
                 ComponentCheckState {
                     last_checked_at: Some(chrono::Utc::now()),
                     last_exit_code: Some(0),
@@ -552,7 +593,7 @@ mod tests {
             .await;
 
         let state = scheduler.check_state.read().await;
-        assert!(!state.contains_key(&id1));
+        assert!(!state.contains_key(&(id1, None)));
     }
 
     #[tokio::test]
@@ -670,7 +711,7 @@ mod tests {
         // Manually set last_sent_at to 6 minutes ago to simulate staleness
         {
             let mut state = scheduler.check_state.write().await;
-            if let Some(cs) = state.get_mut(&id1) {
+            if let Some(cs) = state.get_mut(&(id1, None)) {
                 cs.last_sent_at = Some(
                     chrono::Utc::now() - chrono::Duration::seconds(STALENESS_TIMEOUT_SECS + 1),
                 );
@@ -746,6 +787,94 @@ mod tests {
             }
         }
         assert_eq!(count, 0, "Component should not be due yet (60s interval)");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_fan_out_emits_one_result_per_member() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let scheduler = Arc::new(CheckScheduler::new(Uuid::new_v4(), tx));
+
+        let comp = Uuid::new_v4();
+        let m1 = Uuid::new_v4();
+        let m2 = Uuid::new_v4();
+        let m3 = Uuid::new_v4();
+
+        // 3 members on the same component, each with its own per-member check command
+        scheduler
+            .update_components(vec![make_fan_out_config(
+                comp,
+                vec![
+                    (m1, "echo ok1"),
+                    (m2, "echo ok2"),
+                    (m3, "echo ok3"),
+                ],
+                1,
+            )])
+            .await;
+
+        scheduler.run_due_checks().await;
+
+        let mut by_member: std::collections::HashMap<Option<Uuid>, CheckResult> =
+            std::collections::HashMap::new();
+        while let Ok(msg) = rx.try_recv() {
+            if let AgentMessage::CheckResult(cr) = msg {
+                assert_eq!(cr.component_id, comp);
+                by_member.insert(cr.cluster_member_id, cr);
+            }
+        }
+
+        assert_eq!(by_member.len(), 3, "one CheckResult per fan-out member");
+        assert!(by_member.contains_key(&Some(m1)));
+        assert!(by_member.contains_key(&Some(m2)));
+        assert!(by_member.contains_key(&Some(m3)));
+        // No component-level result should be emitted when fan-out is active
+        assert!(!by_member.contains_key(&None));
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_fan_out_member_delta_dedup_is_per_member() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let scheduler = Arc::new(CheckScheduler::new(Uuid::new_v4(), tx));
+
+        let comp = Uuid::new_v4();
+        let m1 = Uuid::new_v4();
+        let m2 = Uuid::new_v4();
+
+        // Both members use the same command: should produce distinct CheckResults
+        // thanks to command-hash cache reuse but per-member delta state.
+        scheduler
+            .update_components(vec![make_fan_out_config(
+                comp,
+                vec![(m1, "echo same"), (m2, "echo same")],
+                1,
+            )])
+            .await;
+
+        scheduler.run_due_checks().await;
+        let mut first_cycle = 0;
+        while let Ok(msg) = rx.try_recv() {
+            if matches!(msg, AgentMessage::CheckResult(_)) {
+                first_cycle += 1;
+            }
+        }
+        assert_eq!(first_cycle, 2);
+
+        // Wait for the 1s interval to elapse
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        scheduler.run_due_checks().await;
+        let mut second_cycle = 0;
+        while let Ok(msg) = rx.try_recv() {
+            if matches!(msg, AgentMessage::CheckResult(_)) {
+                second_cycle += 1;
+            }
+        }
+        assert_eq!(
+            second_cycle, 0,
+            "identical exit codes should be deduped per-member"
+        );
     }
 
     // =========================================================================
