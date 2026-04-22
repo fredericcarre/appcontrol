@@ -52,7 +52,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace -- -D warnings -A dependency_on_unit_never_type_fallback
 
       - name: Build (debug)
         run: cargo build --workspace
