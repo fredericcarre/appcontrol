@@ -1,0 +1,77 @@
+{
+  "name": "Windows Cluster Example",
+  "description": "Demonstrates cluster mode on Windows with file-based commands. Each component uses cmd /c to create/delete/check files to simulate start/stop/health-check without needing real services.",
+  "tags": {
+    "env": "demo",
+    "platform": "windows",
+    "purpose": "cluster-quickstart"
+  },
+  "components": [
+    {
+      "name": "database-cluster",
+      "display_name": "Database Cluster",
+      "component_type": "database",
+      "host": "localhost",
+      "cluster_size": 3,
+      "cluster_nodes": ["DB-PRIMARY", "DB-REPLICA-1", "DB-REPLICA-2"],
+      "check_cmd": "cmd /c if exist C:\\temp\\appcontrol\\db-cluster.running (exit 0) else (exit 1)",
+      "start_cmd": "cmd /c if not exist C:\\temp\\appcontrol mkdir C:\\temp\\appcontrol & type nul > C:\\temp\\appcontrol\\db-cluster.running",
+      "stop_cmd": "cmd /c del /f C:\\temp\\appcontrol\\db-cluster.running 2>nul",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 60,
+      "stop_timeout_secs": 30,
+      "position": {"x": 400, "y": 400}
+    },
+    {
+      "name": "cache-cluster",
+      "display_name": "Cache Cluster",
+      "component_type": "cache",
+      "host": "localhost",
+      "cluster_size": 3,
+      "cluster_nodes": ["CACHE-01", "CACHE-02", "CACHE-03"],
+      "check_cmd": "cmd /c if exist C:\\temp\\appcontrol\\cache-cluster.running (exit 0) else (exit 1)",
+      "start_cmd": "cmd /c if not exist C:\\temp\\appcontrol mkdir C:\\temp\\appcontrol & type nul > C:\\temp\\appcontrol\\cache-cluster.running",
+      "stop_cmd": "cmd /c del /f C:\\temp\\appcontrol\\cache-cluster.running 2>nul",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 15,
+      "position": {"x": 200, "y": 250}
+    },
+    {
+      "name": "message-broker",
+      "display_name": "Message Broker",
+      "component_type": "middleware",
+      "host": "localhost",
+      "cluster_size": 3,
+      "cluster_nodes": ["BROKER-01", "BROKER-02", "BROKER-03"],
+      "check_cmd": "cmd /c if exist C:\\temp\\appcontrol\\broker.running (exit 0) else (exit 1)",
+      "start_cmd": "cmd /c if not exist C:\\temp\\appcontrol mkdir C:\\temp\\appcontrol & type nul > C:\\temp\\appcontrol\\broker.running",
+      "stop_cmd": "cmd /c del /f C:\\temp\\appcontrol\\broker.running 2>nul",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 60,
+      "stop_timeout_secs": 30,
+      "position": {"x": 600, "y": 250}
+    },
+    {
+      "name": "app-server",
+      "display_name": "Application Server",
+      "component_type": "application",
+      "host": "localhost",
+      "cluster_size": 2,
+      "cluster_nodes": ["APP-SVR-01", "APP-SVR-02"],
+      "check_cmd": "cmd /c if exist C:\\temp\\appcontrol\\app-server.running (exit 0) else (exit 1)",
+      "start_cmd": "cmd /c if not exist C:\\temp\\appcontrol mkdir C:\\temp\\appcontrol & type nul > C:\\temp\\appcontrol\\app-server.running",
+      "stop_cmd": "cmd /c del /f C:\\temp\\appcontrol\\app-server.running 2>nul",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 15,
+      "position": {"x": 400, "y": 100}
+    }
+  ],
+  "dependencies": [
+    {"from": "cache-cluster", "to": "database-cluster"},
+    {"from": "message-broker", "to": "database-cluster"},
+    {"from": "app-server", "to": "cache-cluster"},
+    {"from": "app-server", "to": "message-broker"}
+  ]
+}

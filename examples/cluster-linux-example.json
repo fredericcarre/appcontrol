@@ -1,0 +1,77 @@
+{
+  "name": "Linux Cluster Example",
+  "description": "Demonstrates cluster mode on Linux with file-based commands. Each component uses touch/rm/test to simulate start/stop/health-check without needing real services.",
+  "tags": {
+    "env": "demo",
+    "platform": "linux",
+    "purpose": "cluster-quickstart"
+  },
+  "components": [
+    {
+      "name": "database-cluster",
+      "display_name": "Database Cluster",
+      "component_type": "database",
+      "host": "localhost",
+      "cluster_size": 3,
+      "cluster_nodes": ["db-primary.local", "db-replica-1.local", "db-replica-2.local"],
+      "check_cmd": "test -f /tmp/appcontrol/db-cluster.running",
+      "start_cmd": "mkdir -p /tmp/appcontrol && touch /tmp/appcontrol/db-cluster.running",
+      "stop_cmd": "rm -f /tmp/appcontrol/db-cluster.running",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 60,
+      "stop_timeout_secs": 30,
+      "position": {"x": 400, "y": 400}
+    },
+    {
+      "name": "cache-cluster",
+      "display_name": "Cache Cluster",
+      "component_type": "cache",
+      "host": "localhost",
+      "cluster_size": 3,
+      "cluster_nodes": ["cache-1.local", "cache-2.local", "cache-3.local"],
+      "check_cmd": "test -f /tmp/appcontrol/cache-cluster.running",
+      "start_cmd": "mkdir -p /tmp/appcontrol && touch /tmp/appcontrol/cache-cluster.running",
+      "stop_cmd": "rm -f /tmp/appcontrol/cache-cluster.running",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 15,
+      "position": {"x": 200, "y": 250}
+    },
+    {
+      "name": "message-broker",
+      "display_name": "Message Broker",
+      "component_type": "middleware",
+      "host": "localhost",
+      "cluster_size": 3,
+      "cluster_nodes": ["broker-1.local", "broker-2.local", "broker-3.local"],
+      "check_cmd": "test -f /tmp/appcontrol/broker.running",
+      "start_cmd": "mkdir -p /tmp/appcontrol && touch /tmp/appcontrol/broker.running",
+      "stop_cmd": "rm -f /tmp/appcontrol/broker.running",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 60,
+      "stop_timeout_secs": 30,
+      "position": {"x": 600, "y": 250}
+    },
+    {
+      "name": "app-server",
+      "display_name": "Application Server",
+      "component_type": "application",
+      "host": "localhost",
+      "cluster_size": 2,
+      "cluster_nodes": ["app-1.local", "app-2.local"],
+      "check_cmd": "test -f /tmp/appcontrol/app-server.running",
+      "start_cmd": "mkdir -p /tmp/appcontrol && touch /tmp/appcontrol/app-server.running",
+      "stop_cmd": "rm -f /tmp/appcontrol/app-server.running",
+      "check_interval_secs": 10,
+      "start_timeout_secs": 30,
+      "stop_timeout_secs": 15,
+      "position": {"x": 400, "y": 100}
+    }
+  ],
+  "dependencies": [
+    {"from": "cache-cluster", "to": "database-cluster"},
+    {"from": "message-broker", "to": "database-cluster"},
+    {"from": "app-server", "to": "cache-cluster"},
+    {"from": "app-server", "to": "message-broker"}
+  ]
+}
