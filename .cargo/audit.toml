@@ -22,4 +22,10 @@ ignore = [
     # all traffic is HTTP/1.1 or HTTP/2 over TLS.
     # Will be resolved when reqwest updates to a fixed quinn version.
     "RUSTSEC-2026-0037",
+
+    # rustls-webpki 0.101.7 — URI name constraints bypass (CVSS 2.2 low)
+    # Pulled in transitively by rustls 0.21.12 via sqlx 0.7.
+    # No fix available for the 0.101.x branch; our 0.103.x is patched (0.103.13).
+    # Will be resolved when upgrading to sqlx 0.8+ (which uses rustls 0.23+).
+    "RUSTSEC-2026-0098",
 ]
