@@ -728,7 +728,11 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Audit
-        run: cargo audit
+        run: |
+          echo "=== Audit config ==="
+          cat .cargo/audit.toml
+          echo "=== Running audit ==="
+          cargo audit
 
   # ---------------------------------------------------------------------------
   # Docker Image Security Scan — trivy vulnerability scanner
