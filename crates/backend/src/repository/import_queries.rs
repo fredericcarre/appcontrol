@@ -456,10 +456,10 @@ pub async fn find_agent_at_site_by_host(
     org_id: Uuid,
     site_id: Uuid,
     host: &str,
-) -> Result<Option<(Uuid,)>, sqlx::Error> {
+) -> Result<Option<(DbUuid,)>, sqlx::Error> {
     #[cfg(feature = "postgres")]
     {
-        sqlx::query_as::<_, (Uuid,)>(
+        sqlx::query_as::<_, (DbUuid,)>(
             r#"SELECT a.id FROM agents a
                JOIN gateways g ON a.gateway_id = g.id
                WHERE a.organization_id = $1 AND g.site_id = $2
@@ -476,7 +476,7 @@ pub async fn find_agent_at_site_by_host(
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
-        sqlx::query_as::<_, (Uuid,)>(
+        sqlx::query_as::<_, (DbUuid,)>(
             r#"SELECT a.id FROM agents a
                JOIN gateways g ON a.gateway_id = g.id
                WHERE a.organization_id = $1 AND g.site_id = $2
@@ -515,8 +515,8 @@ pub async fn find_app_by_name(
     pool: &DbPool,
     org_id: Uuid,
     name: &str,
-) -> Result<Option<(Uuid,)>, sqlx::Error> {
-    sqlx::query_as::<_, (Uuid,)>(
+) -> Result<Option<(DbUuid,)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid,)>(
         "SELECT id FROM applications WHERE organization_id = $1 AND name = $2",
     )
     .bind(crate::db::bind_id(org_id))
@@ -670,8 +670,8 @@ pub async fn find_site_by_code(
     pool: &DbPool,
     org_id: Uuid,
     code: &str,
-) -> Result<Option<(Uuid,)>, sqlx::Error> {
-    sqlx::query_as::<_, (Uuid,)>("SELECT id FROM sites WHERE organization_id = $1 AND code = $2")
+) -> Result<Option<(DbUuid,)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid,)>("SELECT id FROM sites WHERE organization_id = $1 AND code = $2")
         .bind(crate::db::bind_id(org_id))
         .bind(code)
         .fetch_optional(pool)
@@ -789,10 +789,10 @@ pub async fn find_existing_app_for_preview(
 pub async fn find_default_site(
     pool: &DbPool,
     org_id: Uuid,
-) -> Result<Option<(Uuid,)>, sqlx::Error> {
+) -> Result<Option<(DbUuid,)>, sqlx::Error> {
     #[cfg(feature = "postgres")]
     {
-        sqlx::query_as::<_, (Uuid,)>(
+        sqlx::query_as::<_, (DbUuid,)>(
             "SELECT id FROM sites WHERE organization_id = $1 AND is_active = true ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
         )
         .bind(org_id)
@@ -801,7 +801,7 @@ pub async fn find_default_site(
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
-        sqlx::query_as::<_, (Uuid,)>(
+        sqlx::query_as::<_, (DbUuid,)>(
             "SELECT id FROM sites WHERE organization_id = $1 AND is_active = 1 ORDER BY CASE site_type WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1",
         )
         .bind(DbUuid::from(org_id))

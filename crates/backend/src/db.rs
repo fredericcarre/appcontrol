@@ -122,6 +122,9 @@ impl<'q> sqlx::Encode<'q, sqlx::Postgres> for DbUuid {
 impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for DbUuid {
     fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         let text: &str = <&str as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
+        if text.is_empty() {
+            return Err("empty string is not a valid UUID (NULL column?)".into());
+        }
         let uuid = Uuid::parse_str(text)?;
         Ok(DbUuid(uuid))
     }
@@ -158,6 +161,11 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DbUuid {
 #[inline]
 pub fn bind_id(id: impl Into<Uuid>) -> DbUuid {
     DbUuid::from(id.into())
+}
+
+#[inline]
+pub fn bind_opt_id(id: Option<impl Into<Uuid>>) -> Option<DbUuid> {
+    id.map(|v| DbUuid::from(v.into()))
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -325,20 +333,17 @@ pub async fn create_pool(config: &AppConfig) -> Result<DbPool, sqlx::Error> {
         }
 
         sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(config.db_pool_size.min(16)) // SQLite doesn't benefit from many connections
+            .max_connections(config.db_pool_size.min(4)) // SQLite: single writer, minimal pool
             .idle_timeout(Some(Duration::from_secs(config.db_idle_timeout_secs)))
             .acquire_timeout(Duration::from_secs(config.db_connect_timeout_secs))
             .after_connect(|conn, _meta| {
                 Box::pin(async move {
                     use sqlx::Executor;
-                    // Enable WAL mode for better concurrency
                     conn.execute("PRAGMA journal_mode=WAL").await?;
-                    // Busy timeout for handling concurrent access
-                    conn.execute("PRAGMA busy_timeout=30000").await?;
-                    // Foreign keys enforcement (off by default in SQLite)
+                    conn.execute("PRAGMA busy_timeout=60000").await?;
                     conn.execute("PRAGMA foreign_keys=ON").await?;
-                    // Synchronous mode for durability (NORMAL is good balance)
                     conn.execute("PRAGMA synchronous=NORMAL").await?;
+                    conn.execute("PRAGMA wal_autocheckpoint=1000").await?;
                     Ok(())
                 })
             })
@@ -346,7 +351,8 @@ pub async fn create_pool(config: &AppConfig) -> Result<DbPool, sqlx::Error> {
                 config
                     .database_url
                     .parse::<sqlx::sqlite::SqliteConnectOptions>()?
-                    .create_if_missing(true),
+                    .create_if_missing(true)
+                    .statement_cache_capacity(100),
             )
             .await
     }

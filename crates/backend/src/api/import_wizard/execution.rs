@@ -34,7 +34,7 @@ pub async fn execute_import(
         None => {
             let site = repo::find_default_site(&state.db, *user.organization_id).await?;
             match site {
-                Some((id,)) => id,
+                Some((id,)) => *id,
                 None => {
                     let new_site_id = Uuid::new_v4();
                     repo::create_default_site(&state.db, new_site_id, *user.organization_id)
@@ -80,8 +80,8 @@ pub async fn execute_import(
             (Uuid::new_v4(), new_name, false)
         }
         (ConflictAction::Update, Some((existing_id,))) => {
-            repo::delete_app_children_for_update(&state.db, existing_id).await?;
-            (existing_id, original_name, true)
+            repo::delete_app_children_for_update(&state.db, *existing_id).await?;
+            (*existing_id, original_name, true)
         }
     };
 
@@ -339,7 +339,7 @@ pub async fn execute_import(
                     .await?;
 
             let override_site_id = match site_row {
-                Some((id,)) => id,
+                Some((id,)) => *id,
                 None => {
                     warnings.push(format!(
                         "Component '{}': site override for code '{}' skipped",
@@ -359,7 +359,7 @@ pub async fn execute_import(
                     )
                     .await?;
                     match agent_row {
-                        Some((id,)) => Some(id),
+                        Some((id,)) => Some(*id),
                         None => {
                             warnings.push(format!(
                             "Component '{}': site '{}' host_override '{}' could not be resolved",
