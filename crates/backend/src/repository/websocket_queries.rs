@@ -391,10 +391,13 @@ pub async fn insert_discovery_report(
     report: &Value,
     scanned_at: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), sqlx::Error> {
+    let id = Uuid::new_v4();
+
     #[cfg(feature = "postgres")]
     sqlx::query(
-        "INSERT INTO discovery_reports (agent_id, hostname, report, scanned_at) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO discovery_reports (id, agent_id, hostname, report, scanned_at) VALUES ($1, $2, $3, $4, $5)",
     )
+    .bind(id)
     .bind(agent_id)
     .bind(hostname)
     .bind(report)
@@ -404,8 +407,9 @@ pub async fn insert_discovery_report(
 
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     sqlx::query(
-        "INSERT INTO discovery_reports (agent_id, hostname, report, scanned_at) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO discovery_reports (id, agent_id, hostname, report, scanned_at) VALUES ($1, $2, $3, $4, $5)",
     )
+    .bind(DbUuid::from(id))
     .bind(DbUuid::from(agent_id))
     .bind(hostname)
     .bind(serde_json::to_string(report).unwrap_or_default())
