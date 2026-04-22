@@ -109,7 +109,10 @@ impl sqlx::Type<sqlx::Postgres> for DbUuid {
 
 #[cfg(feature = "postgres")]
 impl<'q> sqlx::Encode<'q, sqlx::Postgres> for DbUuid {
-    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> sqlx::encode::IsNull {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         <Uuid as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
     }
 }
@@ -139,7 +142,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DbUuid {
     fn encode_by_ref(
         &self,
         args: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
-    ) -> sqlx::encode::IsNull {
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         let text = self.0.to_string();
         <String as sqlx::Encode<sqlx::Sqlite>>::encode(text, args)
     }
@@ -210,7 +213,10 @@ impl sqlx::Type<sqlx::Postgres> for DbJson {
 
 #[cfg(feature = "postgres")]
 impl<'q> sqlx::Encode<'q, sqlx::Postgres> for DbJson {
-    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> sqlx::encode::IsNull {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         <serde_json::Value as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
     }
 }
@@ -240,7 +246,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for DbJson {
     fn encode_by_ref(
         &self,
         args: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
-    ) -> sqlx::encode::IsNull {
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         let wrapper = sqlx::types::Json(&self.0);
         <sqlx::types::Json<&serde_json::Value> as sqlx::Encode<sqlx::Sqlite>>::encode(wrapper, args)
     }
@@ -633,7 +639,10 @@ impl sqlx::Type<sqlx::Postgres> for UuidArray {
 
 #[cfg(feature = "postgres")]
 impl<'q> sqlx::Encode<'q, sqlx::Postgres> for UuidArray {
-    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> sqlx::encode::IsNull {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         <Vec<Uuid> as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
     }
 }
@@ -666,7 +675,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for UuidArray {
     fn encode_by_ref(
         &self,
         args: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
-    ) -> sqlx::encode::IsNull {
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         let json = serde_json::to_string(&self.0).unwrap_or_else(|_| "[]".to_string());
         <String as sqlx::Encode<sqlx::Sqlite>>::encode(json, args)
     }
@@ -871,7 +880,10 @@ impl sqlx::Type<sqlx::Postgres> for IntArray {
 
 #[cfg(feature = "postgres")]
 impl<'q> sqlx::Encode<'q, sqlx::Postgres> for IntArray {
-    fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> sqlx::encode::IsNull {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         <Vec<i32> as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
     }
 }
@@ -901,7 +913,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for IntArray {
     fn encode_by_ref(
         &self,
         args: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
-    ) -> sqlx::encode::IsNull {
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         let json = serde_json::to_string(&self.0).unwrap_or_else(|_| "[]".to_string());
         <String as sqlx::Encode<sqlx::Sqlite>>::encode(json, args)
     }
