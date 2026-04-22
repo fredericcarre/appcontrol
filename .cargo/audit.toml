@@ -28,4 +28,10 @@ ignore = [
     # No fix available for the 0.101.x branch; our 0.103.x is patched (0.103.13).
     # Will be resolved when upgrading to sqlx 0.8+ (which uses rustls 0.23+).
     "RUSTSEC-2026-0098",
+
+    # rustls-webpki 0.101.7 — Wildcard name constraints accepted incorrectly
+    # Same transitive dependency as above: rustls 0.21.12 via sqlx 0.7.
+    # No fix for the 0.101.x branch; our 0.103.x (0.103.13) is patched.
+    # Will be resolved when upgrading to sqlx 0.8+ (which uses rustls 0.23+).
+    "RUSTSEC-2026-0099",
 ]
