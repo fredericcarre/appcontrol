@@ -319,6 +319,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Map Import (YAML v3 legacy, JSON v4 native)
         .route("/import/yaml", post(import::import_yaml_map))
         .route("/import/json", post(import::import_json_map))
+        .route("/import/fetch-url", post(import::fetch_url))
         // Enhanced Import Wizard (with gateway resolution + binding profiles)
         .route("/import/preview", post(import_wizard::preview_import))
         .route("/import/execute", post(import_wizard::execute_import))

@@ -5,11 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
   Upload, MapPin, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight, Loader2,
-  FileJson, FileCode, Shield, Check, HelpCircle, ChevronDown, ChevronRight, Terminal, Plus, Trash2
+  FileJson, FileCode, Shield, Check, HelpCircle, ChevronDown, ChevronRight, Terminal, Plus, Trash2,
+  Link, Download
 } from 'lucide-react';
 import {
   useImportPreview,
   useImportExecute,
+  useFetchUrl,
   ImportPreviewResponse,
   MappingConfig,
   ComponentResolution,
@@ -413,6 +415,8 @@ export default function ImportWizard() {
 // Step 1: Upload
 // ═══════════════════════════════════════════════════════════════════════════
 
+type UploadSource = 'file' | 'paste' | 'url';
+
 interface UploadStepProps {
   content: string;
   format: 'json' | 'yaml';
@@ -422,6 +426,11 @@ interface UploadStepProps {
 }
 
 function UploadStep({ content, format, onContentChange, onFormatChange, onJsonErrorChange }: UploadStepProps) {
+  const [source, setSource] = useState<UploadSource>('file');
+  const [url, setUrl] = useState('');
+  const [urlError, setUrlError] = useState<string | null>(null);
+  const fetchUrl = useFetchUrl();
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -438,13 +447,55 @@ function UploadStep({ content, format, onContentChange, onFormatChange, onJsonEr
     reader.readAsText(file);
   };
 
+  const handleFetchUrl = async () => {
+    if (!url.trim()) return;
+    setUrlError(null);
+    try {
+      const result = await fetchUrl.mutateAsync({ url: url.trim() });
+      onContentChange(result.content);
+      onFormatChange(result.format as 'json' | 'yaml');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to fetch URL';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const detail = (err as any)?.response?.data?.message || (err as any)?.response?.data?.error || msg;
+      setUrlError(detail);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-medium mb-2">Upload or paste your map file</h3>
+        <h3 className="text-lg font-medium mb-2">Import your map</h3>
         <p className="text-muted-foreground text-sm">
-          Supports JSON and YAML formats.
+          Upload a file, paste content, or import from a URL. Supports JSON and YAML formats.
         </p>
+      </div>
+
+      <div className="flex gap-2">
+        <Button
+          variant={source === 'file' ? 'default' : 'outline'}
+          onClick={() => setSource('file')}
+          size="sm"
+        >
+          <Upload className="h-4 w-4 mr-2" />
+          File
+        </Button>
+        <Button
+          variant={source === 'paste' ? 'default' : 'outline'}
+          onClick={() => setSource('paste')}
+          size="sm"
+        >
+          <FileCode className="h-4 w-4 mr-2" />
+          Paste
+        </Button>
+        <Button
+          variant={source === 'url' ? 'default' : 'outline'}
+          onClick={() => setSource('url')}
+          size="sm"
+        >
+          <Link className="h-4 w-4 mr-2" />
+          URL
+        </Button>
       </div>
 
       <div className="flex gap-4">
@@ -466,35 +517,102 @@ function UploadStep({ content, format, onContentChange, onFormatChange, onJsonEr
         </Button>
       </div>
 
-      <div>
-        <label className="block text-sm font-medium mb-2">Upload file</label>
-        <input
-          type="file"
-          accept=".json,.yaml,.yml"
-          onChange={handleFileUpload}
-          className="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
-        />
-      </div>
+      {source === 'file' && (
+        <div>
+          <label className="block text-sm font-medium mb-2">Upload file</label>
+          <input
+            type="file"
+            accept=".json,.yaml,.yml"
+            onChange={handleFileUpload}
+            className="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
+          />
+        </div>
+      )}
 
-      <div>
-        <label className="block text-sm font-medium mb-2">Or paste content</label>
-        {format === 'json' ? (
-          <JsonEditor
-            value={content}
-            onChange={onContentChange}
-            onValidationChange={onJsonErrorChange}
-            placeholder={'{\n  "name": "My App",\n  "components": []\n}'}
-            height="350px"
-          />
-        ) : (
-          <textarea
-            value={content}
-            onChange={(e) => onContentChange(e.target.value)}
-            placeholder={'name: My App\ncomponents:\n  - name: component1\n    ...'}
-            className="w-full h-64 px-3 py-2 border rounded-md bg-background text-sm font-mono"
-          />
-        )}
-      </div>
+      {source === 'url' && (
+        <div className="space-y-3">
+          <label className="block text-sm font-medium">URL of the map file</label>
+          <div className="flex gap-2">
+            <input
+              type="url"
+              value={url}
+              onChange={(e) => { setUrl(e.target.value); setUrlError(null); }}
+              placeholder="https://example.com/map.json"
+              className="flex-1 px-3 py-2 border rounded-md bg-background text-sm"
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleFetchUrl(); } }}
+            />
+            <Button
+              onClick={handleFetchUrl}
+              disabled={!url.trim() || fetchUrl.isPending}
+            >
+              {fetchUrl.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-2" />
+              )}
+              Fetch
+            </Button>
+          </div>
+          {urlError && (
+            <div className="flex items-start gap-2 text-sm text-destructive">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>{urlError}</span>
+            </div>
+          )}
+          {fetchUrl.isSuccess && content && (
+            <div className="flex items-center gap-2 text-sm text-green-600">
+              <Check className="h-4 w-4" />
+              <span>Content loaded ({fetchUrl.data.content_length.toLocaleString()} bytes, {fetchUrl.data.format.toUpperCase()})</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {(source === 'paste' || (source === 'url' && content)) && (
+        <div>
+          <label className="block text-sm font-medium mb-2">
+            {source === 'url' ? 'Fetched content' : 'Paste content'}
+          </label>
+          {format === 'json' ? (
+            <JsonEditor
+              value={content}
+              onChange={onContentChange}
+              onValidationChange={onJsonErrorChange}
+              placeholder={'{\n  "name": "My App",\n  "components": []\n}'}
+              height="350px"
+            />
+          ) : (
+            <textarea
+              value={content}
+              onChange={(e) => onContentChange(e.target.value)}
+              placeholder={'name: My App\ncomponents:\n  - name: component1\n    ...'}
+              className="w-full h-64 px-3 py-2 border rounded-md bg-background text-sm font-mono"
+            />
+          )}
+        </div>
+      )}
+
+      {source === 'file' && content && (
+        <div>
+          <label className="block text-sm font-medium mb-2">Loaded content</label>
+          {format === 'json' ? (
+            <JsonEditor
+              value={content}
+              onChange={onContentChange}
+              onValidationChange={onJsonErrorChange}
+              placeholder={'{\n  "name": "My App",\n  "components": []\n}'}
+              height="350px"
+            />
+          ) : (
+            <textarea
+              value={content}
+              onChange={(e) => onContentChange(e.target.value)}
+              placeholder={'name: My App\ncomponents:\n  - name: component1\n    ...'}
+              className="w-full h-64 px-3 py-2 border rounded-md bg-background text-sm font-mono"
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -968,3 +968,112 @@ pub async fn import_json_map(
 
     Ok((StatusCode::CREATED, Json(json!(result))))
 }
+
+// ── Fetch from URL ─────────────────────────────────────────────────
+
+const MAX_FETCH_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+
+#[derive(Debug, Deserialize)]
+pub struct FetchUrlRequest {
+    pub url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FetchUrlResponse {
+    content: String,
+    format: String,
+    content_length: usize,
+}
+
+/// POST /api/v1/import/fetch-url
+/// Fetch map content (JSON or YAML) from a remote URL.
+pub async fn fetch_url(
+    State(_state): State<Arc<AppState>>,
+    Extension(_user): Extension<AuthUser>,
+    Json(body): Json<FetchUrlRequest>,
+) -> Result<Json<FetchUrlResponse>, ApiError> {
+    let url = body.url.trim().to_string();
+
+    let parsed =
+        url::Url::parse(&url).map_err(|e| ApiError::Validation(format!("Invalid URL: {e}")))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        s => {
+            return Err(ApiError::Validation(format!(
+                "Unsupported URL scheme '{s}'. Only http and https are allowed"
+            )));
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| ApiError::Internal(format!("HTTP client error: {e}")))?;
+
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "AppControl/4.0")
+        .send()
+        .await
+        .map_err(|e| ApiError::Validation(format!("Failed to fetch URL: {e}")))?;
+
+    if !resp.status().is_success() {
+        return Err(ApiError::Validation(format!(
+            "URL returned HTTP {}",
+            resp.status()
+        )));
+    }
+
+    if let Some(len) = resp.content_length() {
+        if len as usize > MAX_FETCH_SIZE {
+            return Err(ApiError::Validation(format!(
+                "Content too large ({} bytes, max {} bytes)",
+                len, MAX_FETCH_SIZE
+            )));
+        }
+    }
+
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to read response: {e}")))?;
+
+    if bytes.len() > MAX_FETCH_SIZE {
+        return Err(ApiError::Validation(format!(
+            "Content too large ({} bytes, max {} bytes)",
+            bytes.len(),
+            MAX_FETCH_SIZE
+        )));
+    }
+
+    let content = String::from_utf8(bytes.to_vec())
+        .map_err(|_| ApiError::Validation("Response is not valid UTF-8 text".into()))?;
+
+    let format = if content_type.contains("yaml") || content_type.contains("x-yaml") {
+        "yaml"
+    } else if content_type.contains("json") {
+        "json"
+    } else {
+        let path = parsed.path().to_lowercase();
+        if path.ends_with(".yaml") || path.ends_with(".yml") {
+            "yaml"
+        } else if path.ends_with(".json") || serde_json::from_str::<Value>(&content).is_ok() {
+            "json"
+        } else {
+            "yaml"
+        }
+    };
+
+    Ok(Json(FetchUrlResponse {
+        content_length: content.len(),
+        content,
+        format: format.to_string(),
+    }))
+}

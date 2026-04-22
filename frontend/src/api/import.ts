@@ -155,6 +155,29 @@ export interface DrPatternRule {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Fetch from URL
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface FetchUrlRequest {
+  url: string;
+}
+
+export interface FetchUrlResponse {
+  content: string;
+  format: string;
+  content_length: number;
+}
+
+export function useFetchUrl() {
+  return useMutation({
+    mutationFn: async (payload: FetchUrlRequest) => {
+      const { data } = await client.post<FetchUrlResponse>('/import/fetch-url', payload);
+      return data;
+    },
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Import Preview & Execute Hooks
 // ═══════════════════════════════════════════════════════════════════════════
 
