@@ -1001,20 +1001,23 @@ pub async fn get_component_referenced_app_id(
 ) -> Result<Option<Uuid>, sqlx::Error> {
     #[cfg(feature = "postgres")]
     {
-        sqlx::query_scalar::<_, Uuid>("SELECT referenced_app_id FROM components WHERE id = $1")
-            .bind(component_id)
-            .fetch_optional(pool)
-            .await
+        let row = sqlx::query_scalar::<_, Option<Uuid>>(
+            "SELECT referenced_app_id FROM components WHERE id = $1",
+        )
+        .bind(component_id)
+        .fetch_optional(pool)
+        .await?;
+        Ok(row.flatten())
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
-        let row = sqlx::query_scalar::<_, DbUuid>(
+        let row = sqlx::query_scalar::<_, Option<DbUuid>>(
             "SELECT referenced_app_id FROM components WHERE id = $1",
         )
         .bind(DbUuid::from(component_id))
         .fetch_optional(pool)
         .await?;
-        Ok(row.map(|v| v.into_inner()))
+        Ok(row.flatten().map(|v| v.into_inner()))
     }
 }
 

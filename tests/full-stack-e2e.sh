@@ -354,8 +354,8 @@ fi
 # 10. Verify state transitions were recorded
 # ---------------------------------------------------------------------------
 log "Checking state transitions..."
-TRANSITIONS=$(api GET "/apps/$APP_ID/history" 2>/dev/null || echo "[]")
-TRANSITION_COUNT=$(echo "$TRANSITIONS" | jq 'if type == "array" then length elif .transitions then (.transitions | length) else 0 end' 2>/dev/null || echo "0")
+TRANSITIONS=$(api GET "/components/$COMP_ID/state-transitions" 2>/dev/null || echo '{"transitions":[]}')
+TRANSITION_COUNT=$(echo "$TRANSITIONS" | jq '.transitions | length' 2>/dev/null || echo "0")
 if [ "$TRANSITION_COUNT" -gt 0 ]; then
   ok "State transitions recorded ($TRANSITION_COUNT entries)"
 else
