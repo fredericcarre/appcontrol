@@ -44,6 +44,7 @@ pub struct AppState {
     // Repository instances — all database queries go through these
     pub app_repo: Box<dyn repository::apps::AppRepository>,
     pub component_repo: Box<dyn repository::components::ComponentRepository>,
+    pub cluster_member_repo: Box<dyn repository::cluster_members::ClusterMemberRepository>,
     pub team_repo: Box<dyn repository::teams::TeamRepository>,
     pub permission_repo: Box<dyn repository::permissions::PermissionRepository>,
     pub site_repo: Box<dyn repository::sites::SiteRepository>,

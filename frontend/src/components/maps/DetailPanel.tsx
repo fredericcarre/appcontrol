@@ -9,6 +9,7 @@ import { STATE_COLORS, ComponentState } from '@/lib/colors';
 import { Component, useComponentMetrics } from '@/api/apps';
 import { useStateTransitions, useCommandExecutions, useCheckEvents, CommandExecution, CheckEvent } from '@/api/components';
 import { MetricsWidgets } from './MetricsWidgets';
+import { ClusterMembersPanel } from './ClusterMembersPanel';
 import { ScheduleList } from '@/components/schedules';
 import { LogSourcesPanel } from '@/components/logs/LogSourcesPanel';
 
@@ -139,11 +140,24 @@ export function DetailPanel({
         <TabsList className="mx-4 mt-2">
           <TabsTrigger value="metrics">Metrics</TabsTrigger>
           <TabsTrigger value="info">Info</TabsTrigger>
+          {component.cluster_mode === 'fan_out' && (
+            <TabsTrigger value="members">Members</TabsTrigger>
+          )}
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="commands">Commands</TabsTrigger>
           <TabsTrigger value="events">Events</TabsTrigger>
           <TabsTrigger value="schedules">Schedules</TabsTrigger>
         </TabsList>
+
+        {component.cluster_mode === 'fan_out' && (
+          <TabsContent value="members" className="flex-1 overflow-auto">
+            <ClusterMembersPanel
+              componentId={component.id}
+              canOperate={canOperate}
+              canEdit={canOperate}
+            />
+          </TabsContent>
+        )}
 
         <TabsContent value="metrics" className="flex-1 overflow-auto p-4">
           {metricsData?.metrics ? (

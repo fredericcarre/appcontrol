@@ -1019,6 +1019,7 @@ async fn process_agent_message(
                 component_id = %cr.component_id,
                 exit_code = cr.exit_code,
                 has_metrics = cr.metrics.is_some(),
+                member_id = ?cr.cluster_member_id,
                 "Processing check result"
             );
 
@@ -1030,8 +1031,27 @@ async fn process_agent_message(
                 state.heartbeat_batcher.record(*agent_id).await;
             }
 
-            // Process FSM transition first (priority: state must update fast)
-            if let Err(e) =
+            // Fan-out cluster members drive the parent component's FSM via aggregation;
+            // regular components use the standard single-FSM path.
+            if let Some(member_id) = cr.cluster_member_id {
+                if let Err(e) = crate::core::fsm::process_member_check_result(
+                    state,
+                    cr.component_id,
+                    member_id,
+                    cr.exit_code,
+                    cr.duration_ms,
+                    cr.stdout.as_deref(),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        component_id = %cr.component_id,
+                        member_id = %member_id,
+                        exit_code = cr.exit_code,
+                        "Failed to process member check result: {}", e
+                    );
+                }
+            } else if let Err(e) =
                 crate::core::fsm::process_check_result(state, cr.component_id, cr.exit_code).await
             {
                 tracing::warn!(
@@ -1651,24 +1671,53 @@ pub async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
         }
     };
 
+    // Fan-out cluster members assigned to this agent, grouped by parent component.
+    // Non-fan_out components yield an empty Vec, so the agent skips member-level scheduling.
+    let mut members_by_component: std::collections::HashMap<
+        uuid::Uuid,
+        Vec<appcontrol_common::ClusterMemberConfig>,
+    > = std::collections::HashMap::new();
+    match state.cluster_member_repo.load_for_agent(agent_id).await {
+        Ok(agent_members) => {
+            for m in agent_members {
+                members_by_component
+                    .entry(m.component_id)
+                    .or_default()
+                    .push(m.into_protocol());
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                agent_id = %agent_id,
+                "Failed to load cluster members for agent: {}", e
+            );
+        }
+    }
+
     // Always send UpdateConfig, even if empty - this ensures agent's scheduler stays in sync
     let components: Vec<appcontrol_common::ComponentConfig> = rows
         .into_iter()
-        .map(|c| appcontrol_common::ComponentConfig {
-            component_id: c.component_id,
-            name: c.name,
-            check_cmd: c.check_cmd,
-            start_cmd: c.start_cmd,
-            stop_cmd: c.stop_cmd,
-            integrity_check_cmd: c.integrity_check_cmd,
-            post_start_check_cmd: c.post_start_check_cmd,
-            infra_check_cmd: c.infra_check_cmd,
-            rebuild_cmd: c.rebuild_cmd,
-            rebuild_infra_cmd: c.rebuild_infra_cmd,
-            check_interval_seconds: c.check_interval_seconds as u32,
-            start_timeout_seconds: c.start_timeout_seconds as u32,
-            stop_timeout_seconds: c.stop_timeout_seconds as u32,
-            env_vars: c.env_vars,
+        .map(|c| {
+            let cluster_members = members_by_component
+                .remove(&c.component_id)
+                .unwrap_or_default();
+            appcontrol_common::ComponentConfig {
+                component_id: c.component_id,
+                name: c.name,
+                check_cmd: c.check_cmd,
+                start_cmd: c.start_cmd,
+                stop_cmd: c.stop_cmd,
+                integrity_check_cmd: c.integrity_check_cmd,
+                post_start_check_cmd: c.post_start_check_cmd,
+                infra_check_cmd: c.infra_check_cmd,
+                rebuild_cmd: c.rebuild_cmd,
+                rebuild_infra_cmd: c.rebuild_infra_cmd,
+                check_interval_seconds: c.check_interval_seconds as u32,
+                start_timeout_seconds: c.start_timeout_seconds as u32,
+                stop_timeout_seconds: c.stop_timeout_seconds as u32,
+                env_vars: c.env_vars,
+                cluster_members,
+            }
         })
         .collect();
 

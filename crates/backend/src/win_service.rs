@@ -156,6 +156,10 @@ fn run_service() -> anyhow::Result<()> {
             component_repo: appcontrol_backend::repository::components::create_component_repository(
                 pool.clone(),
             ),
+            cluster_member_repo:
+                appcontrol_backend::repository::cluster_members::create_cluster_member_repository(
+                    pool.clone(),
+                ),
             team_repo: appcontrol_backend::repository::teams::create_team_repository(pool.clone()),
             permission_repo:
                 appcontrol_backend::repository::permissions::create_permission_repository(

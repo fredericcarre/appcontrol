@@ -509,6 +509,9 @@ pub struct AgentComponentConfig {
     pub start_timeout_seconds: i32,
     pub stop_timeout_seconds: i32,
     pub env_vars: Value,
+    /// For fan-out cluster components: members assigned to this agent.
+    /// Empty for regular components or aggregate-mode clusters.
+    pub cluster_members: Vec<appcontrol_common::ClusterMemberConfig>,
 }
 
 /// Get all component configs for an agent (non-suspended apps only).
@@ -585,6 +588,7 @@ pub async fn get_agent_component_configs(
                         start_timeout_seconds: start_to,
                         stop_timeout_seconds: stop_to,
                         env_vars: env,
+                        cluster_members: Vec::new(),
                     }
                 },
             )
@@ -660,6 +664,7 @@ pub async fn get_agent_component_configs(
                         stop_timeout_seconds: stop_to,
                         env_vars: serde_json::from_str::<Value>(&env)
                             .unwrap_or(serde_json::json!({})),
+                        cluster_members: Vec::new(),
                     }
                 },
             )

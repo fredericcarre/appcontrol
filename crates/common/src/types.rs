@@ -108,6 +108,10 @@ pub struct CheckResult {
     /// The frontend renders this generically without interpreting the schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics: Option<serde_json::Value>,
+    /// When set, this result concerns a single member of a fan-out cluster.
+    /// Absent for regular components or aggregate-mode clusters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_member_id: Option<Uuid>,
 }
 
 /// Status for a diagnostic check level.
@@ -181,6 +185,84 @@ pub struct ComponentConfig {
     pub check_interval_seconds: u32,
     pub start_timeout_seconds: u32,
     pub stop_timeout_seconds: u32,
+    pub env_vars: serde_json::Value,
+    /// When non-empty, this component is in fan-out cluster mode and the agent
+    /// must run checks/commands per member instead of at the component level.
+    /// The backend pre-filters this list to members assigned to the receiving
+    /// agent (via `cluster_members.agent_id`).
+    #[serde(default)]
+    pub cluster_members: Vec<ClusterMemberConfig>,
+}
+
+/// How cluster members contribute to the parent component's state.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::EnumString,
+    strum::Display,
+)]
+#[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterMode {
+    /// External aggregation: the component-level check_cmd is assumed to
+    /// already aggregate over hosts (F5, Oracle SCAN, JMX, etc.).
+    /// `cluster_size` / `cluster_nodes` (V035) are cosmetic.
+    #[default]
+    Aggregate,
+    /// Per-member execution: each `cluster_members` row is a first-class
+    /// entity with its own agent, commands, FSM and history.
+    FanOut,
+}
+
+/// Policy that derives the parent component's state from member states
+/// (only meaningful when `cluster_mode = FanOut`).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::EnumString,
+    strum::Display,
+)]
+#[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterHealthPolicy {
+    /// All RUNNING → RUNNING; any non-RUNNING → DEGRADED; 0 RUNNING → FAILED.
+    #[default]
+    AllHealthy,
+    /// Any RUNNING → RUNNING; 0 RUNNING → FAILED.
+    AnyHealthy,
+    /// count(RUNNING) ≥ ⌈N/2⌉+1 → RUNNING; else DEGRADED; 0 RUNNING → FAILED.
+    Quorum,
+    /// %RUNNING ≥ min_healthy_pct → RUNNING; ≥50% → DEGRADED; else FAILED.
+    ThresholdPct,
+}
+
+/// Configuration for a single fan-out cluster member pushed to its agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterMemberConfig {
+    pub member_id: Uuid,
+    pub hostname: String,
+    /// Resolved check command (override or inherited from component).
+    pub check_cmd: Option<String>,
+    /// Resolved start command.
+    pub start_cmd: Option<String>,
+    /// Resolved stop command.
+    pub stop_cmd: Option<String>,
+    /// Merged env vars (component env_vars + per-member override on top).
+    #[serde(default)]
     pub env_vars: serde_json::Value,
 }
 

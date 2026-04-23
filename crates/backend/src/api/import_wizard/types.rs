@@ -295,6 +295,16 @@ pub(crate) struct ComponentData {
     pub rebuild_protected: bool,
     pub cluster_size: Option<i32>,
     pub cluster_nodes: Option<Vec<String>>,
+    /// Fan-out cluster mode: "aggregate" (default) or "fan_out".
+    pub cluster_mode: Option<String>,
+    /// Aggregation policy when in fan_out mode.
+    pub cluster_health_policy: Option<String>,
+    /// Min %healthy for `threshold_pct` policy (1..=100).
+    pub cluster_min_healthy_pct: Option<i16>,
+    /// First-class members for fan_out mode. Each member is monitored and
+    /// operated independently (own agent, own optional command overrides).
+    #[serde(default)]
+    pub cluster_members: Vec<ClusterMemberData>,
     #[serde(default)]
     pub site_overrides: Vec<SiteOverrideData>,
     #[serde(flatten)]
@@ -316,6 +326,30 @@ pub(crate) struct SiteOverrideData {
 pub(crate) struct PositionData {
     pub x: f32,
     pub y: f32,
+}
+
+/// One first-class fan-out cluster member.
+/// `agent` (or `host`) defaults to the parent component's agent when omitted —
+/// useful when all members share a single agent for demos. In production
+/// each member typically has its own dedicated agent on the target host.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct ClusterMemberData {
+    pub hostname: String,
+    /// Agent name/host (resolved like the component's `host`). Optional —
+    /// inherits from the parent component when absent.
+    pub agent: Option<String>,
+    pub install_path: Option<String>,
+    pub check_cmd_override: Option<String>,
+    pub start_cmd_override: Option<String>,
+    pub stop_cmd_override: Option<String>,
+    pub env_vars_override: Option<serde_json::Value>,
+    #[serde(default)]
+    pub member_order: i32,
+    #[serde(default = "default_true")]
+    pub is_enabled: bool,
+    #[serde(default)]
+    pub tags: Option<serde_json::Value>,
 }
 
 fn default_check_interval() -> i32 {

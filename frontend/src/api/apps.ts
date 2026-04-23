@@ -51,9 +51,18 @@ export interface Component {
   is_optional: boolean;
   position_x: number | null;
   position_y: number | null;
-  // Cluster fields
+  // Cluster fields (aggregate mode: cosmetic; fan_out mode: metadata only)
   cluster_size?: number | null;
   cluster_nodes?: string[] | null;
+  // Fan-out cluster configuration (v4.3+)
+  cluster_mode?: 'aggregate' | 'fan_out' | null;
+  cluster_health_policy?:
+    | 'all_healthy'
+    | 'any_healthy'
+    | 'quorum'
+    | 'threshold_pct'
+    | null;
+  cluster_min_healthy_pct?: number | null;
   // Application reference (for app-type synthetic components)
   referenced_app_id?: string | null;
   referenced_app_name?: string | null;
@@ -668,6 +677,13 @@ export function useUpdateComponent() {
       referenced_app_id?: string | null;
       cluster_size?: number | null;
       cluster_nodes?: string[] | null;
+      cluster_mode?: 'aggregate' | 'fan_out';
+      cluster_health_policy?:
+        | 'all_healthy'
+        | 'any_healthy'
+        | 'quorum'
+        | 'threshold_pct';
+      cluster_min_healthy_pct?: number;
     }) => {
       const { data } = await client.put(`/components/${payload.id}`, payload);
       return data;

@@ -5,11 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
   Upload, MapPin, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight, Loader2,
-  FileJson, FileCode, Shield, Check, HelpCircle, ChevronDown, ChevronRight, Terminal, Plus, Trash2
+  FileJson, FileCode, Shield, Check, HelpCircle, ChevronDown, ChevronRight, Terminal, Plus, Trash2,
+  Link as LinkIcon
 } from 'lucide-react';
 import {
   useImportPreview,
   useImportExecute,
+  useFetchImportFromUrl,
   ImportPreviewResponse,
   MappingConfig,
   ComponentResolution,
@@ -505,6 +507,11 @@ interface UploadStepProps {
 }
 
 function UploadStep({ content, format, onContentChange, onFormatChange, onJsonErrorChange }: UploadStepProps) {
+  const [url, setUrl] = useState('');
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [fetchInfo, setFetchInfo] = useState<string | null>(null);
+  const fetchFromUrl = useFetchImportFromUrl();
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -521,10 +528,32 @@ function UploadStep({ content, format, onContentChange, onFormatChange, onJsonEr
     reader.readAsText(file);
   };
 
+  const handleFetch = async () => {
+    setFetchError(null);
+    setFetchInfo(null);
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    try {
+      const resp = await fetchFromUrl.mutateAsync({ url: trimmed });
+      onContentChange(resp.content);
+      onFormatChange(resp.format);
+      setFetchInfo(
+        `Fetched ${(resp.size_bytes / 1024).toFixed(1)} KB from ${resp.source_url}` +
+          (resp.content_type ? ` (${resp.content_type})` : ''),
+      );
+    } catch (err) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        (err as Error).message ??
+        'Failed to fetch URL';
+      setFetchError(msg);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-medium mb-2">Upload or paste your map file</h3>
+        <h3 className="text-lg font-medium mb-2">Upload, paste, or fetch from URL</h3>
         <p className="text-muted-foreground text-sm">
           Supports JSON and YAML formats.
         </p>
@@ -557,6 +586,60 @@ function UploadStep({ content, format, onContentChange, onFormatChange, onJsonEr
           onChange={handleFileUpload}
           className="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
         />
+      </div>
+
+      <div>
+        <label htmlFor="import-url" className="block text-sm font-medium mb-2">
+          Fetch from URL
+        </label>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <LinkIcon className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              id="import-url"
+              type="url"
+              inputMode="url"
+              autoComplete="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleFetch();
+                }
+              }}
+              placeholder="https://raw.githubusercontent.com/org/repo/main/map.json"
+              className="h-9 w-full rounded-md border bg-background pl-7 pr-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+          <Button
+            type="button"
+            onClick={handleFetch}
+            disabled={!url.trim() || fetchFromUrl.isPending}
+          >
+            {fetchFromUrl.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Fetching…
+              </>
+            ) : (
+              'Fetch'
+            )}
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Server-side GET. Scheme must be http or https, max 5 MiB, 15 s timeout.
+          Private IPs are blocked unless the backend sets{' '}
+          <code className="font-mono">IMPORT_FETCH_ALLOW_PRIVATE=true</code>.
+        </p>
+        {fetchError && (
+          <p className="mt-2 text-sm text-destructive" role="alert">
+            {fetchError}
+          </p>
+        )}
+        {fetchInfo && !fetchError && (
+          <p className="mt-2 text-sm text-emerald-600 dark:text-emerald-400">{fetchInfo}</p>
+        )}
       </div>
 
       <div>

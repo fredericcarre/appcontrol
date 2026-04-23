@@ -4,9 +4,9 @@ These example configurations demonstrate how to model real-world IT systems as A
 
 ## Available Examples
 
-### 1. Cluster Demo (`cluster-demo.json`)
+### 1. Cluster Demo — Aggregate Mode (`cluster-demo.json`)
 
-Demonstrates the cluster feature with multiple components configured as multi-node clusters.
+Demonstrates the **aggregate** cluster mode: each component is shown with `cluster_size` and `cluster_nodes` for visual purposes, but a single `check_cmd` drives one shared FSM. Suitable for clusters that already self-aggregate (LB pools, Oracle SCAN, JMX domain controllers).
 
 ```
 PostgreSQL Cluster (×3)
@@ -22,6 +22,28 @@ PostgreSQL Cluster (×3)
 - `cluster_nodes`: List of server hostnames/IPs
 - Visual rendering with stacked cards and node count badge
 - Commands execute on the primary node (first in the list)
+
+### 1bis. Fan-out Cluster Demo (`fan-out-jboss-linux.json`, `fan-out-iis-windows.json`)
+
+Demonstrates the **fan-out** cluster mode: each cluster member is a first-class entity with its own FSM, state cache, and operations. Use this when each node must be monitored and operated independently (e.g. a JBoss/IIS pool of N hosts).
+
+| File | OS | Health policy | Members |
+|------|----|----|----|
+| `fan-out-jboss-linux.json` | Linux (`/tmp/...`, `touch`/`rm`) | `threshold_pct` at 80% | 6 JBoss members |
+| `fan-out-iis-windows.json` | Windows (`%TEMP%\...`, `type nul`/`del`) | `quorum` (majority) | 4 IIS members |
+
+Both stacks: `LB (aggregate, x2) → App tier (fan-out) → DB (aggregate)`.
+
+**Key concepts demonstrated:**
+- `cluster_mode: "fan_out"` enables per-member execution
+- `cluster_health_policy`: `all_healthy` | `any_healthy` | `quorum` | `threshold_pct`
+- `cluster_min_healthy_pct` for threshold_pct policy
+- `cluster_members[]` with per-member `hostname`, `install_path`, command overrides, and optional `agent` (defaults to parent)
+- Aggregated component state derived from per-member states (RUNNING/DEGRADED/FAILED)
+- Members panel in the UI with batch Start/Stop and individual member operations
+- Comparison with the **aggregate** mode (LB and DB in the same map)
+
+After import, open the App tier component → **Members** tab → drop one member's flag file (`rm /tmp/appcontrol-fanout/jboss-003.running`) and observe the parent state transition driven by the configured policy.
 
 ### 2. Metrics Demo (`metrics-demo.json`)
 

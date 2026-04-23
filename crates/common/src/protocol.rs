@@ -44,6 +44,10 @@ pub enum AgentMessage {
         /// Monotonic sequence ID for reliable delivery (ack/retransmit).
         #[serde(default)]
         sequence_id: Option<u64>,
+        /// Set when this result corresponds to a command targeted at a
+        /// specific fan-out cluster member.
+        #[serde(default)]
+        cluster_member_id: Option<Uuid>,
     },
     Register {
         agent_id: Uuid,
@@ -263,6 +267,10 @@ pub enum BackendMessage {
         /// Execution mode: "sync" (wait for result) or "detached" (double-fork).
         #[serde(default = "default_exec_mode")]
         exec_mode: String,
+        /// Set when targeting a specific member of a fan-out cluster.
+        /// The `command` string is already resolved (overrides applied).
+        #[serde(default)]
+        cluster_member_id: Option<Uuid>,
     },
     UpdateConfig {
         components: Vec<ComponentConfig>,
@@ -547,6 +555,17 @@ pub enum WsEvent {
         unreachable_agents: Vec<String>,
         timestamp: DateTime<Utc>,
     },
+    /// State change for a single fan-out cluster member (separate from the
+    /// parent component's aggregated StateChange event).
+    ClusterMemberStateChange {
+        component_id: Uuid,
+        cluster_member_id: Uuid,
+        app_id: Uuid,
+        hostname: String,
+        from: ComponentState,
+        to: ComponentState,
+        at: DateTime<Utc>,
+    },
     /// Cross-site probe detected a component running on the passive/wrong site
     CrossSiteAlert {
         component_id: Uuid,
@@ -740,6 +759,7 @@ mod tests {
             duration_ms: 42,
             at: Utc::now(),
             metrics: None,
+            cluster_member_id: None,
         });
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: AgentMessage = serde_json::from_str(&json).unwrap();
@@ -761,6 +781,7 @@ mod tests {
             stderr: "error".to_string(),
             duration_ms: 100,
             sequence_id: Some(42),
+            cluster_member_id: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: AgentMessage = serde_json::from_str(&json).unwrap();
@@ -856,6 +877,7 @@ mod tests {
             command: "systemctl start nginx".to_string(),
             timeout_seconds: 60,
             exec_mode: "detached".to_string(),
+            cluster_member_id: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: BackendMessage = serde_json::from_str(&json).unwrap();
@@ -904,6 +926,7 @@ mod tests {
                 start_timeout_seconds: 120,
                 stop_timeout_seconds: 60,
                 env_vars: serde_json::json!({}),
+                cluster_members: vec![],
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -964,6 +987,7 @@ mod tests {
             command: "systemctl start nginx".to_string(),
             timeout_seconds: 60,
             exec_mode: "sync".to_string(),
+            cluster_member_id: None,
         };
         let envelope = super::GatewayEnvelope::ForwardToAgent {
             target_agent_id: agent_id,
@@ -1172,6 +1196,7 @@ mod tests {
             stderr: String::new(),
             duration_ms: 0,
             sequence_id: None,
+            cluster_member_id: None,
         };
 
         assert!(heartbeat.priority() < cmd_result.priority());
@@ -1209,6 +1234,7 @@ mod tests {
             stderr: String::new(),
             duration_ms: 0,
             sequence_id: None,
+            cluster_member_id: None,
         };
         let check_result = AgentMessage::CheckResult(CheckResult {
             component_id: Uuid::new_v4(),
@@ -1218,6 +1244,7 @@ mod tests {
             duration_ms: 0,
             metrics: None,
             at: Utc::now(),
+            cluster_member_id: None,
         });
 
         assert_eq!(heartbeat.agent_id(), Some(id));
@@ -1240,6 +1267,7 @@ mod tests {
             command: "test".to_string(),
             timeout_seconds: 30,
             exec_mode: "sync".to_string(),
+            cluster_member_id: None,
         };
         assert!(ack.priority() < exec.priority());
     }

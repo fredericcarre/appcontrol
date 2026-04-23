@@ -623,6 +623,7 @@ impl ConnectionManager {
                 command,
                 timeout_seconds,
                 exec_mode,
+                cluster_member_id,
             } => {
                 // Advisory mode: refuse execution commands (start/stop/rebuild).
                 // Health checks are handled by the scheduler, not by ExecuteCommand.
@@ -644,6 +645,7 @@ impl ConnectionManager {
                             .to_string(),
                         duration_ms: 0,
                         sequence_id: Some(seq),
+                        cluster_member_id,
                     });
                     return true; // continue processing other messages
                 }
@@ -682,6 +684,7 @@ impl ConnectionManager {
                                     stderr: String::new(),
                                     duration_ms: 0,
                                     sequence_id: Some(seq),
+                                    cluster_member_id,
                                 });
                             }
                             Err(e) => {
@@ -695,6 +698,7 @@ impl ConnectionManager {
                                     stderr: format!("Detached exec failed: {}", e),
                                     duration_ms: 0,
                                     sequence_id: Some(seq),
+                                    cluster_member_id,
                                 });
                             }
                         }
@@ -728,6 +732,7 @@ impl ConnectionManager {
                                     stderr: result.stderr,
                                     duration_ms: result.duration_ms,
                                     sequence_id: Some(seq),
+                                    cluster_member_id,
                                 });
                             }
                             Err(e) => {
@@ -742,6 +747,7 @@ impl ConnectionManager {
                                     stderr: format!("Agent execution error: {}", e),
                                     duration_ms,
                                     sequence_id: Some(seq),
+                                    cluster_member_id,
                                 });
                             }
                         }

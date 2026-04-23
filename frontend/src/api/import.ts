@@ -169,6 +169,32 @@ export function useImportPreview() {
   });
 }
 
+export interface FetchImportRequest {
+  url: string;
+  format?: 'json' | 'yaml';
+}
+
+export interface FetchImportResponse {
+  content: string;
+  format: 'json' | 'yaml';
+  source_url: string;
+  size_bytes: number;
+  content_type: string | null;
+}
+
+/**
+ * Fetch an import document from a remote URL (server-side GET).
+ * Blocks private IPs by default — see IMPORT_FETCH_ALLOW_PRIVATE env var.
+ */
+export function useFetchImportFromUrl() {
+  return useMutation({
+    mutationFn: async (payload: FetchImportRequest) => {
+      const { data } = await client.post<FetchImportResponse>('/import/fetch', payload);
+      return data;
+    },
+  });
+}
+
 export function useImportExecute() {
   const qc = useQueryClient();
   return useMutation({
