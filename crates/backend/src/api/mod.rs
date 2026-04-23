@@ -350,6 +350,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Enhanced Import Wizard (with gateway resolution + binding profiles)
         .route("/import/preview", post(import_wizard::preview_import))
         .route("/import/execute", post(import_wizard::execute_import))
+        .route("/import/fetch", post(import_wizard::fetch_import))
         // Binding Profiles
         .route(
             "/apps/:app_id/profiles",
