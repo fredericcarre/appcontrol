@@ -14,9 +14,9 @@ ALTER TABLE components
     ADD COLUMN cluster_min_healthy_pct SMALLINT NOT NULL DEFAULT 100
         CHECK (cluster_min_healthy_pct BETWEEN 1 AND 100);
 
-COMMENT ON COLUMN components.cluster_mode IS 'aggregate: external aggregation (current behavior, cluster_size/cluster_nodes cosmetic); fan_out: each cluster_members row is a first-class monitored entity';
+COMMENT ON COLUMN components.cluster_mode IS 'aggregate = external aggregation (current behavior, cluster_size/cluster_nodes cosmetic). fan_out = each cluster_members row is a first-class monitored entity';
 COMMENT ON COLUMN components.cluster_health_policy IS 'How the component FSM is derived from member states in fan_out mode';
-COMMENT ON COLUMN components.cluster_min_healthy_pct IS 'For threshold_pct policy: minimum percentage of members that must be RUNNING for the component to be RUNNING';
+COMMENT ON COLUMN components.cluster_min_healthy_pct IS 'For threshold_pct policy, minimum percentage of members that must be RUNNING for the component to be RUNNING';
 
 -- First-class cluster members for fan_out mode
 CREATE TABLE cluster_members (
