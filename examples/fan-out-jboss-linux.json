@@ -1,0 +1,111 @@
+{
+  "name": "Fan-out Demo (Linux)",
+  "description": "Showcases fan-out cluster mode on Linux: a JBoss-like app tier with 6 first-class members (each monitored and operated independently) sitting between an aggregate-mode load balancer and an aggregate-mode database. All commands use file markers under /tmp/appcontrol-fanout/ so the demo runs without any real services. Toggle individual members in the Members panel to see DEGRADED/FAILED transitions driven by the configured aggregation policy.",
+  "tags": { "env": "demo", "feature": "fan-out-cluster", "os": "linux" },
+  "components": [
+    {
+      "name": "Postgres Primary",
+      "display_name": "PostgreSQL (aggregate)",
+      "component_type": "database",
+      "host": "agent-primary",
+      "check_cmd": "test -f /tmp/appcontrol-fanout/postgres.running",
+      "start_cmd": "mkdir -p /tmp/appcontrol-fanout && touch /tmp/appcontrol-fanout/postgres.running",
+      "stop_cmd": "rm -f /tmp/appcontrol-fanout/postgres.running",
+      "check_interval_seconds": 10,
+      "start_timeout_seconds": 30,
+      "stop_timeout_seconds": 30,
+      "position": { "x": 500, "y": 500 }
+    },
+    {
+      "name": "JBoss App Tier",
+      "display_name": "JBoss Pool (fan-out, 6 nodes)",
+      "component_type": "appserver",
+      "host": "agent-primary",
+      "check_cmd": "test -f /tmp/appcontrol-fanout/jboss-default.running",
+      "start_cmd": "mkdir -p /tmp/appcontrol-fanout && touch /tmp/appcontrol-fanout/jboss-default.running",
+      "stop_cmd": "rm -f /tmp/appcontrol-fanout/jboss-default.running",
+      "check_interval_seconds": 10,
+      "start_timeout_seconds": 60,
+      "stop_timeout_seconds": 30,
+      "cluster_mode": "fan_out",
+      "cluster_health_policy": "threshold_pct",
+      "cluster_min_healthy_pct": 80,
+      "cluster_members": [
+        {
+          "hostname": "jboss-prd-001.lan",
+          "install_path": "/opt/jboss/node-001",
+          "check_cmd_override": "test -f /tmp/appcontrol-fanout/jboss-001.running",
+          "start_cmd_override": "mkdir -p /tmp/appcontrol-fanout && touch /tmp/appcontrol-fanout/jboss-001.running",
+          "stop_cmd_override": "rm -f /tmp/appcontrol-fanout/jboss-001.running"
+        },
+        {
+          "hostname": "jboss-prd-002.lan",
+          "install_path": "/opt/jboss/node-002",
+          "check_cmd_override": "test -f /tmp/appcontrol-fanout/jboss-002.running",
+          "start_cmd_override": "mkdir -p /tmp/appcontrol-fanout && touch /tmp/appcontrol-fanout/jboss-002.running",
+          "stop_cmd_override": "rm -f /tmp/appcontrol-fanout/jboss-002.running"
+        },
+        {
+          "hostname": "jboss-prd-003.lan",
+          "install_path": "/opt/jboss/node-003",
+          "check_cmd_override": "test -f /tmp/appcontrol-fanout/jboss-003.running",
+          "start_cmd_override": "mkdir -p /tmp/appcontrol-fanout && touch /tmp/appcontrol-fanout/jboss-003.running",
+          "stop_cmd_override": "rm -f /tmp/appcontrol-fanout/jboss-003.running"
+        },
+        {
+          "hostname": "jboss-prd-004.lan",
+          "install_path": "/opt/jboss/node-004",
+          "check_cmd_override": "test -f /tmp/appcontrol-fanout/jboss-004.running",
+          "start_cmd_override": "mkdir -p /tmp/appcontrol-fanout && touch /tmp/appcontrol-fanout/jboss-004.running",
+          "stop_cmd_override": "rm -f /tmp/appcontrol-fanout/jboss-004.running"
+        },
+        {
+          "hostname": "jboss-prd-005.lan",
+          "install_path": "/opt/jboss/node-005",
+          "check_cmd_override": "test -f /tmp/appcontrol-fanout/jboss-005.running",
+          "start_cmd_override": "mkdir -p /tmp/appcontrol-fanout && touch /tmp/appcontrol-fanout/jboss-005.running",
+          "stop_cmd_override": "rm -f /tmp/appcontrol-fanout/jboss-005.running"
+        },
+        {
+          "hostname": "jboss-prd-006.lan",
+          "install_path": "/opt/jboss/node-006",
+          "check_cmd_override": "test -f /tmp/appcontrol-fanout/jboss-006.running",
+          "start_cmd_override": "mkdir -p /tmp/appcontrol-fanout && touch /tmp/appcontrol-fanout/jboss-006.running",
+          "stop_cmd_override": "rm -f /tmp/appcontrol-fanout/jboss-006.running"
+        }
+      ],
+      "position": { "x": 500, "y": 300 }
+    },
+    {
+      "name": "HAProxy",
+      "display_name": "HAProxy LB (aggregate, x2)",
+      "component_type": "loadbalancer",
+      "host": "agent-primary",
+      "cluster_size": 2,
+      "cluster_nodes": ["lb-prd-001.lan", "lb-prd-002.lan"],
+      "check_cmd": "test -f /tmp/appcontrol-fanout/haproxy.running",
+      "start_cmd": "mkdir -p /tmp/appcontrol-fanout && touch /tmp/appcontrol-fanout/haproxy.running",
+      "stop_cmd": "rm -f /tmp/appcontrol-fanout/haproxy.running",
+      "check_interval_seconds": 10,
+      "start_timeout_seconds": 30,
+      "stop_timeout_seconds": 15,
+      "position": { "x": 500, "y": 100 }
+    }
+  ],
+  "dependencies": [
+    { "from": "JBoss App Tier", "to": "Postgres Primary", "type": "strong" },
+    { "from": "HAProxy", "to": "JBoss App Tier", "type": "strong" }
+  ],
+  "notes": {
+    "demo_purpose": "Compares aggregate cluster mode (HAProxy: 2 nodes shown as one, single FSM, single check) with fan-out mode (JBoss: 6 nodes individually monitored, each with its own state, batch operations, threshold_pct policy at 80%).",
+    "try_this": [
+      "Start the app — JBoss tier becomes RUNNING when ≥5/6 members are RUNNING (80% threshold).",
+      "Open the JBoss App Tier component → Members tab. Stop one member individually (rm /tmp/appcontrol-fanout/jboss-003.running) — the tier stays RUNNING (5/6 = 83%).",
+      "Stop a second member — the tier drops to DEGRADED (4/6 = 67%, below 80% but above 50%).",
+      "Stop a third — DEGRADED (3/6 = 50%).",
+      "Stop a fourth — FAILED (2/6 = 33%, below 50%).",
+      "Use the batch Start button to bring all members back up at once."
+    ],
+    "agent_setup": "All members share `agent-primary` for the demo. In production each JBoss host typically runs its own agent — use the `agent` field on each member to point to its dedicated agent."
+  }
+}

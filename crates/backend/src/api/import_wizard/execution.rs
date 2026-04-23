@@ -289,6 +289,76 @@ pub async fn execute_import(
         comp_name_to_id.insert(comp_name.clone(), comp_id);
         components_created += 1;
 
+        // Fan-out cluster: persist mode + policy and seed members.
+        // Importers are free to omit cluster_mode and only provide cluster_members:
+        // we infer fan_out automatically when members are present.
+        let wants_fan_out =
+            comp.cluster_mode.as_deref() == Some("fan_out") || !comp.cluster_members.is_empty();
+        if wants_fan_out {
+            let policy = comp
+                .cluster_health_policy
+                .clone()
+                .unwrap_or_else(|| "all_healthy".to_string());
+            let min_pct = comp.cluster_min_healthy_pct.unwrap_or(100);
+            apply_cluster_config(&state.db, comp_id, "fan_out", &policy, min_pct).await?;
+
+            for (member_idx, member) in comp.cluster_members.iter().enumerate() {
+                // Resolve member agent: explicit `agent` field uses host resolution,
+                // otherwise inherit the parent component's agent.
+                // Resolve member agent: explicit `agent` field uses host resolution,
+                // otherwise inherit the parent component's agent.
+                let member_agent_id: Uuid = if let Some(a) = member.agent.as_deref() {
+                    use crate::core::resolution::{resolve_host_with_options, ResolutionResult};
+                    match resolve_host_with_options(
+                        &state.db,
+                        a,
+                        &[],
+                        crate::db::DbUuid::from(*user.organization_id),
+                    )
+                    .await
+                    {
+                        Ok(ResolutionResult::Resolved {
+                            agent_id: resolved, ..
+                        }) => resolved,
+                        _ => agent_id,
+                    }
+                } else {
+                    agent_id
+                };
+                let env_text = member
+                    .env_vars_override
+                    .as_ref()
+                    .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()));
+                let tags_value = member.tags.clone().unwrap_or_else(|| serde_json::json!([]));
+                let order = if member.member_order != 0 {
+                    member.member_order
+                } else {
+                    member_idx as i32
+                };
+
+                state
+                    .cluster_member_repo
+                    .create(crate::repository::cluster_members::CreateClusterMember {
+                        component_id: comp_id,
+                        hostname: member.hostname.clone(),
+                        agent_id: member_agent_id,
+                        site_id: None,
+                        check_cmd_override: member.check_cmd_override.clone(),
+                        start_cmd_override: member.start_cmd_override.clone(),
+                        stop_cmd_override: member.stop_cmd_override.clone(),
+                        install_path: member.install_path.clone(),
+                        env_vars_override: member.env_vars_override.clone().or_else(|| {
+                            env_text.as_ref().and_then(|t| serde_json::from_str(t).ok())
+                        }),
+                        member_order: order,
+                        is_enabled: member.is_enabled,
+                        tags: tags_value,
+                    })
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?;
+            }
+        }
+
         // Import custom commands
         for custom_cmd in &comp.custom_commands {
             let cmd_id = Uuid::new_v4();
@@ -513,4 +583,53 @@ pub async fn execute_import(
     };
 
     Ok((StatusCode::CREATED, Json(response)))
+}
+
+/// Update a component's cluster mode + aggregation policy in a single statement.
+/// Used by the importer to enable fan_out without going through the dedicated
+/// REST endpoint (no auth round-trip needed inside the import path).
+async fn apply_cluster_config(
+    pool: &crate::db::DbPool,
+    component_id: Uuid,
+    cluster_mode: &str,
+    cluster_health_policy: &str,
+    cluster_min_healthy_pct: i16,
+) -> Result<(), ApiError> {
+    #[cfg(feature = "postgres")]
+    {
+        sqlx::query(
+            "UPDATE components SET \
+                cluster_mode = $2, \
+                cluster_health_policy = $3, \
+                cluster_min_healthy_pct = $4, \
+                updated_at = now() \
+             WHERE id = $1",
+        )
+        .bind(crate::db::bind_id(component_id))
+        .bind(cluster_mode)
+        .bind(cluster_health_policy)
+        .bind(cluster_min_healthy_pct)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        sqlx::query(
+            "UPDATE components SET \
+                cluster_mode = $2, \
+                cluster_health_policy = $3, \
+                cluster_min_healthy_pct = $4, \
+                updated_at = datetime('now') \
+             WHERE id = $1",
+        )
+        .bind(crate::db::DbUuid::from(component_id))
+        .bind(cluster_mode)
+        .bind(cluster_health_policy)
+        .bind(cluster_min_healthy_pct)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
+    Ok(())
 }
