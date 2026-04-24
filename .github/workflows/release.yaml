@@ -408,6 +408,9 @@ jobs:
       - name: Package examples
         run: tar czf artifacts/examples.tar.gz examples/
 
+      - name: Package demo scenarios
+        run: tar czf artifacts/demo-rebuild.tar.gz demo-rebuild/
+
       - name: Copy release compose file and standalone script
         run: |
           cp docker/docker-compose.release.yaml artifacts/docker-compose.release.yaml
@@ -539,6 +542,7 @@ jobs:
             echo "| appcontrol.ps1 | Standalone deployment script |"
             echo "| docker-compose.release.yaml | Docker Compose config |"
             echo "| examples.tar.gz | Example application maps |"
+            echo "| demo-rebuild.tar.gz | End-to-end rebuild & DR demo scenario (map + Windows/Linux scripts + README) |"
             echo "| checksums-sha256.txt | SHA-256 checksums for all assets |"
           } > /tmp/release-notes.md
 
