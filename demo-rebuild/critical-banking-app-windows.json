@@ -15,11 +15,11 @@
       "cluster_size": 2,
       "cluster_nodes": ["oracle-rac-01.primary.local", "oracle-rac-02.primary.local"],
       "rebuild_protected": true,
-      "check_cmd": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\oracle-rac.running\" (exit 0) else (exit 1)",
-      "start_cmd": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\primary\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\primary\\oracle-rac.running\"",
-      "stop_cmd": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\primary\\oracle-rac.running\" 2>nul & exit 0",
-      "rebuild_cmd": "\"%TEMP%\\appcontrol-demo-rebuild\\bin\\xlr-cli.bat\" trigger --template \"Oracle RAC Rebuild PROD\" --var target=oracle-rac-01.primary.local --wait-complete",
-      "integrity_check_cmd": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\oracle-rac.running\" (exit 0) else (exit 1)",
+      "check_cmd": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\oracle-rac.running (exit /b 0) else (exit /b 1)",
+      "start_cmd": "if not exist %TEMP%\\appcontrol-demo-rebuild\\primary mkdir %TEMP%\\appcontrol-demo-rebuild\\primary & echo.> %TEMP%\\appcontrol-demo-rebuild\\primary\\oracle-rac.running",
+      "stop_cmd": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\primary\\oracle-rac.running 2>nul",
+      "rebuild_cmd": "%TEMP%\\appcontrol-demo-rebuild\\bin\\xlr-cli.bat trigger --template \"Oracle RAC Rebuild PROD\" --var target=oracle-rac-01.primary.local --wait-complete",
+      "integrity_check_cmd": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\oracle-rac.running (exit /b 0) else (exit /b 1)",
       "check_interval_seconds": 10,
       "start_timeout_seconds": 90,
       "stop_timeout_seconds": 60,
@@ -27,10 +27,10 @@
       "site_overrides": [
         {
           "site_code": "DR",
-          "check_cmd_override": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\dr\\oracle-rac.running\" (exit 0) else (exit 1)",
-          "start_cmd_override": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\dr\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\dr\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\dr\\oracle-rac.running\"",
-          "stop_cmd_override": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\dr\\oracle-rac.running\" 2>nul & exit 0",
-          "rebuild_cmd_override": "\"%TEMP%\\appcontrol-demo-rebuild\\bin\\xlr-cli.bat\" trigger --template \"Oracle RAC Rebuild DR\" --var target=oracle-rac-01.dr.local --wait-complete"
+          "check_cmd_override": "if exist %TEMP%\\appcontrol-demo-rebuild\\dr\\oracle-rac.running (exit /b 0) else (exit /b 1)",
+          "start_cmd_override": "if not exist %TEMP%\\appcontrol-demo-rebuild\\dr mkdir %TEMP%\\appcontrol-demo-rebuild\\dr & echo.> %TEMP%\\appcontrol-demo-rebuild\\dr\\oracle-rac.running",
+          "stop_cmd_override": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\dr\\oracle-rac.running 2>nul",
+          "rebuild_cmd_override": "%TEMP%\\appcontrol-demo-rebuild\\bin\\xlr-cli.bat trigger --template \"Oracle RAC Rebuild DR\" --var target=oracle-rac-01.dr.local --wait-complete"
         }
       ]
     },
@@ -39,10 +39,10 @@
       "display_name": "MQ Series (transactional bus)",
       "component_type": "middleware",
       "host": "agent-primary",
-      "check_cmd": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\mq-series.running\" (exit 0) else (exit 1)",
-      "start_cmd": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\primary\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\primary\\mq-series.running\"",
-      "stop_cmd": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\primary\\mq-series.running\" 2>nul & exit 0",
-      "rebuild_cmd": "\"%TEMP%\\appcontrol-demo-rebuild\\bin\\xldeploy-cli.bat\" deploy --package mq-series:9.2.4 --target mq-prd-01.primary.local --wait",
+      "check_cmd": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\mq-series.running (exit /b 0) else (exit /b 1)",
+      "start_cmd": "if not exist %TEMP%\\appcontrol-demo-rebuild\\primary mkdir %TEMP%\\appcontrol-demo-rebuild\\primary & echo.> %TEMP%\\appcontrol-demo-rebuild\\primary\\mq-series.running",
+      "stop_cmd": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\primary\\mq-series.running 2>nul",
+      "rebuild_cmd": "%TEMP%\\appcontrol-demo-rebuild\\bin\\xldeploy-cli.bat deploy --package mq-series:9.2.4 --target mq-prd-01.primary.local --wait",
       "check_interval_seconds": 10,
       "start_timeout_seconds": 60,
       "stop_timeout_seconds": 30,
@@ -50,9 +50,9 @@
       "site_overrides": [
         {
           "site_code": "DR",
-          "check_cmd_override": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\dr\\mq-series.running\" (exit 0) else (exit 1)",
-          "start_cmd_override": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\dr\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\dr\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\dr\\mq-series.running\"",
-          "stop_cmd_override": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\dr\\mq-series.running\" 2>nul & exit 0"
+          "check_cmd_override": "if exist %TEMP%\\appcontrol-demo-rebuild\\dr\\mq-series.running (exit /b 0) else (exit /b 1)",
+          "start_cmd_override": "if not exist %TEMP%\\appcontrol-demo-rebuild\\dr mkdir %TEMP%\\appcontrol-demo-rebuild\\dr & echo.> %TEMP%\\appcontrol-demo-rebuild\\dr\\mq-series.running",
+          "stop_cmd_override": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\dr\\mq-series.running 2>nul"
         }
       ]
     },
@@ -64,9 +64,9 @@
       "cluster_mode": "fan_out",
       "cluster_health_policy": "threshold_pct",
       "cluster_min_healthy_pct": 80,
-      "check_cmd": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-default.running\" (exit 0) else (exit 1)",
-      "start_cmd": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\primary\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-default.running\"",
-      "stop_cmd": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-default.running\" 2>nul & exit 0",
+      "check_cmd": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-default.running (exit /b 0) else (exit /b 1)",
+      "start_cmd": "if not exist %TEMP%\\appcontrol-demo-rebuild\\primary mkdir %TEMP%\\appcontrol-demo-rebuild\\primary & echo.> %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-default.running",
+      "stop_cmd": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-default.running 2>nul",
       "check_interval_seconds": 10,
       "start_timeout_seconds": 90,
       "stop_timeout_seconds": 45,
@@ -75,52 +75,52 @@
         {
           "hostname": "jboss-prd-001.primary.local",
           "install_path": "C:\\jboss\\node-001",
-          "check_cmd_override": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-001.running\" (exit 0) else (exit 1)",
-          "start_cmd_override": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\primary\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-001.running\"",
-          "stop_cmd_override": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-001.running\" 2>nul & exit 0"
+          "check_cmd_override": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-001.running (exit /b 0) else (exit /b 1)",
+          "start_cmd_override": "if not exist %TEMP%\\appcontrol-demo-rebuild\\primary mkdir %TEMP%\\appcontrol-demo-rebuild\\primary & echo.> %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-001.running",
+          "stop_cmd_override": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-001.running 2>nul"
         },
         {
           "hostname": "jboss-prd-002.primary.local",
           "install_path": "C:\\jboss\\node-002",
-          "check_cmd_override": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-002.running\" (exit 0) else (exit 1)",
-          "start_cmd_override": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\primary\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-002.running\"",
-          "stop_cmd_override": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-002.running\" 2>nul & exit 0"
+          "check_cmd_override": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-002.running (exit /b 0) else (exit /b 1)",
+          "start_cmd_override": "if not exist %TEMP%\\appcontrol-demo-rebuild\\primary mkdir %TEMP%\\appcontrol-demo-rebuild\\primary & echo.> %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-002.running",
+          "stop_cmd_override": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-002.running 2>nul"
         },
         {
           "hostname": "jboss-prd-003.primary.local",
           "install_path": "C:\\jboss\\node-003",
-          "check_cmd_override": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-003.running\" (exit 0) else (exit 1)",
-          "start_cmd_override": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\primary\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-003.running\"",
-          "stop_cmd_override": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-003.running\" 2>nul & exit 0"
+          "check_cmd_override": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-003.running (exit /b 0) else (exit /b 1)",
+          "start_cmd_override": "if not exist %TEMP%\\appcontrol-demo-rebuild\\primary mkdir %TEMP%\\appcontrol-demo-rebuild\\primary & echo.> %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-003.running",
+          "stop_cmd_override": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-003.running 2>nul"
         },
         {
           "hostname": "jboss-prd-004.primary.local",
           "install_path": "C:\\jboss\\node-004",
-          "check_cmd_override": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-004.running\" (exit 0) else (exit 1)",
-          "start_cmd_override": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\primary\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-004.running\"",
-          "stop_cmd_override": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-004.running\" 2>nul & exit 0"
+          "check_cmd_override": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-004.running (exit /b 0) else (exit /b 1)",
+          "start_cmd_override": "if not exist %TEMP%\\appcontrol-demo-rebuild\\primary mkdir %TEMP%\\appcontrol-demo-rebuild\\primary & echo.> %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-004.running",
+          "stop_cmd_override": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-004.running 2>nul"
         },
         {
           "hostname": "jboss-prd-005.primary.local",
           "install_path": "C:\\jboss\\node-005",
-          "check_cmd_override": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-005.running\" (exit 0) else (exit 1)",
-          "start_cmd_override": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\primary\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-005.running\"",
-          "stop_cmd_override": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-005.running\" 2>nul & exit 0"
+          "check_cmd_override": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-005.running (exit /b 0) else (exit /b 1)",
+          "start_cmd_override": "if not exist %TEMP%\\appcontrol-demo-rebuild\\primary mkdir %TEMP%\\appcontrol-demo-rebuild\\primary & echo.> %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-005.running",
+          "stop_cmd_override": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-005.running 2>nul"
         },
         {
           "hostname": "jboss-prd-006.primary.local",
           "install_path": "C:\\jboss\\node-006",
-          "check_cmd_override": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-006.running\" (exit 0) else (exit 1)",
-          "start_cmd_override": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\primary\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-006.running\"",
-          "stop_cmd_override": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-006.running\" 2>nul & exit 0"
+          "check_cmd_override": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-006.running (exit /b 0) else (exit /b 1)",
+          "start_cmd_override": "if not exist %TEMP%\\appcontrol-demo-rebuild\\primary mkdir %TEMP%\\appcontrol-demo-rebuild\\primary & echo.> %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-006.running",
+          "stop_cmd_override": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\primary\\jboss-006.running 2>nul"
         }
       ],
       "site_overrides": [
         {
           "site_code": "DR",
-          "check_cmd_override": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\dr\\jboss-default.running\" (exit 0) else (exit 1)",
-          "start_cmd_override": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\dr\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\dr\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\dr\\jboss-default.running\"",
-          "stop_cmd_override": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\dr\\jboss-default.running\" 2>nul & exit 0"
+          "check_cmd_override": "if exist %TEMP%\\appcontrol-demo-rebuild\\dr\\jboss-default.running (exit /b 0) else (exit /b 1)",
+          "start_cmd_override": "if not exist %TEMP%\\appcontrol-demo-rebuild\\dr mkdir %TEMP%\\appcontrol-demo-rebuild\\dr & echo.> %TEMP%\\appcontrol-demo-rebuild\\dr\\jboss-default.running",
+          "stop_cmd_override": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\dr\\jboss-default.running 2>nul"
         }
       ]
     },
@@ -129,10 +129,10 @@
       "display_name": "WebSphere Portal (online banking)",
       "component_type": "webfront",
       "host": "agent-primary",
-      "check_cmd": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\websphere-portal.running\" (exit 0) else (exit 1)",
-      "start_cmd": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\primary\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\primary\\websphere-portal.running\"",
-      "stop_cmd": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\primary\\websphere-portal.running\" 2>nul & exit 0",
-      "rebuild_cmd": "\"%TEMP%\\appcontrol-demo-rebuild\\bin\\xldeploy-cli.bat\" deploy --package websphere-portal:8.5.5 --target wsp-prd-01.primary.local --wait",
+      "check_cmd": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\websphere-portal.running (exit /b 0) else (exit /b 1)",
+      "start_cmd": "if not exist %TEMP%\\appcontrol-demo-rebuild\\primary mkdir %TEMP%\\appcontrol-demo-rebuild\\primary & echo.> %TEMP%\\appcontrol-demo-rebuild\\primary\\websphere-portal.running",
+      "stop_cmd": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\primary\\websphere-portal.running 2>nul",
+      "rebuild_cmd": "%TEMP%\\appcontrol-demo-rebuild\\bin\\xldeploy-cli.bat deploy --package websphere-portal:8.5.5 --target wsp-prd-01.primary.local --wait",
       "check_interval_seconds": 10,
       "start_timeout_seconds": 60,
       "stop_timeout_seconds": 30,
@@ -140,9 +140,9 @@
       "site_overrides": [
         {
           "site_code": "DR",
-          "check_cmd_override": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\dr\\websphere-portal.running\" (exit 0) else (exit 1)",
-          "start_cmd_override": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\dr\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\dr\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\dr\\websphere-portal.running\"",
-          "stop_cmd_override": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\dr\\websphere-portal.running\" 2>nul & exit 0"
+          "check_cmd_override": "if exist %TEMP%\\appcontrol-demo-rebuild\\dr\\websphere-portal.running (exit /b 0) else (exit /b 1)",
+          "start_cmd_override": "if not exist %TEMP%\\appcontrol-demo-rebuild\\dr mkdir %TEMP%\\appcontrol-demo-rebuild\\dr & echo.> %TEMP%\\appcontrol-demo-rebuild\\dr\\websphere-portal.running",
+          "stop_cmd_override": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\dr\\websphere-portal.running 2>nul"
         }
       ]
     },
@@ -153,9 +153,9 @@
       "host": "agent-primary",
       "cluster_size": 2,
       "cluster_nodes": ["f5-prd-01.primary.local", "f5-prd-02.primary.local"],
-      "check_cmd": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\\f5-lb.running\" (exit 0) else (exit 1)",
-      "start_cmd": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\primary\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\primary\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\primary\\f5-lb.running\"",
-      "stop_cmd": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\primary\\f5-lb.running\" 2>nul & exit 0",
+      "check_cmd": "if exist %TEMP%\\appcontrol-demo-rebuild\\primary\\f5-lb.running (exit /b 0) else (exit /b 1)",
+      "start_cmd": "if not exist %TEMP%\\appcontrol-demo-rebuild\\primary mkdir %TEMP%\\appcontrol-demo-rebuild\\primary & echo.> %TEMP%\\appcontrol-demo-rebuild\\primary\\f5-lb.running",
+      "stop_cmd": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\primary\\f5-lb.running 2>nul",
       "check_interval_seconds": 10,
       "start_timeout_seconds": 30,
       "stop_timeout_seconds": 15,
@@ -163,9 +163,9 @@
       "site_overrides": [
         {
           "site_code": "DR",
-          "check_cmd_override": "if exist \"%TEMP%\\appcontrol-demo-rebuild\\dr\\f5-lb.running\" (exit 0) else (exit 1)",
-          "start_cmd_override": "if not exist \"%TEMP%\\appcontrol-demo-rebuild\\dr\" mkdir \"%TEMP%\\appcontrol-demo-rebuild\\dr\" && type nul > \"%TEMP%\\appcontrol-demo-rebuild\\dr\\f5-lb.running\"",
-          "stop_cmd_override": "del /Q \"%TEMP%\\appcontrol-demo-rebuild\\dr\\f5-lb.running\" 2>nul & exit 0"
+          "check_cmd_override": "if exist %TEMP%\\appcontrol-demo-rebuild\\dr\\f5-lb.running (exit /b 0) else (exit /b 1)",
+          "start_cmd_override": "if not exist %TEMP%\\appcontrol-demo-rebuild\\dr mkdir %TEMP%\\appcontrol-demo-rebuild\\dr & echo.> %TEMP%\\appcontrol-demo-rebuild\\dr\\f5-lb.running",
+          "stop_cmd_override": "del /f /q %TEMP%\\appcontrol-demo-rebuild\\dr\\f5-lb.running 2>nul"
         }
       ]
     }
