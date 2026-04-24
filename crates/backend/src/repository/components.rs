@@ -35,6 +35,9 @@ pub struct Component {
     pub position_y: Option<f32>,
     pub cluster_size: Option<i32>,
     pub cluster_nodes: Option<Value>,
+    pub cluster_mode: Option<String>,
+    pub cluster_health_policy: Option<String>,
+    pub cluster_min_healthy_pct: Option<i16>,
     pub referenced_app_id: Option<Uuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -370,6 +373,9 @@ struct PgComponentRow {
     position_y: Option<f32>,
     cluster_size: Option<i32>,
     cluster_nodes: Option<Value>,
+    cluster_mode: Option<String>,
+    cluster_health_policy: Option<String>,
+    cluster_min_healthy_pct: Option<i16>,
     referenced_app_id: Option<Uuid>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
@@ -400,6 +406,9 @@ impl From<PgComponentRow> for Component {
             position_y: r.position_y,
             cluster_size: r.cluster_size,
             cluster_nodes: r.cluster_nodes,
+            cluster_mode: r.cluster_mode,
+            cluster_health_policy: r.cluster_health_policy,
+            cluster_min_healthy_pct: r.cluster_min_healthy_pct,
             referenced_app_id: r.referenced_app_id,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -437,7 +446,7 @@ const COMPONENT_COLS: &str =
     "id, application_id, name, component_type, display_name, description, icon, group_id, \
     host, agent_id, check_cmd, start_cmd, stop_cmd, \
     check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional, \
-    position_x, position_y, cluster_size, cluster_nodes, referenced_app_id, created_at, updated_at";
+    position_x, position_y, cluster_size, cluster_nodes, cluster_mode, cluster_health_policy, cluster_min_healthy_pct, referenced_app_id, created_at, updated_at";
 
 #[cfg(feature = "postgres")]
 #[async_trait]
@@ -463,7 +472,7 @@ impl ComponentRepository for PgComponentRepository {
             "SELECT c.id, c.application_id, c.name, c.component_type, c.display_name, c.description, c.icon, c.group_id, \
                 c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd, \
                 c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds, c.is_optional, \
-                c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at \
+                c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.cluster_mode, c.cluster_health_policy, c.cluster_min_healthy_pct, c.referenced_app_id, c.created_at, c.updated_at \
                 FROM components c JOIN applications a ON c.application_id = a.id \
                 WHERE c.id = $1 AND a.organization_id = $2"
         )
@@ -1043,6 +1052,9 @@ struct SqliteComponentRow {
     position_y: Option<f32>,
     cluster_size: Option<i32>,
     cluster_nodes: Option<Value>,
+    cluster_mode: Option<String>,
+    cluster_health_policy: Option<String>,
+    cluster_min_healthy_pct: Option<i16>,
     referenced_app_id: Option<DbUuid>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
@@ -1073,6 +1085,9 @@ impl From<SqliteComponentRow> for Component {
             position_y: r.position_y,
             cluster_size: r.cluster_size,
             cluster_nodes: r.cluster_nodes,
+            cluster_mode: r.cluster_mode,
+            cluster_health_policy: r.cluster_health_policy,
+            cluster_min_healthy_pct: r.cluster_min_healthy_pct,
             referenced_app_id: r.referenced_app_id.map(|r| r.into_inner()),
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -1114,7 +1129,7 @@ impl ComponentRepository for SqliteComponentRepository {
             "SELECT c.id, c.application_id, c.name, c.component_type, c.display_name, c.description, c.icon, c.group_id, \
                 c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd, \
                 c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds, c.is_optional, \
-                c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.referenced_app_id, c.created_at, c.updated_at \
+                c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.cluster_mode, c.cluster_health_policy, c.cluster_min_healthy_pct, c.referenced_app_id, c.created_at, c.updated_at \
                 FROM components c JOIN applications a ON c.application_id = a.id \
                 WHERE c.id = $1 AND a.organization_id = $2"
         )
