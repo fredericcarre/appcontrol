@@ -160,6 +160,26 @@ pub trait ClusterMemberRepository: Send + Sync {
         &self,
         component_id: Uuid,
     ) -> Result<Vec<ClusterMemberState>, sqlx::Error>;
+
+    /// Aggregate member counts per component for a whole application.
+    /// Returns one [`ComponentMemberCounts`] per fan-out component that has
+    /// at least one enabled member. Components without members are absent
+    /// from the result (the caller treats this as "no data — show nothing").
+    async fn count_members_by_app(
+        &self,
+        app_id: Uuid,
+    ) -> Result<Vec<ComponentMemberCounts>, sqlx::Error>;
+}
+
+/// Per-component member-state aggregate (used by the map view).
+#[derive(Debug, Clone)]
+pub struct ComponentMemberCounts {
+    pub component_id: Uuid,
+    pub total: i64,
+    pub running: i64,
+    pub degraded: i64,
+    pub failed: i64,
+    pub stopped: i64,
 }
 
 // ============================================================================
@@ -502,6 +522,40 @@ impl ClusterMemberRepository for PgClusterMemberRepository {
                 last_check_duration_ms: r.4,
                 last_stdout: r.5,
                 updated_at: r.6,
+            })
+            .collect())
+    }
+
+    async fn count_members_by_app(
+        &self,
+        app_id: Uuid,
+    ) -> Result<Vec<ComponentMemberCounts>, sqlx::Error> {
+        let sql = r#"
+            SELECT cm.component_id,
+                   COUNT(*)::bigint AS total,
+                   COUNT(*) FILTER (WHERE cms.current_state = 'RUNNING')::bigint   AS running,
+                   COUNT(*) FILTER (WHERE cms.current_state = 'DEGRADED')::bigint  AS degraded,
+                   COUNT(*) FILTER (WHERE cms.current_state = 'FAILED')::bigint    AS failed,
+                   COUNT(*) FILTER (WHERE cms.current_state = 'STOPPED')::bigint   AS stopped
+            FROM cluster_members cm
+            JOIN components c ON c.id = cm.component_id
+            LEFT JOIN cluster_member_state cms ON cms.cluster_member_id = cm.id
+            WHERE c.application_id = $1 AND cm.is_enabled = true
+            GROUP BY cm.component_id
+        "#;
+        let rows: Vec<(Uuid, i64, i64, i64, i64, i64)> = sqlx::query_as(sql)
+            .bind(crate::db::bind_id(app_id))
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ComponentMemberCounts {
+                component_id: r.0,
+                total: r.1,
+                running: r.2,
+                degraded: r.3,
+                failed: r.4,
+                stopped: r.5,
             })
             .collect())
     }
@@ -870,6 +924,47 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
                 last_check_duration_ms: r.4,
                 last_stdout: r.5,
                 updated_at: r.6,
+            })
+            .collect())
+    }
+
+    async fn count_members_by_app(
+        &self,
+        app_id: Uuid,
+    ) -> Result<Vec<ComponentMemberCounts>, sqlx::Error> {
+        let sql = r#"
+            SELECT cm.component_id,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN cms.current_state = 'RUNNING'  THEN 1 ELSE 0 END) AS running,
+                   SUM(CASE WHEN cms.current_state = 'DEGRADED' THEN 1 ELSE 0 END) AS degraded,
+                   SUM(CASE WHEN cms.current_state = 'FAILED'   THEN 1 ELSE 0 END) AS failed,
+                   SUM(CASE WHEN cms.current_state = 'STOPPED'  THEN 1 ELSE 0 END) AS stopped
+            FROM cluster_members cm
+            JOIN components c ON c.id = cm.component_id
+            LEFT JOIN cluster_member_state cms ON cms.cluster_member_id = cm.id
+            WHERE c.application_id = $1 AND cm.is_enabled = 1
+            GROUP BY cm.component_id
+        "#;
+        let rows: Vec<(
+            DbUuid,
+            i64,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+        )> = sqlx::query_as(sql)
+            .bind(DbUuid::from(app_id))
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ComponentMemberCounts {
+                component_id: r.0.into_inner(),
+                total: r.1,
+                running: r.2.unwrap_or(0),
+                degraded: r.3.unwrap_or(0),
+                failed: r.4.unwrap_or(0),
+                stopped: r.5.unwrap_or(0),
             })
             .collect())
     }

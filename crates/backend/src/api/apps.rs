@@ -297,6 +297,17 @@ pub async fn get_app(
     // Fetch dependencies via repository
     let dependencies = state.app_repo.get_app_dependencies(id).await?;
 
+    // Aggregate fan-out member counts per component (one query for the whole app).
+    // This drives the "fan-out · N members · X/N healthy" badge on the map.
+    let member_counts: std::collections::HashMap<Uuid, _> = state
+        .cluster_member_repo
+        .count_members_by_app(id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .into_iter()
+        .map(|c| (c.component_id, c))
+        .collect();
+
     // Get live connection status from WebSocket hub
     let connected_agents: std::collections::HashSet<Uuid> =
         state.ws_hub.connected_agent_ids().into_iter().collect();
@@ -365,6 +376,13 @@ pub async fn get_app(
                 "cluster_mode": c.cluster_mode,
                 "cluster_health_policy": c.cluster_health_policy,
                 "cluster_min_healthy_pct": c.cluster_min_healthy_pct,
+                "cluster_member_counts": member_counts.get(&c.id).map(|m| json!({
+                    "total":    m.total,
+                    "running":  m.running,
+                    "degraded": m.degraded,
+                    "failed":   m.failed,
+                    "stopped":  m.stopped,
+                })),
                 "referenced_app_id": c.referenced_app_id,
                 "referenced_app_name": c.referenced_app_id.and_then(|ref_id| referenced_app_names.get(&ref_id).cloned()),
                 "created_at": c.created_at,

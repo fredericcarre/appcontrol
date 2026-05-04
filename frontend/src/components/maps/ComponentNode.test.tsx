@@ -228,4 +228,42 @@ describe('ComponentNode', () => {
     const label = screen.getByText('my-db');
     expect(label.closest('[title]')?.getAttribute('title')).toBe('Main production database');
   });
+
+  describe('fan-out badge', () => {
+    it('renders fan-out · healthy/total when in fan_out mode with members', () => {
+      renderComponentNode({
+        clusterMode: 'fan_out',
+        clusterHealthPolicy: 'threshold_pct',
+        clusterMinHealthyPct: 80,
+        clusterMemberCounts: { total: 6, running: 5, degraded: 0, failed: 1, stopped: 0 },
+      });
+      expect(screen.getByText('fan-out · 5/6')).toBeInTheDocument();
+    });
+
+    it('renders bare "fan-out" badge when fan_out is enabled but has no members', () => {
+      renderComponentNode({
+        clusterMode: 'fan_out',
+        clusterMemberCounts: null,
+      });
+      expect(screen.getByText('fan-out')).toBeInTheDocument();
+    });
+
+    it('hides the legacy x{N} badge in fan_out mode (replaced by fan-out badge)', () => {
+      renderComponentNode({
+        clusterSize: 6,
+        clusterMode: 'fan_out',
+        clusterMemberCounts: { total: 6, running: 6, degraded: 0, failed: 0, stopped: 0 },
+      });
+      expect(screen.queryByText('x6')).not.toBeInTheDocument();
+      expect(screen.getByText('fan-out · 6/6')).toBeInTheDocument();
+    });
+
+    it('still shows x{N} badge for aggregate clusters (cluster_mode != fan_out)', () => {
+      renderComponentNode({
+        clusterSize: 3,
+        clusterMode: 'aggregate',
+      });
+      expect(screen.getByText('x3')).toBeInTheDocument();
+    });
+  });
 });
