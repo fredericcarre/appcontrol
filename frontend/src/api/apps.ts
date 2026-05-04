@@ -63,6 +63,15 @@ export interface Component {
     | 'threshold_pct'
     | null;
   cluster_min_healthy_pct?: number | null;
+  // Live aggregate of fan-out member states (only present when there is at
+  // least one enabled member). Drives the fan-out badge on the map.
+  cluster_member_counts?: {
+    total: number;
+    running: number;
+    degraded: number;
+    failed: number;
+    stopped: number;
+  } | null;
   // Application reference (for app-type synthetic components)
   referenced_app_id?: string | null;
   referenced_app_name?: string | null;

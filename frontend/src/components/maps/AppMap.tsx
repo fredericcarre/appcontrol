@@ -320,6 +320,10 @@ function buildNodes(
         // Cluster configuration
         clusterSize: c.cluster_size,
         clusterNodes: c.cluster_nodes,
+        clusterMode: c.cluster_mode,
+        clusterHealthPolicy: c.cluster_health_policy,
+        clusterMinHealthyPct: c.cluster_min_healthy_pct,
+        clusterMemberCounts: c.cluster_member_counts,
         // Connectivity status
         connectivityStatus: c.connectivity_status,
         agentHostname: c.agent_hostname,

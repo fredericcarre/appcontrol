@@ -13,7 +13,7 @@
       "host": "localhost",
       "check_cmd": "metrics-demo-check.bat postgres-db",
       "start_cmd": "type nul > %TEMP%\\appcontrol_demo\\postgres-db.running",
-      "stop_cmd": "del %TEMP%\\appcontrol_demo\\postgres-db.running 2>nul",
+      "stop_cmd": "del %TEMP%\\appcontrol_demo\\postgres-db.running 2>nul & exit /b 0",
       "check_interval_secs": 10
     },
     {
@@ -23,7 +23,7 @@
       "host": "localhost",
       "check_cmd": "metrics-demo-check.bat redis-cache",
       "start_cmd": "type nul > %TEMP%\\appcontrol_demo\\redis-cache.running",
-      "stop_cmd": "del %TEMP%\\appcontrol_demo\\redis-cache.running 2>nul",
+      "stop_cmd": "del %TEMP%\\appcontrol_demo\\redis-cache.running 2>nul & exit /b 0",
       "check_interval_secs": 10
     },
     {
@@ -33,7 +33,7 @@
       "host": "localhost",
       "check_cmd": "metrics-demo-check.bat kafka-broker",
       "start_cmd": "type nul > %TEMP%\\appcontrol_demo\\kafka-broker.running",
-      "stop_cmd": "del %TEMP%\\appcontrol_demo\\kafka-broker.running 2>nul",
+      "stop_cmd": "del %TEMP%\\appcontrol_demo\\kafka-broker.running 2>nul & exit /b 0",
       "check_interval_secs": 10
     },
     {
@@ -43,7 +43,7 @@
       "host": "localhost",
       "check_cmd": "metrics-demo-check.bat api-gateway",
       "start_cmd": "type nul > %TEMP%\\appcontrol_demo\\api-gateway.running",
-      "stop_cmd": "del %TEMP%\\appcontrol_demo\\api-gateway.running 2>nul",
+      "stop_cmd": "del %TEMP%\\appcontrol_demo\\api-gateway.running 2>nul & exit /b 0",
       "check_interval_secs": 10
     },
     {
@@ -53,7 +53,7 @@
       "host": "localhost",
       "check_cmd": "metrics-demo-check.bat backend-api",
       "start_cmd": "type nul > %TEMP%\\appcontrol_demo\\backend-api.running",
-      "stop_cmd": "del %TEMP%\\appcontrol_demo\\backend-api.running 2>nul",
+      "stop_cmd": "del %TEMP%\\appcontrol_demo\\backend-api.running 2>nul & exit /b 0",
       "check_interval_secs": 10
     },
     {
@@ -63,7 +63,7 @@
       "host": "localhost",
       "check_cmd": "metrics-demo-check.bat worker-pool",
       "start_cmd": "type nul > %TEMP%\\appcontrol_demo\\worker-pool.running",
-      "stop_cmd": "del %TEMP%\\appcontrol_demo\\worker-pool.running 2>nul",
+      "stop_cmd": "del %TEMP%\\appcontrol_demo\\worker-pool.running 2>nul & exit /b 0",
       "check_interval_secs": 10
     },
     {
@@ -73,7 +73,7 @@
       "host": "localhost",
       "check_cmd": "metrics-demo-check.bat frontend",
       "start_cmd": "type nul > %TEMP%\\appcontrol_demo\\frontend.running",
-      "stop_cmd": "del %TEMP%\\appcontrol_demo\\frontend.running 2>nul",
+      "stop_cmd": "del %TEMP%\\appcontrol_demo\\frontend.running 2>nul & exit /b 0",
       "check_interval_secs": 10
     }
   ],

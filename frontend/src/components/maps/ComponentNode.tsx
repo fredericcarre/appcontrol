@@ -30,6 +30,16 @@ interface ComponentNodeData {
   // Cluster configuration
   clusterSize?: number | null;
   clusterNodes?: string[] | null;
+  clusterMode?: 'aggregate' | 'fan_out' | null;
+  clusterHealthPolicy?: 'all_healthy' | 'any_healthy' | 'quorum' | 'threshold_pct' | null;
+  clusterMinHealthyPct?: number | null;
+  clusterMemberCounts?: {
+    total: number;
+    running: number;
+    degraded: number;
+    failed: number;
+    stopped: number;
+  } | null;
   // Connectivity status
   connectivityStatus?: 'connected' | 'agent_disconnected' | 'gateway_disconnected' | 'no_agent';
   agentHostname?: string;
@@ -90,8 +100,12 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
   const displayLabel = data.displayName || data.label;
 
   // Cluster support
-  const isCluster = data.clusterSize && data.clusterSize >= 2;
-  const stackCount = Math.min(data.clusterSize || 1, 3); // Max 3 visible stacked cards
+  const isFanOut = data.clusterMode === 'fan_out';
+  // Use member count for fan-out, cluster_size for aggregate clusters
+  const effectiveSize =
+    (isFanOut ? data.clusterMemberCounts?.total : data.clusterSize) || 0;
+  const isCluster = effectiveSize >= 2;
+  const stackCount = Math.min(effectiveSize || 1, 3); // Max 3 visible stacked cards
 
   // Connectivity status
   const isDisconnected = data.connectivityStatus === 'agent_disconnected' ||
@@ -214,7 +228,7 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
             {displayLabel}
           </span>
           {/* Cluster badge */}
-          {isCluster && (
+          {isCluster && !isFanOut && (
             <span
               className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-200 text-slate-700"
               title={
@@ -226,6 +240,8 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
               x{data.clusterSize}
             </span>
           )}
+          {/* Fan-out badge: members + healthy ratio + policy */}
+          {isFanOut && <FanOutBadge counts={data.clusterMemberCounts} policy={data.clusterHealthPolicy} minPct={data.clusterMinHealthyPct} />}
           {/* Metrics indicator badge - always visible when metrics exist */}
           {hasMetrics && (
             <Tooltip delayDuration={200}>
@@ -558,8 +574,76 @@ function arePropsEqual(prevProps: NodeProps, nextProps: NodeProps): boolean {
   // Re-render if metrics change (simple reference check)
   if (prevData.metrics !== nextData.metrics) return false;
 
+  // Re-render when fan-out counts change (a member just turned RED/GREEN)
+  const prev = prevData.clusterMemberCounts;
+  const next = nextData.clusterMemberCounts;
+  if (prev?.total !== next?.total) return false;
+  if (prev?.running !== next?.running) return false;
+  if (prev?.failed !== next?.failed) return false;
+  if (prev?.degraded !== next?.degraded) return false;
+  if (prev?.stopped !== next?.stopped) return false;
+
   // Default: don't re-render for other changes (position, etc. handled by React Flow)
   return true;
 }
 
 export const ComponentNode = memo(ComponentNodeInner, arePropsEqual);
+
+// ── Fan-out badge ────────────────────────────────────────
+// Shows "fan-out N · healthy/total" with a colour driven by the ratio,
+// so an operator sees the cluster shape without opening the side panel.
+function FanOutBadge({
+  counts,
+  policy,
+  minPct,
+}: {
+  counts?: ComponentNodeData['clusterMemberCounts'];
+  policy?: ComponentNodeData['clusterHealthPolicy'];
+  minPct?: number | null;
+}) {
+  // No members yet — surface that explicitly so users know fan-out is wired
+  // but empty (e.g. just after import, before the first check).
+  if (!counts || counts.total === 0) {
+    return (
+      <span
+        className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700"
+        title="Fan-out cluster — no members yet"
+      >
+        fan-out
+      </span>
+    );
+  }
+
+  const { total, running, degraded, failed, stopped } = counts;
+  const healthy = running + degraded;
+
+  // Pick a colour from the worst-state-first rule
+  let cls = 'bg-emerald-100 text-emerald-700';
+  if (failed > 0) cls = 'bg-red-100 text-red-700';
+  else if (degraded > 0) cls = 'bg-amber-100 text-amber-700';
+  else if (running === 0 && stopped === total) cls = 'bg-gray-200 text-gray-700';
+  else if (running < total) cls = 'bg-amber-100 text-amber-700';
+
+  const policyLabel = policy
+    ? policy === 'threshold_pct' && minPct
+      ? `threshold ≥${minPct}%`
+      : policy.replace('_', ' ')
+    : 'aggregation';
+
+  const tip =
+    `Fan-out cluster — ${total} members · ${policyLabel}\n` +
+    `  ${running} RUNNING, ${degraded} DEGRADED, ${failed} FAILED, ${stopped} STOPPED`;
+
+  return (
+    <span
+      className={cn(
+        'text-[10px] font-medium px-1.5 py-0.5 rounded inline-flex items-center gap-1',
+        cls,
+      )}
+      title={tip}
+    >
+      <Server className="h-2.5 w-2.5" />
+      fan-out · {healthy}/{total}
+    </span>
+  );
+}
