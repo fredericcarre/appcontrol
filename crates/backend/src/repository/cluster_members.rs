@@ -169,6 +169,11 @@ pub trait ClusterMemberRepository: Send + Sync {
         &self,
         app_id: Uuid,
     ) -> Result<Vec<ComponentMemberCounts>, sqlx::Error>;
+
+    /// List every enabled member of every fan-out component in an application,
+    /// each carrying its current FSM state. Drives the "explode fan-out on the
+    /// map" view — one round-trip instead of one query per component.
+    async fn list_by_app(&self, app_id: Uuid) -> Result<Vec<ClusterMemberWithState>, sqlx::Error>;
 }
 
 /// Per-component member-state aggregate (used by the map view).
@@ -556,6 +561,56 @@ impl ClusterMemberRepository for PgClusterMemberRepository {
                 degraded: r.3,
                 failed: r.4,
                 stopped: r.5,
+            })
+            .collect())
+    }
+
+    async fn list_by_app(&self, app_id: Uuid) -> Result<Vec<ClusterMemberWithState>, sqlx::Error> {
+        let members_sql = format!(
+            "SELECT {} FROM cluster_members cm \
+             WHERE cm.is_enabled = true \
+               AND EXISTS ( \
+                   SELECT 1 FROM components c \
+                   WHERE c.id = cm.component_id \
+                     AND c.application_id = $1 \
+                     AND c.cluster_mode = 'fan_out' \
+               ) \
+             ORDER BY cm.component_id, cm.member_order, cm.hostname",
+            PG_MEMBER_COLS
+        );
+        let members = sqlx::query_as::<_, PgMemberRow>(&members_sql)
+            .bind(crate::db::bind_id(app_id))
+            .fetch_all(&self.pool)
+            .await?;
+
+        let states: Vec<(Uuid, String, Option<DateTime<Utc>>, Option<i16>)> = sqlx::query_as(
+            "SELECT cms.cluster_member_id, cms.current_state, cms.last_check_at, cms.last_check_exit_code \
+             FROM cluster_member_state cms \
+             JOIN cluster_members cm ON cm.id = cms.cluster_member_id \
+             JOIN components c ON c.id = cm.component_id \
+             WHERE c.application_id = $1 AND c.cluster_mode = 'fan_out'",
+        )
+        .bind(crate::db::bind_id(app_id))
+        .fetch_all(&self.pool)
+        .await?;
+
+        let state_map: std::collections::HashMap<Uuid, _> =
+            states.into_iter().map(|s| (s.0, (s.1, s.2, s.3))).collect();
+
+        Ok(members
+            .into_iter()
+            .map(|m| {
+                let base: ClusterMember = m.into();
+                let (current_state, last_check_at, last_check_exit_code) = state_map
+                    .get(&base.id)
+                    .cloned()
+                    .unwrap_or_else(|| ("UNKNOWN".to_string(), None, None));
+                ClusterMemberWithState {
+                    member: base,
+                    current_state,
+                    last_check_at,
+                    last_check_exit_code,
+                }
             })
             .collect())
     }
@@ -965,6 +1020,58 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
                 degraded: r.3.unwrap_or(0),
                 failed: r.4.unwrap_or(0),
                 stopped: r.5.unwrap_or(0),
+            })
+            .collect())
+    }
+
+    async fn list_by_app(&self, app_id: Uuid) -> Result<Vec<ClusterMemberWithState>, sqlx::Error> {
+        let members_sql = format!(
+            "SELECT {} FROM cluster_members cm \
+             WHERE cm.is_enabled = 1 \
+               AND EXISTS ( \
+                   SELECT 1 FROM components c \
+                   WHERE c.id = cm.component_id \
+                     AND c.application_id = $1 \
+                     AND c.cluster_mode = 'fan_out' \
+               ) \
+             ORDER BY cm.component_id, cm.member_order, cm.hostname",
+            SQLITE_MEMBER_COLS
+        );
+        let members = sqlx::query_as::<_, SqliteMemberTuple>(&members_sql)
+            .bind(DbUuid::from(app_id))
+            .fetch_all(&self.pool)
+            .await?;
+
+        let states: Vec<(DbUuid, String, Option<DateTime<Utc>>, Option<i16>)> = sqlx::query_as(
+            "SELECT cms.cluster_member_id, cms.current_state, cms.last_check_at, cms.last_check_exit_code \
+             FROM cluster_member_state cms \
+             JOIN cluster_members cm ON cm.id = cms.cluster_member_id \
+             JOIN components c ON c.id = cm.component_id \
+             WHERE c.application_id = $1 AND c.cluster_mode = 'fan_out'",
+        )
+        .bind(DbUuid::from(app_id))
+        .fetch_all(&self.pool)
+        .await?;
+
+        let state_map: std::collections::HashMap<Uuid, _> = states
+            .into_iter()
+            .map(|s| (s.0.into_inner(), (s.1, s.2, s.3)))
+            .collect();
+
+        Ok(members
+            .into_iter()
+            .map(|t| {
+                let base = member_from_tuple(t);
+                let (current_state, last_check_at, last_check_exit_code) = state_map
+                    .get(&base.id)
+                    .cloned()
+                    .unwrap_or_else(|| ("UNKNOWN".to_string(), None, None));
+                ClusterMemberWithState {
+                    member: base,
+                    current_state,
+                    last_check_at,
+                    last_check_exit_code,
+                }
             })
             .collect())
     }

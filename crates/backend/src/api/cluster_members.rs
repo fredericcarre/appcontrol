@@ -180,6 +180,26 @@ pub async fn list_members(
     Ok(Json(json!({ "members": result })))
 }
 
+/// GET /api/v1/apps/:id/cluster-members
+///
+/// Returns every enabled fan-out member across the whole application in a
+/// single round-trip. Drives the "explode fan-out on the map" view — without
+/// this endpoint the frontend would issue one request per fan-out component.
+pub async fn list_app_members(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(app_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
+    if perm < PermissionLevel::View {
+        return Err(ApiError::Forbidden);
+    }
+
+    let members = state.cluster_member_repo.list_by_app(app_id).await?;
+    let result: Vec<Value> = members.iter().map(member_with_state_to_json).collect();
+    Ok(Json(json!({ "members": result })))
+}
+
 /// POST /api/v1/components/:id/members
 pub async fn create_member(
     State(state): State<Arc<AppState>>,
