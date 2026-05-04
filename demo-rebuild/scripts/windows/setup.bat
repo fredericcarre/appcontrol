@@ -12,13 +12,16 @@ if not exist "%DEMO_DIR%\primary" mkdir "%DEMO_DIR%\primary"
 if not exist "%DEMO_DIR%\dr"      mkdir "%DEMO_DIR%\dr"
 if not exist "%BIN_DIR%"          mkdir "%BIN_DIR%"
 
-copy /Y "%~dp0xldeploy-cli.bat" "%BIN_DIR%\xldeploy-cli.bat" >nul
-copy /Y "%~dp0xlr-cli.bat"      "%BIN_DIR%\xlr-cli.bat"      >nul
+copy /Y "%~dp0xldeploy-cli.bat"  "%BIN_DIR%\xldeploy-cli.bat"  >nul
+copy /Y "%~dp0xlr-cli.bat"       "%BIN_DIR%\xlr-cli.bat"       >nul
+copy /Y "%~dp0marker-start.bat"  "%BIN_DIR%\marker-start.bat"  >nul
+copy /Y "%~dp0marker-stop.bat"   "%BIN_DIR%\marker-stop.bat"   >nul
+copy /Y "%~dp0marker-check.bat"  "%BIN_DIR%\marker-check.bat"  >nul
 
 echo [SETUP] Directories created:
 echo   %DEMO_DIR%\primary    (primary site markers)
 echo   %DEMO_DIR%\dr         (DR site markers)
-echo   %BIN_DIR%             (mock XL Deploy / XL Release)
+echo   %BIN_DIR%             (mock XL Deploy / XL Release + marker helpers)
 echo.
 echo [SETUP] Mock CLIs installed in %BIN_DIR%
 echo.

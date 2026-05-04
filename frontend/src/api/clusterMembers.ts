@@ -81,6 +81,27 @@ export function useClusterMembers(componentId: string | null | undefined, enable
   });
 }
 
+const appMembersKey = (appId: string) => ['cluster-members', 'by-app', appId] as const;
+
+/**
+ * Fetch every fan-out member of an entire application in one round-trip.
+ * Used by the map view in "expanded" mode (each member rendered as its own
+ * sub-node), so we don't fan out N parallel `useClusterMembers` requests.
+ */
+export function useAppClusterMembers(appId: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: appId ? appMembersKey(appId) : ['cluster-members', 'by-app', '_none'],
+    queryFn: async () => {
+      const { data } = await client.get<{ members: ClusterMember[] }>(
+        `/apps/${appId}/cluster-members`,
+      );
+      return data.members;
+    },
+    enabled: !!appId && enabled,
+    refetchInterval: 5000, // members change state often during start/stop sequences
+  });
+}
+
 export function useCreateClusterMember(componentId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -153,6 +174,33 @@ export function useBatchStopMembers(componentId: string) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: membersKey(componentId) });
+    },
+  });
+}
+
+/**
+ * Start or stop a single fan-out member when the calling code only knows
+ * the member id, not its parent component id (e.g. the map's expanded view
+ * triggers a per-node start). Internally dispatches the existing batch
+ * endpoint with `member_ids: [memberId]`, scoped to `componentId`.
+ */
+export function useMemberAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: {
+      componentId: string;
+      memberId: string;
+      action: 'start' | 'stop';
+    }) => {
+      const { data } = await client.post<BatchActionResponse>(
+        `/components/${args.componentId}/members/actions/${args.action}`,
+        { member_ids: [args.memberId] },
+      );
+      return data;
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: membersKey(vars.componentId) });
+      qc.invalidateQueries({ queryKey: ['cluster-members', 'by-app'] });
     },
   });
 }

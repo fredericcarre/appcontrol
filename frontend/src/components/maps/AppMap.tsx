@@ -22,7 +22,9 @@ import '@xyflow/react/dist/style.css';
 import Dagre from '@dagrejs/dagre';
 import { toast } from 'sonner';
 import { ComponentNode } from './ComponentNode';
+import { MemberNode } from './MemberNode';
 import { MapToolbar } from './MapToolbar';
+import type { ClusterMember } from '@/api/clusterMembers';
 import { InfrastructureSummary } from './InfrastructureSummary';
 import { EdgeToolbar } from './EdgeToolbar';
 import { MapContextMenu, MapContextMenuProps } from './MapContextMenu';
@@ -33,6 +35,8 @@ import { ComponentState, ComponentType, STATE_COLORS } from '@/lib/colors';
 const nodeTypes: NodeTypes = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   component: ComponentNode as any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  member: MemberNode as any,
 };
 
 export interface BranchHighlight {
@@ -107,6 +111,14 @@ interface AppMapProps {
   onDeleteGroup?: (groupId: string) => Promise<void>;
   activeGroupFilter?: string | null;
   onGroupFilterChange?: (groupId: string | null) => void;
+  // Fan-out display: when 'expanded' and members are provided, every fan-out
+  // component is rendered with its enabled members as small sub-nodes below
+  // the parent. 'badge' (default) only shows the fan-out · X/Y pill on the
+  // parent.
+  fanOutDisplay?: 'badge' | 'expanded';
+  clusterMembers?: ClusterMember[];
+  onStartMember?: (memberId: string) => void;
+  onStopMember?: (memberId: string) => void;
 }
 
 /**
@@ -253,6 +265,10 @@ function buildNodes(
   siteBindingsMap?: Map<string, SiteBinding[]>,
   primarySite?: SiteInfo | null,
   activeGroupFilter?: string | null,
+  fanOutDisplay: 'badge' | 'expanded' = 'badge',
+  clusterMembers?: ClusterMember[],
+  onStartMember?: (memberId: string) => void,
+  onStopMember?: (memberId: string) => void,
 ): Node[] {
   const groupColorMap: Record<string, string> = {};
   if (groups) {
@@ -263,7 +279,7 @@ function buildNodes(
 
   const autoPositions = computeDagrePositions(components, dependencies);
 
-  return components.map((c) => {
+  const parentNodes: Node[] = components.map((c) => {
     // Use saved position only if not forcing auto-layout
     const hasPosition = !forceAutoLayout && c.position_x != null && c.position_y != null;
     const pos = hasPosition
@@ -367,6 +383,52 @@ function buildNodes(
         : undefined,
     };
   });
+
+  // Append member sub-nodes when fan-out display is "expanded".
+  // Layout: members are arranged in a horizontal row 120 px below their parent,
+  // 160 px apart. The first parent's saved position drives the row's anchor.
+  if (fanOutDisplay === 'expanded' && clusterMembers && clusterMembers.length > 0) {
+    const componentNodeMap = new Map(parentNodes.map((n) => [n.id, n]));
+    const membersByComponent = new Map<string, ClusterMember[]>();
+    for (const m of clusterMembers) {
+      if (!m.is_enabled) continue;
+      const arr = membersByComponent.get(m.component_id) || [];
+      arr.push(m);
+      membersByComponent.set(m.component_id, arr);
+    }
+
+    const MEMBER_X_GAP = 160;
+    const MEMBER_Y_OFFSET = 120;
+
+    for (const [componentId, members] of membersByComponent) {
+      const parent = componentNodeMap.get(componentId);
+      if (!parent) continue;
+      const parentX = parent.position.x;
+      const parentY = parent.position.y;
+      // Centre the row of members horizontally under the parent
+      const rowWidth = (members.length - 1) * MEMBER_X_GAP;
+      const startX = parentX + 90 - rowWidth / 2; // 90 = half of NODE_WIDTH
+
+      members.forEach((m, idx) => {
+        parentNodes.push({
+          id: `member-${m.id}`,
+          type: 'member',
+          position: { x: startX + idx * MEMBER_X_GAP, y: parentY + MEMBER_Y_OFFSET },
+          draggable: false,
+          selectable: false,
+          data: {
+            hostname: m.hostname,
+            state: (m.current_state || 'UNKNOWN') as ComponentState,
+            isEnabled: m.is_enabled,
+            onStart: onStartMember,
+            onStop: onStopMember,
+          },
+        });
+      });
+    }
+  }
+
+  return parentNodes;
 }
 
 function buildEdges(
@@ -481,6 +543,10 @@ function AppMapInner({
   onDeleteGroup,
   activeGroupFilter,
   onGroupFilterChange,
+  fanOutDisplay = 'badge',
+  clusterMembers,
+  onStartMember,
+  onStopMember,
 }: AppMapProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition, fitView } = useReactFlow();
@@ -569,8 +635,12 @@ function AppMapInner({
       siteBindingsMap,
       primarySite,
       activeGroupFilter,
+      fanOutDisplay,
+      clusterMembers,
+      onStartMember,
+      onStopMember,
     ),
-    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteBindingsMap, primarySite, activeGroupFilter],
+    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteBindingsMap, primarySite, activeGroupFilter, fanOutDisplay, clusterMembers, onStartMember, onStopMember],
   );
 
   const initialEdges = useMemo(

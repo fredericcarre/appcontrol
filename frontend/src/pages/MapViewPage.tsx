@@ -23,6 +23,7 @@ import {
   useDeleteGroup,
 } from '@/api/apps';
 import { useStartComponent, useStopComponent, useForceStopComponent, useStartWithDeps, useRestartWithDependents } from '@/api/components';
+import { useAppClusterMembers, useMemberAction } from '@/api/clusterMembers';
 import { usePermission } from '@/hooks/use-permission';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useSiteBindings } from '@/api/site-overrides';
@@ -59,7 +60,7 @@ import {
   Pencil, Download, Save, ArrowLeft, Play, Square, Loader2,
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   MoreVertical, Trash2, Pause, PlayCircle, Maximize, Minimize,
-  Monitor, History, X, Calendar,
+  Monitor, History, X, Calendar, Server,
 } from 'lucide-react';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 
@@ -87,6 +88,7 @@ export function MapViewPage() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
   const { data: app, isLoading } = useApp(appId || '');
+  const memberAction = useMemberAction();
   const { canOperate, canEdit, canManage } = usePermission(appId || '');
   const startApp = useStartApp();
   const stopApp = useStopApp();
@@ -163,6 +165,42 @@ export function MapViewPage() {
   const [historyMode, setHistoryMode] = useState(false);
   const [historyTime, setHistoryTime] = useState<Date | null>(null);
   const [historySnapshot, setHistorySnapshot] = useState<TimeSnapshot | null>(null);
+
+  // Fan-out display: 'badge' (compact, on the parent) or 'expanded' (one
+  // sub-node per member). Persists across reloads via localStorage so an
+  // operator's preference survives navigation.
+  const [fanOutDisplay, setFanOutDisplay] = useState<'badge' | 'expanded'>(() => {
+    const saved = typeof window !== 'undefined'
+      ? window.localStorage.getItem('appcontrol.fanOutDisplay')
+      : null;
+    return saved === 'expanded' ? 'expanded' : 'badge';
+  });
+  useEffect(() => {
+    window.localStorage.setItem('appcontrol.fanOutDisplay', fanOutDisplay);
+  }, [fanOutDisplay]);
+
+  // Only fetch the per-app member list when the operator actually wants
+  // the expanded view — saves a roundtrip + 5s poll for every map open.
+  const { data: clusterMembers } = useAppClusterMembers(
+    appId,
+    fanOutDisplay === 'expanded',
+  );
+  const handleStartMember = useCallback(
+    (memberId: string) => {
+      const m = clusterMembers?.find((cm) => cm.id === memberId);
+      if (!m) return;
+      memberAction.mutate({ componentId: m.component_id, memberId, action: 'start' });
+    },
+    [clusterMembers, memberAction],
+  );
+  const handleStopMember = useCallback(
+    (memberId: string) => {
+      const m = clusterMembers?.find((cm) => cm.id === memberId);
+      if (!m) return;
+      memberAction.mutate({ componentId: m.component_id, memberId, action: 'stop' });
+    },
+    [clusterMembers, memberAction],
+  );
 
   // Subscribe to app events via WebSocket
   useEffect(() => {
@@ -955,6 +993,28 @@ export function MapViewPage() {
                 </>
               )}
 
+              {/* Fan-out display toggle: badge ⇄ exploded sub-nodes */}
+              {!editMode && (
+                <Button
+                  variant={fanOutDisplay === 'expanded' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() =>
+                    setFanOutDisplay((m) => (m === 'expanded' ? 'badge' : 'expanded'))
+                  }
+                  title={
+                    fanOutDisplay === 'expanded'
+                      ? 'Collapse fan-out members back to a badge'
+                      : 'Show fan-out cluster members as individual nodes on the map'
+                  }
+                  aria-pressed={fanOutDisplay === 'expanded'}
+                >
+                  <Server className="h-4 w-4" />
+                  <span className="hidden sm:inline ml-1">
+                    {fanOutDisplay === 'expanded' ? 'Collapse members' : 'Show members'}
+                  </span>
+                </Button>
+              )}
+
               {/* History mode toggle */}
               {!editMode && (
                 <>
@@ -1120,6 +1180,11 @@ export function MapViewPage() {
             onDeleteGroup={handleDeleteGroup}
             activeGroupFilter={activeGroupFilter}
             onGroupFilterChange={setActiveGroupFilter}
+            // Fan-out display
+            fanOutDisplay={fanOutDisplay}
+            clusterMembers={clusterMembers}
+            onStartMember={historyMode ? undefined : handleStartMember}
+            onStopMember={historyMode ? undefined : handleStopMember}
           />
         </div>
 

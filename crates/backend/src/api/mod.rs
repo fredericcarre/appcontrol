@@ -137,6 +137,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         // Fan-out cluster members
         .route(
+            "/apps/:id/cluster-members",
+            get(cluster_members::list_app_members),
+        )
+        .route(
             "/components/:id/members",
             get(cluster_members::list_members).post(cluster_members::create_member),
         )
