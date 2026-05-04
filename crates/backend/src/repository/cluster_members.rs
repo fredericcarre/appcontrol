@@ -945,11 +945,17 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
             WHERE c.application_id = $1 AND cm.is_enabled = 1
             GROUP BY cm.component_id
         "#;
-        let rows: Vec<(DbUuid, i64, Option<i64>, Option<i64>, Option<i64>, Option<i64>)> =
-            sqlx::query_as(sql)
-                .bind(DbUuid::from(app_id))
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<(
+            DbUuid,
+            i64,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+        )> = sqlx::query_as(sql)
+            .bind(DbUuid::from(app_id))
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows
             .into_iter()
             .map(|r| ComponentMemberCounts {
