@@ -1277,12 +1277,13 @@ pub async fn count_running_components_in_app(pool: &DbPool, app_id: Uuid) -> i64
     .unwrap_or(0)
 }
 
-/// Get start component info: start_cmd, timeout, agent_id, referenced_app_id.
+/// Get start component info: start_cmd, timeout, agent_id, referenced_app_id, cluster_mode.
 pub struct StartComponentInfo {
     pub start_cmd: Option<String>,
     pub start_timeout_seconds: i32,
     pub agent_id: Option<Uuid>,
     pub referenced_app_id: Option<Uuid>,
+    pub cluster_mode: Option<String>,
 }
 
 pub async fn get_start_component_info(
@@ -1295,10 +1296,11 @@ pub async fn get_start_component_info(
         start_timeout_seconds: i32,
         agent_id: Option<DbUuid>,
         referenced_app_id: Option<DbUuid>,
+        cluster_mode: Option<String>,
     }
 
     let row = sqlx::query_as::<_, Row>(
-        "SELECT start_cmd, start_timeout_seconds, agent_id, referenced_app_id FROM components WHERE id = $1",
+        "SELECT start_cmd, start_timeout_seconds, agent_id, referenced_app_id, cluster_mode FROM components WHERE id = $1",
     )
     .bind(crate::db::bind_id(component_id))
     .fetch_one(pool)
@@ -1309,16 +1311,18 @@ pub async fn get_start_component_info(
         start_timeout_seconds: row.start_timeout_seconds,
         agent_id: row.agent_id.map(|v| v.into_inner()),
         referenced_app_id: row.referenced_app_id.map(|v| v.into_inner()),
+        cluster_mode: row.cluster_mode,
     })
 }
 
-/// Get stop component info: stop_cmd, timeout, agent_id, referenced_app_id, application_id.
+/// Get stop component info: stop_cmd, timeout, agent_id, referenced_app_id, application_id, cluster_mode.
 pub struct StopComponentInfo {
     pub stop_cmd: Option<String>,
     pub stop_timeout_seconds: i32,
     pub agent_id: Option<Uuid>,
     pub referenced_app_id: Option<Uuid>,
     pub application_id: Uuid,
+    pub cluster_mode: Option<String>,
 }
 
 pub async fn get_stop_component_info(
@@ -1332,10 +1336,11 @@ pub async fn get_stop_component_info(
         agent_id: Option<DbUuid>,
         referenced_app_id: Option<DbUuid>,
         application_id: DbUuid,
+        cluster_mode: Option<String>,
     }
 
     let row = sqlx::query_as::<_, Row>(
-        "SELECT stop_cmd, stop_timeout_seconds, agent_id, referenced_app_id, application_id FROM components WHERE id = $1",
+        "SELECT stop_cmd, stop_timeout_seconds, agent_id, referenced_app_id, application_id, cluster_mode FROM components WHERE id = $1",
     )
     .bind(crate::db::bind_id(component_id))
     .fetch_one(pool)
@@ -1347,6 +1352,7 @@ pub async fn get_stop_component_info(
         agent_id: row.agent_id.map(|v| v.into_inner()),
         referenced_app_id: row.referenced_app_id.map(|v| v.into_inner()),
         application_id: row.application_id.into_inner(),
+        cluster_mode: row.cluster_mode,
     })
 }
 
