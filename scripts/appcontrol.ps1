@@ -311,7 +311,7 @@ function Do-Start {
     # Start backend
     $backendLog = Join-Path $script:LogDir "backend.log"
     $backendErr = Join-Path $script:LogDir "backend.err.log"
-    $backendProc = Start-Process -FilePath $backendBin -PassThru -NoNewWindow `
+    $backendProc = Start-Process -FilePath $backendBin -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput $backendLog -RedirectStandardError $backendErr
     Write-Info ("Backend started with PID " + $backendProc.Id)
 
@@ -369,7 +369,7 @@ function Do-Start {
 
             $gwLog = Join-Path $script:LogDir ("gateway-" + $siteName + ".log")
             $gwErr = Join-Path $script:LogDir ("gateway-" + $siteName + ".err.log")
-            $gwProc = Start-Process -FilePath $gwBin -PassThru -NoNewWindow `
+            $gwProc = Start-Process -FilePath $gwBin -PassThru -WindowStyle Hidden `
                 -RedirectStandardOutput $gwLog -RedirectStandardError $gwErr
             $pids.gateways[$siteName] = $gwProc.Id
             Write-Info ("Gateway '" + $siteName + "' started with PID " + $gwProc.Id + " on port " + $gwPort)
@@ -393,7 +393,7 @@ function Do-Start {
             if (Test-Path $agConfigFile) {
                 # Enrolled agent -- use its config file
                 $agArgList = @("--config", "`"$agConfigFile`"")
-                $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgList -PassThru -NoNewWindow `
+                $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgList -PassThru -WindowStyle Hidden `
                     -RedirectStandardOutput $agLog -RedirectStandardError $agErr
             } else {
                 # Fallback: no enrollment yet -- connect directly
@@ -401,7 +401,7 @@ function Do-Start {
                 $env:GATEWAY_URL = "wss://localhost:" + $gwPort
                 Ensure-Dir $agDataDir
                 $env:DATA_DIR = $agDataDir
-                $agProc = Start-Process -FilePath $agBin -PassThru -NoNewWindow `
+                $agProc = Start-Process -FilePath $agBin -PassThru -WindowStyle Hidden `
                     -RedirectStandardOutput $agLog -RedirectStandardError $agErr
             }
             $pids.agents[$siteName] = $agProc.Id
@@ -763,7 +763,7 @@ function Do-AddSite {
             $gwBin = Join-Path $script:BinDir ("appcontrol-gateway" + $script:BinExt)
             $gwLog = Join-Path $script:LogDir ("gateway-" + $siteName + ".log")
             $gwErr = Join-Path $script:LogDir ("gateway-" + $siteName + ".err.log")
-            $gwProc = Start-Process -FilePath $gwBin -PassThru -NoNewWindow `
+            $gwProc = Start-Process -FilePath $gwBin -PassThru -WindowStyle Hidden `
                 -RedirectStandardOutput $gwLog -RedirectStandardError $gwErr
             Write-Info ("Gateway started with PID " + $gwProc.Id + " on port " + $gwPort)
 
@@ -806,13 +806,13 @@ function Do-AddSite {
                 $env:DATA_DIR = $agDataDir
                 $agLog = Join-Path $script:LogDir ("agent-" + $siteName + ".log")
                 $agErr = Join-Path $script:LogDir ("agent-" + $siteName + ".err.log")
-                $agProc = Start-Process -FilePath $agBin -PassThru -NoNewWindow `
+                $agProc = Start-Process -FilePath $agBin -PassThru -WindowStyle Hidden `
                     -RedirectStandardOutput $agLog -RedirectStandardError $agErr
             } else {
                 $agArgList = @("--config", "`"$agConfigFile`"")
                 $agLog = Join-Path $script:LogDir ("agent-" + $siteName + ".log")
                 $agErr = Join-Path $script:LogDir ("agent-" + $siteName + ".err.log")
-                $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgList -PassThru -NoNewWindow `
+                $agProc = Start-Process -FilePath $agBin -ArgumentList $agArgList -PassThru -WindowStyle Hidden `
                     -RedirectStandardOutput $agLog -RedirectStandardError $agErr
             }
             Write-Info ("Agent started with PID " + $agProc.Id)
