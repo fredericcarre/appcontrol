@@ -500,6 +500,20 @@ pub async fn start_single_component(
         return Ok(());
     }
 
+    // Fan-out cluster: dispatch start to every enabled member instead of the
+    // parent, then wait for the aggregate state to become Running. The parent's
+    // own start_cmd is treated as a per-member fallback when a member has no
+    // override of its own.
+    if info.cluster_mode.as_deref() == Some("fan_out") {
+        return start_fan_out_component(
+            state,
+            component_id,
+            info.start_cmd.as_deref(),
+            info.start_timeout_seconds,
+        )
+        .await;
+    }
+
     // Components without a start command are skipped - nothing to do
     let start_cmd = match &info.start_cmd {
         Some(cmd) if !cmd.trim().is_empty() => cmd.clone(),
@@ -585,19 +599,30 @@ pub async fn start_single_component(
         "Triggered immediate health checks after start command"
     );
 
-    // Get the app_id for checking cancellation
+    wait_for_running(state, component_id, timeout_secs, Some(agent_id)).await
+}
+
+/// Block until `component_id` reaches RUNNING (or DEGRADED → ok), FAILED, or
+/// timeout. While polling, optionally ping `agent_id` with RunChecksNow every
+/// few seconds so the next health check confirms the new state quickly. The
+/// fan-out path passes `None` because each member runs its own scheduled
+/// checks via the snapshot the agent already has.
+async fn wait_for_running(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+    timeout_secs: i32,
+    ping_agent: Option<Uuid>,
+) -> Result<(), SequencerError> {
     let app_id: Option<Uuid> =
         crate::repository::core_queries::get_component_app_id_uuid(&state.db, component_id)
             .await
             .ok();
 
-    // Wait for component to reach Running state (agent's health check will confirm)
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
     let mut last_check_request = std::time::Instant::now();
-    const CHECK_REQUEST_INTERVAL_SECS: u64 = 3; // Request checks more frequently during start
+    const CHECK_REQUEST_INTERVAL_SECS: u64 = 3;
 
     loop {
-        // Check for cancellation
         if let Some(aid) = app_id {
             if state.operation_lock.is_cancelled_async(aid).await {
                 tracing::info!(component_id = %component_id, "Start operation cancelled");
@@ -630,15 +655,16 @@ pub async fn start_single_component(
                     });
                 }
 
-                // Request health check every few seconds to detect start faster
-                if last_check_request.elapsed().as_secs() >= CHECK_REQUEST_INTERVAL_SECS {
-                    let _ = state.ws_hub.send_to_agent(
-                        agent_id,
-                        BackendMessage::RunChecksNow {
-                            request_id: *DbUuid::new_v4(),
-                        },
-                    );
-                    last_check_request = std::time::Instant::now();
+                if let Some(agent) = ping_agent {
+                    if last_check_request.elapsed().as_secs() >= CHECK_REQUEST_INTERVAL_SECS {
+                        let _ = state.ws_hub.send_to_agent(
+                            agent,
+                            BackendMessage::RunChecksNow {
+                                request_id: *DbUuid::new_v4(),
+                            },
+                        );
+                        last_check_request = std::time::Instant::now();
+                    }
                 }
 
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -668,6 +694,19 @@ pub async fn stop_single_component(
             "Skipping application-type component (handled by execute_stop_internal)"
         );
         return Ok(());
+    }
+
+    // Fan-out cluster: symmetric to start — dispatch stop to every enabled
+    // member, then wait for the aggregate state to become Stopped.
+    if info.cluster_mode.as_deref() == Some("fan_out") {
+        return stop_fan_out_component(
+            state,
+            component_id,
+            info.application_id,
+            info.stop_cmd.as_deref(),
+            info.stop_timeout_seconds,
+        )
+        .await;
     }
 
     // Components without a stop command are skipped - nothing to do
@@ -1411,4 +1450,205 @@ async fn stop_branch_dependents(
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Fan-out cluster helpers
+// ============================================================================
+//
+// When the DAG sequencer hits a component whose `cluster_mode = 'fan_out'`,
+// the parent's own start_cmd is no longer the workload — the workload is the
+// set of enabled members, each with its own agent and (optionally) its own
+// command override. We dispatch the start/stop to each member, then wait for
+// the parent's aggregate state to settle (the FSM aggregates member check
+// results into the parent's state via `apply_member_check_result` +
+// `derive_component_state`).
+//
+// Behaviour:
+// * No enabled members → log + treat as no-op (no transition). The component
+//   stays in whatever state its own check_cmd reports, so demos that haven't
+//   added any members yet don't break.
+// * Member has neither override nor parent fallback → skip + warn (won't
+//   prevent other members from starting).
+// * Gateway unavailable for a member during start → fail the whole fan-out
+//   (consistent with how `start_single_component` treats a missing gateway).
+// * Stop is forgiving: a missing member gateway is logged but doesn't abort.
+
+async fn start_fan_out_component(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+    parent_start_cmd: Option<&str>,
+    start_timeout_seconds: i32,
+) -> Result<(), SequencerError> {
+    let current = super::fsm::get_current_state(&state.db, component_id).await?;
+    if current == ComponentState::Running {
+        tracing::debug!(component_id = %component_id, "Fan-out parent already RUNNING, skipping start");
+        return Ok(());
+    }
+
+    let members = state
+        .cluster_member_repo
+        .list_by_component(component_id)
+        .await
+        .map_err(|e| SequencerError::Database(e.to_string()))?;
+
+    let enabled: Vec<_> = members
+        .into_iter()
+        .filter(|m| m.member.is_enabled)
+        .collect();
+    if enabled.is_empty() {
+        tracing::warn!(
+            component_id = %component_id,
+            "Fan-out component has no enabled members — nothing to start"
+        );
+        return Ok(());
+    }
+
+    super::fsm::transition_component(state, component_id, ComponentState::Starting).await?;
+
+    let parent_cmd = parent_start_cmd.map(str::trim).filter(|s| !s.is_empty());
+
+    let mut dispatched = 0usize;
+    for m in &enabled {
+        let cmd = m
+            .member
+            .start_cmd_override
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .or_else(|| parent_cmd.map(|s| s.to_string()));
+
+        let Some(command) = cmd else {
+            tracing::warn!(
+                component_id = %component_id,
+                member_id = %m.member.id,
+                hostname = %m.member.hostname,
+                "Skipping member with neither start_cmd_override nor parent start_cmd"
+            );
+            continue;
+        };
+
+        let request_id = Uuid::new_v4();
+        let message = BackendMessage::ExecuteCommand {
+            request_id,
+            component_id,
+            command,
+            timeout_seconds: start_timeout_seconds as u32,
+            exec_mode: "detached".to_string(),
+            cluster_member_id: Some(m.member.id),
+        };
+
+        crate::repository::core_queries::record_command_dispatch(
+            &state.db,
+            request_id,
+            component_id,
+            m.member.agent_id,
+            "start",
+        )
+        .await;
+
+        if !state.ws_hub.send_to_agent(m.member.agent_id, message) {
+            let _ =
+                super::fsm::transition_component(state, component_id, ComponentState::Failed).await;
+            let name = get_component_name(&state.db, component_id).await;
+            return Err(SequencerError::GatewayUnavailable {
+                agent_id: m.member.agent_id,
+                name,
+            });
+        }
+        dispatched += 1;
+    }
+
+    tracing::info!(
+        component_id = %component_id,
+        members = dispatched,
+        "Fan-out start dispatched to members — waiting for aggregate to reach RUNNING"
+    );
+
+    // Reuse the per-component wait loop. The parent's current_state is updated
+    // by apply_member_check_result whenever a member sends a check result, so
+    // wait_for_running converges naturally on the aggregated policy.
+    wait_for_running(state, component_id, start_timeout_seconds, None).await
+}
+
+async fn stop_fan_out_component(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+    _application_id: Uuid,
+    parent_stop_cmd: Option<&str>,
+    stop_timeout_seconds: i32,
+) -> Result<(), SequencerError> {
+    let current = super::fsm::get_current_state(&state.db, component_id).await?;
+    if !matches!(current, ComponentState::Running | ComponentState::Degraded) {
+        return Ok(());
+    }
+
+    let members = state
+        .cluster_member_repo
+        .list_by_component(component_id)
+        .await
+        .map_err(|e| SequencerError::Database(e.to_string()))?;
+
+    let enabled: Vec<_> = members
+        .into_iter()
+        .filter(|m| m.member.is_enabled)
+        .collect();
+    if enabled.is_empty() {
+        return Ok(());
+    }
+
+    super::fsm::transition_component(state, component_id, ComponentState::Stopping).await?;
+
+    let parent_cmd = parent_stop_cmd.map(str::trim).filter(|s| !s.is_empty());
+
+    for m in &enabled {
+        let cmd = m
+            .member
+            .stop_cmd_override
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .or_else(|| parent_cmd.map(|s| s.to_string()));
+
+        let Some(command) = cmd else {
+            tracing::warn!(
+                component_id = %component_id,
+                member_id = %m.member.id,
+                "Skipping member with neither stop_cmd_override nor parent stop_cmd"
+            );
+            continue;
+        };
+
+        let request_id = Uuid::new_v4();
+        let message = BackendMessage::ExecuteCommand {
+            request_id,
+            component_id,
+            command,
+            timeout_seconds: stop_timeout_seconds as u32,
+            exec_mode: "detached".to_string(),
+            cluster_member_id: Some(m.member.id),
+        };
+
+        crate::repository::core_queries::record_command_dispatch(
+            &state.db,
+            request_id,
+            component_id,
+            m.member.agent_id,
+            "stop",
+        )
+        .await;
+
+        if !state.ws_hub.send_to_agent(m.member.agent_id, message) {
+            tracing::warn!(
+                component_id = %component_id,
+                member_id = %m.member.id,
+                agent_id = %m.member.agent_id,
+                "Gateway unavailable for member during fan-out stop — continuing"
+            );
+        }
+    }
+
+    wait_for_stopped(state, component_id, stop_timeout_seconds as u64).await
 }

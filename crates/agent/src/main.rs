@@ -206,7 +206,18 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Windows: Ctrl+C / shutdown signal handling (foreground mode only, not service)
+    // Windows: Ctrl+C / shutdown signal handling (foreground mode only, not service).
+    //
+    // We give a 1-second grace period before exiting so that:
+    //   * the WS connection has a chance to send its goodbye frame,
+    //   * the sled offline buffer flushes pending writes to disk, and
+    //   * tracing-subscriber's BufferedWriter flushes err.log so any
+    //     last messages actually land on disk (otherwise post-mortem
+    //     debugging shows an empty err.log even when the agent did log).
+    //
+    // 1s is plenty for the above and short enough that an operator pressing
+    // Ctrl+C still feels responsive. Windows itself only force-kills after
+    // ~5s on CTRL_CLOSE_EVENT, so we stay well within the budget.
     #[cfg(windows)]
     {
         tokio::spawn(async {
@@ -214,7 +225,8 @@ async fn main() -> anyhow::Result<()> {
                 tracing::error!("Failed to listen for Ctrl+C: {}", e);
                 return;
             }
-            tracing::info!("Received Ctrl+C — shutting down gracefully");
+            tracing::info!("Agent received Ctrl+C — flushing buffers (1s grace) then exiting");
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
             std::process::exit(0);
         });
     }

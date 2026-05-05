@@ -521,15 +521,30 @@ async fn main() -> anyhow::Result<()> {
     let tls_acceptor = tokio_rustls::TlsAcceptor::from(rustls_config);
     let tcp_listener = tokio::net::TcpListener::bind(&addr).await?;
 
+    // Listen for Ctrl+C / SIGTERM so we can log the shutdown intent and exit
+    // cleanly instead of letting Windows hard-kill the process. Mostly useful
+    // when the orchestrator (appcontrol.ps1) does NOT fully detach us from the
+    // console — see https://learn.microsoft.com/en-us/windows/console/handlerroutine.
+    let mut shutdown = std::pin::pin!(async {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("Gateway received Ctrl+C / SIGTERM — shutting down");
+    });
+
     // Accept TLS connections, extract client cert if present, then serve with axum
     loop {
-        let (tcp_stream, peer_addr) = tcp_listener.accept().await?;
-        let acceptor = tls_acceptor.clone();
-        let app = app.clone();
+        tokio::select! {
+            _ = &mut shutdown => {
+                tracing::info!("Gateway accept loop exiting after shutdown signal");
+                return Ok(());
+            }
+            accepted = tcp_listener.accept() => {
+                let (tcp_stream, peer_addr) = accepted?;
+                let acceptor = tls_acceptor.clone();
+                let app = app.clone();
 
-        tokio::spawn(async move {
-            match acceptor.accept(tcp_stream).await {
-                Ok(tls_stream) => {
+                tokio::spawn(async move {
+                    match acceptor.accept(tcp_stream).await {
+                        Ok(tls_stream) => {
                     // Extract client cert fingerprint from the TLS session (may be None for /enroll)
                     let fingerprint = extract_client_cert_fingerprint(&tls_stream);
                     if let Some(ref fp) = fingerprint {
@@ -565,16 +580,18 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
-                Err(e) => {
-                    // TLS handshake failed
-                    tracing::warn!(
-                        peer = %peer_addr,
-                        "TLS handshake failed: {}",
-                        e
-                    );
-                }
+                        Err(e) => {
+                            // TLS handshake failed
+                            tracing::warn!(
+                                peer = %peer_addr,
+                                "TLS handshake failed: {}",
+                                e
+                            );
+                        }
+                    }
+                });
             }
-        });
+        }
     }
 }
 
