@@ -1,0 +1,88 @@
+{
+  "name": "Native HTTP Probes Demo",
+  "description": "Showcases v1.18.0 native commands: each component's check / start / stop is described as a typed `*_native` HTTP probe instead of a shell command. The agent runs them via its built-in HTTP client (reqwest) — no curl, wget, Invoke-WebRequest needed on the host. Particularly useful on Windows where shipping curl.exe is awkward. Three components: a JSON-API frontend, a backing API, and a fictional 'admin' that exposes start/stop endpoints.",
+  "tags": { "env": "demo", "feature": "native-http", "os": "any" },
+  "components": [
+    {
+      "name": "Backing API",
+      "display_name": "Backing API (HTTP /health probe)",
+      "component_type": "api",
+      "host": "localhost",
+      "// notes": "When `check_native` is set, the agent ignores `check_cmd` and runs the typed probe instead. Same precedence applies to start_native and stop_native. exit 0 = healthy, exit 1 = unhealthy.",
+      "check_native": {
+        "kind": "http",
+        "method": "GET",
+        "url": "http://localhost:8080/health",
+        "expect_status": 200,
+        "expect_body_contains": "ok",
+        "timeout_seconds": 3
+      },
+      "start_native": {
+        "kind": "http",
+        "method": "POST",
+        "url": "http://admin.local/lifecycle/api/start",
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"target\":\"backing-api\"}",
+        "expect_status": 202,
+        "timeout_seconds": 10
+      },
+      "stop_native": {
+        "kind": "http",
+        "method": "POST",
+        "url": "http://admin.local/lifecycle/api/stop",
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"target\":\"backing-api\",\"graceful\":true}",
+        "expect_status": 202,
+        "timeout_seconds": 10
+      },
+      "check_interval_seconds": 10,
+      "start_timeout_seconds": 60,
+      "stop_timeout_seconds": 30,
+      "position": { "x": 200, "y": 300 }
+    },
+    {
+      "name": "JSON Frontend",
+      "display_name": "JSON Frontend (HTTP /healthz)",
+      "component_type": "webfront",
+      "host": "localhost",
+      "check_native": {
+        "kind": "http",
+        "method": "GET",
+        "url": "http://localhost:3000/healthz",
+        "timeout_seconds": 3
+      },
+      "// fallback_explanation": "No start_native / stop_native here — when those fields are absent, the agent falls back to start_cmd / stop_cmd if set. Both empty = the parent app's Start button is a no-op for this component (useful when something else manages it).",
+      "check_interval_seconds": 10,
+      "start_timeout_seconds": 60,
+      "stop_timeout_seconds": 30,
+      "position": { "x": 200, "y": 100 }
+    },
+    {
+      "name": "Postgres TCP",
+      "display_name": "Postgres (TCP-connect probe)",
+      "component_type": "database",
+      "host": "localhost",
+      "// tcp_probe": "Native check doesn't have to be HTTP — `kind: tcp_connect` opens a TCP socket to host:port within timeout_seconds. Healthy when the socket opens. Useful for databases / queues / caches where you don't want to authenticate just to probe liveness.",
+      "check_native": {
+        "kind": "tcp_connect",
+        "host": "localhost",
+        "port": 5432,
+        "timeout_seconds": 2
+      },
+      "check_interval_seconds": 10,
+      "start_timeout_seconds": 60,
+      "stop_timeout_seconds": 30,
+      "position": { "x": 200, "y": 500 }
+    }
+  ],
+  "dependencies": [
+    { "from": "JSON Frontend", "to": "Backing API", "type": "strong" },
+    { "from": "Backing API", "to": "Postgres TCP", "type": "strong" }
+  ],
+  "notes": {
+    "why_native": "Lets a check / start / stop be described as a typed payload (HTTP probe, TCP connect, …) instead of a shell command. Avoids per-host quoting headaches and the recurring 'how do I install curl on Windows' problem. The shell `*_cmd` columns still work — when both shell and native are set on the same field, native wins.",
+    "expect_status": "Default = any 2xx is healthy. Set `expect_status: 200` to require the exact status, or skip it for permissive checks.",
+    "expect_body_contains": "Optional substring assertion. Useful for HTTP services that always return 200 with `{ status: \"degraded\" }` in the body.",
+    "insecure_tls": "Set `insecure: true` on an HTTP probe to skip TLS verification — for self-signed gear in non-production envs."
+  }
+}
