@@ -22,6 +22,7 @@ pub mod gateway_queries;
 pub mod gateways;
 pub mod hostings;
 pub mod import_queries;
+pub mod map_settings;
 pub mod misc_queries;
 pub mod org_queries;
 pub mod permissions;

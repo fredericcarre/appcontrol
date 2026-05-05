@@ -1284,8 +1284,12 @@ pub struct StartComponentInfo {
     pub agent_id: Option<Uuid>,
     pub referenced_app_id: Option<Uuid>,
     pub cluster_mode: Option<String>,
+    pub cluster_concurrency_mode: Option<String>,
+    pub cluster_batch_size: Option<i32>,
+    pub start_native: Option<appcontrol_common::types::NativeCommand>,
 }
 
+#[cfg(feature = "postgres")]
 pub async fn get_start_component_info(
     pool: &DbPool,
     component_id: Uuid,
@@ -1297,10 +1301,15 @@ pub async fn get_start_component_info(
         agent_id: Option<DbUuid>,
         referenced_app_id: Option<DbUuid>,
         cluster_mode: Option<String>,
+        cluster_concurrency_mode: Option<String>,
+        cluster_batch_size: Option<i32>,
+        start_native: Option<serde_json::Value>,
     }
 
     let row = sqlx::query_as::<_, Row>(
-        "SELECT start_cmd, start_timeout_seconds, agent_id, referenced_app_id, cluster_mode FROM components WHERE id = $1",
+        "SELECT start_cmd, start_timeout_seconds, agent_id, referenced_app_id, \
+                cluster_mode, cluster_concurrency_mode, cluster_batch_size, start_native \
+           FROM components WHERE id = $1",
     )
     .bind(crate::db::bind_id(component_id))
     .fetch_one(pool)
@@ -1312,6 +1321,49 @@ pub async fn get_start_component_info(
         agent_id: row.agent_id.map(|v| v.into_inner()),
         referenced_app_id: row.referenced_app_id.map(|v| v.into_inner()),
         cluster_mode: row.cluster_mode,
+        cluster_concurrency_mode: row.cluster_concurrency_mode,
+        cluster_batch_size: row.cluster_batch_size,
+        start_native: row
+            .start_native
+            .and_then(|v| serde_json::from_value(v).ok()),
+    })
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn get_start_component_info(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<StartComponentInfo, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        start_cmd: Option<String>,
+        start_timeout_seconds: i32,
+        agent_id: Option<DbUuid>,
+        referenced_app_id: Option<DbUuid>,
+        cluster_mode: Option<String>,
+        cluster_concurrency_mode: Option<String>,
+        cluster_batch_size: Option<i32>,
+        start_native: Option<String>,
+    }
+
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT start_cmd, start_timeout_seconds, agent_id, referenced_app_id, \
+                cluster_mode, cluster_concurrency_mode, cluster_batch_size, start_native \
+           FROM components WHERE id = $1",
+    )
+    .bind(crate::db::DbUuid::from(component_id))
+    .fetch_one(pool)
+    .await?;
+
+    Ok(StartComponentInfo {
+        start_cmd: row.start_cmd,
+        start_timeout_seconds: row.start_timeout_seconds,
+        agent_id: row.agent_id.map(|v| v.into_inner()),
+        referenced_app_id: row.referenced_app_id.map(|v| v.into_inner()),
+        cluster_mode: row.cluster_mode,
+        cluster_concurrency_mode: row.cluster_concurrency_mode,
+        cluster_batch_size: row.cluster_batch_size,
+        start_native: row.start_native.and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
 
@@ -1323,8 +1375,12 @@ pub struct StopComponentInfo {
     pub referenced_app_id: Option<Uuid>,
     pub application_id: Uuid,
     pub cluster_mode: Option<String>,
+    pub cluster_concurrency_mode: Option<String>,
+    pub cluster_batch_size: Option<i32>,
+    pub stop_native: Option<appcontrol_common::types::NativeCommand>,
 }
 
+#[cfg(feature = "postgres")]
 pub async fn get_stop_component_info(
     pool: &DbPool,
     component_id: Uuid,
@@ -1337,10 +1393,15 @@ pub async fn get_stop_component_info(
         referenced_app_id: Option<DbUuid>,
         application_id: DbUuid,
         cluster_mode: Option<String>,
+        cluster_concurrency_mode: Option<String>,
+        cluster_batch_size: Option<i32>,
+        stop_native: Option<serde_json::Value>,
     }
 
     let row = sqlx::query_as::<_, Row>(
-        "SELECT stop_cmd, stop_timeout_seconds, agent_id, referenced_app_id, application_id, cluster_mode FROM components WHERE id = $1",
+        "SELECT stop_cmd, stop_timeout_seconds, agent_id, referenced_app_id, application_id, \
+                cluster_mode, cluster_concurrency_mode, cluster_batch_size, stop_native \
+           FROM components WHERE id = $1",
     )
     .bind(crate::db::bind_id(component_id))
     .fetch_one(pool)
@@ -1353,6 +1414,49 @@ pub async fn get_stop_component_info(
         referenced_app_id: row.referenced_app_id.map(|v| v.into_inner()),
         application_id: row.application_id.into_inner(),
         cluster_mode: row.cluster_mode,
+        cluster_concurrency_mode: row.cluster_concurrency_mode,
+        cluster_batch_size: row.cluster_batch_size,
+        stop_native: row.stop_native.and_then(|v| serde_json::from_value(v).ok()),
+    })
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn get_stop_component_info(
+    pool: &DbPool,
+    component_id: Uuid,
+) -> Result<StopComponentInfo, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        stop_cmd: Option<String>,
+        stop_timeout_seconds: i32,
+        agent_id: Option<DbUuid>,
+        referenced_app_id: Option<DbUuid>,
+        application_id: DbUuid,
+        cluster_mode: Option<String>,
+        cluster_concurrency_mode: Option<String>,
+        cluster_batch_size: Option<i32>,
+        stop_native: Option<String>,
+    }
+
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT stop_cmd, stop_timeout_seconds, agent_id, referenced_app_id, application_id, \
+                cluster_mode, cluster_concurrency_mode, cluster_batch_size, stop_native \
+           FROM components WHERE id = $1",
+    )
+    .bind(crate::db::DbUuid::from(component_id))
+    .fetch_one(pool)
+    .await?;
+
+    Ok(StopComponentInfo {
+        stop_cmd: row.stop_cmd,
+        stop_timeout_seconds: row.stop_timeout_seconds,
+        agent_id: row.agent_id.map(|v| v.into_inner()),
+        referenced_app_id: row.referenced_app_id.map(|v| v.into_inner()),
+        application_id: row.application_id.into_inner(),
+        cluster_mode: row.cluster_mode,
+        cluster_concurrency_mode: row.cluster_concurrency_mode,
+        cluster_batch_size: row.cluster_batch_size,
+        stop_native: row.stop_native.and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
 

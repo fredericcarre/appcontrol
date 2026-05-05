@@ -24,6 +24,7 @@ import {
 } from '@/api/apps';
 import { useStartComponent, useStopComponent, useForceStopComponent, useStartWithDeps, useRestartWithDependents } from '@/api/components';
 import { useAppClusterMembers, useMemberAction } from '@/api/clusterMembers';
+import { useMapSettings, useUpdateMapSettings, type MapDisplayOptions, isFlagOn } from '@/api/mapSettings';
 import { usePermission } from '@/hooks/use-permission';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useSiteBindings } from '@/api/site-overrides';
@@ -55,12 +56,14 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 import {
   Pencil, Download, Save, ArrowLeft, Play, Square, Loader2,
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   MoreVertical, Trash2, Pause, PlayCircle, Maximize, Minimize,
-  Monitor, History, X, Calendar, Server,
+  Monitor, History, X, Calendar, Server, SlidersHorizontal,
 } from 'lucide-react';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 
@@ -89,6 +92,7 @@ export function MapViewPage() {
   const navigate = useNavigate();
   const { data: app, isLoading } = useApp(appId || '');
   const memberAction = useMemberAction();
+  const { data: mapDisplayOptions } = useMapSettings(appId);
   const { canOperate, canEdit, canManage } = usePermission(appId || '');
   const startApp = useStartApp();
   const stopApp = useStopApp();
@@ -993,6 +997,14 @@ export function MapViewPage() {
                 </>
               )}
 
+              {/* Per-app display options — declutter the map by hiding the
+                  bits the operator doesn't care about right now. Persisted
+                  in `applications.map_display_options` so it survives
+                  navigation and is shared across operators on the same app. */}
+              {!editMode && appId && (
+                <MapViewOptionsMenu appId={appId} canEdit={canEdit} />
+              )}
+
               {/* Fan-out display toggle: badge ⇄ exploded sub-nodes */}
               {!editMode && (
                 <Button
@@ -1185,6 +1197,8 @@ export function MapViewPage() {
             clusterMembers={clusterMembers}
             onStartMember={historyMode ? undefined : handleStartMember}
             onStopMember={historyMode ? undefined : handleStopMember}
+            // Per-app display options (host/metrics/links/etc.)
+            mapDisplayOptions={mapDisplayOptions}
           />
         </div>
 
@@ -1290,5 +1304,79 @@ export function MapViewPage() {
         onConfirm={confirmDialog.onConfirm}
       />
     </div>
+  );
+}
+
+// Dropdown menu wired to GET/PUT /apps/:id/map-settings. Each checkbox flips
+// one boolean inside the JSON blob. Default = enabled (the API returns `{}`
+// for never-customised apps and `isFlagOn` reads "absent = true"), so the
+// initial state of every box is checked.
+function MapViewOptionsMenu({ appId, canEdit }: { appId: string; canEdit?: boolean }) {
+  const { data: opts } = useMapSettings(appId);
+  const update = useUpdateMapSettings(appId);
+
+  const flip = (key: keyof MapDisplayOptions, value: boolean) => {
+    const next: MapDisplayOptions = { ...(opts ?? {}), [key]: value };
+    update.mutate(next);
+  };
+
+  const flag = (key: keyof MapDisplayOptions) => isFlagOn(opts, key);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" title="Map display options">
+          <SlidersHorizontal className="h-4 w-4" />
+          <span className="hidden sm:inline ml-1">View</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuLabel>Show on each component</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem
+          checked={flag('show_host')}
+          onCheckedChange={(v) => flip('show_host', v)}
+          disabled={!canEdit}
+        >
+          Host / agent
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={flag('show_metrics')}
+          onCheckedChange={(v) => flip('show_metrics', v)}
+          disabled={!canEdit}
+        >
+          Metrics widget
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={flag('show_cluster_badge')}
+          onCheckedChange={(v) => flip('show_cluster_badge', v)}
+          disabled={!canEdit}
+        >
+          Cluster / fan-out badge
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={flag('show_site_bindings')}
+          onCheckedChange={(v) => flip('show_site_bindings', v)}
+          disabled={!canEdit}
+        >
+          Multi-site split panel
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={flag('show_links')}
+          onCheckedChange={(v) => flip('show_links', v)}
+          disabled={!canEdit}
+        >
+          Hyperlinks
+        </DropdownMenuCheckboxItem>
+        {!canEdit && (
+          <>
+            <DropdownMenuSeparator />
+            <div className="px-2 py-1 text-[10px] text-muted-foreground">
+              Edit permission required to change these options.
+            </div>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

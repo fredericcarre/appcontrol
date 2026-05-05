@@ -271,6 +271,11 @@ pub enum BackendMessage {
         /// The `command` string is already resolved (overrides applied).
         #[serde(default)]
         cluster_member_id: Option<Uuid>,
+        /// When present, the agent runs this typed command instead of the
+        /// `command` shell string. Lets `check_native` / `start_native` /
+        /// `stop_native` reach the agent over the same transport.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        native: Option<crate::types::NativeCommand>,
     },
     UpdateConfig {
         components: Vec<ComponentConfig>,
@@ -587,6 +592,10 @@ pub enum WsEvent {
 /// can deliver it to the correct agent (no broadcast).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
+// `BackendMessage` carries optional typed payloads (NativeCommand, terminal
+// resize args, etc.) that make the enum modestly large; the size disparity
+// between variants here is intentional and not worth a Box hop.
+#[allow(clippy::large_enum_variant)]
 pub enum GatewayEnvelope {
     /// Route a backend message to a specific agent.
     ForwardToAgent {
@@ -878,6 +887,7 @@ mod tests {
             timeout_seconds: 60,
             exec_mode: "detached".to_string(),
             cluster_member_id: None,
+            native: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: BackendMessage = serde_json::from_str(&json).unwrap();
@@ -988,6 +998,7 @@ mod tests {
             timeout_seconds: 60,
             exec_mode: "sync".to_string(),
             cluster_member_id: None,
+            native: None,
         };
         let envelope = super::GatewayEnvelope::ForwardToAgent {
             target_agent_id: agent_id,
@@ -1268,6 +1279,7 @@ mod tests {
             timeout_seconds: 30,
             exec_mode: "sync".to_string(),
             cluster_member_id: None,
+            native: None,
         };
         assert!(ack.priority() < exec.priority());
     }

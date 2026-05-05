@@ -40,6 +40,12 @@ interface ComponentNodeData {
     failed: number;
     stopped: number;
   } | null;
+  // Per-map display options (default = show everything when undefined)
+  showHost?: boolean;
+  showMetrics?: boolean;
+  showClusterBadge?: boolean;
+  showSiteBindings?: boolean;
+  showLinks?: boolean;
   // Connectivity status
   connectivityStatus?: 'connected' | 'agent_disconnected' | 'gateway_disconnected' | 'no_agent';
   agentHostname?: string;
@@ -227,8 +233,8 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
           <span className="font-semibold text-sm truncate flex-1" title={data.description || undefined}>
             {displayLabel}
           </span>
-          {/* Cluster badge */}
-          {isCluster && !isFanOut && (
+          {/* Cluster badge — gated by per-map display option */}
+          {(data.showClusterBadge ?? true) && isCluster && !isFanOut && (
             <span
               className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-200 text-slate-700"
               title={
@@ -241,9 +247,9 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
             </span>
           )}
           {/* Fan-out badge: members + healthy ratio + policy */}
-          {isFanOut && <FanOutBadge counts={data.clusterMemberCounts} policy={data.clusterHealthPolicy} minPct={data.clusterMinHealthyPct} />}
-          {/* Metrics indicator badge - always visible when metrics exist */}
-          {hasMetrics && (
+          {(data.showClusterBadge ?? true) && isFanOut && <FanOutBadge counts={data.clusterMemberCounts} policy={data.clusterHealthPolicy} minPct={data.clusterMinHealthyPct} />}
+          {/* Metrics indicator pill — gated by per-map display option */}
+          {(data.showMetrics ?? true) && hasMetrics && (
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
                 <span
@@ -264,16 +270,21 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         </div>
 
         <div className="flex items-center justify-between">
-          {/* For application-type with referenced app: show referenced app name; for others: show host */}
+          {/* For application-type with referenced app: show referenced app name;
+              for others: show host. The referenced-app label is part of the
+              app navigation contract, NOT a "host" — we keep it visible even
+              when the operator hides hosts via the View menu. */}
           {data.componentType === 'application' && data.referencedAppId ? (
             <span className="text-xs text-blue-600 truncate max-w-[100px] flex items-center gap-1" title={data.referencedAppName || 'Referenced app'}>
               <ExternalLink className="h-3 w-3" />
               {data.referencedAppName || 'App ref'}
             </span>
-          ) : (
+          ) : (data.showHost ?? true) ? (
             <span className="text-xs text-muted-foreground truncate max-w-[100px]" title={data.agentHostname || data.host}>
               {data.agentHostname || data.host}
             </span>
+          ) : (
+            <span /> /* keep flex layout balanced when host hidden */
           )}
           <div className="flex items-center gap-1">
             {/* Hide connectivity status for application-type components */}
@@ -312,7 +323,7 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
         </div>
 
         {/* Metrics display (compact mode, always visible when available) */}
-        {data.metrics && Object.keys(data.metrics).length > 0 && (
+        {(data.showMetrics ?? true) && data.metrics && Object.keys(data.metrics).length > 0 && (
           <div className="mt-2 pt-2 border-t border-gray-200">
             <MetricsDisplay
               metrics={data.metrics}
@@ -322,8 +333,8 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
           </div>
         )}
 
-        {/* Multi-site split panel */}
-        {data.siteBindings && data.siteBindings.length > 0 && (
+        {/* Multi-site split panel — gated by per-map display option */}
+        {(data.showSiteBindings ?? true) && data.siteBindings && data.siteBindings.length > 0 && (
           <SitePanels
             siteBindings={data.siteBindings}
             currentState={data.state}
@@ -392,7 +403,7 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
                 </button>
               )}
             </div>
-            {data.links && data.links.length > 0 && (
+            {(data.showLinks ?? true) && data.links && data.links.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1.5">
                 {data.links.map((link, i) => (
                   <a

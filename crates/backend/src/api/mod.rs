@@ -22,6 +22,7 @@ pub mod import;
 pub mod import_wizard;
 pub mod links;
 pub mod logs;
+pub mod map_settings;
 pub mod orchestration;
 pub mod organizations;
 pub mod permissions;
@@ -64,6 +65,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/apps/:id/force-unlock", post(apps::force_unlock_operation))
         .route("/apps/:id/suspend", put(apps::suspend_application))
         .route("/apps/:id/resume", put(apps::resume_application))
+        .route(
+            "/apps/:id/map-settings",
+            get(map_settings::get_map_settings).put(map_settings::put_map_settings),
+        )
         .route(
             "/apps/:app_id/site-overrides",
             get(apps::get_site_overrides),
