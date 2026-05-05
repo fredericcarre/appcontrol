@@ -6,6 +6,7 @@ mod enroll;
 mod executor;
 mod log_buffer;
 mod native_commands;
+mod native_runner;
 mod platform;
 mod scheduler;
 mod self_update;

@@ -24,6 +24,8 @@ import {
 } from '@/api/apps';
 import { useStartComponent, useStopComponent, useForceStopComponent, useStartWithDeps, useRestartWithDependents } from '@/api/components';
 import { useAppClusterMembers, useMemberAction } from '@/api/clusterMembers';
+import { useMapSettings, useUpdateMapSettings, type MapDisplayOptions, isFlagOn } from '@/api/mapSettings';
+import { usePendingManualTasks } from '@/api/manualTasks';
 import { usePermission } from '@/hooks/use-permission';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useSiteBindings } from '@/api/site-overrides';
@@ -55,12 +57,14 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 import {
   Pencil, Download, Save, ArrowLeft, Play, Square, Loader2,
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   MoreVertical, Trash2, Pause, PlayCircle, Maximize, Minimize,
-  Monitor, History, X, Calendar, Server,
+  Monitor, History, X, Calendar, Server, SlidersHorizontal, FileText, Clock,
 } from 'lucide-react';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 
@@ -89,6 +93,14 @@ export function MapViewPage() {
   const navigate = useNavigate();
   const { data: app, isLoading } = useApp(appId || '');
   const memberAction = useMemberAction();
+  const { data: mapDisplayOptions } = useMapSettings(appId);
+  // Subset of pending manual tasks that belong to THIS app — drives the
+  // "PAUSED · N manual task(s) awaiting validation" badge in the header.
+  const { data: pendingManual } = usePendingManualTasks();
+  const pendingManualForApp = useMemo(
+    () => pendingManual?.tasks.filter((t) => t.application_id === appId) ?? [],
+    [pendingManual, appId],
+  );
   const { canOperate, canEdit, canManage } = usePermission(appId || '');
   const startApp = useStartApp();
   const stopApp = useStopApp();
@@ -867,6 +879,26 @@ export function MapViewPage() {
               <Badge variant={getWeatherVariant(weather)} className="shrink-0">
                 {globalState}
               </Badge>
+              {/* If any component in this app currently has a pending manual
+                  validation, surface it loudly next to the global state.
+                  Otherwise the operator might see a STARTING / DEGRADED app
+                  and assume it's stuck on a check_cmd, when actually a human
+                  needs to click Validate. */}
+              {pendingManualForApp.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (pendingManualForApp[0]) {
+                      setSelectedComponentId(pendingManualForApp[0].component_id);
+                    }
+                  }}
+                  className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 text-xs border border-amber-300 hover:bg-amber-200 dark:hover:bg-amber-800/60"
+                  title="One or more manual tasks are awaiting your validation. Click to open the first one."
+                >
+                  <Clock className="h-3 w-3" />
+                  PAUSED · {pendingManualForApp.length} manual task{pendingManualForApp.length !== 1 ? 's' : ''} awaiting validation
+                </button>
+              )}
               {editMode && (
                 <span className="text-xs bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200 px-2 py-1 rounded shrink-0">
                   Edit Mode
@@ -993,6 +1025,14 @@ export function MapViewPage() {
                 </>
               )}
 
+              {/* Per-app display options — declutter the map by hiding the
+                  bits the operator doesn't care about right now. Persisted
+                  in `applications.map_display_options` so it survives
+                  navigation and is shared across operators on the same app. */}
+              {!editMode && appId && (
+                <MapViewOptionsMenu appId={appId} canEdit={canEdit} />
+              )}
+
               {/* Fan-out display toggle: badge ⇄ exploded sub-nodes */}
               {!editMode && (
                 <Button
@@ -1052,6 +1092,12 @@ export function MapViewPage() {
                   <DropdownMenuItem onClick={handleExport} disabled={exportApp.isPending}>
                     <Download className="h-4 w-4 mr-2" />
                     Export as JSON
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => window.open(`/apps/${appId}/print-plan`, '_blank')}
+                  >
+                    <FileText className="h-4 w-4 mr-2" />
+                    Print plan / Save as PDF
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={toggleFullscreen}>
                     {isFullscreen ? (
@@ -1185,6 +1231,8 @@ export function MapViewPage() {
             clusterMembers={clusterMembers}
             onStartMember={historyMode ? undefined : handleStartMember}
             onStopMember={historyMode ? undefined : handleStopMember}
+            // Per-app display options (host/metrics/links/etc.)
+            mapDisplayOptions={mapDisplayOptions}
           />
         </div>
 
@@ -1290,5 +1338,79 @@ export function MapViewPage() {
         onConfirm={confirmDialog.onConfirm}
       />
     </div>
+  );
+}
+
+// Dropdown menu wired to GET/PUT /apps/:id/map-settings. Each checkbox flips
+// one boolean inside the JSON blob. Default = enabled (the API returns `{}`
+// for never-customised apps and `isFlagOn` reads "absent = true"), so the
+// initial state of every box is checked.
+function MapViewOptionsMenu({ appId, canEdit }: { appId: string; canEdit?: boolean }) {
+  const { data: opts } = useMapSettings(appId);
+  const update = useUpdateMapSettings(appId);
+
+  const flip = (key: keyof MapDisplayOptions, value: boolean) => {
+    const next: MapDisplayOptions = { ...(opts ?? {}), [key]: value };
+    update.mutate(next);
+  };
+
+  const flag = (key: keyof MapDisplayOptions) => isFlagOn(opts, key);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" title="Map display options">
+          <SlidersHorizontal className="h-4 w-4" />
+          <span className="hidden sm:inline ml-1">View</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuLabel>Show on each component</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem
+          checked={flag('show_host')}
+          onCheckedChange={(v) => flip('show_host', v)}
+          disabled={!canEdit}
+        >
+          Host / agent
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={flag('show_metrics')}
+          onCheckedChange={(v) => flip('show_metrics', v)}
+          disabled={!canEdit}
+        >
+          Metrics widget
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={flag('show_cluster_badge')}
+          onCheckedChange={(v) => flip('show_cluster_badge', v)}
+          disabled={!canEdit}
+        >
+          Cluster / fan-out badge
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={flag('show_site_bindings')}
+          onCheckedChange={(v) => flip('show_site_bindings', v)}
+          disabled={!canEdit}
+        >
+          Multi-site split panel
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={flag('show_links')}
+          onCheckedChange={(v) => flip('show_links', v)}
+          disabled={!canEdit}
+        >
+          Hyperlinks
+        </DropdownMenuCheckboxItem>
+        {!canEdit && (
+          <>
+            <DropdownMenuSeparator />
+            <div className="px-2 py-1 text-[10px] text-muted-foreground">
+              Edit permission required to change these options.
+            </div>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

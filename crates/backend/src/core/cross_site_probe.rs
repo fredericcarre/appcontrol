@@ -92,6 +92,7 @@ async fn probe_passive_sites(state: &Arc<AppState>) -> Result<(), Box<dyn std::e
                 timeout_seconds: 30,
                 exec_mode: "sync".to_string(),
                 cluster_member_id: None,
+                native: None,
             },
         );
 

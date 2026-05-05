@@ -25,6 +25,8 @@ import { ComponentNode } from './ComponentNode';
 import { MemberNode } from './MemberNode';
 import { MapToolbar } from './MapToolbar';
 import type { ClusterMember } from '@/api/clusterMembers';
+import type { MapDisplayOptions } from '@/api/mapSettings';
+import { isFlagOn } from '@/api/mapSettings';
 import { InfrastructureSummary } from './InfrastructureSummary';
 import { EdgeToolbar } from './EdgeToolbar';
 import { MapContextMenu, MapContextMenuProps } from './MapContextMenu';
@@ -119,6 +121,9 @@ interface AppMapProps {
   clusterMembers?: ClusterMember[];
   onStartMember?: (memberId: string) => void;
   onStopMember?: (memberId: string) => void;
+  /** Per-app display options (host/metrics/cluster badge/etc.). When
+   *  undefined or absent keys, the renderer assumes all flags are on. */
+  mapDisplayOptions?: MapDisplayOptions;
 }
 
 /**
@@ -269,6 +274,7 @@ function buildNodes(
   clusterMembers?: ClusterMember[],
   onStartMember?: (memberId: string) => void,
   onStopMember?: (memberId: string) => void,
+  mapDisplayOptions?: MapDisplayOptions,
 ): Node[] {
   const groupColorMap: Record<string, string> = {};
   if (groups) {
@@ -351,6 +357,13 @@ function buildNodes(
         referencedAppName: c.referenced_app_name || undefined,
         // Cross-site probe status
         passiveSiteStatus: c.passive_site_status || undefined,
+        // Per-map display flags — ComponentNode reads these to hide/show
+        // optional sections. Absent key = "show" (back-compat).
+        showHost: isFlagOn(mapDisplayOptions, 'show_host'),
+        showMetrics: isFlagOn(mapDisplayOptions, 'show_metrics'),
+        showClusterBadge: isFlagOn(mapDisplayOptions, 'show_cluster_badge'),
+        showSiteBindings: isFlagOn(mapDisplayOptions, 'show_site_bindings'),
+        showLinks: isFlagOn(mapDisplayOptions, 'show_links'),
         // Callbacks
         onStart: editable ? undefined : onStart,
         onStop: editable ? undefined : onStop,
@@ -385,8 +398,17 @@ function buildNodes(
   });
 
   // Append member sub-nodes when fan-out display is "expanded".
-  // Layout: members are arranged in a horizontal row 120 px below their parent,
-  // 160 px apart. The first parent's saved position drives the row's anchor.
+  // Layout strategy by cluster size:
+  //   * N ≤ 30     : 140×50 tile per member, grid clamp(ceil(√N), 2, 12) cols
+  //   * 30 < N ≤ 50: 110×40 compact tile, hostname only, same grid rule
+  //   * N > 50     : single "summary" tile that points the operator to the
+  //                  Members tab. Rendering 200 individual nodes wrecks the
+  //                  React Flow viewport even with pan/zoom — the Members
+  //                  tab has Search + state filter and is the right tool
+  //                  for that scale.
+  // Members are centred horizontally under their parent.
+  const EXPANDED_DETAIL_LIMIT = 50;
+
   if (fanOutDisplay === 'expanded' && clusterMembers && clusterMembers.length > 0) {
     const componentNodeMap = new Map(parentNodes.map((n) => [n.id, n]));
     const membersByComponent = new Map<string, ClusterMember[]>();
@@ -397,29 +419,74 @@ function buildNodes(
       membersByComponent.set(m.component_id, arr);
     }
 
-    const MEMBER_X_GAP = 160;
-    const MEMBER_Y_OFFSET = 120;
+    const PARENT_WIDTH = 180; // matches NODE_WIDTH used by buildNodes
+    const Y_OFFSET = 110;
+    const GAP_X = 10;
+    const GAP_Y = 10;
 
     for (const [componentId, members] of membersByComponent) {
       const parent = componentNodeMap.get(componentId);
       if (!parent) continue;
-      const parentX = parent.position.x;
-      const parentY = parent.position.y;
-      // Centre the row of members horizontally under the parent
-      const rowWidth = (members.length - 1) * MEMBER_X_GAP;
-      const startX = parentX + 90 - rowWidth / 2; // 90 = half of NODE_WIDTH
+
+      const n = members.length;
+
+      // Above the detail limit → render a single summary tile instead of
+      // a giant grid. Keeps the map navigable even for 200-node tiers.
+      if (n > EXPANDED_DETAIL_LIMIT) {
+        const running = members.filter((m) => m.current_state === 'RUNNING').length;
+        const degraded = members.filter((m) => m.current_state === 'DEGRADED').length;
+        const failed = members.filter((m) => m.current_state === 'FAILED').length;
+        const stopped = members.filter((m) => m.current_state === 'STOPPED').length;
+        // Worst-state colour, mirrors FanOutBadge so the cue is consistent
+        let summaryState: ComponentState = 'RUNNING';
+        if (failed > 0) summaryState = 'FAILED';
+        else if (degraded > 0) summaryState = 'DEGRADED';
+        else if (running === 0 && stopped === n) summaryState = 'STOPPED';
+        else if (running < n) summaryState = 'DEGRADED';
+
+        const tileW = 280;
+        const startX = parent.position.x + PARENT_WIDTH / 2 - tileW / 2;
+        parentNodes.push({
+          id: `member-summary-${componentId}`,
+          type: 'member',
+          position: { x: startX, y: parent.position.y + Y_OFFSET },
+          draggable: false,
+          selectable: false,
+          data: {
+            hostname: `${n} members · ${running} RUNNING / ${degraded} DEG / ${failed} FAIL / ${stopped} STOP`,
+            state: summaryState,
+            isEnabled: true,
+            compact: true,
+          },
+        });
+        continue;
+      }
+
+      const compact = n > 30;
+      const tileW = compact ? 110 : 140;
+      const tileH = compact ? 40 : 50;
+      const cols = Math.min(12, Math.max(2, Math.ceil(Math.sqrt(n))));
+      const gridWidth = cols * tileW + (cols - 1) * GAP_X;
+      const startX = parent.position.x + PARENT_WIDTH / 2 - gridWidth / 2;
+      const startY = parent.position.y + Y_OFFSET;
 
       members.forEach((m, idx) => {
+        const row = Math.floor(idx / cols);
+        const col = idx % cols;
         parentNodes.push({
           id: `member-${m.id}`,
           type: 'member',
-          position: { x: startX + idx * MEMBER_X_GAP, y: parentY + MEMBER_Y_OFFSET },
+          position: {
+            x: startX + col * (tileW + GAP_X),
+            y: startY + row * (tileH + GAP_Y),
+          },
           draggable: false,
           selectable: false,
           data: {
             hostname: m.hostname,
             state: (m.current_state || 'UNKNOWN') as ComponentState,
             isEnabled: m.is_enabled,
+            compact,
             onStart: onStartMember,
             onStop: onStopMember,
           },
@@ -547,6 +614,7 @@ function AppMapInner({
   clusterMembers,
   onStartMember,
   onStopMember,
+  mapDisplayOptions,
 }: AppMapProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition, fitView } = useReactFlow();
@@ -639,8 +707,9 @@ function AppMapInner({
       clusterMembers,
       onStartMember,
       onStopMember,
+      mapDisplayOptions,
     ),
-    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteBindingsMap, primarySite, activeGroupFilter, fanOutDisplay, clusterMembers, onStartMember, onStopMember],
+    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteBindingsMap, primarySite, activeGroupFilter, fanOutDisplay, clusterMembers, onStartMember, onStopMember, mapDisplayOptions],
   );
 
   const initialEdges = useMemo(

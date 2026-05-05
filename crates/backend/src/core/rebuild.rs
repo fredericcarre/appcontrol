@@ -215,6 +215,7 @@ pub async fn execute_rebuild(
                         timeout_seconds: INFRA_CMD_TIMEOUT_SECS as u32,
                         exec_mode: "sync".to_string(),
                         cluster_member_id: None,
+                        native: None,
                     };
 
                     // Record dispatch
@@ -270,6 +271,7 @@ pub async fn execute_rebuild(
                         timeout_seconds: REBUILD_CMD_TIMEOUT_SECS as u32,
                         exec_mode: "sync".to_string(),
                         cluster_member_id: None,
+                        native: None,
                     };
 
                     super::sequencer::record_command_dispatch_public(

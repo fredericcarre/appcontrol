@@ -624,6 +624,7 @@ impl ConnectionManager {
                 timeout_seconds,
                 exec_mode,
                 cluster_member_id,
+                native,
             } => {
                 // Advisory mode: refuse execution commands (start/stop/rebuild).
                 // Health checks are handled by the scheduler, not by ExecuteCommand.
@@ -654,6 +655,7 @@ impl ConnectionManager {
                     request_id = %request_id,
                     component_id = %component_id,
                     exec_mode = %exec_mode,
+                    has_native = native.is_some(),
                     "Executing command: {}",
                     command
                 );
@@ -661,6 +663,27 @@ impl ConnectionManager {
                 let msg_tx = self.msg_tx.clone();
                 let timeout = std::time::Duration::from_secs(timeout_seconds as u64);
                 let seq_counter = self.sequence_counter.clone();
+
+                // Native typed command (HTTP probe, TCP connect, …) overrides
+                // the shell `command` string when present. We always run native
+                // commands sync — they're fast (millisecond-scale probes), so
+                // 'detached' mode is meaningless for them.
+                if let Some(native_cmd) = native {
+                    tokio::spawn(async move {
+                        let result = crate::native_runner::run(&native_cmd).await;
+                        let seq = seq_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let _ = msg_tx.send(AgentMessage::CommandResult {
+                            request_id,
+                            exit_code: result.exit_code,
+                            stdout: result.stdout,
+                            stderr: result.stderr,
+                            duration_ms: result.duration_ms,
+                            sequence_id: Some(seq),
+                            cluster_member_id,
+                        });
+                    });
+                    return true;
+                }
 
                 // Spawn execution in a separate task — never block the WS loop
                 tokio::spawn(async move {

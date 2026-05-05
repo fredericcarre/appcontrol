@@ -505,6 +505,7 @@ pub async fn batch_action(
             timeout_seconds: timeout_secs,
             exec_mode: "detached".to_string(),
             cluster_member_id: Some(m.member.id),
+            native: None,
         };
         let sent = state.ws_hub.send_to_agent(m.member.agent_id, message);
         if sent {

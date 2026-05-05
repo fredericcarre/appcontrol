@@ -1033,6 +1033,7 @@ pub async fn execute_command(
         timeout_seconds: 300,
         exec_mode: "sync".to_string(),
         cluster_member_id: None,
+        native: None,
     };
 
     let dispatched = state.ws_hub.send_to_agent(agent_id, message);

@@ -500,6 +500,20 @@ pub async fn start_single_component(
         return Ok(());
     }
 
+    // Manual task: pause the DAG until an operator validates via the API.
+    // Open (or reuse) a pending manual_task_validations row, transition the
+    // component to STARTING, then poll. Validated → RUNNING. Skipped →
+    // RUNNING (the operator decided to advance without claiming success,
+    // typically for "this step doesn't apply this time"). Failed → FAILED
+    // (kills the level the same way a regular component failure does).
+    if info.component_type.as_deref() == Some("manual_task") {
+        let app_id = info.application_id.ok_or_else(|| {
+            SequencerError::Database("manual_task component has no application_id".into())
+        })?;
+        return run_manual_task_component(state, component_id, app_id, info.start_timeout_seconds)
+            .await;
+    }
+
     // Fan-out cluster: dispatch start to every enabled member instead of the
     // parent, then wait for the aggregate state to become Running. The parent's
     // own start_cmd is treated as a per-member fallback when a member has no
@@ -510,6 +524,8 @@ pub async fn start_single_component(
             component_id,
             info.start_cmd.as_deref(),
             info.start_timeout_seconds,
+            info.cluster_concurrency_mode.as_deref(),
+            info.cluster_batch_size,
         )
         .await;
     }
@@ -549,7 +565,9 @@ pub async fn start_single_component(
     super::fsm::transition_component(state, component_id, ComponentState::Starting).await?;
     let timeout_secs = info.start_timeout_seconds;
 
-    // Send start command to the specific agent via its gateway
+    // Send start command to the specific agent via its gateway. When the
+    // component has a native start spec it overrides the shell `start_cmd`
+    // (the agent ignores `command` if `native` is set).
     let request_id = Uuid::new_v4();
     let message = BackendMessage::ExecuteCommand {
         request_id,
@@ -558,6 +576,7 @@ pub async fn start_single_component(
         timeout_seconds: timeout_secs as u32,
         exec_mode: "detached".to_string(),
         cluster_member_id: None,
+        native: info.start_native.clone(),
     };
 
     // Record dispatch in command_executions for audit trail
@@ -705,6 +724,8 @@ pub async fn stop_single_component(
             info.application_id,
             info.stop_cmd.as_deref(),
             info.stop_timeout_seconds,
+            info.cluster_concurrency_mode.as_deref(),
+            info.cluster_batch_size,
         )
         .await;
     }
@@ -743,7 +764,8 @@ pub async fn stop_single_component(
     super::fsm::transition_component(state, component_id, ComponentState::Stopping).await?;
     let timeout_secs = info.stop_timeout_seconds;
 
-    // Send stop command to the specific agent via its gateway
+    // Send stop command to the specific agent via its gateway. Native spec
+    // overrides the shell `stop_cmd` when set (agent honors `native` first).
     let request_id = Uuid::new_v4();
     let message = BackendMessage::ExecuteCommand {
         request_id,
@@ -752,6 +774,7 @@ pub async fn stop_single_component(
         timeout_seconds: timeout_secs as u32,
         exec_mode: "detached".to_string(),
         cluster_member_id: None,
+        native: info.stop_native.clone(),
     };
 
     // Record dispatch in command_executions for audit trail
@@ -1080,6 +1103,7 @@ async fn dispatch_stop(state: &Arc<AppState>, component_id: Uuid) -> Result<(), 
             timeout_seconds: dinfo.stop_timeout_seconds as u32,
             exec_mode: "detached".to_string(),
             cluster_member_id: None,
+            native: None,
         };
 
         crate::repository::core_queries::record_command_dispatch(
@@ -1313,6 +1337,7 @@ pub async fn force_stop_single_component(
             timeout_seconds: timeout_secs as u32,
             exec_mode: "detached".to_string(),
             cluster_member_id: None,
+            native: None,
         };
 
         crate::repository::core_queries::record_command_dispatch(
@@ -1474,11 +1499,33 @@ async fn stop_branch_dependents(
 //   (consistent with how `start_single_component` treats a missing gateway).
 // * Stop is forgiving: a missing member gateway is logged but doesn't abort.
 
+/// Default batch size when the operator picks 'batched' but leaves
+/// `cluster_batch_size` NULL. Tuned to be small enough that a downstream
+/// service (DB, auth, LB) doesn't get stomped on by a 200-node tier coming
+/// up at once, but large enough that bring-up of a typical 6-30-node tier
+/// completes in a reasonable wall-clock time.
+const DEFAULT_FAN_OUT_BATCH_SIZE: usize = 10;
+
+fn resolve_batch_size(mode: Option<&str>, configured: Option<i32>, total: usize) -> Option<usize> {
+    if mode == Some("batched") {
+        let n = configured
+            .filter(|n| *n > 0)
+            .map(|n| n as usize)
+            .unwrap_or(DEFAULT_FAN_OUT_BATCH_SIZE)
+            .min(total.max(1));
+        Some(n)
+    } else {
+        None
+    }
+}
+
 async fn start_fan_out_component(
     state: &Arc<AppState>,
     component_id: Uuid,
     parent_start_cmd: Option<&str>,
     start_timeout_seconds: i32,
+    concurrency_mode: Option<&str>,
+    batch_size: Option<i32>,
 ) -> Result<(), SequencerError> {
     let current = super::fsm::get_current_state(&state.db, component_id).await?;
     if current == ComponentState::Running {
@@ -1507,9 +1554,10 @@ async fn start_fan_out_component(
     super::fsm::transition_component(state, component_id, ComponentState::Starting).await?;
 
     let parent_cmd = parent_start_cmd.map(str::trim).filter(|s| !s.is_empty());
+    let batch = resolve_batch_size(concurrency_mode, batch_size, enabled.len());
 
     let mut dispatched = 0usize;
-    for m in &enabled {
+    for (idx, m) in enabled.iter().enumerate() {
         let cmd = m
             .member
             .start_cmd_override
@@ -1537,6 +1585,7 @@ async fn start_fan_out_component(
             timeout_seconds: start_timeout_seconds as u32,
             exec_mode: "detached".to_string(),
             cluster_member_id: Some(m.member.id),
+            native: None,
         };
 
         crate::repository::core_queries::record_command_dispatch(
@@ -1557,12 +1606,51 @@ async fn start_fan_out_component(
                 name,
             });
         }
+
+        // Mark the member as STARTING so when its next health check returns
+        // exit 0 the FSM transitions Starting → Running cleanly, and on a
+        // failed check during the start window the member stays in Starting.
+        let _ = state
+            .cluster_member_repo
+            .upsert_state(m.member.id, "STARTING", 0, 0, None)
+            .await;
         dispatched += 1;
+
+        // Batched concurrency: every `batch` dispatches, wait for the
+        // members started so far to reach RUNNING (or the start window to
+        // expire) before kicking the next batch. We poll the aggregate
+        // parent state — which `apply_member_check_result` keeps in sync —
+        // rather than tracking each member individually, so a tier that
+        // converges well below 100% on its policy (e.g. threshold_pct 80)
+        // still flows past the gate.
+        if let Some(b) = batch {
+            let started_count = idx + 1;
+            let last_in_batch = started_count % b == 0;
+            let any_left = idx + 1 < enabled.len();
+            if last_in_batch && any_left {
+                tracing::info!(
+                    component_id = %component_id,
+                    batch_size = b,
+                    started = started_count,
+                    total = enabled.len(),
+                    "Batched fan-out start: waiting for current batch before next"
+                );
+                wait_until_aggregate_satisfied(
+                    state,
+                    component_id,
+                    start_timeout_seconds,
+                    "RUNNING",
+                )
+                .await?;
+            }
+        }
     }
 
     tracing::info!(
         component_id = %component_id,
         members = dispatched,
+        concurrency = ?concurrency_mode,
+        batch_size = ?batch,
         "Fan-out start dispatched to members — waiting for aggregate to reach RUNNING"
     );
 
@@ -1572,12 +1660,55 @@ async fn start_fan_out_component(
     wait_for_running(state, component_id, start_timeout_seconds, None).await
 }
 
+/// Block until the parent's aggregated state matches `target_state`, used
+/// between batches in `start_fan_out_component` / `stop_fan_out_component`.
+/// Honors operation cancellation. Logs and returns Ok on timeout — the next
+/// batch still gets a chance.
+async fn wait_until_aggregate_satisfied(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+    timeout_secs: i32,
+    target_state: &str,
+) -> Result<(), SequencerError> {
+    let app_id =
+        crate::repository::core_queries::get_component_app_id_uuid(&state.db, component_id)
+            .await
+            .ok();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs as u64);
+
+    loop {
+        if let Some(aid) = app_id {
+            if state.operation_lock.is_cancelled_async(aid).await {
+                return Err(SequencerError::Cancelled);
+            }
+        }
+        let current = super::fsm::get_current_state(&state.db, component_id).await?;
+        if current.to_string().eq_ignore_ascii_case(target_state)
+            || current == ComponentState::Failed
+            || current == ComponentState::Stopped
+        {
+            return Ok(());
+        }
+        if std::time::Instant::now() > deadline {
+            tracing::warn!(
+                component_id = %component_id,
+                target = %target_state,
+                "Batched fan-out: gate timed out, proceeding with next batch anyway"
+            );
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+}
+
 async fn stop_fan_out_component(
     state: &Arc<AppState>,
     component_id: Uuid,
     _application_id: Uuid,
     parent_stop_cmd: Option<&str>,
     stop_timeout_seconds: i32,
+    concurrency_mode: Option<&str>,
+    batch_size: Option<i32>,
 ) -> Result<(), SequencerError> {
     let current = super::fsm::get_current_state(&state.db, component_id).await?;
     if !matches!(current, ComponentState::Running | ComponentState::Degraded) {
@@ -1601,8 +1732,9 @@ async fn stop_fan_out_component(
     super::fsm::transition_component(state, component_id, ComponentState::Stopping).await?;
 
     let parent_cmd = parent_stop_cmd.map(str::trim).filter(|s| !s.is_empty());
+    let batch = resolve_batch_size(concurrency_mode, batch_size, enabled.len());
 
-    for m in &enabled {
+    for (idx, m) in enabled.iter().enumerate() {
         let cmd = m
             .member
             .stop_cmd_override
@@ -1629,6 +1761,7 @@ async fn stop_fan_out_component(
             timeout_seconds: stop_timeout_seconds as u32,
             exec_mode: "detached".to_string(),
             cluster_member_id: Some(m.member.id),
+            native: None,
         };
 
         crate::repository::core_queries::record_command_dispatch(
@@ -1647,8 +1780,153 @@ async fn stop_fan_out_component(
                 agent_id = %m.member.agent_id,
                 "Gateway unavailable for member during fan-out stop — continuing"
             );
+            continue;
+        }
+
+        // Mark the member as STOPPING. Without this, the next scheduled
+        // health check would arrive while the member is still RUNNING and
+        // map exit 1 → DEGRADED (not STOPPED) — the parent's aggregation
+        // would then never converge on STOPPED and the operator would think
+        // "Stop did nothing". Setting STOPPING upfront makes
+        // `next_state_from_check(Stopping, non_zero) = Stopped` fire as
+        // soon as the agent's first post-stop check lands.
+        let _ = state
+            .cluster_member_repo
+            .upsert_state(m.member.id, "STOPPING", 0, 0, None)
+            .await;
+
+        // Symmetric to start: throttle through batches of size `b` so a
+        // 200-node tier doesn't fire 200 stop_cmds at the same instant.
+        if let Some(b) = batch {
+            let stopped_count = idx + 1;
+            let last_in_batch = stopped_count % b == 0;
+            let any_left = idx + 1 < enabled.len();
+            if last_in_batch && any_left {
+                tracing::info!(
+                    component_id = %component_id,
+                    batch_size = b,
+                    stopped = stopped_count,
+                    total = enabled.len(),
+                    "Batched fan-out stop: waiting for current batch before next"
+                );
+                wait_until_aggregate_satisfied(
+                    state,
+                    component_id,
+                    stop_timeout_seconds,
+                    "STOPPED",
+                )
+                .await?;
+            }
         }
     }
 
     wait_for_stopped(state, component_id, stop_timeout_seconds as u64).await
+}
+
+// ============================================================================
+// Manual task helpers
+// ============================================================================
+//
+// Manual tasks are DAG checkpoints for actions the operator does outside
+// AppControl (clicks in F5, pages on-call, asks the DBA, …). The sequencer
+// pauses on them: opens a `manual_task_validations` pending row, polls
+// until the operator submits POST /components/:id/manual-task/validate,
+// then advances or fails the FSM accordingly.
+//
+// The poll cadence (2 s) is faster than the per-component start poll
+// (1 s + RunChecksNow at 3 s) because validation latency is human, not
+// machine — operators paste a ticket number, then click. The dominant
+// bound is operator typing speed, not network.
+
+async fn run_manual_task_component(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+    application_id: Uuid,
+    start_timeout_seconds: i32,
+) -> Result<(), SequencerError> {
+    let current = super::fsm::get_current_state(&state.db, component_id).await?;
+    if current == ComponentState::Running {
+        tracing::debug!(component_id = %component_id, "Manual task already RUNNING — skipping");
+        return Ok(());
+    }
+    super::fsm::transition_component(state, component_id, ComponentState::Starting).await?;
+
+    // Reuse the pending operation lock's user_id when available so the
+    // audit log shows who triggered the start. Falls back to nil — the
+    // close_pending call later attributes the validation to the operator
+    // who clicked Validate, not to the sequencer.
+    let started_by = state
+        .operation_lock
+        .get_active(application_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|op| op.user_id)
+        .unwrap_or(Uuid::nil());
+
+    let _validation_id = crate::repository::manual_tasks::open_pending(
+        &state.db,
+        component_id,
+        application_id,
+        started_by,
+    )
+    .await
+    .map_err(|e| SequencerError::Database(e.to_string()))?;
+
+    tracing::info!(
+        component_id = %component_id,
+        application_id = %application_id,
+        "Manual task pending — waiting for operator validation"
+    );
+
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(start_timeout_seconds as u64);
+    loop {
+        if state
+            .operation_lock
+            .is_cancelled_async(application_id)
+            .await
+        {
+            return Err(SequencerError::Cancelled);
+        }
+
+        let status =
+            crate::repository::manual_tasks::latest_pending_status(&state.db, component_id)
+                .await
+                .map_err(|e| SequencerError::Database(e.to_string()))?
+                .unwrap_or_else(|| "pending".into());
+
+        match status.as_str() {
+            "validated" | "skipped" => {
+                super::fsm::transition_component(state, component_id, ComponentState::Running)
+                    .await?;
+                return Ok(());
+            }
+            "failed" => {
+                super::fsm::transition_component(state, component_id, ComponentState::Failed)
+                    .await?;
+                let name = get_component_name(&state.db, component_id).await;
+                return Err(SequencerError::ComponentFailed {
+                    id: component_id,
+                    name,
+                });
+            }
+            _ => {
+                if std::time::Instant::now() > deadline {
+                    let _ = super::fsm::transition_component(
+                        state,
+                        component_id,
+                        ComponentState::Failed,
+                    )
+                    .await;
+                    let name = get_component_name(&state.db, component_id).await;
+                    return Err(SequencerError::ComponentFailed {
+                        id: component_id,
+                        name,
+                    });
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        }
+    }
 }

@@ -300,7 +300,20 @@ pub async fn execute_import(
                 .clone()
                 .unwrap_or_else(|| "all_healthy".to_string());
             let min_pct = comp.cluster_min_healthy_pct.unwrap_or(100);
-            apply_cluster_config(&state.db, comp_id, "fan_out", &policy, min_pct).await?;
+            let concurrency = comp
+                .cluster_concurrency_mode
+                .clone()
+                .unwrap_or_else(|| "parallel".to_string());
+            apply_cluster_config(
+                &state.db,
+                comp_id,
+                "fan_out",
+                &policy,
+                min_pct,
+                &concurrency,
+                comp.cluster_batch_size,
+            )
+            .await?;
 
             for (member_idx, member) in comp.cluster_members.iter().enumerate() {
                 // Resolve member agent: explicit `agent` field uses host resolution,
@@ -585,15 +598,18 @@ pub async fn execute_import(
     Ok((StatusCode::CREATED, Json(response)))
 }
 
-/// Update a component's cluster mode + aggregation policy in a single statement.
-/// Used by the importer to enable fan_out without going through the dedicated
-/// REST endpoint (no auth round-trip needed inside the import path).
+/// Update a component's cluster mode + aggregation policy + concurrency in a
+/// single statement. Used by the importer to enable fan_out without going
+/// through the dedicated REST endpoint (no auth round-trip needed inside the
+/// import path).
 async fn apply_cluster_config(
     pool: &crate::db::DbPool,
     component_id: Uuid,
     cluster_mode: &str,
     cluster_health_policy: &str,
     cluster_min_healthy_pct: i16,
+    cluster_concurrency_mode: &str,
+    cluster_batch_size: Option<i32>,
 ) -> Result<(), ApiError> {
     #[cfg(feature = "postgres")]
     {
@@ -602,6 +618,8 @@ async fn apply_cluster_config(
                 cluster_mode = $2, \
                 cluster_health_policy = $3, \
                 cluster_min_healthy_pct = $4, \
+                cluster_concurrency_mode = $5, \
+                cluster_batch_size = $6, \
                 updated_at = now() \
              WHERE id = $1",
         )
@@ -609,6 +627,8 @@ async fn apply_cluster_config(
         .bind(cluster_mode)
         .bind(cluster_health_policy)
         .bind(cluster_min_healthy_pct)
+        .bind(cluster_concurrency_mode)
+        .bind(cluster_batch_size)
         .execute(pool)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -620,6 +640,8 @@ async fn apply_cluster_config(
                 cluster_mode = $2, \
                 cluster_health_policy = $3, \
                 cluster_min_healthy_pct = $4, \
+                cluster_concurrency_mode = $5, \
+                cluster_batch_size = $6, \
                 updated_at = datetime('now') \
              WHERE id = $1",
         )
@@ -627,6 +649,8 @@ async fn apply_cluster_config(
         .bind(cluster_mode)
         .bind(cluster_health_policy)
         .bind(cluster_min_healthy_pct)
+        .bind(cluster_concurrency_mode)
+        .bind(cluster_batch_size)
         .execute(pool)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;

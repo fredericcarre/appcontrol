@@ -67,6 +67,16 @@ export function ClusterMembersPanel({
   const [showAdd, setShowAdd] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  // Search + state filter — needed to keep the Members tab usable when
+  // tier sizes climb (clients reported needing it for ~200-node tiers).
+  // Both apply to the rendered table only; the aggregate summary at the top
+  // and the batch action footer always operate on the FULL member set so
+  // operators don't accidentally Stop only what they happen to be filtering.
+  const [search, setSearch] = useState('');
+  const [stateFilter, setStateFilter] = useState<
+    'all' | 'RUNNING' | 'DEGRADED' | 'FAILED' | 'STOPPED'
+  >('all');
+
   const summary = useMemo(() => {
     const total = members.length;
     const running = members.filter((m) => m.current_state === 'RUNNING').length;
@@ -75,6 +85,19 @@ export function ClusterMembersPanel({
     const stopped = members.filter((m) => m.current_state === 'STOPPED').length;
     return { total, running, degraded, failed, stopped };
   }, [members]);
+
+  const visibleMembers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return members.filter((m) => {
+      if (stateFilter !== 'all' && (m.current_state || 'UNKNOWN') !== stateFilter) {
+        return false;
+      }
+      if (q && !m.hostname.toLowerCase().includes(q)) {
+        return false;
+      }
+      return true;
+    });
+  }, [members, search, stateFilter]);
 
   const toggleSelect = (id: string) => {
     const next = new Set(selectedIds);
@@ -160,6 +183,45 @@ export function ClusterMembersPanel({
         )}
       </div>
 
+      {/* Search + state filter — only renders when there are members so the
+          empty-tier "Add a member" CTA stays clean. */}
+      {members.length > 0 && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Input
+            placeholder="Search hostname…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-8 sm:max-w-xs font-mono text-xs"
+            aria-label="Search members by hostname"
+          />
+          <div className="flex flex-wrap gap-1 text-[11px]">
+            {(
+              [
+                ['all', `All (${summary.total})`],
+                ['RUNNING', `RUNNING (${summary.running})`],
+                ['DEGRADED', `DEGRADED (${summary.degraded})`],
+                ['FAILED', `FAILED (${summary.failed})`],
+                ['STOPPED', `STOPPED (${summary.stopped})`],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setStateFilter(value)}
+                aria-pressed={stateFilter === value}
+                className={`px-2 py-0.5 rounded border ${
+                  stateFilter === value
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background text-muted-foreground border-border hover:bg-muted'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Members table */}
       <ScrollArea className="max-h-[400px] rounded-md border">
         <table className="w-full text-sm">
@@ -179,8 +241,28 @@ export function ClusterMembersPanel({
                   No members yet. Add one to start monitoring.
                 </td>
               </tr>
+            ) : visibleMembers.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="p-4 text-center text-muted-foreground">
+                  No member matches the current search/filter
+                  {(search || stateFilter !== 'all') && (
+                    <Button
+                      size="sm"
+                      variant="link"
+                      className="ml-2 h-auto p-0"
+                      onClick={() => {
+                        setSearch('');
+                        setStateFilter('all');
+                      }}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                  .
+                </td>
+              </tr>
             ) : (
-              members.map((m) => {
+              visibleMembers.map((m) => {
                 const agent = agents.find((a) => a.id === m.agent_id);
                 return (
                   <tr key={m.id} className="border-t hover:bg-muted/30">

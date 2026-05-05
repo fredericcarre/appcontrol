@@ -512,6 +512,12 @@ pub struct AgentComponentConfig {
     /// For fan-out cluster components: members assigned to this agent.
     /// Empty for regular components or aggregate-mode clusters.
     pub cluster_members: Vec<appcontrol_common::ClusterMemberConfig>,
+    /// Native command specs (HTTP/TCP/process). When Some(...), the agent
+    /// runs the typed probe instead of the shell `*_cmd`. NULL JSON in the
+    /// DB → None here → agent falls back to the shell command.
+    pub check_native: Option<appcontrol_common::types::NativeCommand>,
+    pub start_native: Option<appcontrol_common::types::NativeCommand>,
+    pub stop_native: Option<appcontrol_common::types::NativeCommand>,
 }
 
 /// Get all component configs for an agent (non-suspended apps only).
@@ -521,30 +527,35 @@ pub async fn get_agent_component_configs(
 ) -> Result<Vec<AgentComponentConfig>, sqlx::Error> {
     #[cfg(feature = "postgres")]
     {
-        let rows = sqlx::query_as::<
-            _,
-            (
-                Uuid,
-                String,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                i32,
-                i32,
-                i32,
-                Value,
-            ),
-        >(
+        // 17 columns: sqlx tuple FromRow only goes up to 16. Use a derived
+        // struct so we keep the columns explicit + readable.
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            id: Uuid,
+            name: String,
+            check_cmd: Option<String>,
+            start_cmd: Option<String>,
+            stop_cmd: Option<String>,
+            integrity_check_cmd: Option<String>,
+            post_start_check_cmd: Option<String>,
+            infra_check_cmd: Option<String>,
+            rebuild_cmd: Option<String>,
+            rebuild_infra_cmd: Option<String>,
+            check_interval_seconds: i32,
+            start_timeout_seconds: i32,
+            stop_timeout_seconds: i32,
+            env_vars: Value,
+            check_native: Option<Value>,
+            start_native: Option<Value>,
+            stop_native: Option<Value>,
+        }
+        let rows = sqlx::query_as::<_, Row>(
             "SELECT c.id, c.name, c.check_cmd, c.start_cmd, c.stop_cmd,
                     c.integrity_check_cmd, c.post_start_check_cmd, c.infra_check_cmd,
                     c.rebuild_cmd, c.rebuild_infra_cmd,
                     c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
-                    COALESCE(c.env_vars, '{}'::jsonb)
+                    COALESCE(c.env_vars, '{}'::jsonb) AS env_vars,
+                    c.check_native, c.start_native, c.stop_native
              FROM components c
              JOIN applications a ON c.application_id = a.id
              WHERE c.agent_id = $1
@@ -556,70 +567,58 @@ pub async fn get_agent_component_configs(
 
         Ok(rows
             .into_iter()
-            .map(
-                |(
-                    id,
-                    name,
-                    check,
-                    start,
-                    stop,
-                    integrity,
-                    post_start,
-                    infra,
-                    rebuild,
-                    rebuild_infra,
-                    interval,
-                    start_to,
-                    stop_to,
-                    env,
-                )| {
-                    AgentComponentConfig {
-                        component_id: id,
-                        name,
-                        check_cmd: check,
-                        start_cmd: start,
-                        stop_cmd: stop,
-                        integrity_check_cmd: integrity,
-                        post_start_check_cmd: post_start,
-                        infra_check_cmd: infra,
-                        rebuild_cmd: rebuild,
-                        rebuild_infra_cmd: rebuild_infra,
-                        check_interval_seconds: interval,
-                        start_timeout_seconds: start_to,
-                        stop_timeout_seconds: stop_to,
-                        env_vars: env,
-                        cluster_members: Vec::new(),
-                    }
-                },
-            )
+            .map(|r| AgentComponentConfig {
+                component_id: r.id,
+                name: r.name,
+                check_cmd: r.check_cmd,
+                start_cmd: r.start_cmd,
+                stop_cmd: r.stop_cmd,
+                integrity_check_cmd: r.integrity_check_cmd,
+                post_start_check_cmd: r.post_start_check_cmd,
+                infra_check_cmd: r.infra_check_cmd,
+                rebuild_cmd: r.rebuild_cmd,
+                rebuild_infra_cmd: r.rebuild_infra_cmd,
+                check_interval_seconds: r.check_interval_seconds,
+                start_timeout_seconds: r.start_timeout_seconds,
+                stop_timeout_seconds: r.stop_timeout_seconds,
+                env_vars: r.env_vars,
+                cluster_members: Vec::new(),
+                check_native: r.check_native.and_then(|v| serde_json::from_value(v).ok()),
+                start_native: r.start_native.and_then(|v| serde_json::from_value(v).ok()),
+                stop_native: r.stop_native.and_then(|v| serde_json::from_value(v).ok()),
+            })
             .collect())
     }
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     {
-        let rows = sqlx::query_as::<
-            _,
-            (
-                DbUuid,
-                String,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                i32,
-                i32,
-                i32,
-                String,
-            ),
-        >(
+        // Same 17-column constraint as the Postgres branch — derived struct.
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            id: DbUuid,
+            name: String,
+            check_cmd: Option<String>,
+            start_cmd: Option<String>,
+            stop_cmd: Option<String>,
+            integrity_check_cmd: Option<String>,
+            post_start_check_cmd: Option<String>,
+            infra_check_cmd: Option<String>,
+            rebuild_cmd: Option<String>,
+            rebuild_infra_cmd: Option<String>,
+            check_interval_seconds: i32,
+            start_timeout_seconds: i32,
+            stop_timeout_seconds: i32,
+            env_vars: String,
+            check_native: Option<String>,
+            start_native: Option<String>,
+            stop_native: Option<String>,
+        }
+        let rows = sqlx::query_as::<_, Row>(
             "SELECT c.id, c.name, c.check_cmd, c.start_cmd, c.stop_cmd,
                     c.integrity_check_cmd, c.post_start_check_cmd, c.infra_check_cmd,
                     c.rebuild_cmd, c.rebuild_infra_cmd,
                     c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds,
-                    COALESCE(c.env_vars, '{}')
+                    COALESCE(c.env_vars, '{}') AS env_vars,
+                    c.check_native, c.start_native, c.stop_native
              FROM components c
              JOIN applications a ON c.application_id = a.id
              WHERE c.agent_id = $1
@@ -631,43 +630,27 @@ pub async fn get_agent_component_configs(
 
         Ok(rows
             .into_iter()
-            .map(
-                |(
-                    id,
-                    name,
-                    check,
-                    start,
-                    stop,
-                    integrity,
-                    post_start,
-                    infra,
-                    rebuild,
-                    rebuild_infra,
-                    interval,
-                    start_to,
-                    stop_to,
-                    env,
-                )| {
-                    AgentComponentConfig {
-                        component_id: id.into_inner(),
-                        name,
-                        check_cmd: check,
-                        start_cmd: start,
-                        stop_cmd: stop,
-                        integrity_check_cmd: integrity,
-                        post_start_check_cmd: post_start,
-                        infra_check_cmd: infra,
-                        rebuild_cmd: rebuild,
-                        rebuild_infra_cmd: rebuild_infra,
-                        check_interval_seconds: interval,
-                        start_timeout_seconds: start_to,
-                        stop_timeout_seconds: stop_to,
-                        env_vars: serde_json::from_str::<Value>(&env)
-                            .unwrap_or(serde_json::json!({})),
-                        cluster_members: Vec::new(),
-                    }
-                },
-            )
+            .map(|r| AgentComponentConfig {
+                component_id: r.id.into_inner(),
+                name: r.name,
+                check_cmd: r.check_cmd,
+                start_cmd: r.start_cmd,
+                stop_cmd: r.stop_cmd,
+                integrity_check_cmd: r.integrity_check_cmd,
+                post_start_check_cmd: r.post_start_check_cmd,
+                infra_check_cmd: r.infra_check_cmd,
+                rebuild_cmd: r.rebuild_cmd,
+                rebuild_infra_cmd: r.rebuild_infra_cmd,
+                check_interval_seconds: r.check_interval_seconds,
+                start_timeout_seconds: r.start_timeout_seconds,
+                stop_timeout_seconds: r.stop_timeout_seconds,
+                env_vars: serde_json::from_str::<Value>(&r.env_vars)
+                    .unwrap_or(serde_json::json!({})),
+                cluster_members: Vec::new(),
+                check_native: r.check_native.and_then(|s| serde_json::from_str(&s).ok()),
+                start_native: r.start_native.and_then(|s| serde_json::from_str(&s).ok()),
+                stop_native: r.stop_native.and_then(|s| serde_json::from_str(&s).ok()),
+            })
             .collect())
     }
 }

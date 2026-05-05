@@ -1717,6 +1717,9 @@ pub async fn send_config_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
                 stop_timeout_seconds: c.stop_timeout_seconds as u32,
                 env_vars: c.env_vars,
                 cluster_members,
+                check_native: c.check_native,
+                start_native: c.start_native,
+                stop_native: c.stop_native,
             }
         })
         .collect();

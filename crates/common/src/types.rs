@@ -192,6 +192,65 @@ pub struct ComponentConfig {
     /// agent (via `cluster_members.agent_id`).
     #[serde(default)]
     pub cluster_members: Vec<ClusterMemberConfig>,
+    /// Optional native (non-shell) check / start / stop specs. When set the
+    /// agent runs them via its built-in runners (HTTP probe, TCP connect,
+    /// process probe) instead of spawning a shell — useful for hosts that
+    /// don't have curl/wget/comparable utilities installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_native: Option<NativeCommand>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_native: Option<NativeCommand>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_native: Option<NativeCommand>,
+}
+
+/// Typed, agent-runnable command. Same payload shape on the wire as in the
+/// `*_native` JSON columns on `components`. The discriminator is `kind`.
+///
+/// Today only `http` is implemented end-to-end; `tcp` and `process` are
+/// scaffolded so we can add them without a protocol break.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NativeCommand {
+    /// HTTP probe. Considered successful if the response status is in the
+    /// 2xx range, or matches `expect_status` exactly when set.
+    Http {
+        #[serde(default = "default_http_method")]
+        method: String,
+        url: String,
+        #[serde(default)]
+        headers: std::collections::HashMap<String, String>,
+        #[serde(default)]
+        body: Option<String>,
+        #[serde(default)]
+        expect_status: Option<u16>,
+        /// Substring that must appear in the response body. None = any body.
+        #[serde(default)]
+        expect_body_contains: Option<String>,
+        #[serde(default = "default_http_timeout_seconds")]
+        timeout_seconds: u32,
+        /// Skip TLS verification — for self-signed prod gear.
+        #[serde(default)]
+        insecure: bool,
+    },
+    /// TCP connect probe. Successful if the agent can open a TCP socket to
+    /// `host:port` within `timeout_seconds`.
+    TcpConnect {
+        host: String,
+        port: u16,
+        #[serde(default = "default_tcp_timeout_seconds")]
+        timeout_seconds: u32,
+    },
+}
+
+fn default_http_method() -> String {
+    "GET".to_string()
+}
+fn default_http_timeout_seconds() -> u32 {
+    5
+}
+fn default_tcp_timeout_seconds() -> u32 {
+    3
 }
 
 /// How cluster members contribute to the parent component's state.

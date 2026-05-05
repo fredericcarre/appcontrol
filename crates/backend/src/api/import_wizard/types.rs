@@ -301,6 +301,12 @@ pub(crate) struct ComponentData {
     pub cluster_health_policy: Option<String>,
     /// Min %healthy for `threshold_pct` policy (1..=100).
     pub cluster_min_healthy_pct: Option<i16>,
+    /// Concurrency policy for fan_out start/stop: "parallel" (default, all
+    /// at once) or "batched" (chunked, with `cluster_batch_size` per batch).
+    pub cluster_concurrency_mode: Option<String>,
+    /// Batch size when concurrency_mode = 'batched'. Falls back to a sane
+    /// default (10) when None.
+    pub cluster_batch_size: Option<i32>,
     /// First-class members for fan_out mode. Each member is monitored and
     /// operated independently (own agent, own optional command overrides).
     #[serde(default)]
