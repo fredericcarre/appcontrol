@@ -7,11 +7,17 @@ import { STATE_COLORS, ComponentState } from '@/lib/colors';
 // Compact node used to render a fan-out cluster member on the map when the
 // user toggles the "explode members" view. Smaller than ComponentNode and
 // has no edit affordances — members are managed from the parent's panel.
+//
+// `compact` switches to a tighter render (110×40 with no agent line and no
+// inline action buttons) for clusters with > 30 members, so a 200-node tier
+// stays navigable. The full render (140×50 with start/stop buttons and an
+// agent footer) is used for smaller demos like the 6-node JBoss tier.
 export interface MemberNodeData {
   hostname: string;
   state: ComponentState;
   isEnabled: boolean;
   agentHostname?: string | null;
+  compact?: boolean;
   // Lit when the operator clicks Start/Stop on the parent's panel
   onStart?: (memberId: string) => void;
   onStop?: (memberId: string) => void;
@@ -24,6 +30,34 @@ function MemberNodeInner({ id, data }: NodeProps & { data: MemberNodeData }) {
   const handleStop = useCallback(() => data.onStop?.(id), [data, id]);
 
   const isTransitioning = data.state === 'STARTING' || data.state === 'STOPPING';
+  const compact = !!data.compact;
+
+  // Compact tile: hostname only, colour-coded by state, full-tile click target.
+  // Tooltip carries the state + hostname so operators don't lose info.
+  if (compact) {
+    return (
+      <div className="relative">
+        <Handle type="target" position={Position.Top} className="!bg-gray-300 !w-1 !h-1" />
+        <div
+          className={cn(
+            'rounded-md border min-w-[110px] max-w-[110px] px-2 py-1 text-[11px] font-mono shadow-sm truncate',
+            isTransitioning && 'animate-state-pulse',
+            !data.isEnabled && 'opacity-50',
+          )}
+          style={{
+            backgroundColor: stateStyle.bg,
+            borderColor: stateStyle.border,
+            borderStyle: data.state === 'UNKNOWN' ? 'dashed' : 'solid',
+            color: stateStyle.border,
+          }}
+          title={`${data.hostname} — ${data.state}`}
+        >
+          {data.hostname}
+        </div>
+        <Handle type="source" position={Position.Bottom} className="!bg-gray-300 !w-1 !h-1" />
+      </div>
+    );
+  }
 
   return (
     <div className="relative">

@@ -663,45 +663,185 @@ fn parse_time_range_hours(since: &Option<String>) -> Option<i32> {
 }
 
 // ============================================================================
-// Agent Communication (TODO: Implement with actual agent protocol)
+// Agent Communication: dispatch GetProcessLogs / GetFileLogs / GetEventLogs to
+// the component's agent, register a pending request keyed by request_id, await
+// the matching ComponentLogs / FileLogs / EventLogs response. The agent side
+// (`crates/agent/src/connection.rs`) already implements the responder.
 // ============================================================================
 
-async fn get_process_logs_from_agent(
-    _state: &AppState,
-    _component: &LogComponentRow,
-    _query: &GetLogsQuery,
+/// Convert the protocol's [`ComponentLogEntry`] into the API's [`LogEntry`]
+/// (same shape, kept separate so the two can evolve independently).
+fn to_api_entry(e: appcontrol_common::protocol::ComponentLogEntry) -> LogEntry {
+    LogEntry {
+        timestamp: e.timestamp,
+        level: e.level,
+        content: e.content,
+    }
+}
+
+/// Pull `entries` out of the JSON the WS handler put on `pending_log_requests`.
+fn extract_entries_from_response(value: serde_json::Value) -> Result<Vec<LogEntry>, ApiError> {
+    let entries: Vec<appcontrol_common::protocol::ComponentLogEntry> = serde_json::from_value(
+        value
+            .get("entries")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
+    )
+    .map_err(|e| ApiError::Internal(format!("Failed to parse log entries: {}", e)))?;
+    Ok(entries.into_iter().map(to_api_entry).collect())
+}
+
+/// Round-trip a request to the agent and wait for the typed response.
+///
+/// Returns `[<info entry explaining why it's empty>]` when:
+/// * the component has no agent yet (e.g. unenrolled site),
+/// * the gateway/agent is offline,
+/// * the agent took longer than `pending_log_requests.timeout()` (30s) to
+///   answer.
+///
+/// We intentionally surface these as a single-line LogEntry instead of a 500
+/// so the UI keeps rendering the Logs tab gracefully.
+async fn dispatch_log_request(
+    state: &AppState,
+    agent_id: Option<DbUuid>,
+    request_id: Uuid,
+    msg: appcontrol_common::BackendMessage,
+    no_agent_msg: &str,
 ) -> Result<Vec<LogEntry>, ApiError> {
-    Ok(vec![LogEntry {
-        timestamp: Some(Utc::now()),
-        level: Some("INFO".into()),
-        content: "[Process log capture not yet implemented]".into(),
-    }])
+    let Some(agent_id) = agent_id.map(|a| a.into_inner()) else {
+        return Ok(vec![LogEntry {
+            timestamp: Some(Utc::now()),
+            level: Some("WARN".into()),
+            content: no_agent_msg.to_string(),
+        }]);
+    };
+
+    let rx = state.pending_log_requests.register(request_id);
+
+    if !state.ws_hub.send_to_agent(agent_id, msg) {
+        // Drop the pending request so it doesn't leak; an eventual late
+        // arrival would just hit the cleanup path.
+        state
+            .pending_log_requests
+            .complete(request_id, Err("agent offline".into()));
+        return Ok(vec![LogEntry {
+            timestamp: Some(Utc::now()),
+            level: Some("WARN".into()),
+            content: format!("Agent {agent_id} is not currently reachable via its gateway."),
+        }]);
+    }
+
+    let timeout = state.pending_log_requests.timeout();
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(Ok(value))) => extract_entries_from_response(value),
+        Ok(Ok(Err(err))) => Ok(vec![LogEntry {
+            timestamp: Some(Utc::now()),
+            level: Some("ERROR".into()),
+            content: format!("Agent reported error: {err}"),
+        }]),
+        Ok(Err(_)) => Ok(vec![LogEntry {
+            timestamp: Some(Utc::now()),
+            level: Some("WARN".into()),
+            content: "Agent response channel was dropped before completion.".into(),
+        }]),
+        Err(_) => Ok(vec![LogEntry {
+            timestamp: Some(Utc::now()),
+            level: Some("WARN".into()),
+            content: format!(
+                "Timed out after {}s waiting for the agent to return logs.",
+                timeout.as_secs()
+            ),
+        }]),
+    }
+}
+
+async fn get_process_logs_from_agent(
+    state: &AppState,
+    component: &LogComponentRow,
+    query: &GetLogsQuery,
+) -> Result<Vec<LogEntry>, ApiError> {
+    let request_id = Uuid::new_v4();
+    let msg = appcontrol_common::BackendMessage::GetProcessLogs {
+        request_id,
+        component_id: component.id.into_inner(),
+        lines: query.lines.or(Some(100)),
+        filter: query.filter.clone(),
+        since: query.since.clone(),
+    };
+    dispatch_log_request(
+        state,
+        component.agent_id,
+        request_id,
+        msg,
+        "No agent assigned to this component — process log capture needs an enrolled agent.",
+    )
+    .await
 }
 
 async fn get_file_logs_from_agent(
-    _state: &AppState,
-    _component: &LogComponentRow,
-    _source: &LogSourceRow,
-    _query: &GetLogsQuery,
+    state: &AppState,
+    component: &LogComponentRow,
+    source: &LogSourceRow,
+    query: &GetLogsQuery,
 ) -> Result<Vec<LogEntry>, ApiError> {
-    Ok(vec![LogEntry {
-        timestamp: Some(Utc::now()),
-        level: Some("INFO".into()),
-        content: "[File log retrieval not yet implemented]".into(),
-    }])
+    let Some(file_path) = source.file_path.clone() else {
+        return Ok(vec![LogEntry {
+            timestamp: Some(Utc::now()),
+            level: Some("ERROR".into()),
+            content: "Log source is of type 'file' but has no file_path configured.".into(),
+        }]);
+    };
+    let request_id = Uuid::new_v4();
+    let msg = appcontrol_common::BackendMessage::GetFileLogs {
+        request_id,
+        component_id: component.id.into_inner(),
+        file_path,
+        lines: query.lines.or(Some(100)),
+        filter: query.filter.clone(),
+        since: query.since.clone(),
+    };
+    dispatch_log_request(
+        state,
+        component.agent_id,
+        request_id,
+        msg,
+        "No agent assigned to this component — file log retrieval needs an enrolled agent.",
+    )
+    .await
 }
 
 async fn get_event_logs_from_agent(
-    _state: &AppState,
-    _component: &LogComponentRow,
-    _source: &LogSourceRow,
-    _query: &GetLogsQuery,
+    state: &AppState,
+    component: &LogComponentRow,
+    source: &LogSourceRow,
+    query: &GetLogsQuery,
 ) -> Result<Vec<LogEntry>, ApiError> {
-    Ok(vec![LogEntry {
-        timestamp: Some(Utc::now()),
-        level: Some("INFO".into()),
-        content: "[Windows Event Log retrieval not yet implemented]".into(),
-    }])
+    let Some(log_name) = source.event_log_name.clone() else {
+        return Ok(vec![LogEntry {
+            timestamp: Some(Utc::now()),
+            level: Some("ERROR".into()),
+            content: "Log source is of type 'event_log' but has no event_log_name configured."
+                .into(),
+        }]);
+    };
+    let request_id = Uuid::new_v4();
+    let msg = appcontrol_common::BackendMessage::GetEventLogs {
+        request_id,
+        component_id: component.id.into_inner(),
+        log_name,
+        source: source.event_log_source.clone(),
+        level: source.event_log_level.clone(),
+        lines: query.lines.or(Some(100)),
+        since: query.since.clone(),
+    };
+    dispatch_log_request(
+        state,
+        component.agent_id,
+        request_id,
+        msg,
+        "No agent assigned to this component — Windows Event Log retrieval needs an enrolled agent.",
+    )
+    .await
 }
 
 async fn execute_command_on_agent(

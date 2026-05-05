@@ -240,6 +240,19 @@ describe('ComponentNode', () => {
       expect(screen.getByText('fan-out · 5/6')).toBeInTheDocument();
     });
 
+    it('does NOT count DEGRADED members as healthy on the badge', () => {
+      // Regression test: a user killed one member, the Members tab correctly
+      // showed it DEGRADED, but the parent badge still read "6/6 green" because
+      // healthy = running + degraded. Now healthy = running only and the colour
+      // turns amber to signal partial health.
+      renderComponentNode({
+        clusterMode: 'fan_out',
+        clusterMemberCounts: { total: 6, running: 5, degraded: 1, failed: 0, stopped: 0 },
+      });
+      expect(screen.getByText('fan-out · 5/6')).toBeInTheDocument();
+      expect(screen.queryByText('fan-out · 6/6')).not.toBeInTheDocument();
+    });
+
     it('renders bare "fan-out" badge when fan_out is enabled but has no members', () => {
       renderComponentNode({
         clusterMode: 'fan_out',

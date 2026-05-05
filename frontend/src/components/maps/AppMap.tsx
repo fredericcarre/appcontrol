@@ -385,8 +385,15 @@ function buildNodes(
   });
 
   // Append member sub-nodes when fan-out display is "expanded".
-  // Layout: members are arranged in a horizontal row 120 px below their parent,
-  // 160 px apart. The first parent's saved position drives the row's anchor.
+  // Layout: members are arranged in a grid below their parent. The grid auto-
+  // sizes by cluster size to stay readable from a 6-node demo up to a 200-node
+  // production tier:
+  //   * cols    = clamp(ceil(sqrt(N)), 2, 12)   — keeps the grid roughly square
+  //                                               but never wider than 12 cols,
+  //   * tile    = 140×50 for N ≤ 30, 110×40 for N > 30 (compact mode),
+  //   * gap     = 10×10.
+  // For 6 members → 3×2 grid, for 200 → 12×17 grid (still navigable via pan
+  // + zoom). Members are centred horizontally under the parent.
   if (fanOutDisplay === 'expanded' && clusterMembers && clusterMembers.length > 0) {
     const componentNodeMap = new Map(parentNodes.map((n) => [n.id, n]));
     const membersByComponent = new Map<string, ClusterMember[]>();
@@ -397,29 +404,41 @@ function buildNodes(
       membersByComponent.set(m.component_id, arr);
     }
 
-    const MEMBER_X_GAP = 160;
-    const MEMBER_Y_OFFSET = 120;
+    const PARENT_WIDTH = 180;       // matches NODE_WIDTH used by buildNodes
+    const Y_OFFSET = 110;           // gap below the parent before the grid
+    const GAP_X = 10;
+    const GAP_Y = 10;
 
     for (const [componentId, members] of membersByComponent) {
       const parent = componentNodeMap.get(componentId);
       if (!parent) continue;
-      const parentX = parent.position.x;
-      const parentY = parent.position.y;
-      // Centre the row of members horizontally under the parent
-      const rowWidth = (members.length - 1) * MEMBER_X_GAP;
-      const startX = parentX + 90 - rowWidth / 2; // 90 = half of NODE_WIDTH
+
+      const n = members.length;
+      const compact = n > 30;
+      const tileW = compact ? 110 : 140;
+      const tileH = compact ? 40 : 50;
+      const cols = Math.min(12, Math.max(2, Math.ceil(Math.sqrt(n))));
+      const gridWidth = cols * tileW + (cols - 1) * GAP_X;
+      const startX = parent.position.x + PARENT_WIDTH / 2 - gridWidth / 2;
+      const startY = parent.position.y + Y_OFFSET;
 
       members.forEach((m, idx) => {
+        const row = Math.floor(idx / cols);
+        const col = idx % cols;
         parentNodes.push({
           id: `member-${m.id}`,
           type: 'member',
-          position: { x: startX + idx * MEMBER_X_GAP, y: parentY + MEMBER_Y_OFFSET },
+          position: {
+            x: startX + col * (tileW + GAP_X),
+            y: startY + row * (tileH + GAP_Y),
+          },
           draggable: false,
           selectable: false,
           data: {
             hostname: m.hostname,
             state: (m.current_state || 'UNKNOWN') as ComponentState,
             isEnabled: m.is_enabled,
+            compact,
             onStart: onStartMember,
             onStop: onStopMember,
           },

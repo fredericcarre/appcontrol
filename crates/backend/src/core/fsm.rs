@@ -324,17 +324,17 @@ pub async fn process_check_result(
 
 /// Process a check result attributed to a fan-out cluster member.
 ///
-/// Unlike `process_check_result`, this does not drive the parent component's
-/// FSM directly via `next_state_from_check`: each member has its own state,
-/// stored in `cluster_member_state`. After updating the member, we compute the
-/// aggregated component state from the configured health policy and issue a
-/// component-level transition only when the aggregate changed.
+/// Each member has its own state, stored in `cluster_member_state`. We run
+/// the same FSM as for parent components (`next_state_from_check`) so a check
+/// arriving while the member is STOPPING correctly maps to STOPPED, while a
+/// check arriving in STARTING stays in STARTING (the sequencer drives the
+/// failure path on timeout). Only after the member's state changed do we
+/// recompute the aggregate parent state from the configured health policy.
 ///
-/// `exit_code` maps to a per-member state:
-/// - 0    → RUNNING
-/// - 1    → DEGRADED
-/// - ≥ 2  → FAILED
-/// - other (e.g., -1 execution error) → UNREACHABLE
+/// Edge cases preserved from the previous hard-coded mapping:
+/// - `exit_code < 0` (e.g. `-1` for "agent could not even start the command")
+///   surfaces the member as UNREACHABLE rather than relying on
+///   `next_state_from_check`, which would treat any non-zero exit the same.
 pub async fn process_member_check_result(
     state: &Arc<AppState>,
     component_id: Uuid,
@@ -343,12 +343,49 @@ pub async fn process_member_check_result(
     duration_ms: u32,
     stdout: Option<&str>,
 ) -> Result<(), FsmError> {
-    let member_state_str = match exit_code {
-        0 => "RUNNING",
-        1 => "DEGRADED",
-        c if c >= 2 => "FAILED",
-        _ => "UNREACHABLE",
+    // Resolve current member state — defaults to UNKNOWN on first ever check.
+    let current = state
+        .cluster_member_repo
+        .get_states_for_component(component_id)
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?
+        .into_iter()
+        .find(|s| s.cluster_member_id == member_id)
+        .map(|s| parse_state(&s.current_state).unwrap_or(ComponentState::Unknown))
+        .unwrap_or(ComponentState::Unknown);
+
+    // Pick the next state. Keep the legacy "exit_code < 0 → UNREACHABLE"
+    // semantic — that was the agent's signal that the command couldn't be
+    // executed at all (e.g. spawn failed). Otherwise defer to the FSM.
+    let new_state_opt = if exit_code < 0 {
+        Some(ComponentState::Unreachable)
+    } else {
+        appcontrol_common::next_state_from_check(current, exit_code)
     };
+
+    // The member's state didn't change — still write the updated check
+    // bookkeeping (last_check_at, exit_code, stdout) but keep the state.
+    let member_state_str = new_state_opt
+        .map(|s| match s {
+            ComponentState::Running => "RUNNING",
+            ComponentState::Degraded => "DEGRADED",
+            ComponentState::Failed => "FAILED",
+            ComponentState::Stopped => "STOPPED",
+            ComponentState::Starting => "STARTING",
+            ComponentState::Stopping => "STOPPING",
+            ComponentState::Unreachable => "UNREACHABLE",
+            ComponentState::Unknown => "UNKNOWN",
+        })
+        .unwrap_or(match current {
+            ComponentState::Running => "RUNNING",
+            ComponentState::Degraded => "DEGRADED",
+            ComponentState::Failed => "FAILED",
+            ComponentState::Stopped => "STOPPED",
+            ComponentState::Starting => "STARTING",
+            ComponentState::Stopping => "STOPPING",
+            ComponentState::Unreachable => "UNREACHABLE",
+            ComponentState::Unknown => "UNKNOWN",
+        });
 
     state
         .cluster_member_repo

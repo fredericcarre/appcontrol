@@ -1557,6 +1557,15 @@ async fn start_fan_out_component(
                 name,
             });
         }
+
+        // Mark the member as STARTING so when its next health check returns
+        // exit 0 the FSM transitions Starting → Running cleanly, and on a
+        // failed check during the start window the member stays in Starting
+        // (matches per-component start semantics — see fsm::next_state_from_check).
+        let _ = state
+            .cluster_member_repo
+            .upsert_state(m.member.id, "STARTING", 0, 0, None)
+            .await;
         dispatched += 1;
     }
 
@@ -1647,7 +1656,20 @@ async fn stop_fan_out_component(
                 agent_id = %m.member.agent_id,
                 "Gateway unavailable for member during fan-out stop — continuing"
             );
+            continue;
         }
+
+        // Mark the member as STOPPING. Without this, the next scheduled
+        // health check would arrive while the member is still RUNNING and
+        // map exit 1 → DEGRADED (not STOPPED) — the parent's aggregation
+        // would then never converge on STOPPED and the operator would think
+        // "Stop did nothing". Setting STOPPING upfront makes
+        // `next_state_from_check(Stopping, non_zero) = Stopped` fire as
+        // soon as the agent's first post-stop check lands.
+        let _ = state
+            .cluster_member_repo
+            .upsert_state(m.member.id, "STOPPING", 0, 0, None)
+            .await;
     }
 
     wait_for_stopped(state, component_id, stop_timeout_seconds as u64).await

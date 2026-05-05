@@ -615,7 +615,13 @@ function FanOutBadge({
   }
 
   const { total, running, degraded, failed, stopped } = counts;
-  const healthy = running + degraded;
+  // "Healthy" on the badge counts only RUNNING members. DEGRADED used to be
+  // bundled in (5 RUNNING + 1 DEGRADED would render "6/6 green"), which
+  // hid problems from operators: the user reported killing one member,
+  // seeing it correctly turn DEGRADED in the Members tab, yet the parent
+  // badge stayed at 6/6 in green. Now: only fully-RUNNING is counted, the
+  // colour signals partial health, and the tooltip carries the breakdown.
+  const healthy = running;
 
   // Pick a colour from the worst-state-first rule
   let cls = 'bg-emerald-100 text-emerald-700';
