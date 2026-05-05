@@ -1287,6 +1287,10 @@ pub struct StartComponentInfo {
     pub cluster_concurrency_mode: Option<String>,
     pub cluster_batch_size: Option<i32>,
     pub start_native: Option<appcontrol_common::types::NativeCommand>,
+    /// `component_type` from the row — used by the sequencer to detect
+    /// `manual_task` components and pause the DAG.
+    pub component_type: Option<String>,
+    pub application_id: Option<Uuid>,
 }
 
 #[cfg(feature = "postgres")]
@@ -1304,11 +1308,14 @@ pub async fn get_start_component_info(
         cluster_concurrency_mode: Option<String>,
         cluster_batch_size: Option<i32>,
         start_native: Option<serde_json::Value>,
+        component_type: Option<String>,
+        application_id: Option<Uuid>,
     }
 
     let row = sqlx::query_as::<_, Row>(
         "SELECT start_cmd, start_timeout_seconds, agent_id, referenced_app_id, \
-                cluster_mode, cluster_concurrency_mode, cluster_batch_size, start_native \
+                cluster_mode, cluster_concurrency_mode, cluster_batch_size, start_native, \
+                component_type, application_id \
            FROM components WHERE id = $1",
     )
     .bind(crate::db::bind_id(component_id))
@@ -1326,6 +1333,8 @@ pub async fn get_start_component_info(
         start_native: row
             .start_native
             .and_then(|v| serde_json::from_value(v).ok()),
+        component_type: row.component_type,
+        application_id: row.application_id,
     })
 }
 
@@ -1344,11 +1353,14 @@ pub async fn get_start_component_info(
         cluster_concurrency_mode: Option<String>,
         cluster_batch_size: Option<i32>,
         start_native: Option<String>,
+        component_type: Option<String>,
+        application_id: Option<DbUuid>,
     }
 
     let row = sqlx::query_as::<_, Row>(
         "SELECT start_cmd, start_timeout_seconds, agent_id, referenced_app_id, \
-                cluster_mode, cluster_concurrency_mode, cluster_batch_size, start_native \
+                cluster_mode, cluster_concurrency_mode, cluster_batch_size, start_native, \
+                component_type, application_id \
            FROM components WHERE id = $1",
     )
     .bind(crate::db::DbUuid::from(component_id))
@@ -1364,6 +1376,8 @@ pub async fn get_start_component_info(
         cluster_concurrency_mode: row.cluster_concurrency_mode,
         cluster_batch_size: row.cluster_batch_size,
         start_native: row.start_native.and_then(|s| serde_json::from_str(&s).ok()),
+        component_type: row.component_type,
+        application_id: row.application_id.map(|v| v.into_inner()),
     })
 }
 

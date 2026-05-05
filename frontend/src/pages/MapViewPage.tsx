@@ -25,6 +25,7 @@ import {
 import { useStartComponent, useStopComponent, useForceStopComponent, useStartWithDeps, useRestartWithDependents } from '@/api/components';
 import { useAppClusterMembers, useMemberAction } from '@/api/clusterMembers';
 import { useMapSettings, useUpdateMapSettings, type MapDisplayOptions, isFlagOn } from '@/api/mapSettings';
+import { usePendingManualTasks } from '@/api/manualTasks';
 import { usePermission } from '@/hooks/use-permission';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useSiteBindings } from '@/api/site-overrides';
@@ -63,7 +64,7 @@ import {
   Pencil, Download, Save, ArrowLeft, Play, Square, Loader2,
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   MoreVertical, Trash2, Pause, PlayCircle, Maximize, Minimize,
-  Monitor, History, X, Calendar, Server, SlidersHorizontal,
+  Monitor, History, X, Calendar, Server, SlidersHorizontal, FileText, Clock,
 } from 'lucide-react';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 
@@ -93,6 +94,13 @@ export function MapViewPage() {
   const { data: app, isLoading } = useApp(appId || '');
   const memberAction = useMemberAction();
   const { data: mapDisplayOptions } = useMapSettings(appId);
+  // Subset of pending manual tasks that belong to THIS app — drives the
+  // "PAUSED · N manual task(s) awaiting validation" badge in the header.
+  const { data: pendingManual } = usePendingManualTasks();
+  const pendingManualForApp = useMemo(
+    () => pendingManual?.tasks.filter((t) => t.application_id === appId) ?? [],
+    [pendingManual, appId],
+  );
   const { canOperate, canEdit, canManage } = usePermission(appId || '');
   const startApp = useStartApp();
   const stopApp = useStopApp();
@@ -871,6 +879,26 @@ export function MapViewPage() {
               <Badge variant={getWeatherVariant(weather)} className="shrink-0">
                 {globalState}
               </Badge>
+              {/* If any component in this app currently has a pending manual
+                  validation, surface it loudly next to the global state.
+                  Otherwise the operator might see a STARTING / DEGRADED app
+                  and assume it's stuck on a check_cmd, when actually a human
+                  needs to click Validate. */}
+              {pendingManualForApp.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (pendingManualForApp[0]) {
+                      setSelectedComponentId(pendingManualForApp[0].component_id);
+                    }
+                  }}
+                  className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 text-xs border border-amber-300 hover:bg-amber-200 dark:hover:bg-amber-800/60"
+                  title="One or more manual tasks are awaiting your validation. Click to open the first one."
+                >
+                  <Clock className="h-3 w-3" />
+                  PAUSED · {pendingManualForApp.length} manual task{pendingManualForApp.length !== 1 ? 's' : ''} awaiting validation
+                </button>
+              )}
               {editMode && (
                 <span className="text-xs bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200 px-2 py-1 rounded shrink-0">
                   Edit Mode
@@ -1064,6 +1092,12 @@ export function MapViewPage() {
                   <DropdownMenuItem onClick={handleExport} disabled={exportApp.isPending}>
                     <Download className="h-4 w-4 mr-2" />
                     Export as JSON
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => window.open(`/apps/${appId}/print-plan`, '_blank')}
+                  >
+                    <FileText className="h-4 w-4 mr-2" />
+                    Print plan / Save as PDF
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={toggleFullscreen}>
                     {isFullscreen ? (

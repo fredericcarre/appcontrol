@@ -500,6 +500,20 @@ pub async fn start_single_component(
         return Ok(());
     }
 
+    // Manual task: pause the DAG until an operator validates via the API.
+    // Open (or reuse) a pending manual_task_validations row, transition the
+    // component to STARTING, then poll. Validated → RUNNING. Skipped →
+    // RUNNING (the operator decided to advance without claiming success,
+    // typically for "this step doesn't apply this time"). Failed → FAILED
+    // (kills the level the same way a regular component failure does).
+    if info.component_type.as_deref() == Some("manual_task") {
+        let app_id = info.application_id.ok_or_else(|| {
+            SequencerError::Database("manual_task component has no application_id".into())
+        })?;
+        return run_manual_task_component(state, component_id, app_id, info.start_timeout_seconds)
+            .await;
+    }
+
     // Fan-out cluster: dispatch start to every enabled member instead of the
     // parent, then wait for the aggregate state to become Running. The parent's
     // own start_cmd is treated as a per-member fallback when a member has no
@@ -1807,4 +1821,112 @@ async fn stop_fan_out_component(
     }
 
     wait_for_stopped(state, component_id, stop_timeout_seconds as u64).await
+}
+
+// ============================================================================
+// Manual task helpers
+// ============================================================================
+//
+// Manual tasks are DAG checkpoints for actions the operator does outside
+// AppControl (clicks in F5, pages on-call, asks the DBA, …). The sequencer
+// pauses on them: opens a `manual_task_validations` pending row, polls
+// until the operator submits POST /components/:id/manual-task/validate,
+// then advances or fails the FSM accordingly.
+//
+// The poll cadence (2 s) is faster than the per-component start poll
+// (1 s + RunChecksNow at 3 s) because validation latency is human, not
+// machine — operators paste a ticket number, then click. The dominant
+// bound is operator typing speed, not network.
+
+async fn run_manual_task_component(
+    state: &Arc<AppState>,
+    component_id: Uuid,
+    application_id: Uuid,
+    start_timeout_seconds: i32,
+) -> Result<(), SequencerError> {
+    let current = super::fsm::get_current_state(&state.db, component_id).await?;
+    if current == ComponentState::Running {
+        tracing::debug!(component_id = %component_id, "Manual task already RUNNING — skipping");
+        return Ok(());
+    }
+    super::fsm::transition_component(state, component_id, ComponentState::Starting).await?;
+
+    // Reuse the pending operation lock's user_id when available so the
+    // audit log shows who triggered the start. Falls back to nil — the
+    // close_pending call later attributes the validation to the operator
+    // who clicked Validate, not to the sequencer.
+    let started_by = state
+        .operation_lock
+        .get_active(application_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|op| op.user_id)
+        .unwrap_or(Uuid::nil());
+
+    let _validation_id = crate::repository::manual_tasks::open_pending(
+        &state.db,
+        component_id,
+        application_id,
+        started_by,
+    )
+    .await
+    .map_err(|e| SequencerError::Database(e.to_string()))?;
+
+    tracing::info!(
+        component_id = %component_id,
+        application_id = %application_id,
+        "Manual task pending — waiting for operator validation"
+    );
+
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(start_timeout_seconds as u64);
+    loop {
+        if state
+            .operation_lock
+            .is_cancelled_async(application_id)
+            .await
+        {
+            return Err(SequencerError::Cancelled);
+        }
+
+        let status =
+            crate::repository::manual_tasks::latest_pending_status(&state.db, component_id)
+                .await
+                .map_err(|e| SequencerError::Database(e.to_string()))?
+                .unwrap_or_else(|| "pending".into());
+
+        match status.as_str() {
+            "validated" | "skipped" => {
+                super::fsm::transition_component(state, component_id, ComponentState::Running)
+                    .await?;
+                return Ok(());
+            }
+            "failed" => {
+                super::fsm::transition_component(state, component_id, ComponentState::Failed)
+                    .await?;
+                let name = get_component_name(&state.db, component_id).await;
+                return Err(SequencerError::ComponentFailed {
+                    id: component_id,
+                    name,
+                });
+            }
+            _ => {
+                if std::time::Instant::now() > deadline {
+                    let _ = super::fsm::transition_component(
+                        state,
+                        component_id,
+                        ComponentState::Failed,
+                    )
+                    .await;
+                    let name = get_component_name(&state.db, component_id).await;
+                    return Err(SequencerError::ComponentFailed {
+                        id: component_id,
+                        name,
+                    });
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        }
+    }
 }

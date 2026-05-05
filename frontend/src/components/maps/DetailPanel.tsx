@@ -10,6 +10,7 @@ import { Component, useComponentMetrics } from '@/api/apps';
 import { useStateTransitions, useCommandExecutions, useCheckEvents, CommandExecution, CheckEvent } from '@/api/components';
 import { MetricsWidgets } from './MetricsWidgets';
 import { ClusterMembersPanel } from './ClusterMembersPanel';
+import { ManualTaskPanel } from './ManualTaskPanel';
 import { ScheduleList } from '@/components/schedules';
 import { LogSourcesPanel } from '@/components/logs/LogSourcesPanel';
 
@@ -136,8 +137,17 @@ export function DetailPanel({
 
       <Separator />
 
-      <Tabs defaultValue="metrics" className="flex-1 flex flex-col min-h-0">
+      <Tabs
+        defaultValue={component.component_type === 'manual_task' ? 'manual' : 'metrics'}
+        className="flex-1 flex flex-col min-h-0"
+      >
         <TabsList className="mx-4 mt-2">
+          {/* Manual-task components surface their action panel first; for
+              everything else the default "Metrics" landing keeps muscle
+              memory intact. */}
+          {component.component_type === 'manual_task' && (
+            <TabsTrigger value="manual">Manual task</TabsTrigger>
+          )}
           <TabsTrigger value="metrics">Metrics</TabsTrigger>
           <TabsTrigger value="info">Info</TabsTrigger>
           {component.cluster_mode === 'fan_out' && (
@@ -148,6 +158,12 @@ export function DetailPanel({
           <TabsTrigger value="events">Events</TabsTrigger>
           <TabsTrigger value="schedules">Schedules</TabsTrigger>
         </TabsList>
+
+        {component.component_type === 'manual_task' && (
+          <TabsContent value="manual" className="flex-1 overflow-auto">
+            <ManualTaskPanel componentId={component.id} canOperate={canOperate} />
+          </TabsContent>
+        )}
 
         {component.cluster_mode === 'fan_out' && (
           <TabsContent value="members" className="flex-1 overflow-auto">

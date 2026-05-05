@@ -7,6 +7,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { MapViewPage } from '@/pages/MapViewPage';
+import PrintExecutionPlanPage from '@/pages/PrintExecutionPlanPage';
 import { TeamsPage } from '@/pages/TeamsPage';
 import { AgentsPage } from '@/pages/AgentsPage';
 import { GatewaysPage } from '@/pages/GatewaysPage';
@@ -73,6 +74,7 @@ export default function App() {
         <Route path="/" element={<AuthLayout><DashboardPage /></AuthLayout>} />
         <Route path="/discovery" element={<AuthLayout><DiscoveryPage /></AuthLayout>} />
         <Route path="/apps/:appId" element={<AuthLayout><MapViewPage /></AuthLayout>} />
+        <Route path="/apps/:appId/print-plan" element={<AuthLayout><PrintExecutionPlanPage /></AuthLayout>} />
         <Route path="/teams" element={<AuthLayout><TeamsPage /></AuthLayout>} />
         <Route path="/users" element={<AuthLayout><UsersPage /></AuthLayout>} />
         <Route path="/sites" element={<AuthLayout><SitesPage /></AuthLayout>} />

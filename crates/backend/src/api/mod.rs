@@ -22,6 +22,7 @@ pub mod import;
 pub mod import_wizard;
 pub mod links;
 pub mod logs;
+pub mod manual_tasks;
 pub mod map_settings;
 pub mod orchestration;
 pub mod organizations;
@@ -144,6 +145,18 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/apps/:id/cluster-members",
             get(cluster_members::list_app_members),
+        )
+        .route(
+            "/components/:id/manual-task",
+            get(manual_tasks::get_manual_task),
+        )
+        .route(
+            "/components/:id/manual-task/validate",
+            post(manual_tasks::validate_manual_task),
+        )
+        .route(
+            "/me/pending-manual-tasks",
+            get(manual_tasks::list_pending_for_user),
         )
         .route(
             "/components/:id/members",

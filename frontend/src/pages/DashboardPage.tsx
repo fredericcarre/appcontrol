@@ -1,6 +1,7 @@
 import { useMemo, useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApps, useStartApp, useStopApp, useCancelOperation } from '@/api/apps';
+import { PendingManualTasksBanner } from '@/components/dashboard/PendingManualTasksBanner';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -449,6 +450,7 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      <PendingManualTasksBanner />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <div className="flex items-center gap-2">
