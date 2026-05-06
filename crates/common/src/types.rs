@@ -209,7 +209,13 @@ pub struct ComponentConfig {
 ///
 /// Today only `http` is implemented end-to-end; `tcp` and `process` are
 /// scaffolded so we can add them without a protocol break.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The `Debug` impl is custom so secrets (`bearer_token`, `Authorization`
+/// headers) never leak into `tracing` output or audit logs that include
+/// command details. Use the auto `Serialize` for on-wire transit (the
+/// agent needs the real value to dial), but `redacted()` for anywhere a
+/// human might read the result back.
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NativeCommand {
     /// HTTP probe. Considered successful if the response status is in the
@@ -218,8 +224,17 @@ pub enum NativeCommand {
         #[serde(default = "default_http_method")]
         method: String,
         url: String,
+        /// Free-form headers. When `bearer_token` is set, the agent adds an
+        /// `Authorization: Bearer <token>` automatically (and an explicit
+        /// `Authorization` entry here wins over it for callers who need
+        /// non-bearer schemes).
         #[serde(default)]
         headers: std::collections::HashMap<String, String>,
+        /// Convenience for `Authorization: Bearer …`. Kept on its own field
+        /// so operators don't have to know the header name and so we can
+        /// mask it in Debug / audit output. None = no bearer auth.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bearer_token: Option<String>,
         #[serde(default)]
         body: Option<String>,
         #[serde(default)]
@@ -241,6 +256,98 @@ pub enum NativeCommand {
         #[serde(default = "default_tcp_timeout_seconds")]
         timeout_seconds: u32,
     },
+}
+
+impl NativeCommand {
+    /// Return a copy where any secret-bearing fields are replaced with a
+    /// fixed redacted marker. Use this when serialising the command into
+    /// audit logs, action_log details, or anything an operator can read
+    /// back. The on-wire path to the agent must keep using the real
+    /// value, so don't run this on the message you actually send.
+    pub fn redacted(&self) -> Self {
+        match self {
+            NativeCommand::Http {
+                method,
+                url,
+                headers,
+                bearer_token,
+                body,
+                expect_status,
+                expect_body_contains,
+                timeout_seconds,
+                insecure,
+            } => {
+                let masked_headers = headers
+                    .iter()
+                    .map(|(k, v)| {
+                        if k.eq_ignore_ascii_case("authorization")
+                            || k.eq_ignore_ascii_case("x-api-key")
+                            || k.eq_ignore_ascii_case("cookie")
+                        {
+                            (k.clone(), "***".to_string())
+                        } else {
+                            (k.clone(), v.clone())
+                        }
+                    })
+                    .collect();
+                NativeCommand::Http {
+                    method: method.clone(),
+                    url: url.clone(),
+                    headers: masked_headers,
+                    bearer_token: bearer_token.as_ref().map(|_| "***".to_string()),
+                    body: body.clone(),
+                    expect_status: *expect_status,
+                    expect_body_contains: expect_body_contains.clone(),
+                    timeout_seconds: *timeout_seconds,
+                    insecure: *insecure,
+                }
+            }
+            other => other.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for NativeCommand {
+    // Routes through `redacted()` so a `tracing::debug!(?cmd, …)` never
+    // prints a Bearer token or an Authorization header. Format mirrors
+    // what `derive(Debug)` would have produced so existing log greps
+    // still work.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.redacted() {
+            NativeCommand::Http {
+                method,
+                url,
+                headers,
+                bearer_token,
+                body,
+                expect_status,
+                expect_body_contains,
+                timeout_seconds,
+                insecure,
+            } => f
+                .debug_struct("Http")
+                .field("method", &method)
+                .field("url", &url)
+                .field("headers", &headers)
+                .field("bearer_token", &bearer_token)
+                .field("body", &body)
+                .field("expect_status", &expect_status)
+                .field("expect_body_contains", &expect_body_contains)
+                .field("timeout_seconds", &timeout_seconds)
+                .field("insecure", &insecure)
+                .finish(),
+            NativeCommand::TcpConnect {
+                host,
+                port,
+                timeout_seconds,
+            } => f
+                .debug_struct("TcpConnect")
+                .field("host", &host)
+                .field("port", &port)
+                .field("timeout_seconds", &timeout_seconds)
+                .finish(),
+        }
+    }
 }
 
 fn default_http_method() -> String {

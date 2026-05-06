@@ -27,6 +27,7 @@ import { useComponentTypes } from '@/hooks/use-component-types';
 import { AlertCircle, Shield, Trash2, Plus, MapPin, Search, Folder, Server } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ICON_MAP } from '@/lib/icons';
+import { ClusterMembersPanel } from '@/components/maps/ClusterMembersPanel';
 
 const ICONS = ICON_MAP;
 
@@ -1233,8 +1234,9 @@ export function ComponentEditor({
                       <div className="space-y-3 rounded-md border border-dashed p-3">
                         <p className="text-xs text-muted-foreground">
                           Fan-out mode runs check/start/stop on every member independently.
-                          Manage members (hostname, agent, overrides) from the Members panel
-                          on the component detail view after saving.
+                          {isCreating
+                            ? ' Save the component first to start adding members.'
+                            : ' Manage members below — every change is saved immediately.'}
                         </p>
 
                         <div className="space-y-2">
@@ -1292,6 +1294,24 @@ export function ComponentEditor({
                             <p className="text-xs text-muted-foreground">
                               Between this threshold and 50% → DEGRADED. Below 50% → FAILED.
                             </p>
+                          </div>
+                        )}
+
+                        {/* Embedded members table — only visible when editing
+                            an existing component (creation has no id yet).
+                            Mutations against the panel hit the cluster_members
+                            API directly and persist independently of the
+                            outer component-form save. */}
+                        {!isCreating && component?.id && (
+                          <div className="border-t pt-2 -mx-3">
+                            <div className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Members
+                            </div>
+                            <ClusterMembersPanel
+                              componentId={component.id}
+                              canOperate
+                              canEdit
+                            />
                           </div>
                         )}
                       </div>

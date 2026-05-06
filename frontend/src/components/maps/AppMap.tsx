@@ -407,6 +407,15 @@ function buildNodes(
   //                  tab has Search + state filter and is the right tool
   //                  for that scale.
   // Members are centred horizontally under their parent.
+  //
+  // Sibling overlap fix: dropping a 6×60 px grid 110 px below a parent at
+  // y=350 ends at y=570. Any sibling component at y≥460 (e.g. Oracle RAC
+  // at y=500 in the demo) would visually clip through the member grid. To
+  // keep the map readable when expanded, every component whose stored y
+  // sits below a fan-out parent's grid gets nudged down by the grid
+  // height + a margin before we emit its node. We do this in-place on the
+  // already-built `parentNodes` so the layout reflows for THIS render
+  // only — saved positions in the DB are unchanged.
   const EXPANDED_DETAIL_LIMIT = 50;
 
   if (fanOutDisplay === 'expanded' && clusterMembers && clusterMembers.length > 0) {
@@ -423,6 +432,15 @@ function buildNodes(
     const Y_OFFSET = 110;
     const GAP_X = 10;
     const GAP_Y = 10;
+    const SIBLING_MARGIN = 30;
+
+    // Compute the grid height each fan-out parent will need so we can
+    // shift everything below it.
+    type FanOutLayout = {
+      parentY: number;
+      gridHeight: number;
+    };
+    const fanOutLayouts: FanOutLayout[] = [];
 
     for (const [componentId, members] of membersByComponent) {
       const parent = componentNodeMap.get(componentId);
@@ -445,6 +463,7 @@ function buildNodes(
         else if (running < n) summaryState = 'DEGRADED';
 
         const tileW = 280;
+        const tileH = 40;
         const startX = parent.position.x + PARENT_WIDTH / 2 - tileW / 2;
         parentNodes.push({
           id: `member-summary-${componentId}`,
@@ -453,11 +472,16 @@ function buildNodes(
           draggable: false,
           selectable: false,
           data: {
+            memberId: 'summary',
             hostname: `${n} members · ${running} RUNNING / ${degraded} DEG / ${failed} FAIL / ${stopped} STOP`,
             state: summaryState,
             isEnabled: true,
             compact: true,
           },
+        });
+        fanOutLayouts.push({
+          parentY: parent.position.y,
+          gridHeight: Y_OFFSET + tileH + SIBLING_MARGIN,
         });
         continue;
       }
@@ -466,7 +490,9 @@ function buildNodes(
       const tileW = compact ? 110 : 140;
       const tileH = compact ? 40 : 50;
       const cols = Math.min(12, Math.max(2, Math.ceil(Math.sqrt(n))));
+      const rows = Math.ceil(n / cols);
       const gridWidth = cols * tileW + (cols - 1) * GAP_X;
+      const gridHeight = rows * tileH + (rows - 1) * GAP_Y;
       const startX = parent.position.x + PARENT_WIDTH / 2 - gridWidth / 2;
       const startY = parent.position.y + Y_OFFSET;
 
@@ -483,6 +509,11 @@ function buildNodes(
           draggable: false,
           selectable: false,
           data: {
+            // Pass the un-prefixed cluster_members.id separately — the React
+            // Flow node id has to be prefixed (member-…) to avoid collisions
+            // with regular component nodes, but Start/Stop dispatch needs
+            // the raw uuid to look the member up in clusterMembers[].
+            memberId: m.id,
             hostname: m.hostname,
             state: (m.current_state || 'UNKNOWN') as ComponentState,
             isEnabled: m.is_enabled,
@@ -492,6 +523,45 @@ function buildNodes(
           },
         });
       });
+      fanOutLayouts.push({
+        parentY: parent.position.y,
+        gridHeight: Y_OFFSET + gridHeight + SIBLING_MARGIN,
+      });
+    }
+
+    // Shift every component / dependency-edge attachment that sits below
+    // a fan-out parent's expanded grid. Member nodes themselves were
+    // positioned with the offset already factored in, so we skip them.
+    if (fanOutLayouts.length > 0) {
+      // Sort top-down so multiple fan-outs cascade their offsets.
+      fanOutLayouts.sort((a, b) => a.parentY - b.parentY);
+      for (const node of parentNodes) {
+        if (node.type === 'member') continue;
+        let cumulativeShift = 0;
+        for (const lo of fanOutLayouts) {
+          if (node.position.y > lo.parentY + 1) {
+            cumulativeShift += lo.gridHeight;
+          }
+        }
+        if (cumulativeShift > 0) {
+          node.position = { x: node.position.x, y: node.position.y + cumulativeShift };
+        }
+      }
+      // Member tiles also need the shift from any fan-out ABOVE their
+      // own parent (e.g. two stacked fan-out tiers in one app).
+      for (const node of parentNodes) {
+        if (node.type !== 'member') continue;
+        const ownParentY = (node.position.y as number) - Y_OFFSET;
+        let cumulativeShift = 0;
+        for (const lo of fanOutLayouts) {
+          if (lo.parentY < ownParentY - 1) {
+            cumulativeShift += lo.gridHeight;
+          }
+        }
+        if (cumulativeShift > 0) {
+          node.position = { x: node.position.x, y: node.position.y + cumulativeShift };
+        }
+      }
     }
   }
 

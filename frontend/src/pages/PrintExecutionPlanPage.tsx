@@ -74,8 +74,10 @@ export default function PrintExecutionPlanPage() {
         </div>
       </div>
 
-      {/* Document body */}
-      <article className="plan max-w-3xl mx-auto p-8">
+      {/* Document body — width tracks the viewport so a 200-component plan
+          uses the page instead of a tall scrollable column. The print
+          stylesheet relaxes the padding to A4 margins. */}
+      <article className="plan mx-auto p-8" style={{ maxWidth: '210mm' }}>
         <header className="mb-6 border-b pb-4">
           <div className="text-xs text-gray-500 uppercase tracking-wider">
             AppControl execution plan
@@ -281,14 +283,27 @@ function topologicalLevels(
   return levels;
 }
 
+// Print stylesheet:
+//   * The level-section was previously `page-break-inside: avoid`, which
+//     forces a level with many components onto a single page — for the
+//     IIS demo (8 components) or a bigger fan-out, the browser then ran
+//     the content off the page instead of paginating, which is what the
+//     operator described as "a scrollbar instead of multiple pages".
+//   * We now only protect individual `component-block` rows from being
+//     split mid-card; levels are allowed to span as many pages as they
+//     need. `page-break-after: avoid` on the heading keeps the heading
+//     glued to its first component card.
 const PRINT_CSS = `
 @media print {
   .no-print { display: none !important; }
-  body { background: white !important; }
-  .plan { max-width: none !important; padding: 1cm 1.5cm !important; }
-  .level-section { page-break-inside: avoid; }
-  .level-heading { page-break-after: avoid; }
-  .component-block { break-inside: avoid; box-shadow: none !important; }
+  html, body { background: white !important; }
+  .plan { max-width: none !important; padding: 0 !important; }
+  .level-heading { page-break-after: avoid; break-after: avoid; }
+  .component-block {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
   pre { font-size: 10px; }
 }
 

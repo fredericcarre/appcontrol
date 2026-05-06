@@ -78,7 +78,7 @@ async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) {
         let needs_fk_off = sql.contains("-- FK_OFF");
         if needs_fk_off {
             sqlx::query("PRAGMA foreign_keys = OFF")
-                .execute(&*pool)
+                .execute(pool)
                 .await
                 .expect("Failed to disable FK checks");
         }
@@ -90,7 +90,7 @@ async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) {
 
         if needs_fk_off {
             sqlx::query("PRAGMA foreign_keys = ON")
-                .execute(&*pool)
+                .execute(pool)
                 .await
                 .expect("Failed to re-enable FK checks");
         }

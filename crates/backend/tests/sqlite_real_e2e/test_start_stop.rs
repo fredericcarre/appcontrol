@@ -56,7 +56,7 @@ fn verify_stop_transitions(transitions: &[(String, String, String)], name: &str)
     let last_running_idx = transitions
         .iter()
         .rposition(|(_, to, _)| to == "RUNNING")
-        .expect(&format!("{name} should have RUNNING before stop"));
+        .unwrap_or_else(|| panic!("{name} should have RUNNING before stop"));
 
     let stop_transitions = &transitions[last_running_idx..];
 

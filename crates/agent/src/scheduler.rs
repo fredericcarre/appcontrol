@@ -522,6 +522,9 @@ mod tests {
             stop_timeout_seconds: 60,
             env_vars: serde_json::json!({}),
             cluster_members: vec![],
+            check_native: None,
+            start_native: None,
+            stop_native: None,
         }
     }
 
@@ -545,6 +548,9 @@ mod tests {
             start_timeout_seconds: 120,
             stop_timeout_seconds: 60,
             env_vars: serde_json::json!({}),
+            check_native: None,
+            start_native: None,
+            stop_native: None,
             cluster_members: members
                 .into_iter()
                 .enumerate()
