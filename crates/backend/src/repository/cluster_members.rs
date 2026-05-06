@@ -365,7 +365,8 @@ impl ClusterMemberRepository for PgClusterMemberRepository {
             PG_MEMBER_COLS
         );
         let native_to_value = |n: &Option<appcontrol_common::types::NativeCommand>| {
-            n.as_ref().map(|c| serde_json::to_value(c).unwrap_or(serde_json::Value::Null))
+            n.as_ref()
+                .map(|c| serde_json::to_value(c).unwrap_or(serde_json::Value::Null))
         };
         let row = sqlx::query_as::<_, PgMemberRow>(&sql)
             .bind(crate::db::bind_id(input.component_id))

@@ -121,7 +121,8 @@ fn member_to_json(m: &ClusterMember) -> Value {
     // client never displays a token a screenshare could leak. Operators with
     // Edit can still PUT a new value; reading back masks it.
     let red = |n: &Option<appcontrol_common::types::NativeCommand>| {
-        n.as_ref().map(|c| serde_json::to_value(c.redacted()).unwrap_or(Value::Null))
+        n.as_ref()
+            .map(|c| serde_json::to_value(c.redacted()).unwrap_or(Value::Null))
     };
     json!({
         "id": m.id,

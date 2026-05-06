@@ -269,9 +269,10 @@ impl CheckScheduler {
                 //      ClusterMemberConfig.check_cmd is already pre-resolved
                 //      by the backend (override OR inherited parent value).
                 for m in &config.cluster_members {
-                    let templated_parent = config.check_native.as_ref().map(|n| {
-                        n.templated_for_member(&m.hostname, m.install_path.as_deref())
-                    });
+                    let templated_parent = config
+                        .check_native
+                        .as_ref()
+                        .map(|n| n.templated_for_member(&m.hostname, m.install_path.as_deref()));
                     let native = m.check_native.clone().or(templated_parent);
 
                     if let Some(native_cmd) = native {

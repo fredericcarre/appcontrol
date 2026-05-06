@@ -1563,18 +1563,11 @@ async fn start_fan_out_component(
     for (idx, m) in enabled.iter().enumerate() {
         // Native dispatch wins over shell, same precedence as the agent's
         // scheduler: explicit per-member override → templated parent native.
-        let native = m
-            .member
-            .start_native_override
-            .clone()
-            .or_else(|| {
-                parent_start_native.map(|n| {
-                    n.templated_for_member(
-                        &m.member.hostname,
-                        m.member.install_path.as_deref(),
-                    )
-                })
-            });
+        let native = m.member.start_native_override.clone().or_else(|| {
+            parent_start_native.map(|n| {
+                n.templated_for_member(&m.member.hostname, m.member.install_path.as_deref())
+            })
+        });
 
         let cmd = m
             .member
@@ -1757,18 +1750,11 @@ async fn stop_fan_out_component(
     let batch = resolve_batch_size(concurrency_mode, batch_size, enabled.len());
 
     for (idx, m) in enabled.iter().enumerate() {
-        let native = m
-            .member
-            .stop_native_override
-            .clone()
-            .or_else(|| {
-                parent_stop_native.map(|n| {
-                    n.templated_for_member(
-                        &m.member.hostname,
-                        m.member.install_path.as_deref(),
-                    )
-                })
-            });
+        let native = m.member.stop_native_override.clone().or_else(|| {
+            parent_stop_native.map(|n| {
+                n.templated_for_member(&m.member.hostname, m.member.install_path.as_deref())
+            })
+        });
 
         let cmd = m
             .member
