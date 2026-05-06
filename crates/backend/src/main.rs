@@ -878,17 +878,20 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
         // Migration files contain multiple SQL statements separated by semicolons.
         // sqlx::query() uses the extended protocol which only supports one statement,
         // so we split on semicolons and execute each statement individually.
+        //
+        // Strip `--` line comments BEFORE splitting on `;` so a stray semicolon in
+        // a comment (e.g. `-- 'pending'; then it stays`) doesn't slice a real
+        // statement in half. We don't try to parse SQL strings here — operators
+        // who write `';'` literals inside CREATE TABLE/INSERT bodies still need
+        // to keep `;` out of `--` comment lines.
+        let stripped: String = sql
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let mut tx = pool.begin().await?;
-        for statement in sql.split(';') {
-            // Strip comment-only lines before checking if the statement is empty.
-            // After splitting on ';', a chunk may start with "-- comment\nCREATE TABLE..."
-            // and we must not skip the whole chunk just because it starts with "--".
-            let stripped: String = statement
-                .lines()
-                .filter(|line| !line.trim_start().starts_with("--"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let trimmed = stripped.trim();
+        for statement in stripped.split(';') {
+            let trimmed = statement.trim();
             if trimmed.is_empty() {
                 continue;
             }
