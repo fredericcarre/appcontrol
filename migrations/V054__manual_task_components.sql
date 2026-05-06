@@ -30,13 +30,13 @@ CREATE TABLE IF NOT EXISTS manual_task_validations (
     started_by      UUID REFERENCES users(id),
     validated_at    TIMESTAMPTZ,
     validated_by    UUID REFERENCES users(id),
-    /// 'pending' until an operator clicks Validate or Skip; then it stays
-    /// in its terminal state and a new row is created on the next start.
+    -- 'pending' until an operator clicks Validate or Skip; then it stays
+    -- in its terminal state and a new row is created on the next start.
     status          TEXT NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending', 'validated', 'skipped', 'failed')),
     comment         TEXT,
-    /// duration_seconds: validated_at - started_at, denormalised so DORA
-    /// reports don't have to re-derive it.
+    -- duration_seconds: validated_at - started_at, denormalised so DORA
+    -- reports don't have to re-derive it.
     duration_seconds INTEGER
 );
 
