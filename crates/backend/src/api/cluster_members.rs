@@ -53,6 +53,12 @@ pub struct CreateMemberRequest {
     #[serde(default)]
     pub env_vars_override: Option<Value>,
     #[serde(default)]
+    pub check_native_override: Option<appcontrol_common::types::NativeCommand>,
+    #[serde(default)]
+    pub start_native_override: Option<appcontrol_common::types::NativeCommand>,
+    #[serde(default)]
+    pub stop_native_override: Option<appcontrol_common::types::NativeCommand>,
+    #[serde(default)]
     pub member_order: Option<i32>,
     #[serde(default)]
     pub is_enabled: Option<bool>,
@@ -111,6 +117,12 @@ pub struct BatchActionRequest {
 // ============================================================================
 
 fn member_to_json(m: &ClusterMember) -> Value {
+    // Native overrides are returned redacted (bearer / Authorization) so the
+    // client never displays a token a screenshare could leak. Operators with
+    // Edit can still PUT a new value; reading back masks it.
+    let red = |n: &Option<appcontrol_common::types::NativeCommand>| {
+        n.as_ref().map(|c| serde_json::to_value(c.redacted()).unwrap_or(Value::Null))
+    };
     json!({
         "id": m.id,
         "component_id": m.component_id,
@@ -122,6 +134,9 @@ fn member_to_json(m: &ClusterMember) -> Value {
         "stop_cmd_override": m.stop_cmd_override,
         "install_path": m.install_path,
         "env_vars_override": m.env_vars_override,
+        "check_native_override": red(&m.check_native_override),
+        "start_native_override": red(&m.start_native_override),
+        "stop_native_override": red(&m.stop_native_override),
         "member_order": m.member_order,
         "is_enabled": m.is_enabled,
         "tags": m.tags,
@@ -245,6 +260,9 @@ pub async fn create_member(
         stop_cmd_override: body.stop_cmd_override,
         install_path: body.install_path,
         env_vars_override: body.env_vars_override,
+        check_native_override: body.check_native_override,
+        start_native_override: body.start_native_override,
+        stop_native_override: body.stop_native_override,
         member_order: body.member_order.unwrap_or(0),
         is_enabled: body.is_enabled.unwrap_or(true),
         tags: body.tags.unwrap_or(json!([])),

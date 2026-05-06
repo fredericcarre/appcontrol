@@ -259,6 +259,61 @@ pub enum NativeCommand {
 }
 
 impl NativeCommand {
+    /// Substitute `{hostname}` and `{install_path}` placeholders in every
+    /// string-shaped field that an operator might want to template per
+    /// fan-out member: HTTP url / headers / body / expect_body_contains
+    /// for `Http`, `host` for `TcpConnect`. Anything that isn't a recognised
+    /// placeholder is left alone — including stray `{}` braces that just
+    /// happen to look like one. `install_path = None` deletes the
+    /// placeholder rather than leaving the literal string in.
+    ///
+    /// This is the templating step the agent applies when a fan-out parent
+    /// has `*_native` set and a specific member has no override of its
+    /// own — same model as `check_cmd`/`start_cmd`/`stop_cmd` on the shell
+    /// side, except substitution is field-aware.
+    pub fn templated_for_member(&self, hostname: &str, install_path: Option<&str>) -> Self {
+        let install_path = install_path.unwrap_or("");
+        let render = |s: &str| -> String {
+            s.replace("{hostname}", hostname)
+                .replace("{install_path}", install_path)
+        };
+        match self {
+            NativeCommand::Http {
+                method,
+                url,
+                headers,
+                bearer_token,
+                body,
+                expect_status,
+                expect_body_contains,
+                timeout_seconds,
+                insecure,
+            } => NativeCommand::Http {
+                method: method.clone(),
+                url: render(url),
+                headers: headers
+                    .iter()
+                    .map(|(k, v)| (k.clone(), render(v)))
+                    .collect(),
+                bearer_token: bearer_token.clone(),
+                body: body.as_deref().map(render),
+                expect_status: *expect_status,
+                expect_body_contains: expect_body_contains.as_deref().map(render),
+                timeout_seconds: *timeout_seconds,
+                insecure: *insecure,
+            },
+            NativeCommand::TcpConnect {
+                host,
+                port,
+                timeout_seconds,
+            } => NativeCommand::TcpConnect {
+                host: render(host),
+                port: *port,
+                timeout_seconds: *timeout_seconds,
+            },
+        }
+    }
+
     /// Return a copy where any secret-bearing fields are replaced with a
     /// fixed redacted marker. Use this when serialising the command into
     /// audit logs, action_log details, or anything an operator can read
@@ -430,6 +485,19 @@ pub struct ClusterMemberConfig {
     /// Merged env vars (component env_vars + per-member override on top).
     #[serde(default)]
     pub env_vars: serde_json::Value,
+    /// Optional install path for templating into native URLs/bodies.
+    #[serde(default)]
+    pub install_path: Option<String>,
+    /// Per-member native overrides. None = inherit from parent component
+    /// (which the agent then templates with this member's hostname /
+    /// install_path). `serde(default)` so older agents and older snapshots
+    /// roundtrip cleanly when the column is missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_native: Option<NativeCommand>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_native: Option<NativeCommand>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_native: Option<NativeCommand>,
 }
 
 /// Switchover phases for DR failover.
@@ -664,4 +732,106 @@ pub enum UpdateStatus {
     Applying,
     Complete,
     Failed,
+}
+
+#[cfg(test)]
+mod native_command_tests {
+    use super::*;
+
+    #[test]
+    fn templated_http_substitutes_hostname_and_install_path() {
+        let cmd = NativeCommand::Http {
+            method: "GET".to_string(),
+            url: "https://{hostname}:8443/health".to_string(),
+            headers: [("X-Path".to_string(), "{install_path}/v1".to_string())]
+                .into_iter()
+                .collect(),
+            bearer_token: Some("secret".to_string()),
+            body: Some("ping {hostname}".to_string()),
+            expect_status: Some(200),
+            expect_body_contains: Some("from {hostname}".to_string()),
+            timeout_seconds: 3,
+            insecure: false,
+        };
+
+        let out = cmd.templated_for_member("srv-042.prod", Some("/opt/jboss"));
+        match out {
+            NativeCommand::Http {
+                url,
+                headers,
+                body,
+                expect_body_contains,
+                bearer_token,
+                ..
+            } => {
+                assert_eq!(url, "https://srv-042.prod:8443/health");
+                assert_eq!(
+                    headers.get("X-Path").map(String::as_str),
+                    Some("/opt/jboss/v1")
+                );
+                assert_eq!(body.as_deref(), Some("ping srv-042.prod"));
+                assert_eq!(expect_body_contains.as_deref(), Some("from srv-042.prod"));
+                // Bearer token is opaque, not templated.
+                assert_eq!(bearer_token.as_deref(), Some("secret"));
+            }
+            _ => panic!("expected Http"),
+        }
+    }
+
+    #[test]
+    fn templated_tcp_substitutes_host_only() {
+        let cmd = NativeCommand::TcpConnect {
+            host: "{hostname}.internal".to_string(),
+            port: 5432,
+            timeout_seconds: 2,
+        };
+        let out = cmd.templated_for_member("db-01", None);
+        match out {
+            NativeCommand::TcpConnect { host, port, .. } => {
+                assert_eq!(host, "db-01.internal");
+                assert_eq!(port, 5432);
+            }
+            _ => panic!("expected TcpConnect"),
+        }
+    }
+
+    #[test]
+    fn redacted_masks_bearer_and_authorization_headers() {
+        let cmd = NativeCommand::Http {
+            method: "GET".to_string(),
+            url: "https://api/health".to_string(),
+            headers: [
+                ("Authorization".to_string(), "Bearer xyz".to_string()),
+                ("X-API-Key".to_string(), "k".to_string()),
+                ("X-Trace".to_string(), "abc".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            bearer_token: Some("real-token".to_string()),
+            body: None,
+            expect_status: None,
+            expect_body_contains: None,
+            timeout_seconds: 3,
+            insecure: false,
+        };
+
+        let r = cmd.redacted();
+        match r {
+            NativeCommand::Http {
+                bearer_token,
+                headers,
+                ..
+            } => {
+                assert_eq!(bearer_token.as_deref(), Some("***"));
+                assert_eq!(
+                    headers.get("Authorization").map(String::as_str),
+                    Some("***")
+                );
+                assert_eq!(headers.get("X-API-Key").map(String::as_str), Some("***"));
+                // Non-sensitive headers untouched.
+                assert_eq!(headers.get("X-Trace").map(String::as_str), Some("abc"));
+            }
+            _ => panic!("expected Http"),
+        }
+    }
 }

@@ -363,6 +363,9 @@ pub async fn execute_import(
                         env_vars_override: member.env_vars_override.clone().or_else(|| {
                             env_text.as_ref().and_then(|t| serde_json::from_str(t).ok())
                         }),
+                        check_native_override: member.check_native_override.clone(),
+                        start_native_override: member.start_native_override.clone(),
+                        stop_native_override: member.stop_native_override.clone(),
                         member_order: order,
                         is_enabled: member.is_enabled,
                         tags: tags_value,

@@ -30,6 +30,12 @@ pub struct ClusterMember {
     pub stop_cmd_override: Option<String>,
     pub install_path: Option<String>,
     pub env_vars_override: Option<Value>,
+    /// Native override columns (V055). None = inherit from parent component
+    /// (which the agent then templates with this member's hostname /
+    /// install_path).
+    pub check_native_override: Option<appcontrol_common::types::NativeCommand>,
+    pub start_native_override: Option<appcontrol_common::types::NativeCommand>,
+    pub stop_native_override: Option<appcontrol_common::types::NativeCommand>,
     pub member_order: i32,
     pub is_enabled: bool,
     pub tags: Value,
@@ -57,7 +63,7 @@ pub struct ClusterMemberWithState {
     pub last_check_exit_code: Option<i16>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CreateClusterMember {
     pub component_id: Uuid,
     pub hostname: String,
@@ -68,6 +74,9 @@ pub struct CreateClusterMember {
     pub stop_cmd_override: Option<String>,
     pub install_path: Option<String>,
     pub env_vars_override: Option<Value>,
+    pub check_native_override: Option<appcontrol_common::types::NativeCommand>,
+    pub start_native_override: Option<appcontrol_common::types::NativeCommand>,
+    pub stop_native_override: Option<appcontrol_common::types::NativeCommand>,
     pub member_order: i32,
     pub is_enabled: bool,
     pub tags: Value,
@@ -101,6 +110,14 @@ pub struct AgentMemberConfig {
     pub start_cmd: Option<String>,
     pub stop_cmd: Option<String>,
     pub env_vars: Value,
+    /// Per-member native overrides — Some only when the operator has set
+    /// `cluster_members.{check,start,stop}_native_override`. The agent
+    /// templates the parent's native into the member's hostname/install_path
+    /// when this is None and the parent has a native spec.
+    pub install_path: Option<String>,
+    pub check_native: Option<appcontrol_common::types::NativeCommand>,
+    pub start_native: Option<appcontrol_common::types::NativeCommand>,
+    pub stop_native: Option<appcontrol_common::types::NativeCommand>,
 }
 
 impl AgentMemberConfig {
@@ -112,6 +129,10 @@ impl AgentMemberConfig {
             start_cmd: self.start_cmd,
             stop_cmd: self.stop_cmd,
             env_vars: self.env_vars,
+            install_path: self.install_path,
+            check_native: self.check_native,
+            start_native: self.start_native,
+            stop_native: self.stop_native,
         }
     }
 }
@@ -216,6 +237,9 @@ struct PgMemberRow {
     stop_cmd_override: Option<String>,
     install_path: Option<String>,
     env_vars_override: Option<Value>,
+    check_native_override: Option<Value>,
+    start_native_override: Option<Value>,
+    stop_native_override: Option<Value>,
     member_order: i32,
     is_enabled: bool,
     tags: Value,
@@ -237,6 +261,15 @@ impl From<PgMemberRow> for ClusterMember {
             stop_cmd_override: r.stop_cmd_override,
             install_path: r.install_path,
             env_vars_override: r.env_vars_override,
+            check_native_override: r
+                .check_native_override
+                .and_then(|v| serde_json::from_value(v).ok()),
+            start_native_override: r
+                .start_native_override
+                .and_then(|v| serde_json::from_value(v).ok()),
+            stop_native_override: r
+                .stop_native_override
+                .and_then(|v| serde_json::from_value(v).ok()),
             member_order: r.member_order,
             is_enabled: r.is_enabled,
             tags: r.tags,
@@ -249,7 +282,8 @@ impl From<PgMemberRow> for ClusterMember {
 #[cfg(feature = "postgres")]
 const PG_MEMBER_COLS: &str = "id, component_id, hostname, agent_id, site_id, \
     check_cmd_override, start_cmd_override, stop_cmd_override, install_path, \
-    env_vars_override, member_order, is_enabled, tags, created_at, updated_at";
+    env_vars_override, check_native_override, start_native_override, stop_native_override, \
+    member_order, is_enabled, tags, created_at, updated_at";
 
 #[cfg(feature = "postgres")]
 #[async_trait]
@@ -323,11 +357,16 @@ impl ClusterMemberRepository for PgClusterMemberRepository {
             "INSERT INTO cluster_members ( \
                 component_id, hostname, agent_id, site_id, \
                 check_cmd_override, start_cmd_override, stop_cmd_override, \
-                install_path, env_vars_override, member_order, is_enabled, tags) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+                install_path, env_vars_override, \
+                check_native_override, start_native_override, stop_native_override, \
+                member_order, is_enabled, tags) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
              RETURNING {}",
             PG_MEMBER_COLS
         );
+        let native_to_value = |n: &Option<appcontrol_common::types::NativeCommand>| {
+            n.as_ref().map(|c| serde_json::to_value(c).unwrap_or(serde_json::Value::Null))
+        };
         let row = sqlx::query_as::<_, PgMemberRow>(&sql)
             .bind(crate::db::bind_id(input.component_id))
             .bind(&input.hostname)
@@ -338,6 +377,9 @@ impl ClusterMemberRepository for PgClusterMemberRepository {
             .bind(&input.stop_cmd_override)
             .bind(&input.install_path)
             .bind(&input.env_vars_override)
+            .bind(native_to_value(&input.check_native_override))
+            .bind(native_to_value(&input.start_native_override))
+            .bind(native_to_value(&input.stop_native_override))
             .bind(input.member_order)
             .bind(input.is_enabled)
             .bind(&input.tags)
@@ -414,13 +456,20 @@ impl ClusterMemberRepository for PgClusterMemberRepository {
 
     async fn load_for_agent(&self, agent_id: Uuid) -> Result<Vec<AgentMemberConfig>, sqlx::Error> {
         // Only members of components in fan_out mode on non-suspended apps.
-        // Commands are resolved: override → inherit from component.
+        // Shell commands are resolved here (override → inherit). Natives are
+        // returned raw — the agent gets the override OR None; when None, it
+        // templates the parent's native using `templated_for_member` at run
+        // time so URLs/hosts pick up this member's hostname/install_path.
         let sql = r#"
             SELECT cm.id, c.id, cm.hostname,
                    COALESCE(cm.check_cmd_override, c.check_cmd) AS check_cmd,
                    COALESCE(cm.start_cmd_override, c.start_cmd) AS start_cmd,
                    COALESCE(cm.stop_cmd_override, c.stop_cmd) AS stop_cmd,
-                   COALESCE(cm.env_vars_override, c.env_vars, '{}'::jsonb) AS env_vars
+                   COALESCE(cm.env_vars_override, c.env_vars, '{}'::jsonb) AS env_vars,
+                   cm.install_path,
+                   cm.check_native_override,
+                   cm.start_native_override,
+                   cm.stop_native_override
             FROM cluster_members cm
             JOIN components c ON c.id = cm.component_id
             JOIN applications a ON a.id = c.application_id
@@ -439,6 +488,10 @@ impl ClusterMemberRepository for PgClusterMemberRepository {
                 Option<String>,
                 Option<String>,
                 Value,
+                Option<String>,
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
             ),
         >(sql)
         .bind(crate::db::bind_id(agent_id))
@@ -455,6 +508,10 @@ impl ClusterMemberRepository for PgClusterMemberRepository {
                 start_cmd: r.4,
                 stop_cmd: r.5,
                 env_vars: r.6,
+                install_path: r.7,
+                check_native: r.8.and_then(|v| serde_json::from_value(v).ok()),
+                start_native: r.9.and_then(|v| serde_json::from_value(v).ok()),
+                stop_native: r.10.and_then(|v| serde_json::from_value(v).ok()),
             })
             .collect())
     }
@@ -650,45 +707,56 @@ fn json_to_string(v: &Value) -> String {
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 const SQLITE_MEMBER_COLS: &str = "id, component_id, hostname, agent_id, site_id, \
     check_cmd_override, start_cmd_override, stop_cmd_override, install_path, \
-    env_vars_override, member_order, is_enabled, tags, created_at, updated_at";
+    env_vars_override, check_native_override, start_native_override, stop_native_override, \
+    member_order, is_enabled, tags, created_at, updated_at";
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-type SqliteMemberTuple = (
-    DbUuid,
-    DbUuid,
-    String,
-    DbUuid,
-    Option<DbUuid>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    i32,
-    i32,
-    String,
-    DateTime<Utc>,
-    DateTime<Utc>,
-);
+#[derive(sqlx::FromRow)]
+struct SqliteMemberRow {
+    id: DbUuid,
+    component_id: DbUuid,
+    hostname: String,
+    agent_id: DbUuid,
+    site_id: Option<DbUuid>,
+    check_cmd_override: Option<String>,
+    start_cmd_override: Option<String>,
+    stop_cmd_override: Option<String>,
+    install_path: Option<String>,
+    env_vars_override: Option<String>,
+    check_native_override: Option<String>,
+    start_native_override: Option<String>,
+    stop_native_override: Option<String>,
+    member_order: i32,
+    is_enabled: i32,
+    tags: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
 
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-fn member_from_tuple(r: SqliteMemberTuple) -> ClusterMember {
+fn member_from_row(r: SqliteMemberRow) -> ClusterMember {
+    let parse_native = |s: Option<String>| -> Option<appcontrol_common::types::NativeCommand> {
+        s.and_then(|raw| serde_json::from_str(&raw).ok())
+    };
     ClusterMember {
-        id: r.0.into_inner(),
-        component_id: r.1.into_inner(),
-        hostname: r.2,
-        agent_id: r.3.into_inner(),
-        site_id: r.4.map(|u| u.into_inner()),
-        check_cmd_override: r.5,
-        start_cmd_override: r.6,
-        stop_cmd_override: r.7,
-        install_path: r.8,
-        env_vars_override: parse_json_opt(r.9),
-        member_order: r.10,
-        is_enabled: r.11 != 0,
-        tags: parse_json_or_default(Some(r.12), serde_json::json!([])),
-        created_at: r.13,
-        updated_at: r.14,
+        id: r.id.into_inner(),
+        component_id: r.component_id.into_inner(),
+        hostname: r.hostname,
+        agent_id: r.agent_id.into_inner(),
+        site_id: r.site_id.map(|u| u.into_inner()),
+        check_cmd_override: r.check_cmd_override,
+        start_cmd_override: r.start_cmd_override,
+        stop_cmd_override: r.stop_cmd_override,
+        install_path: r.install_path,
+        env_vars_override: parse_json_opt(r.env_vars_override),
+        check_native_override: parse_native(r.check_native_override),
+        start_native_override: parse_native(r.start_native_override),
+        stop_native_override: parse_native(r.stop_native_override),
+        member_order: r.member_order,
+        is_enabled: r.is_enabled != 0,
+        tags: parse_json_or_default(Some(r.tags), serde_json::json!([])),
+        created_at: r.created_at,
+        updated_at: r.updated_at,
     }
 }
 
@@ -705,7 +773,7 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
              ORDER BY member_order, hostname",
             SQLITE_MEMBER_COLS
         );
-        let members = sqlx::query_as::<_, SqliteMemberTuple>(&members_sql)
+        let members = sqlx::query_as::<_, SqliteMemberRow>(&members_sql)
             .bind(DbUuid::from(component_id))
             .fetch_all(&self.pool)
             .await?;
@@ -727,7 +795,7 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
         Ok(members
             .into_iter()
             .map(|t| {
-                let base = member_from_tuple(t);
+                let base = member_from_row(t);
                 let (current_state, last_check_at, last_check_exit_code) = state_map
                     .get(&base.id)
                     .cloned()
@@ -747,11 +815,11 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
             "SELECT {} FROM cluster_members WHERE id = $1",
             SQLITE_MEMBER_COLS
         );
-        let row = sqlx::query_as::<_, SqliteMemberTuple>(&sql)
+        let row = sqlx::query_as::<_, SqliteMemberRow>(&sql)
             .bind(DbUuid::from(id))
             .fetch_optional(&self.pool)
             .await?;
-        Ok(row.map(member_from_tuple))
+        Ok(row.map(member_from_row))
     }
 
     async fn get_component_id(&self, member_id: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
@@ -770,14 +838,19 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
             "INSERT INTO cluster_members ( \
                 id, component_id, hostname, agent_id, site_id, \
                 check_cmd_override, start_cmd_override, stop_cmd_override, \
-                install_path, env_vars_override, member_order, is_enabled, tags) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
+                install_path, env_vars_override, \
+                check_native_override, start_native_override, stop_native_override, \
+                member_order, is_enabled, tags) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
              RETURNING {}",
             SQLITE_MEMBER_COLS
         );
         let env_text = input.env_vars_override.as_ref().map(json_to_string);
         let tags_text = json_to_string(&input.tags);
-        let row = sqlx::query_as::<_, SqliteMemberTuple>(&sql)
+        let native_text = |n: &Option<appcontrol_common::types::NativeCommand>| {
+            n.as_ref().and_then(|c| serde_json::to_string(c).ok())
+        };
+        let row = sqlx::query_as::<_, SqliteMemberRow>(&sql)
             .bind(new_id)
             .bind(DbUuid::from(input.component_id))
             .bind(&input.hostname)
@@ -788,12 +861,15 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
             .bind(&input.stop_cmd_override)
             .bind(&input.install_path)
             .bind(env_text)
+            .bind(native_text(&input.check_native_override))
+            .bind(native_text(&input.start_native_override))
+            .bind(native_text(&input.stop_native_override))
             .bind(input.member_order)
             .bind(i32::from(input.is_enabled))
             .bind(tags_text)
             .fetch_one(&self.pool)
             .await?;
-        Ok(member_from_tuple(row))
+        Ok(member_from_row(row))
     }
 
     async fn update(
@@ -840,7 +916,7 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
         );
         let env_text = env.as_ref().map(json_to_string);
         let tags_text = json_to_string(&tags);
-        let row = sqlx::query_as::<_, SqliteMemberTuple>(&sql)
+        let row = sqlx::query_as::<_, SqliteMemberRow>(&sql)
             .bind(DbUuid::from(id))
             .bind(&hostname)
             .bind(DbUuid::from(agent_id))
@@ -855,7 +931,7 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
             .bind(tags_text)
             .fetch_optional(&self.pool)
             .await?;
-        Ok(row.map(member_from_tuple))
+        Ok(row.map(member_from_row))
     }
 
     async fn delete(&self, id: Uuid) -> Result<bool, sqlx::Error> {
@@ -872,7 +948,11 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
                    COALESCE(cm.check_cmd_override, c.check_cmd) AS check_cmd,
                    COALESCE(cm.start_cmd_override, c.start_cmd) AS start_cmd,
                    COALESCE(cm.stop_cmd_override, c.stop_cmd) AS stop_cmd,
-                   COALESCE(cm.env_vars_override, c.env_vars, '{}') AS env_vars
+                   COALESCE(cm.env_vars_override, c.env_vars, '{}') AS env_vars,
+                   cm.install_path,
+                   cm.check_native_override,
+                   cm.start_native_override,
+                   cm.stop_native_override
             FROM cluster_members cm
             JOIN components c ON c.id = cm.component_id
             JOIN applications a ON a.id = c.application_id
@@ -891,12 +971,19 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
                 Option<String>,
                 Option<String>,
                 String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
             ),
         >(sql)
         .bind(DbUuid::from(agent_id))
         .fetch_all(&self.pool)
         .await?;
 
+        let parse_native = |s: Option<String>| -> Option<appcontrol_common::types::NativeCommand> {
+            s.and_then(|raw| serde_json::from_str(&raw).ok())
+        };
         Ok(rows
             .into_iter()
             .map(|r| AgentMemberConfig {
@@ -907,6 +994,10 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
                 start_cmd: r.4,
                 stop_cmd: r.5,
                 env_vars: parse_json_or_default(Some(r.6), serde_json::json!({})),
+                install_path: r.7,
+                check_native: parse_native(r.8),
+                start_native: parse_native(r.9),
+                stop_native: parse_native(r.10),
             })
             .collect())
     }
@@ -1037,7 +1128,7 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
              ORDER BY cm.component_id, cm.member_order, cm.hostname",
             SQLITE_MEMBER_COLS
         );
-        let members = sqlx::query_as::<_, SqliteMemberTuple>(&members_sql)
+        let members = sqlx::query_as::<_, SqliteMemberRow>(&members_sql)
             .bind(DbUuid::from(app_id))
             .fetch_all(&self.pool)
             .await?;
@@ -1061,7 +1152,7 @@ impl ClusterMemberRepository for SqliteClusterMemberRepository {
         Ok(members
             .into_iter()
             .map(|t| {
-                let base = member_from_tuple(t);
+                let base = member_from_row(t);
                 let (current_state, last_check_at, last_check_exit_code) = state_map
                     .get(&base.id)
                     .cloned()

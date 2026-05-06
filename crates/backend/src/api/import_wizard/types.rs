@@ -350,6 +350,16 @@ pub(crate) struct ClusterMemberData {
     pub start_cmd_override: Option<String>,
     pub stop_cmd_override: Option<String>,
     pub env_vars_override: Option<serde_json::Value>,
+    /// Per-member native overrides. Same shape as `components.*_native` in
+    /// the import payload — the agent skips templating when set and runs
+    /// this command verbatim, so an operator can carve out one odd member
+    /// (legacy port, different /healthz path) without rewriting the parent.
+    #[serde(default)]
+    pub check_native_override: Option<appcontrol_common::types::NativeCommand>,
+    #[serde(default)]
+    pub start_native_override: Option<appcontrol_common::types::NativeCommand>,
+    #[serde(default)]
+    pub stop_native_override: Option<appcontrol_common::types::NativeCommand>,
     #[serde(default)]
     pub member_order: i32,
     #[serde(default = "default_true")]
