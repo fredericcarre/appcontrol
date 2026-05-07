@@ -103,11 +103,8 @@ export interface Component {
   // runs these typed probes instead of the corresponding shell command.
   // Bearer tokens / Authorization / X-API-Key / Cookie come back redacted
   // from the backend (string '***') so the UI never displays a real secret.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   check_native?: NativeCommand | null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   start_native?: NativeCommand | null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   stop_native?: NativeCommand | null;
   created_at: string;
   updated_at: string;
