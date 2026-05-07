@@ -6,37 +6,57 @@
 # documentation screenshot pipeline and by anyone who wants a demo
 # environment with realistic data.
 #
-# Idempotent: if the demo app is already present, exits silently.
-#
-# Required env:
-#   BACKEND_URL          (default: http://localhost:3000)
-#   SEED_ADMIN_EMAIL     (default: admin@localhost — same value as the
-#                         backend SEED_* config; demo auth mode ignores
-#                         the password)
-#   EXAMPLE_FILE         (default: /workspace/examples/banking-core-system.json)
-#   DEMO_APP_NAME        (default: "Core Banking System" — must match
-#                         the "name" field in EXAMPLE_FILE for the
-#                         idempotency check)
+# Idempotent: if the demo app is already present, the import is skipped.
 
 set -euo pipefail
 
 BACKEND_URL="${BACKEND_URL:-http://localhost:3000}"
 ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-admin@localhost}"
-# Backend's seed default. Override via SEED_ADMIN_PASSWORD if you change
-# it in docker-compose.
 ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-admin}"
 EXAMPLE_FILE="${EXAMPLE_FILE:-/workspace/examples/banking-core-system.json}"
 DEMO_APP_NAME="${DEMO_APP_NAME:-Core Banking System}"
-# All components in the demo are rewritten to a single host so that
-# one agent (registering with this hostname) is auto-bound to all of
-# them by the backend's resolve_host_to_agent / auto_bind_agent logic.
 DEMO_AGENT_HOSTNAME="${DEMO_AGENT_HOSTNAME:-demo-host}"
-# Path written inside the shared state volume so the demo-agent service
-# can pick up the enrollment token after this script runs.
 TOKEN_OUT="${TOKEN_OUT:-/workspace/state/enrollment-token}"
 
 log() { echo "[seed-demo] $*"; }
 fail() { echo "[seed-demo] ERROR: $*" >&2; exit 1; }
+
+# api_call METHOD PATH [JSON_BODY] [EXTRA_CURL_ARGS...]
+# Performs the call, prints the response body to stdout on success, and
+# exits 1 with the response body on stderr on any non-2xx status. This
+# replaces "curl -sf" so callers always know why an HTTP call failed.
+api_call() {
+  local method=$1 path=$2 body=${3:-}
+  shift 3 || true
+  local extra=("$@")
+  local tmp http_code resp_body
+  tmp=$(mktemp)
+  local -a auth_args=()
+  if [ -n "${AUTH_TOKEN:-}" ]; then
+    auth_args+=(-H "Authorization: Bearer $AUTH_TOKEN")
+  fi
+  local -a body_args=()
+  if [ -n "$body" ]; then
+    body_args+=(-H "Content-Type: application/json" -d "$body")
+  fi
+
+  http_code=$(curl -sS -o "$tmp" -w "%{http_code}" \
+    -X "$method" "${BACKEND_URL}${path}" \
+    "${auth_args[@]}" "${body_args[@]}" "${extra[@]}" || echo "000")
+  resp_body=$(cat "$tmp")
+  rm -f "$tmp"
+
+  if [ "$http_code" = "000" ]; then
+    log "[$method $path] connection failed"
+    return 22
+  fi
+  if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+    log "[$method $path] HTTP $http_code"
+    log "  response: $resp_body"
+    return 22
+  fi
+  printf '%s' "$resp_body"
+}
 
 # 1. Wait for backend health
 log "Waiting for backend at $BACKEND_URL ..."
@@ -51,55 +71,41 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
-# 2. Login (demo auth: any password works)
+# 2. Login
 log "Logging in as $ADMIN_EMAIL"
-LOGIN_PAYLOAD=$(cat <<EOF
-{"email":"$ADMIN_EMAIL","password":"$ADMIN_PASSWORD"}
-EOF
-)
-LOGIN_RESPONSE=$(curl -sf -X POST "$BACKEND_URL/api/v1/auth/login" \
-  -H "Content-Type: application/json" \
-  -d "$LOGIN_PAYLOAD")
-TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.token')
-if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-  fail "Login failed: $LOGIN_RESPONSE"
-fi
+LOGIN_PAYLOAD=$(jq -n --arg e "$ADMIN_EMAIL" --arg p "$ADMIN_PASSWORD" \
+  '{email: $e, password: $p}')
+LOGIN_RESPONSE=$(api_call POST /api/v1/auth/login "$LOGIN_PAYLOAD") \
+  || fail "Login failed (see HTTP body above)"
+AUTH_TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.token // empty')
+[ -n "$AUTH_TOKEN" ] || fail "No token in login response: $LOGIN_RESPONSE"
 log "Logged in"
 
-AUTH_HEADER="Authorization: Bearer $TOKEN"
-
-# 3. Ensure at least one site exists in the org. The import endpoint
-#    fails with 400 "No site_id provided and no sites exist in the
-#    organization" if there is none. The backend's seed creates an
-#    org + admin user only — no default site — so we have to add one.
-EXISTING_SITES=$(curl -sf -H "$AUTH_HEADER" "$BACKEND_URL/api/v1/sites" \
-  | jq -r '(.sites // .) | length' 2>/dev/null || echo 0)
-if [ "${EXISTING_SITES:-0}" = "0" ]; then
+# 3. Ensure at least one site exists in the org.
+SITES_RESPONSE=$(api_call GET /api/v1/sites '') \
+  || fail "Listing sites failed (see HTTP body above)"
+SITE_COUNT=$(echo "$SITES_RESPONSE" | jq -r '(.sites // .) | length' 2>/dev/null || echo 0)
+log "Sites in org: $SITE_COUNT"
+if [ "${SITE_COUNT:-0}" = "0" ]; then
   log "Creating default site"
-  curl -sf -X POST "$BACKEND_URL/api/v1/sites" \
-    -H "$AUTH_HEADER" \
-    -H "Content-Type: application/json" \
-    -d '{"name":"Default","code":"default","site_type":"primary"}' >/dev/null \
-    || fail "Failed to create default site"
+  api_call POST /api/v1/sites \
+    '{"name":"Default","code":"default","site_type":"primary"}' >/dev/null \
+    || fail "Creating default site failed"
 fi
 
 # 4. Import the demo app (idempotent)
-EXISTING=$(curl -sf -H "$AUTH_HEADER" "$BACKEND_URL/api/v1/apps" \
+APPS_RESPONSE=$(api_call GET /api/v1/apps '') \
+  || fail "Listing apps failed"
+EXISTING=$(echo "$APPS_RESPONSE" \
   | jq -r --arg n "$DEMO_APP_NAME" '.apps[] | select(.name == $n) | .id' \
   | head -n 1)
+
 if [ -n "$EXISTING" ]; then
   log "Demo app '$DEMO_APP_NAME' already exists ($EXISTING). Skipping import."
 else
-  if [ ! -f "$EXAMPLE_FILE" ]; then
-    fail "Example file not found: $EXAMPLE_FILE"
-  fi
-  log "Importing $EXAMPLE_FILE (rewriting all component hosts to '$DEMO_AGENT_HOSTNAME')"
+  [ -f "$EXAMPLE_FILE" ] || fail "Example file not found: $EXAMPLE_FILE"
+  log "Importing $EXAMPLE_FILE (hosts → '$DEMO_AGENT_HOSTNAME')"
 
-  # The example is flat ({name, components, …}). The /api/v1/import/json
-  # endpoint expects the v4 native shape: { format_version, application }.
-  # We also rewrite every component's `host` to DEMO_AGENT_HOSTNAME so they
-  # all bind to the single demo agent, and we coerce the `tags` object into
-  # an array of "key=value" strings (V4Application::tags is Vec<String>).
   REWRITTEN=$(jq --arg h "$DEMO_AGENT_HOSTNAME" '
     {
       format_version: "4.0",
@@ -116,10 +122,8 @@ else
   ' "$EXAMPLE_FILE")
 
   IMPORT_PAYLOAD=$(jq -n --arg json "$REWRITTEN" '{json: $json}')
-  IMPORT_RESPONSE=$(curl -sf -X POST "$BACKEND_URL/api/v1/import/json" \
-    -H "$AUTH_HEADER" \
-    -H "Content-Type: application/json" \
-    -d "$IMPORT_PAYLOAD")
+  IMPORT_RESPONSE=$(api_call POST /api/v1/import/json "$IMPORT_PAYLOAD") \
+    || fail "Import failed (see HTTP body above)"
   APP_ID=$(echo "$IMPORT_RESPONSE" | jq -r '.application_id // .app_id // .id // empty')
   log "Imported demo app: ${APP_ID:-?}"
 fi
@@ -130,16 +134,12 @@ if [ -s "$TOKEN_OUT" ]; then
   log "Enrollment token already present at $TOKEN_OUT — leaving it"
 else
   log "Creating enrollment token for the demo agent"
-  TOKEN_PAYLOAD='{"name":"demo-agent","scope":"agent","valid_hours":168}'
-  TOKEN_RESPONSE=$(curl -sf -X POST "$BACKEND_URL/api/v1/enrollment/tokens" \
-    -H "$AUTH_HEADER" \
-    -H "Content-Type: application/json" \
-    -d "$TOKEN_PAYLOAD")
-  TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.token // empty')
-  if [ -z "$TOKEN" ]; then
-    fail "Could not create enrollment token: $TOKEN_RESPONSE"
-  fi
-  printf '%s' "$TOKEN" > "$TOKEN_OUT"
+  TOKEN_RESPONSE=$(api_call POST /api/v1/enrollment/tokens \
+    '{"name":"demo-agent","scope":"agent","valid_hours":168}') \
+    || fail "Creating enrollment token failed (see HTTP body above)"
+  ENROLL_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.token // empty')
+  [ -n "$ENROLL_TOKEN" ] || fail "No token in response: $TOKEN_RESPONSE"
+  printf '%s' "$ENROLL_TOKEN" > "$TOKEN_OUT"
   chmod 600 "$TOKEN_OUT" 2>/dev/null || true
   log "Enrollment token written to $TOKEN_OUT"
 fi
