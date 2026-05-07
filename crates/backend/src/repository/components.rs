@@ -43,6 +43,13 @@ pub struct Component {
     /// whose `component_type = 'manual_task'`. NULL means "no instructions
     /// — operators just click Validate".
     pub manual_description: Option<String>,
+    /// Native (non-shell) command specs as parsed JSON. The agent runs
+    /// these instead of `check_cmd`/`start_cmd`/`stop_cmd` when present.
+    /// Surfaced through `component_to_json` for the editor; tokens are
+    /// redacted before being sent to the client.
+    pub check_native: Option<Value>,
+    pub start_native: Option<Value>,
+    pub stop_native: Option<Value>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -87,6 +94,12 @@ pub struct CreateComponent {
     /// Markdown shown to the operator at validation time. Only meaningful
     /// when `component_type == "manual_task"`.
     pub manual_description: Option<String>,
+    /// Native (non-shell) command specs as already-serialised JSON. None =
+    /// no native at this slot (the agent falls back to shell). The API
+    /// layer is responsible for serialising `NativeCommand` to JSON.
+    pub check_native: Option<Value>,
+    pub start_native: Option<Value>,
+    pub stop_native: Option<Value>,
 }
 
 /// Parameters for updating a component.
@@ -115,6 +128,11 @@ pub struct UpdateComponent {
     /// Markdown shown to the operator at validation time. Only meaningful
     /// when `component_type == "manual_task"`.
     pub manual_description: Option<String>,
+    /// Native command specs (already-serialised JSON). None on update
+    /// means "leave as-is" — to clear a native, send `Some(Value::Null)`.
+    pub check_native: Option<Value>,
+    pub start_native: Option<Value>,
+    pub stop_native: Option<Value>,
 }
 
 /// Component command columns (for execute_command).
@@ -388,6 +406,9 @@ struct PgComponentRow {
     cluster_min_healthy_pct: Option<i16>,
     referenced_app_id: Option<Uuid>,
     manual_description: Option<String>,
+    check_native: Option<Value>,
+    start_native: Option<Value>,
+    stop_native: Option<Value>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -422,6 +443,9 @@ impl From<PgComponentRow> for Component {
             cluster_min_healthy_pct: r.cluster_min_healthy_pct,
             referenced_app_id: r.referenced_app_id,
             manual_description: r.manual_description,
+            check_native: r.check_native,
+            start_native: r.start_native,
+            stop_native: r.stop_native,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -458,7 +482,7 @@ const COMPONENT_COLS: &str =
     "id, application_id, name, component_type, display_name, description, icon, group_id, \
     host, agent_id, check_cmd, start_cmd, stop_cmd, \
     check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional, \
-    position_x, position_y, cluster_size, cluster_nodes, cluster_mode, cluster_health_policy, cluster_min_healthy_pct, referenced_app_id, manual_description, created_at, updated_at";
+    position_x, position_y, cluster_size, cluster_nodes, cluster_mode, cluster_health_policy, cluster_min_healthy_pct, referenced_app_id, manual_description, check_native, start_native, stop_native, created_at, updated_at";
 
 #[cfg(feature = "postgres")]
 #[async_trait]
@@ -520,8 +544,9 @@ impl ComponentRepository for PgComponentRepository {
                 "INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id, \
                     host, agent_id, check_cmd, start_cmd, stop_cmd, \
                     check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional, \
-                    position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, manual_description, current_state) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, 'STOPPED') \
+                    position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, manual_description, \
+                    check_native, start_native, stop_native, current_state) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'STOPPED') \
                  RETURNING {}", COMPONENT_COLS),
         )
         .bind(comp.id)
@@ -549,6 +574,9 @@ impl ComponentRepository for PgComponentRepository {
         .bind(&comp.cluster_nodes)
         .bind(comp.referenced_app_id)
         .bind(&comp.manual_description)
+        .bind(&comp.check_native)
+        .bind(&comp.start_native)
+        .bind(&comp.stop_native)
         .fetch_one(&self.pool)
         .await?;
         Ok(row.into())
@@ -582,6 +610,9 @@ impl ComponentRepository for PgComponentRepository {
                 cluster_nodes = $20, \
                 referenced_app_id = $21, \
                 manual_description = COALESCE($22, manual_description), \
+                check_native = COALESCE($23, check_native), \
+                start_native = COALESCE($24, start_native), \
+                stop_native = COALESCE($25, stop_native), \
                 updated_at = {} \
              WHERE id = $1 \
              RETURNING {}",
@@ -611,6 +642,9 @@ impl ComponentRepository for PgComponentRepository {
             .bind(&u.cluster_nodes)
             .bind(u.referenced_app_id)
             .bind(&u.manual_description)
+            .bind(&u.check_native)
+            .bind(&u.start_native)
+            .bind(&u.stop_native)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(Into::into))
@@ -1072,6 +1106,11 @@ struct SqliteComponentRow {
     cluster_min_healthy_pct: Option<i16>,
     referenced_app_id: Option<DbUuid>,
     manual_description: Option<String>,
+    /// SQLite stores native specs as TEXT (JSON-encoded). The conversion
+    /// to `serde_json::Value` happens in the `From` impl below.
+    check_native: Option<String>,
+    start_native: Option<String>,
+    stop_native: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -1079,6 +1118,9 @@ struct SqliteComponentRow {
 #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 impl From<SqliteComponentRow> for Component {
     fn from(r: SqliteComponentRow) -> Self {
+        let parse_native = |s: Option<String>| -> Option<Value> {
+            s.and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        };
         Component {
             id: r.id.into_inner(),
             application_id: r.application_id.into_inner(),
@@ -1106,6 +1148,9 @@ impl From<SqliteComponentRow> for Component {
             cluster_min_healthy_pct: r.cluster_min_healthy_pct,
             referenced_app_id: r.referenced_app_id.map(|r| r.into_inner()),
             manual_description: r.manual_description,
+            check_native: parse_native(r.check_native),
+            start_native: parse_native(r.start_native),
+            stop_native: parse_native(r.stop_native),
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -1179,13 +1224,19 @@ impl ComponentRepository for SqliteComponentRepository {
     }
 
     async fn create_component(&self, comp: CreateComponent) -> Result<Component, sqlx::Error> {
+        // SQLite stores `*_native` JSON as TEXT (per V053) — bind the
+        // serialised string. None → SQL NULL.
+        let value_to_text = |v: &Option<Value>| -> Option<String> {
+            v.as_ref().and_then(|val| serde_json::to_string(val).ok())
+        };
         let row = sqlx::query_as::<_, SqliteComponentRow>(
             &format!(
                 "INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id, \
                     host, agent_id, check_cmd, start_cmd, stop_cmd, \
                     check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional, \
-                    position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, manual_description, current_state) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, 'STOPPED') \
+                    position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, manual_description, \
+                    check_native, start_native, stop_native, current_state) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'STOPPED') \
                  RETURNING {}", COMPONENT_COLS),
         )
         .bind(DbUuid::from(comp.id))
@@ -1213,6 +1264,9 @@ impl ComponentRepository for SqliteComponentRepository {
         .bind(&comp.cluster_nodes)
         .bind(comp.referenced_app_id.map(DbUuid::from))
         .bind(&comp.manual_description)
+        .bind(value_to_text(&comp.check_native))
+        .bind(value_to_text(&comp.start_native))
+        .bind(value_to_text(&comp.stop_native))
         .fetch_one(&self.pool)
         .await?;
         Ok(row.into())
@@ -1246,12 +1300,18 @@ impl ComponentRepository for SqliteComponentRepository {
                 cluster_nodes = $20, \
                 referenced_app_id = $21, \
                 manual_description = COALESCE($22, manual_description), \
+                check_native = COALESCE($23, check_native), \
+                start_native = COALESCE($24, start_native), \
+                stop_native = COALESCE($25, stop_native), \
                 updated_at = {} \
              WHERE id = $1 \
              RETURNING {}",
             crate::db::sql::now(),
             COMPONENT_COLS,
         );
+        let value_to_text = |v: &Option<Value>| -> Option<String> {
+            v.as_ref().and_then(|val| serde_json::to_string(val).ok())
+        };
         let row = sqlx::query_as::<_, SqliteComponentRow>(&sql)
             .bind(DbUuid::from(id))
             .bind(&u.name)
@@ -1275,6 +1335,9 @@ impl ComponentRepository for SqliteComponentRepository {
             .bind(&u.cluster_nodes)
             .bind(u.referenced_app_id.map(DbUuid::from))
             .bind(&u.manual_description)
+            .bind(value_to_text(&u.check_native))
+            .bind(value_to_text(&u.start_native))
+            .bind(value_to_text(&u.stop_native))
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(Into::into))

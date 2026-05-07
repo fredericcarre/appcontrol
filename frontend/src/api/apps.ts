@@ -30,6 +30,27 @@ export interface ApplicationDetail extends Application {
   dependencies: Dependency[];
 }
 
+/** Typed agent-runnable command. Discriminator is `kind`. */
+export type NativeCommand =
+  | {
+      kind: 'http';
+      method?: string;
+      url: string;
+      headers?: Record<string, string>;
+      bearer_token?: string;
+      body?: string | null;
+      expect_status?: number | null;
+      expect_body_contains?: string | null;
+      timeout_seconds?: number;
+      insecure?: boolean;
+    }
+  | {
+      kind: 'tcp_connect';
+      host: string;
+      port: number;
+      timeout_seconds?: number;
+    };
+
 export interface Component {
   id: string;
   application_id: string;
@@ -78,6 +99,16 @@ export interface Component {
   // Manual task component: markdown describing what the operator should
   // do. Only meaningful when component_type === 'manual_task'.
   manual_description?: string | null;
+  // Optional native (HTTP / TCP) command specs. When present, the agent
+  // runs these typed probes instead of the corresponding shell command.
+  // Bearer tokens / Authorization / X-API-Key / Cookie come back redacted
+  // from the backend (string '***') so the UI never displays a real secret.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  check_native?: NativeCommand | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  start_native?: NativeCommand | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  stop_native?: NativeCommand | null;
   created_at: string;
   updated_at: string;
   // Connectivity status (from enriched API response)

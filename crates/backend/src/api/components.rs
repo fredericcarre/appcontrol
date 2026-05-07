@@ -59,6 +59,12 @@ pub struct CreateComponentRequest {
     /// Markdown shown to the operator at validation time. Only meaningful
     /// when `component_type == "manual_task"`.
     pub manual_description: Option<String>,
+    /// Optional native (non-shell) checks/starts/stops. When set, the
+    /// agent runs the typed probe (HTTP/TCP) instead of the corresponding
+    /// shell command. v1.18.4: surfaced through the editor's Commands tab.
+    pub check_native: Option<appcontrol_common::types::NativeCommand>,
+    pub start_native: Option<appcontrol_common::types::NativeCommand>,
+    pub stop_native: Option<appcontrol_common::types::NativeCommand>,
 }
 
 impl CreateComponentRequest {
@@ -110,6 +116,12 @@ pub struct UpdateComponentRequest {
     /// Markdown shown to the operator at validation time. Only meaningful
     /// when `component_type == "manual_task"`.
     pub manual_description: Option<String>,
+    /// Optional native (non-shell) checks/starts/stops. When set, the
+    /// agent runs the typed probe (HTTP/TCP) instead of the corresponding
+    /// shell command. v1.18.4: surfaced through the editor's Commands tab.
+    pub check_native: Option<appcontrol_common::types::NativeCommand>,
+    pub start_native: Option<appcontrol_common::types::NativeCommand>,
+    pub stop_native: Option<appcontrol_common::types::NativeCommand>,
 }
 
 impl UpdateComponentRequest {
@@ -183,6 +195,22 @@ pub async fn list_components(
 }
 
 fn component_to_json(c: &crate::repository::components::Component) -> Value {
+    // Round-trip native specs through `redacted()` so the editor shows
+    // the structured fields back (method/url/headers/expectations) but
+    // never leaks bearer_token / Authorization / X-API-Key. Operators
+    // can re-enter a token to overwrite it.
+    let redact = |v: &Option<Value>| -> Value {
+        match v.as_ref() {
+            None => Value::Null,
+            Some(raw) => {
+                match serde_json::from_value::<appcontrol_common::types::NativeCommand>(raw.clone())
+                {
+                    Ok(parsed) => serde_json::to_value(parsed.redacted()).unwrap_or(Value::Null),
+                    Err(_) => raw.clone(),
+                }
+            }
+        }
+    };
     json!({
         "id": c.id,
         "application_id": c.application_id,
@@ -210,6 +238,9 @@ fn component_to_json(c: &crate::repository::components::Component) -> Value {
         "cluster_min_healthy_pct": c.cluster_min_healthy_pct,
         "referenced_app_id": c.referenced_app_id,
         "manual_description": c.manual_description,
+        "check_native": redact(&c.check_native),
+        "start_native": redact(&c.start_native),
+        "stop_native": redact(&c.stop_native),
         "created_at": c.created_at,
         "updated_at": c.updated_at,
     })
@@ -311,6 +342,18 @@ pub async fn create_component(
             cluster_nodes: cluster_nodes_json.clone(),
             referenced_app_id: body.referenced_app_id,
             manual_description: body.manual_description.clone(),
+            check_native: body
+                .check_native
+                .as_ref()
+                .map(|n| serde_json::to_value(n).unwrap_or(Value::Null)),
+            start_native: body
+                .start_native
+                .as_ref()
+                .map(|n| serde_json::to_value(n).unwrap_or(Value::Null)),
+            stop_native: body
+                .stop_native
+                .as_ref()
+                .map(|n| serde_json::to_value(n).unwrap_or(Value::Null)),
         })
         .await?;
 
@@ -408,6 +451,18 @@ pub async fn update_component(
                 cluster_nodes: cluster_nodes_json.clone(),
                 referenced_app_id: body.referenced_app_id,
                 manual_description: body.manual_description.clone(),
+                check_native: body
+                    .check_native
+                    .as_ref()
+                    .map(|n| serde_json::to_value(n).unwrap_or(Value::Null)),
+                start_native: body
+                    .start_native
+                    .as_ref()
+                    .map(|n| serde_json::to_value(n).unwrap_or(Value::Null)),
+                stop_native: body
+                    .stop_native
+                    .as_ref()
+                    .map(|n| serde_json::to_value(n).unwrap_or(Value::Null)),
             },
         )
         .await?
