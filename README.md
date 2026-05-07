@@ -1,10 +1,16 @@
 # AppControl
 
-**Vos outils vous montrent l'infrastructure. AppControl vous montre l'application.**
+**AppControl ne remplace aucun de vos outils. Il leur ajoute la couche qui leur manque.**
 
-Vos pods peuvent tourner pendant que votre application est cassée. Vos batchs peuvent se lancer pendant qu'une dépendance est tombée. Vos écrans de supervision peuvent être tout verts pendant qu'un client ne peut pas payer.
+Vos applications critiques s'appuient sur cinq familles d'outils — supervision, CMDB, ordonnanceur, hyperviseur, orchestrateur de conteneurs — qui font chacune leur métier. Aucune n'a été conçue pour répondre aux questions que vous vous posez vraiment quand quelque chose se passe :
 
-Schedulers, supervisions, Kubernetes, runbooks Word, scripts éparpillés — chaque équipe a son outil, chacun voit un morceau. **Personne ne voit l'application.** AppControl ne remplace rien. Il pose la couche applicative au-dessus de tout ça : la vue d'ensemble exécutable qui vous manque.
+- L'**état réel** de vos processus, là, maintenant
+- L'**impact** d'une panne sur le service rendu à l'utilisateur
+- Le **temps** que prendra le redémarrage
+- L'**ordre** dans lequel les composants doivent revenir
+- Les **interactions** entre services pendant l'incident
+
+AppControl répond à ces cinq questions. Il s'intègre avec les outils en place, ne demande aucun remplacement, et apporte la **vue d'ensemble exécutable** qui manquait.
 
 > *La promenade en prod la plus simple que vous ayez jamais faite.*
 
@@ -17,9 +23,6 @@ Schedulers, supervisions, Kubernetes, runbooks Word, scripts éparpillés — ch
 
 > *« C'est dangereux. Mais pourquoi pas. »*
 > — Directeur de Production, banque française tier-1
-
-> *« Si j'avais ça, j'aurais besoin de 70 % d'ingénieurs de production en moins. »*
-> — Même interlocuteur, dans la même réunion
 
 ---
 
@@ -82,29 +85,40 @@ Aucun de vos outils actuels ne sait faire ça seul. AppControl le fait à leur p
 
 ---
 
-## L'angle mort de Kubernetes
+## L'angle mort de votre stack
 
-Kubernetes orchestre vos conteneurs. Il vous dit si les pods tournent. **Il ne vous dit jamais si votre application fonctionne.**
+Chaque outil de votre chaîne ops a été conçu pour répondre à une question précise — et bien faire son métier signifie ne pas déborder. C'est ce qui les rend bons individuellement, et c'est aussi ce qui crée le trou de couverture qu'AppControl comble.
 
-Il ne vous parle pas non plus des 70 % de votre SI qui ne tourneront jamais en Kube : mainframe, AS/400, batchs Cobol, monolithes Oracle, services Windows. Et il vous demande des compétences profondes, des configurations énormes, des équipes dédiées — pour finalement vous montrer… des conteneurs.
+| Outil | Vous dit | Ne vous dit pas |
+|---|---|---|
+| **Supervision** (Datadog, Dynatrace, Prometheus, Zabbix) | Que la CPU est OK, que les métriques sont vertes | Si l'application *fonctionne* du point de vue métier |
+| **CMDB** (ServiceNow, BMC) | Que l'application existe, et qui en est responsable | Son état actuel, en temps réel |
+| **Ordonnanceur** (Control-M, AutoSys, $Universe, TWS) | Que le job a été lancé | Si le batch a livré, et avec quel impact |
+| **Hyperviseur** (vSphere, Nutanix, Hyper-V) | Que la VM est démarrée | Ce qui tourne dedans, et si c'est utile |
+| **Kubernetes / OpenShift** | Que les pods sont *Running* | Si l'application sert ses utilisateurs |
 
-**AppControl orchestre vos applications. Y compris au-dessus de Kube.** C'est la couche que personne ne fournit aujourd'hui.
-
-| AppControl n'est pas… | Il s'intègre avec |
-|---|---|
-| Un scheduler | Control-M, AutoSys, $Universe, TWS |
-| Un outil de supervision | Datadog, Dynatrace, Prometheus, Zabbix |
-| Un orchestrateur de conteneurs | Kubernetes, OpenShift |
-| Une CMDB | ServiceNow, BMC |
-| Un outil de déploiement | XL Release, Jenkins, GitLab CI, ArgoCD |
+**AppControl s'intègre avec chacun de ces outils** — pour leur ajouter la lecture applicative qu'aucun n'était conçu pour fournir. Y compris au-dessus de Kube, et surtout pour les 70 % de votre SI qui ne tourneront jamais en conteneurs : mainframe, AS/400, batchs Cobol, monolithes Oracle, services Windows.
 
 ---
 
-## Pour qui
+## Trois portes d'entrée
 
-- **Banques, assurances, paiements** — DORA, continuité d'activité, audits ACPR/AMF
-- **Télécoms, énergie, transport, santé** — NIS2, criticité 24/7
-- **Intégrateurs et MSP** — exploitation déléguée d'applications critiques
+C'est le même produit, mais il s'aborde différemment selon votre besoin du moment.
+
+### Vous reconstruisez une application critique
+Vous avez un programme de modernisation à 12-24 mois. AppControl s'intègre comme **outil de pilotage de la reconstruction** : modélisation du DAG cible, validation progressive composant par composant, redémarrages propres tout au long du chantier, audit régulatoire livré clé en main en fin de programme. Périmètre : une application. Sortie possible à tout moment.
+
+*Cible typique : banques, assurances, paiements, opérateurs critiques en programme de transformation.*
+
+### Vous préparez votre conformité DORA / NIS2
+Vous avez besoin de produire **une traçabilité régulatoire complète** sur vos opérations critiques : démarrages, arrêts, bascules, changements de configuration, accès. AppControl produit cet audit en sortie native — append-only, signé, chaîné — sans toucher à votre stack ops existante.
+
+*Cible typique : RSSI et responsables conformité en finance, télécoms, énergie, santé, transport.*
+
+### Vous voulez équiper vos astreintes 24/7
+Vos opérateurs d'astreinte n'ont pas l'outil qu'il leur faut à 3 h du matin. AppControl est conçu pour cette fenêtre : carte applicative immédiate, redémarrage piloté avec ordre de DAG correct, audit automatique. Une seule console à ouvrir.
+
+*Cible typique : intégrateurs, MSP, équipes SRE/ops d'organisations à criticité continue.*
 
 ---
 

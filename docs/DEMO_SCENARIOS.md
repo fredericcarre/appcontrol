@@ -46,8 +46,8 @@ Ce document est la **source de vérité narrative** des démos vidéo intégrée
 | 00:12–00:16 | Clic sur le bouton **Restart error branch** | Click visible |
 | 00:16–00:20 | Modal de confirmation : *"3 composants à redémarrer. Ordre : batch-loader → reconciler → reporter."* Clic **Confirm**. | Click |
 | 00:20–00:35 | Animation : `batch-loader` passe en `STARTING` (jaune) puis `RUNNING` (vert). Puis `reconciler`, puis `reporter`. Ligne de temps en bas qui défile. | Animation cascade |
-| 00:35–00:40 | Toast en bas à droite : *"Audit signed. Sent to ops@bank.fr."* | Apparition douce |
-| 00:40–00:45 | Vue email : objet *"\[AppControl\] core-banking — branche batch restored 03:18:42"*. Aperçu du PDF d'audit. | Slow zoom sur le PDF |
+| 00:35–00:40 | Toast en bas à droite : *"Audit signé — chaîne SHA-256 vérifiée."* | Apparition douce |
+| 00:40–00:45 | La timeline d'audit s'ouvre dans AppControl : quatre lignes (action, état pré, état post, hash chaîné au précédent). Survol d'une ligne → badge *"Signé · vérifié"*. | Slow zoom sur la chaîne de hash |
 
 ### Narration (voix off)
 
@@ -55,7 +55,7 @@ Ce document est la **source de vérité narrative** des démos vidéo intégrée
 > *Votre senior sysadmin est en vacances.*
 > *Vous ouvrez AppControl. La branche en erreur est déjà identifiée.*
 > *Un clic. Les composants redémarrent dans le bon ordre.*
-> *Quatre minutes plus tard, tout est vert. L'audit signé est dans votre boîte mail.*
+> *Quatre minutes plus tard, tout est vert. L'audit est chaîné, signé, prêt à exporter.*
 
 ### Sous-titres (alternative silencieuse)
 
@@ -64,7 +64,7 @@ Ce document est la **source de vérité narrative** des démos vidéo intégrée
 00:08 — La branche en erreur est déjà identifiée.
 00:14 — Un clic : Restart error branch.
 00:22 — Redémarrage dans l'ordre du DAG.
-00:38 — Audit signé, envoyé. Quatre minutes.
+00:38 — Audit chaîné, signé. Quatre minutes.
 ```
 
 ### Sélecteurs requis (à ajouter au frontend)
@@ -81,60 +81,60 @@ La douleur est universelle (tout DSI a vécu un incident week-end). La promesse 
 ## 2. `dr-switchover` — Mardi 14h
 
 ### Hook
-*« Exercice annuel de bascule de site. Toute la direction de la prod regarde. »*
+*« L'exercice DR est lancé. Phase 4. Un check d'intégrité échoue. »*
+
+### Pourquoi ce scénario, pas la bascule "qui se passe bien"
+Une bascule DR réussie du premier coup est la routine — vos scripts internes y arrivent à peu près. **Le vrai différenciateur d'AppControl, c'est le rollback propre quand quelque chose échoue en cours d'exercice.** C'est ce que personne d'autre ne sait faire, et c'est ce qui transforme une bascule annuelle en *exercice de continuité réellement réversible*.
 
 ### État initial (seed)
-- Carte `core-banking` chargée
-- Tous les composants en `RUNNING` sur le site `paris`
-- Site `lyon` configuré, vide
-- Mode démo : durée des phases compressée pour tenir dans la vidéo
+- Carte `core-banking` chargée, badge *"Site actif : Paris"*
+- Site `lyon` configuré
+- Bascule déjà initiée — la vidéo commence en cours de phase 1
+- Phase 4 contient un check d'intégrité scripté pour échouer (lag de réplication > seuil)
 
 ### Storyboard
 
 | Temps | Visuel | Action |
 |---|---|---|
-| 00:00–00:04 | Vue DAG, badge *"Site actif : Paris"* en haut | — |
-| 00:04–00:08 | Clic sur **DR Switchover**. Modal avec 6 phases listées : *Quiesce → Stop → Replicate → Start → Verify → Resume*. | Click |
-| 00:08–00:12 | Choix : Target = Lyon, Mode = FULL. Clic **Initiate**. | Click |
-| 00:12–00:20 | **Phase 1 : Quiesce traffic.** Composants passent en *DRAINING*. Trafic visualisé qui décroît. | Animation barre de progression |
-| 00:20–00:28 | **Phase 2 : Stop applications.** Reverse-DAG : composants passent en gris dans l'ordre inverse. | Animation cascade inverse |
-| 00:28–00:36 | **Phase 3 : Replicate state.** Visualisation de réplication Paris → Lyon (flèche animée). | Animation transversale |
-| 00:36–00:44 | **Phase 4 : Start in Lyon.** Site Lyon devient actif. Composants passent jaune → vert dans l'ordre du DAG. | Animation cascade |
-| 00:44–00:50 | **Phase 5 : Verify integrity.** Liste de checks qui se cochent en vert. | Tick animations |
-| 00:50–00:55 | **Phase 6 : Resume traffic.** Badge *"Site actif : Lyon"* prend la place de Paris. | Transition |
-| 00:55–01:00 | Aperçu du rapport de bascule : timestamps, signatures, checks. | Slow zoom |
+| 00:00–00:04 | Vue DAG, badge *"Site actif : Paris"*. Bandeau *"Bascule DR Paris → Lyon — en cours"*. | — |
+| 00:04–00:14 | Phases 1, 2, 3 défilent en accéléré (label *"× 4 vitesse"*) — drainage, arrêt ordonné, réplication. Tout se passe bien. | Accéléré |
+| 00:14–00:24 | **Phase 4 : Start in Lyon** — vitesse normale. Composants passent jaune → vert un par un. | Animation cascade |
+| 00:24–00:30 | Un check d'intégrité échoue : *"reconciler — replica lag 14 s — seuil 2 s"*. Le composant repasse en rouge. Bandeau rouge en haut : *"Anomalie détectée — Phase 4 — exercice suspendu"*. | Apparition bandeau |
+| 00:30–00:34 | Deux boutons s'affichent : **Rollback** / **Force-continue (avec dérogation)**. Clic **Rollback**. | Click |
+| 00:34–00:40 | Modal de confirmation : *"Retour à Paris. Annulation propre des phases 4, 3, 2, 1. Durée estimée : 18 s. Service jamais interrompu."* Clic **Confirm**. | Click |
+| 00:40–00:55 | Animation inversée : Lyon se vide proprement, réplication inversée, Paris reprend. Composants reviennent en vert sur Paris dans l'ordre du DAG. | Animation cascade inverse |
+| 00:55–01:00 | Badge *"Site actif : Paris (rétabli)"*. Timeline d'audit visible : exercice annoté *"anomalie détectée phase 4 / rollback réussi / replica lag à corriger hors-bande"*. | Slow scroll |
 
 ### Narration
 
-> *Mardi, quatorze heures. Exercice annuel de bascule de site.*
-> *Six phases. Rollback possible à chaque étape.*
-> *Drainer le trafic. Arrêter dans l'ordre inverse. Répliquer. Démarrer à Lyon. Vérifier. Reprendre.*
-> *Vous voyez chaque composant changer de site, en temps réel.*
-> *Le rapport de conformité est prêt avant la fin de la réunion.*
+> *Exercice annuel de bascule. Paris vers Lyon.*
+> *Phases 1, 2, 3 — propres.*
+> *Phase 4. Un check d'intégrité échoue : retard de réplication de quatorze secondes.*
+> *Vous cliquez : Rollback.*
+> *Annulation propre. Dix-huit secondes plus tard, vous êtes revenus sur Paris.*
+> *Service jamais interrompu. Anomalie nommée. Décision documentée.*
 
 ### Sous-titres
 
 ```
-00:04 — Bascule DR : Paris → Lyon.
-00:12 — Phase 1 — Drainage du trafic.
-00:20 — Phase 2 — Arrêt ordonné, DAG inverse.
-00:28 — Phase 3 — Réplication d'état.
-00:36 — Phase 4 — Démarrage à Lyon.
-00:44 — Phase 5 — Vérification d'intégrité.
-00:50 — Phase 6 — Reprise du trafic.
-00:55 — Rapport de bascule signé.
+00:04 — Bascule DR Paris → Lyon, en cours.
+00:14 — Phase 4 — Démarrage à Lyon.
+00:24 — Anomalie : replica lag 14 s.
+00:34 — Clic : Rollback.
+00:40 — Annulation propre, ordre inverse.
+00:55 — Retour à Paris. Service jamais interrompu.
 ```
 
 ### Sélecteurs requis
-- `data-testid="dr-switchover-button"`
-- `data-testid="dr-target-site-select"`
-- `data-testid="dr-mode-select"`
-- `data-testid="dr-initiate-button"`
 - `data-testid="dr-phase-progress"`
+- `data-testid="dr-anomaly-banner"`
+- `data-testid="dr-rollback-button"`
+- `data-testid="dr-confirm-rollback"`
 - `data-testid="dr-active-site-badge"`
+- `data-testid="audit-timeline"`
 
 ### Pourquoi ce scénario marche
-La bascule DR est le rite annuel le plus stressant de toute prod bancaire. La compresser à 60 secondes visibles est physiquement frappant. C'est là que l'auditeur se dit *« attendez, ça fait ça en une minute ? »*
+La bascule DR est le rite annuel le plus stressant de toute prod bancaire — pas parce qu'elle peut ne pas marcher, mais parce qu'**en cas de problème, on n'a souvent pas de plan B propre**. Montrer un rollback documenté en moins d'une minute transforme l'exercice DR d'épreuve à risque en répétition contrôlée. C'est exactement le genre de capacité que DORA exige et que personne ne fournit aujourd'hui.
 
 ---
 
@@ -191,50 +191,59 @@ DORA et l'ACPR sont des sujets de réveil pour tout DSI banque/assurance. Montre
 ## 4. `mcp-claude-control` — Le quatrième moment
 
 ### Hook
-*« Pilotez votre prod en langage naturel. »*
+*« Comité de direction, mardi 9 h 30. Le DG demande si la prod tient. »*
+
+### Pourquoi cette mise en scène
+Une démo MCP en mode "tech" (terminal côte à côte avec une UI) impressionne les ingénieurs et glisse sur les dirigeants. À l'inverse, **un comité de direction est le moment où une réponse instantanée est physiquement impossible avec les outils actuels** : il faut appeler la prod, attendre, agréger plusieurs dashboards. AppControl + MCP rendent une réponse exacte en deux secondes. C'est ce contraste qui déclenche le *« attendez, c'est dangereux ce truc »*.
 
 ### Format
-**Split-screen.** Terminal Claude à gauche (50 %), UI AppControl à droite (50 %).
+**Un seul écran.** AppControl en plein cadre. Une bulle de chat en surimpression dans le coin inférieur droit, comme un assistant intégré. Pas de split-screen avec terminal — illisible en GIF README et étranger à la cible.
 
 ### État initial (seed)
-- Claude CLI connecté au serveur MCP AppControl (binaire du crate `mcp/`)
-- Carte `core-banking` chargée à droite, avec un composant `payment-gateway` en état `DEGRADED`
+- Vue d'accueil AppControl chargée — dashboard agrégé multi-applications
+- Bulle de chat en surimpression connectée au serveur MCP du crate `mcp/`
+- Tout est globalement vert, sauf un voyant orange sur l'application `reporting`
 
 ### Storyboard
 
-| Temps | Visuel gauche (terminal) | Visuel droit (UI) | Action |
+| Temps | Visuel principal | Bulle Claude | Action |
 |---|---|---|---|
-| 00:00–00:05 | Prompt vide. L'utilisateur tape : *"Quelles applications sont en état dégradé ce matin ?"* | Vue d'ensemble du dashboard | Type |
-| 00:05–00:12 | Claude répond : *"Une application : core-banking. Composant payment-gateway, latence anormale depuis 03:42."* | Le composant `payment-gateway` clignote en orange | Réponse Claude + highlight UI |
-| 00:12–00:20 | L'utilisateur tape : *"Diagnostique-le, niveau 2."* | — | Type |
-| 00:20–00:30 | Claude exécute le tool `diagnose_app`. Réponse : *"Test d'intégrité : DB primary OK, replica lag 8s (seuil : 2s). Cause probable : saturation réseau site secondaire."* | Le panel diagnostic s'ouvre à droite, mêmes informations affichées graphiquement | Tool call animé |
-| 00:30–00:38 | L'utilisateur tape : *"Redémarre payment-gateway en dry-run d'abord."* | — | Type |
-| 00:38–00:45 | Claude répond avec le plan : ordre, durée estimée, impact. Demande confirmation. | Plan d'exécution surimprimé sur la carte | Plan animé |
+| 00:00–00:05 | Dashboard agrégé : 12 applications, 11 vertes, 1 orange | Bulle vide en bas à droite | — |
+| 00:05–00:12 | L'utilisateur tape dans la bulle : *« Tout va bien en prod ce matin ? »* | Question apparaît | Type |
+| 00:12–00:25 | Sur le dashboard, l'application `reporting` clignote doucement. Bulle Claude : *« Oui, sauf reporting : composant kpi-extractor redémarré une fois cette nuit, à 04:12, sans impact utilisateur. Tout le reste : nominal. »* | Réponse Claude + highlight UI | Animation + texte |
+| 00:25–00:30 | L'utilisateur tape : *« Détaille reporting. »* | Question apparaît | Type |
+| 00:30–00:42 | Le panneau `reporting` s'ouvre en zoom. Timeline du composant kpi-extractor : crash 04:11:38, restart auto 04:12:02, retour à RUNNING 04:13:08. | *« Crash mémoire à 04:11. Redémarrage automatique réussi en 1 min 06. Aucun rapport client raté. »* | Animation panneau + Claude |
 
 ### Narration
 
-> *Quatrième moment. Vous parlez à votre production en langage naturel.*
-> *Vous demandez ce qui ne va pas. Le diagnostic. Le plan d'action.*
-> *Tout ce que vous tapez, vous le voyez aussi à l'écran.*
-> *AppControl expose un serveur MCP natif. Aucun outil d'exploitation existant ne le permet aujourd'hui.*
+> *Mardi, neuf heures et demie. Comité de direction.*
+> *Le DG demande si la prod tient.*
+> *Vous tapez une phrase. AppControl répond.*
+> *Pas un dashboard. Pas un graphe. Une réponse exacte, en deux secondes.*
+> *Aucun outil d'exploitation existant n'est capable de cela aujourd'hui.*
 
 ### Sous-titres
 
 ```
-00:00 — Pilotez votre prod en langage naturel.
-00:08 — Claude voit ce que vous voyez.
-00:20 — Diagnostic niveau 2, en deux phrases.
-00:38 — Plan d'exécution en dry-run.
-00:45 — Aucun outil d'exploitation existant ne le permet aujourd'hui.
+00:00 — Comité de direction. « La prod tient ? »
+00:08 — Une question, en langage naturel.
+00:14 — Réponse immédiate, fondée sur l'état réel.
+00:32 — Détail à la demande, sans changer d'outil.
+00:42 — Aucun outil d'exploitation ne le permet aujourd'hui.
 ```
 
+### Sélecteurs requis
+- `data-testid="dashboard-overview"`
+- `data-testid="mcp-chat-bubble"`
+- `data-testid="mcp-chat-input"`
+- `data-testid="app-card-reporting"`
+- `data-testid="component-timeline"`
+
 ### Outillage spécifique
-- Capture terminal : `asciinema` puis conversion en vidéo via `agg`
-- Composition split-screen : FFmpeg `hstack` filter
-- Synchronisation : timestamps communs entre asciinema et Playwright
+La bulle de chat est rendue par le frontend AppControl lui-même (composant `<McpChatBubble />` connecté au serveur MCP via WebSocket). Tout est filmé en un seul plan Playwright. Pas d'asciinema, pas de FFmpeg `hstack`. Plus simple, plus stable, plus fidèle à la cible.
 
 ### Pourquoi ce scénario marche
-C'est le scénario qui déclenche le *« attends, c'est dangereux ce truc »* le plus rapidement. C'est le seul du marché à ce niveau de fonctionnalité. Le split-screen rend la magie visible : Claude *voit* la même chose que l'opérateur.
+Il transforme la fonctionnalité technique (serveur MCP) en **valeur exécutive** (réponse immédiate à un dirigeant). C'est le scénario qui justifie une enveloppe budgétaire stratégique, pas un achat de tableau de bord.
 
 ---
 
