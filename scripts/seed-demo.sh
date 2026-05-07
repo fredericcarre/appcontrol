@@ -22,6 +22,9 @@ set -euo pipefail
 
 BACKEND_URL="${BACKEND_URL:-http://localhost:3000}"
 ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-admin@localhost}"
+# Backend's seed default. Override via SEED_ADMIN_PASSWORD if you change
+# it in docker-compose.
+ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-admin}"
 EXAMPLE_FILE="${EXAMPLE_FILE:-/workspace/examples/banking-core-system.json}"
 DEMO_APP_NAME="${DEMO_APP_NAME:-Core Banking System}"
 # All components in the demo are rewritten to a single host so that
@@ -51,7 +54,7 @@ done
 # 2. Login (demo auth: any password works)
 log "Logging in as $ADMIN_EMAIL"
 LOGIN_PAYLOAD=$(cat <<EOF
-{"email":"$ADMIN_EMAIL","password":"demo"}
+{"email":"$ADMIN_EMAIL","password":"$ADMIN_PASSWORD"}
 EOF
 )
 LOGIN_RESPONSE=$(curl -sf -X POST "$BACKEND_URL/api/v1/auth/login" \

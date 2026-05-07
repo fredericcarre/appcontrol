@@ -245,11 +245,14 @@ test.describe('Documentation Screenshots', () => {
 // with the real seeded data.
 
 test.describe('README Screenshots', () => {
-  test.beforeEach(async ({ page, request }) => {
-    // Real login. Seed config uses email "admin@localhost" and any
-    // password is accepted in demo auth mode.
-    const resp = await request.post('/api/v1/auth/login', {
-      data: { email: 'admin@localhost', password: 'demo' },
+  test.beforeEach(async ({ page }) => {
+    // Real login via page.request so the resulting HttpOnly cookie
+    // ends up in the page's own cookie jar — that is the auth scheme
+    // the production frontend uses (see frontend/src/api/client.ts).
+    // The `request` fixture has its own cookie jar, distinct from
+    // the page's, so we deliberately use page.request here.
+    const resp = await page.request.post('/api/v1/auth/login', {
+      data: { email: 'admin@localhost', password: 'admin' },
     });
     const data = resp.ok() ? await resp.json() : null;
 
@@ -265,6 +268,11 @@ test.describe('README Screenshots', () => {
           role: 'admin',
         },
       };
+      // Write both token and user into the persisted store. The
+      // zustand persist middleware filters writes via `partialize`
+      // (user only), but rehydration reads everything that was set,
+      // so the API client picks up the token as a Bearer header on
+      // the first request after navigation.
       const state = d ?? fallback;
       localStorage.setItem(
         'appcontrol-auth',

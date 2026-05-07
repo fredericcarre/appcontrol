@@ -13,6 +13,7 @@ set -euo pipefail
 
 BACKEND_URL="${BACKEND_URL:-http://backend:3000}"
 ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-admin@localhost}"
+ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-admin}"
 DEMO_APP_NAME="${DEMO_APP_NAME:-Core Banking System}"
 DEMO_AGENT_HOSTNAME="${DEMO_AGENT_HOSTNAME:-demo-host}"
 
@@ -28,7 +29,7 @@ done
 # 2. Login
 LOGIN_RESPONSE=$(curl -sf -X POST "$BACKEND_URL/api/v1/auth/login" \
   -H "Content-Type: application/json" \
-  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"demo\"}")
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}")
 TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.token')
 [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || fail "Login failed: $LOGIN_RESPONSE"
 AUTH_HEADER="Authorization: Bearer $TOKEN"

@@ -114,7 +114,7 @@ jobs:
           # least one component reports FAILED, capped at 90 seconds.
           TOKEN=$(curl -sf -k -X POST https://localhost:443/api/v1/auth/login \
             -H "Content-Type: application/json" \
-            -d '{"email":"admin@localhost","password":"demo"}' \
+            -d '{"email":"admin@localhost","password":"admin"}' \
             | jq -r '.token // empty')
           if [ -z "$TOKEN" ]; then
             echo "Login failed; skipping FAILED-state wait"
