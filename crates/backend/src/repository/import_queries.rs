@@ -426,21 +426,26 @@ pub async fn create_dependency(
 }
 
 /// Create a dependency with type.
+///
+/// Note: the `dep_type` column does not yet exist in the `dependencies`
+/// table (cf. export.rs which already returns `dep_type: None`). Until
+/// a migration adds it, we deliberately drop the `dep_type` argument
+/// and write the same row as `create_dependency`. The signature is
+/// preserved so callers (notably the JSON v4 import) keep compiling.
 pub async fn create_dependency_typed(
     pool: &DbPool,
     app_id: Uuid,
     from_component_id: Uuid,
     to_component_id: Uuid,
-    dep_type: &str,
+    _dep_type: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id, dep_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id) VALUES ($1, $2, $3, $4)",
     )
     .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(app_id))
     .bind(crate::db::bind_id(from_component_id))
     .bind(crate::db::bind_id(to_component_id))
-    .bind(dep_type)
     .execute(pool)
     .await?;
     Ok(())
