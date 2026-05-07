@@ -60,36 +60,50 @@ jobs:
           # 200 = direct success, 301 = redirect to HTTPS (also fine)
           [ "$STATUS" = "200" ] || [ "$STATUS" = "301" ]
 
-      - name: Wait for demo seed to complete
+      - name: Wait for demo seed pipeline to complete
         run: |
-          # The demo-seeder service is one-shot. Wait for it to exit
-          # successfully so the dashboard has real seeded data before
-          # Playwright starts capturing.
-          SEEDER_ID=$(docker compose -f docker/docker-compose.yaml ps -aq demo-seeder)
-          if [ -z "$SEEDER_ID" ]; then
-            echo "demo-seeder service not found"
-            docker compose -f docker/docker-compose.yaml ps -a
-            exit 1
-          fi
-          for i in $(seq 1 90); do
-            STATUS=$(docker inspect --format='{{.State.Status}}' "$SEEDER_ID" 2>/dev/null || echo "missing")
-            if [ "$STATUS" = "exited" ]; then
-              EXIT_CODE=$(docker inspect --format='{{.State.ExitCode}}' "$SEEDER_ID")
-              if [ "$EXIT_CODE" = "0" ]; then
-                echo "Demo seed completed successfully after $((i * 2))s"
-                docker compose -f docker/docker-compose.yaml logs demo-seeder | tail -30
-                break
+          # The demo pipeline has three short-lived services chained:
+          #   demo-seeder  → imports the demo app + creates an agent
+          #                  enrollment token
+          #   demo-agent   → long-running, enrols itself with that token
+          #                  and registers as hostname=demo-host (it is
+          #                  auto-bound to all demo components)
+          #   demo-starter → waits for the agent to register, then starts
+          #                  the application so components transition
+          #                  through STARTING → RUNNING
+          # We block here until demo-starter has exited successfully —
+          # by that point the dashboard, the map and the reports page
+          # all hold realistic data ready to be screenshotted.
+          for service in demo-seeder demo-starter; do
+            SVC_ID=$(docker compose -f docker/docker-compose.yaml ps -aq "$service")
+            if [ -z "$SVC_ID" ]; then
+              echo "$service service not found"
+              docker compose -f docker/docker-compose.yaml ps -a
+              exit 1
+            fi
+            echo "Waiting for $service to exit ..."
+            for i in $(seq 1 180); do
+              STATUS=$(docker inspect --format='{{.State.Status}}' "$SVC_ID" 2>/dev/null || echo "missing")
+              if [ "$STATUS" = "exited" ]; then
+                EXIT_CODE=$(docker inspect --format='{{.State.ExitCode}}' "$SVC_ID")
+                if [ "$EXIT_CODE" = "0" ]; then
+                  echo "$service completed successfully after $((i * 2))s"
+                  docker compose -f docker/docker-compose.yaml logs "$service" | tail -30
+                  break
+                fi
+                echo "$service failed (exit code $EXIT_CODE):"
+                docker compose -f docker/docker-compose.yaml logs "$service" | tail -80
+                docker compose -f docker/docker-compose.yaml logs demo-agent | tail -40 || true
+                exit 1
               fi
-              echo "Demo seed failed (exit code $EXIT_CODE):"
-              docker compose -f docker/docker-compose.yaml logs demo-seeder | tail -50
-              exit 1
-            fi
-            if [ "$i" = "90" ]; then
-              echo "Demo seed did not complete within 180s"
-              docker compose -f docker/docker-compose.yaml logs demo-seeder | tail -50
-              exit 1
-            fi
-            sleep 2
+              if [ "$i" = "180" ]; then
+                echo "$service did not complete within 360s"
+                docker compose -f docker/docker-compose.yaml logs "$service" | tail -80
+                docker compose -f docker/docker-compose.yaml logs demo-agent | tail -40 || true
+                exit 1
+              fi
+              sleep 2
+            done
           done
 
       - name: Setup Node.js

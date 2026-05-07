@@ -113,7 +113,8 @@ services:
   # Demo data seeder (runs once; idempotent)
   # Imports examples/banking-core-system.json so the dashboard,
   # documentation screenshots and screen recordings have a real
-  # application to display.
+  # application to display. Also creates an enrollment token for
+  # the demo-agent service below.
   demo-seeder:
     image: alpine:3.19
     command: >
@@ -123,13 +124,65 @@ services:
       BACKEND_URL: http://backend:3000
       SEED_ADMIN_EMAIL: admin@localhost
       EXAMPLE_FILE: /workspace/examples/banking-core-system.json
+      DEMO_AGENT_HOSTNAME: demo-host
+      TOKEN_OUT: /workspace/state/enrollment-token
     volumes:
       - ../scripts:/workspace/scripts:ro
       - ../examples:/workspace/examples:ro
+      - demo-state:/workspace/state
     depends_on:
       backend:
         condition: service_healthy
     restart: "no"
+
+  # Demo starter (runs once after the agent is up)
+  # Waits for the demo-agent to register, then starts the demo
+  # application so its components transition through STARTING → RUNNING.
+  # Without this step, the map would show every component in UNKNOWN.
+  demo-starter:
+    image: alpine:3.19
+    command: >
+      sh -c "apk add --no-cache --quiet curl jq bash >/dev/null &&
+             bash /workspace/scripts/seed-start.sh"
+    environment:
+      BACKEND_URL: http://backend:3000
+      SEED_ADMIN_EMAIL: admin@localhost
+      DEMO_AGENT_HOSTNAME: demo-host
+    volumes:
+      - ../scripts:/workspace/scripts:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      demo-agent:
+        condition: service_started
+    restart: "no"
+
+  # Demo agent — single agent that registers as hostname "demo-host"
+  # and gets auto-bound to every component imported by demo-seeder
+  # (which rewrites all component hosts to "demo-host"). With this
+  # agent in place, start/stop/restart actions actually transition
+  # components through the FSM, producing realistic state on the map.
+  demo-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent
+    hostname: demo-host
+    user: "0:0"  # entrypoint needs write access to /var/lib/appcontrol/state
+    entrypoint: ["/usr/local/bin/demo-agent-entrypoint.sh"]
+    environment:
+      RUST_LOG: info,appcontrol_agent=debug
+      GATEWAY_URL: wss://gateway:4443
+      AGENT_HOSTNAME: demo-host
+      TOKEN_FILE: /var/lib/appcontrol/state/enrollment-token
+    volumes:
+      - ./demo-agent-entrypoint.sh:/usr/local/bin/demo-agent-entrypoint.sh:ro
+      - demo-state:/var/lib/appcontrol/state
+      - demo-agent-config:/var/lib/appcontrol
+    depends_on:
+      gateway:
+        condition: service_started
+      demo-seeder:
+        condition: service_completed_successfully
 
   # Nginx reverse proxy with TLS termination (web UI + API only)
   # Note: Agents connect directly to gateway:4443, NOT through nginx
@@ -158,3 +211,5 @@ services:
 volumes:
   pgdata:
   certs:
+  demo-state:
+  demo-agent-config:
