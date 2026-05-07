@@ -277,7 +277,8 @@ test.describe('README Screenshots', () => {
 
   // Navigate to the first available application's map, querying the
   // API directly to avoid relying on DOM selectors that may not have
-  // a stable testid yet.
+  // a stable testid yet. The /api/v1/apps endpoint wraps results in
+  // { apps: [...], total: N } — handle both shapes for resilience.
   async function openFirstAppMap(page: Page) {
     const appId = await page.evaluate(async () => {
       try {
@@ -288,8 +289,9 @@ test.describe('README Screenshots', () => {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!resp.ok) return null;
-        const apps = await resp.json();
-        return Array.isArray(apps) && apps.length > 0 ? apps[0].id : null;
+        const body = await resp.json();
+        const list = Array.isArray(body) ? body : body?.apps;
+        return Array.isArray(list) && list.length > 0 ? list[0].id : null;
       } catch {
         return null;
       }

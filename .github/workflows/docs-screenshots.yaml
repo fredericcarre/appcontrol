@@ -123,7 +123,7 @@ jobs:
               FAILED_COUNT=$(curl -sf -k \
                 -H "Authorization: Bearer $TOKEN" \
                 https://localhost:443/api/v1/apps \
-                | jq -r '[.[] | .failed_count // 0] | add // 0')
+                | jq -r '[.apps[] | .failed_count // 0] | add // 0')
               if [ "${FAILED_COUNT:-0}" -gt 0 ]; then
                 echo "FSM detected failure after $((i * 2))s — $FAILED_COUNT components FAILED"
                 break

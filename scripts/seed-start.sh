@@ -38,7 +38,7 @@ log "Waiting for agent '$DEMO_AGENT_HOSTNAME' to register"
 for i in $(seq 1 120); do
   AGENT_STATUS=$(curl -sf -H "$AUTH_HEADER" "$BACKEND_URL/api/v1/agents" \
     | jq -r --arg h "$DEMO_AGENT_HOSTNAME" \
-        '.[] | select(.hostname == $h) | .is_active' 2>/dev/null \
+        '.agents[] | select(.hostname == $h) | .is_active' 2>/dev/null \
     | head -n 1)
   if [ "$AGENT_STATUS" = "true" ]; then
     log "Agent registered and active after $((i * 2))s"
@@ -52,7 +52,7 @@ done
 
 # 4. Find the demo app
 APP_ID=$(curl -sf -H "$AUTH_HEADER" "$BACKEND_URL/api/v1/apps" \
-  | jq -r --arg n "$DEMO_APP_NAME" '.[] | select(.name == $n) | .id' \
+  | jq -r --arg n "$DEMO_APP_NAME" '.apps[] | select(.name == $n) | .id' \
   | head -n 1)
 [ -n "$APP_ID" ] || fail "Demo app '$DEMO_APP_NAME' not found"
 log "Demo app id: $APP_ID"
@@ -69,7 +69,7 @@ curl -sf -X POST "$BACKEND_URL/api/v1/apps/$APP_ID/start" \
 log "Waiting for components to converge to RUNNING"
 for i in $(seq 1 90); do
   STATES=$(curl -sf -H "$AUTH_HEADER" "$BACKEND_URL/api/v1/apps/$APP_ID/components" \
-    | jq -r '[.[] | .current_state] | @csv' 2>/dev/null || echo "")
+    | jq -r '[.components[] | .current_state] | @csv' 2>/dev/null || echo "")
   RUNNING_COUNT=$(echo "$STATES" | tr ',' '\n' | grep -c '"RUNNING"' || true)
   TOTAL=$(echo "$STATES" | tr ',' '\n' | grep -c '"' || true)
   log "  ${RUNNING_COUNT}/${TOTAL} components RUNNING"

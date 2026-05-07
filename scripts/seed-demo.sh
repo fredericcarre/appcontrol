@@ -67,7 +67,7 @@ AUTH_HEADER="Authorization: Bearer $TOKEN"
 
 # 3. Import the demo app (idempotent)
 EXISTING=$(curl -sf -H "$AUTH_HEADER" "$BACKEND_URL/api/v1/apps" \
-  | jq -r --arg n "$DEMO_APP_NAME" '.[] | select(.name == $n) | .id' \
+  | jq -r --arg n "$DEMO_APP_NAME" '.apps[] | select(.name == $n) | .id' \
   | head -n 1)
 if [ -n "$EXISTING" ]; then
   log "Demo app '$DEMO_APP_NAME' already exists ($EXISTING). Skipping import."
