@@ -137,6 +137,7 @@ export function LogSourcesPanel({
       selectedSource !== COMMAND_OUTPUT_SOURCE &&
       !sources.some((s) => s.id === selectedSource)
     ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedSource(COMMAND_OUTPUT_SOURCE);
     }
   }, [sources, selectedSource]);

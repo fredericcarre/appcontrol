@@ -57,11 +57,8 @@ export function LogViewerModal({
   // This is valid: we reset state on close to ensure clean state on reopen
   useEffect(() => {
     if (!open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSourceConnected(null);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(null);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEntries([]);
     }
   }, [open]);
@@ -187,7 +184,6 @@ export function LogViewerModal({
     }
 
     // Update state after processing - this is valid for WebSocket message handling
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (foundError) setError(foundError);
     newEntries.forEach(addLogEntry);
   }, [messages, agentId, gatewayId, addLogEntry]);
