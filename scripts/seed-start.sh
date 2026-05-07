@@ -97,10 +97,9 @@ START_RESPONSE=$(api_call POST "/api/v1/apps/$APP_ID/start" '{}') \
 log "Start response: $(echo "$START_RESPONSE" | jq -c .)"
 
 # 6. Wait for the components to converge to RUNNING/DEGRADED.
-# /apps/:id/components does not expose current_state, but /apps
-# returns per-app aggregate counts (running_count, degraded_count,
-# failed_count, component_count) which is what we need.
+# Logs only when state changes, plus first/last iteration.
 log "Waiting for components to converge to RUNNING"
+PREV=""
 for i in $(seq 1 90); do
   APP_AGG=$(api_call GET /api/v1/apps '' \
     | jq --arg id "$APP_ID" '.apps[] | select(.id == $id)')
@@ -108,8 +107,13 @@ for i in $(seq 1 90); do
   DEGRADED=$(echo "$APP_AGG" | jq -r '.degraded_count // 0')
   FAILED=$(echo "$APP_AGG" | jq -r '.failed_count // 0')
   STARTING=$(echo "$APP_AGG" | jq -r '.starting_count // 0')
+  STOPPED=$(echo "$APP_AGG" | jq -r '.stopped_count // 0')
   TOTAL=$(echo "$APP_AGG" | jq -r '.component_count // 0')
-  log "  state run=$RUNNING starting=$STARTING degraded=$DEGRADED failed=$FAILED total=$TOTAL"
+  CUR="run=$RUNNING starting=$STARTING degraded=$DEGRADED failed=$FAILED stopped=$STOPPED total=$TOTAL"
+  if [ "$CUR" != "$PREV" ] || [ "$i" = "1" ]; then
+    log "  state $CUR (iter $i)"
+    PREV="$CUR"
+  fi
   if [ "${TOTAL:-0}" -gt 0 ] && \
      [ "$((RUNNING + DEGRADED))" = "$TOTAL" ]; then
     log "All components RUNNING/DEGRADED"
@@ -118,4 +122,5 @@ for i in $(seq 1 90); do
   sleep 4
 done
 
+log "Final aggregate: $PREV"
 log "Done."

@@ -88,7 +88,7 @@ jobs:
                 EXIT_CODE=$(docker inspect --format='{{.State.ExitCode}}' "$SVC_ID")
                 if [ "$EXIT_CODE" = "0" ]; then
                   echo "$service completed successfully after $((i * 2))s"
-                  docker compose -f docker/docker-compose.yaml logs "$service" | tail -30
+                  docker compose -f docker/docker-compose.yaml logs "$service" | tail -200
                   break
                 fi
                 echo "$service failed (exit code $EXIT_CODE):"
