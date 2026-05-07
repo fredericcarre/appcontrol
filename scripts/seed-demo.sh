@@ -110,7 +110,25 @@ else
     {
       format_version: "4.0",
       application: (
-        .components |= map(.host = $h)
+        .components |= map(
+          # Force every component onto our single demo agent.
+          .host = $h
+          # The v4 import expects commands nested under .commands as
+          # { check: {cmd}, start: {cmd}, stop: {cmd}, integrity_check: ...}.
+          # The example uses the flat shell-style fields. Wrap them.
+          | .commands = {
+              check: (if .check_cmd            then {cmd: .check_cmd}            else null end),
+              start: (if .start_cmd            then {cmd: .start_cmd}            else null end),
+              stop:  (if .stop_cmd             then {cmd: .stop_cmd}             else null end),
+              integrity_check: (if .integrity_check_cmd then {cmd: .integrity_check_cmd} else null end),
+              infra_check:     (if .infra_check_cmd     then {cmd: .infra_check_cmd}     else null end),
+              rebuild:         (if .rebuild_cmd         then {cmd: .rebuild_cmd}         else null end)
+            }
+          # Drop the flat *_cmd siblings — V4Component#[serde(deny_unknown)]
+          # would not error here, but we keep the payload clean.
+          | del(.check_cmd, .start_cmd, .stop_cmd,
+                .integrity_check_cmd, .infra_check_cmd, .rebuild_cmd)
+        )
         | .tags = (
             if (.tags | type) == "object" then
               (.tags | to_entries | map(.key + "=" + (.value | tostring)))
