@@ -60,6 +60,38 @@ jobs:
           # 200 = direct success, 301 = redirect to HTTPS (also fine)
           [ "$STATUS" = "200" ] || [ "$STATUS" = "301" ]
 
+      - name: Wait for demo seed to complete
+        run: |
+          # The demo-seeder service is one-shot. Wait for it to exit
+          # successfully so the dashboard has real seeded data before
+          # Playwright starts capturing.
+          SEEDER_ID=$(docker compose -f docker/docker-compose.yaml ps -aq demo-seeder)
+          if [ -z "$SEEDER_ID" ]; then
+            echo "demo-seeder service not found"
+            docker compose -f docker/docker-compose.yaml ps -a
+            exit 1
+          fi
+          for i in $(seq 1 90); do
+            STATUS=$(docker inspect --format='{{.State.Status}}' "$SEEDER_ID" 2>/dev/null || echo "missing")
+            if [ "$STATUS" = "exited" ]; then
+              EXIT_CODE=$(docker inspect --format='{{.State.ExitCode}}' "$SEEDER_ID")
+              if [ "$EXIT_CODE" = "0" ]; then
+                echo "Demo seed completed successfully after $((i * 2))s"
+                docker compose -f docker/docker-compose.yaml logs demo-seeder | tail -30
+                break
+              fi
+              echo "Demo seed failed (exit code $EXIT_CODE):"
+              docker compose -f docker/docker-compose.yaml logs demo-seeder | tail -50
+              exit 1
+            fi
+            if [ "$i" = "90" ]; then
+              echo "Demo seed did not complete within 180s"
+              docker compose -f docker/docker-compose.yaml logs demo-seeder | tail -50
+              exit 1
+            fi
+            sleep 2
+          done
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:

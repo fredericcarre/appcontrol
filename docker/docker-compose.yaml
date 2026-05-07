@@ -110,6 +110,27 @@ services:
       backend:
         condition: service_healthy
 
+  # Demo data seeder (runs once; idempotent)
+  # Imports examples/banking-core-system.json so the dashboard,
+  # documentation screenshots and screen recordings have a real
+  # application to display.
+  demo-seeder:
+    image: alpine:3.19
+    command: >
+      sh -c "apk add --no-cache --quiet curl jq bash >/dev/null &&
+             bash /workspace/scripts/seed-demo.sh"
+    environment:
+      BACKEND_URL: http://backend:3000
+      SEED_ADMIN_EMAIL: admin@localhost
+      EXAMPLE_FILE: /workspace/examples/banking-core-system.json
+    volumes:
+      - ../scripts:/workspace/scripts:ro
+      - ../examples:/workspace/examples:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: "no"
+
   # Nginx reverse proxy with TLS termination (web UI + API only)
   # Note: Agents connect directly to gateway:4443, NOT through nginx
   nginx:

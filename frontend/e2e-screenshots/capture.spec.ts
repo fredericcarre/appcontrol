@@ -232,54 +232,109 @@ test.describe('Documentation Screenshots', () => {
     await capture(page, 'supervision');
   });
 
-  // ── README Screenshots ──────────────────────────────────────
-  // These fill the <!-- SCREENSHOT:name --> markers in README.md.
-  // The CI workflow substitutes them with image references after capture.
+});
 
-  async function openFirstAppMap(page: Page) {
+// ── README Screenshots ──────────────────────────────────────────
+// Dedicated describe block: these tests fill the <!-- SCREENSHOT:name -->
+// markers in README.md and rely on the demo app being seeded by
+// scripts/seed-demo.sh (run by the demo-seeder service in compose).
+//
+// Unlike the screenshots above which inject a mock auth state to bypass
+// the login screen, these tests perform a real login and use the
+// resulting JWT to query the API — that way the dashboard is rendered
+// with the real seeded data.
+
+test.describe('README Screenshots', () => {
+  test.beforeEach(async ({ page, request }) => {
+    // Real login. Seed config uses email "admin@localhost" and any
+    // password is accepted in demo auth mode.
+    const resp = await request.post('/api/v1/auth/login', {
+      data: { email: 'admin@localhost', password: 'demo' },
+    });
+    const data = resp.ok() ? await resp.json() : null;
+
+    await page.goto('/login');
+    await page.evaluate((d) => {
+      const fallback = {
+        token: 'screenshot-token',
+        user: {
+          id: '00000000-0000-0000-0000-000000000001',
+          email: 'admin@appcontrol.local',
+          name: 'Admin User',
+          org_id: '00000000-0000-0000-0000-000000000001',
+          role: 'admin',
+        },
+      };
+      const state = d ?? fallback;
+      localStorage.setItem(
+        'appcontrol-auth',
+        JSON.stringify({ state, version: 0 }),
+      );
+    }, data);
     await page.goto('/');
-    await page.waitForTimeout(1000);
-    const appCard = page.locator('[data-testid="app-card"]').first();
-    if (await appCard.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await appCard.click();
-      await page.waitForTimeout(2000);
+    await page.waitForTimeout(800);
+  });
+
+  // Navigate to the first available application's map, querying the
+  // API directly to avoid relying on DOM selectors that may not have
+  // a stable testid yet.
+  async function openFirstAppMap(page: Page) {
+    const appId = await page.evaluate(async () => {
+      try {
+        const auth = localStorage.getItem('appcontrol-auth');
+        const token = auth ? JSON.parse(auth).state?.token : null;
+        if (!token) return null;
+        const resp = await fetch('/api/v1/apps', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) return null;
+        const apps = await resp.json();
+        return Array.isArray(apps) && apps.length > 0 ? apps[0].id : null;
+      } catch {
+        return null;
+      }
+    });
+    if (appId) {
+      await page.goto(`/apps/${appId}`);
     } else {
-      // Fallback: navigate directly to the demo app
+      // Last-resort fallback: legacy demo route. Will render an empty
+      // state if no app is seeded — better than nothing.
       await page.goto('/apps/demo');
-      await page.waitForTimeout(1500);
     }
+    await page.waitForTimeout(2500);
   }
 
   test('map-overview', async ({ page }) => {
-    // Hero shot used at the top of README.md.
+    // Hero shot at the top of README.md — the application map with all
+    // its components and dependencies visible.
     await openFirstAppMap(page);
     await capture(page, 'map-overview');
   });
 
   test('incident-recovery', async ({ page }) => {
-    // Used in the "Dimanche 3h17" section. Ideally captured against
-    // a seeded fixture with a failed branch; for now, captures the map
-    // in its natural state and lets the reader project the scenario.
+    // "Dimanche 3h17" section. Best-effort: surface the detail panel
+    // for a component so the shot shows both the map and a per-component
+    // view (state, history, checks). True FAILED states require an
+    // active agent + flag-file removal, which is a follow-up chantier.
     await openFirstAppMap(page);
-    // Try to surface a node detail panel to give the shot more depth
     const node = page.locator('.react-flow__node').first();
     if (await node.isVisible({ timeout: 2000 }).catch(() => false)) {
       await node.click();
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(900);
     }
     await capture(page, 'incident-recovery');
   });
 
   test('dr-switchover', async ({ page }) => {
-    // Used in the "Mardi 14h" section. Best-effort: navigate to the map,
-    // try to open the Switchover panel via the toolbar button. If the
-    // button is not reachable (no data-testid yet), capture the map.
+    // "Mardi 14h" section. Try to open the Switchover panel via the
+    // toolbar; fall back to the bare map if the trigger is not
+    // discoverable without a stable testid.
     await openFirstAppMap(page);
     const candidates = [
       'button:has-text("Switchover")',
       'button:has-text("Bascule")',
-      'button[title*="witchover"]',
-      'button[aria-label*="witchover"]',
+      'button[title*="witchover" i]',
+      'button[aria-label*="witchover" i]',
     ];
     for (const selector of candidates) {
       const btn = page.locator(selector).first();
@@ -293,15 +348,15 @@ test.describe('Documentation Screenshots', () => {
   });
 
   test('audit-export', async ({ page }) => {
-    // Used in the "Vendredi 10h" section. Reports page already exists.
+    // "Vendredi 10h" section. Reports page after the seed has run —
+    // there is at least one action_log entry for the import itself.
     await page.goto('/reports');
     await page.waitForTimeout(1500);
     await capture(page, 'audit-export');
   });
 
   // mcp-claude-control: pending the in-product chat bubble component.
-  // Currently the MCP server is exposed by the `mcp/` Rust crate but
-  // the frontend does not yet embed an inline chat surface that can
-  // be captured. Once <McpChatBubble /> ships, add a test here that
-  // navigates to the dashboard and types a sample question.
+  // The MCP server exists as the `mcp/` Rust crate, but no inline UI
+  // surface is shipped yet. Once <McpChatBubble /> lands, add a test
+  // that types a sample question into it and captures the response.
 });
