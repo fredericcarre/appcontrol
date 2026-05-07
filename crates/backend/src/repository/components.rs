@@ -84,6 +84,9 @@ pub struct CreateComponent {
     pub cluster_size: Option<i32>,
     pub cluster_nodes: Option<Value>,
     pub referenced_app_id: Option<Uuid>,
+    /// Markdown shown to the operator at validation time. Only meaningful
+    /// when `component_type == "manual_task"`.
+    pub manual_description: Option<String>,
 }
 
 /// Parameters for updating a component.
@@ -109,6 +112,9 @@ pub struct UpdateComponent {
     pub cluster_size: Option<i32>,
     pub cluster_nodes: Option<Value>,
     pub referenced_app_id: Option<Uuid>,
+    /// Markdown shown to the operator at validation time. Only meaningful
+    /// when `component_type == "manual_task"`.
+    pub manual_description: Option<String>,
 }
 
 /// Component command columns (for execute_command).
@@ -514,8 +520,8 @@ impl ComponentRepository for PgComponentRepository {
                 "INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id, \
                     host, agent_id, check_cmd, start_cmd, stop_cmd, \
                     check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional, \
-                    position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, current_state) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, 'STOPPED') \
+                    position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, manual_description, current_state) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, 'STOPPED') \
                  RETURNING {}", COMPONENT_COLS),
         )
         .bind(comp.id)
@@ -542,6 +548,7 @@ impl ComponentRepository for PgComponentRepository {
         .bind(comp.cluster_size)
         .bind(&comp.cluster_nodes)
         .bind(comp.referenced_app_id)
+        .bind(&comp.manual_description)
         .fetch_one(&self.pool)
         .await?;
         Ok(row.into())
@@ -574,6 +581,7 @@ impl ComponentRepository for PgComponentRepository {
                 cluster_size = $19, \
                 cluster_nodes = $20, \
                 referenced_app_id = $21, \
+                manual_description = COALESCE($22, manual_description), \
                 updated_at = {} \
              WHERE id = $1 \
              RETURNING {}",
@@ -602,6 +610,7 @@ impl ComponentRepository for PgComponentRepository {
             .bind(u.cluster_size)
             .bind(&u.cluster_nodes)
             .bind(u.referenced_app_id)
+            .bind(&u.manual_description)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(Into::into))
@@ -1175,8 +1184,8 @@ impl ComponentRepository for SqliteComponentRepository {
                 "INSERT INTO components (id, application_id, name, component_type, display_name, description, icon, group_id, \
                     host, agent_id, check_cmd, start_cmd, stop_cmd, \
                     check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, is_optional, \
-                    position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, current_state) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, 'STOPPED') \
+                    position_x, position_y, env_vars, tags, cluster_size, cluster_nodes, referenced_app_id, manual_description, current_state) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, 'STOPPED') \
                  RETURNING {}", COMPONENT_COLS),
         )
         .bind(DbUuid::from(comp.id))
@@ -1203,6 +1212,7 @@ impl ComponentRepository for SqliteComponentRepository {
         .bind(comp.cluster_size)
         .bind(&comp.cluster_nodes)
         .bind(comp.referenced_app_id.map(DbUuid::from))
+        .bind(&comp.manual_description)
         .fetch_one(&self.pool)
         .await?;
         Ok(row.into())
@@ -1235,6 +1245,7 @@ impl ComponentRepository for SqliteComponentRepository {
                 cluster_size = $19, \
                 cluster_nodes = $20, \
                 referenced_app_id = $21, \
+                manual_description = COALESCE($22, manual_description), \
                 updated_at = {} \
              WHERE id = $1 \
              RETURNING {}",
@@ -1263,6 +1274,7 @@ impl ComponentRepository for SqliteComponentRepository {
             .bind(u.cluster_size)
             .bind(&u.cluster_nodes)
             .bind(u.referenced_app_id.map(DbUuid::from))
+            .bind(&u.manual_description)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(Into::into))

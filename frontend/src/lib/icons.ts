@@ -4,6 +4,7 @@ import {
   Calendar, ArrowLeftRight, Search, Workflow, Container,
   Puzzle, Radio, Activity, Terminal, MonitorDot, Key,
   Lock, Unlock, AlertTriangle, CheckCircle, XCircle,
+  ClipboardCheck,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -22,6 +23,7 @@ export const ICON_MAP: Record<string, LucideIcon> = {
   clock: Clock,
   box: Box,
   folder: Folder,
+  clipboard: ClipboardCheck,
 
   // Extended icons
   shield: Shield,

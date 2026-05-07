@@ -1,8 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   FileText,
   Monitor,
-  Terminal,
   Plus,
   Search,
   Clock,
@@ -75,8 +74,11 @@ export function LogSourcesPanel({
   componentId,
   componentName,
 }: LogSourcesPanelProps) {
-  // State
-  const [selectedSource, setSelectedSource] = useState<string>('process');
+  // State. Default to no source — the user picks one from configured
+  // file/event_log sources. The legacy 'process' default surfaced a
+  // backend stub that returned "[Process log capture not yet implemented]"
+  // so it's been removed; agents don't capture live stdout today.
+  const [selectedSource, setSelectedSource] = useState<string>('');
   const [filter, setFilter] = useState('');
   const [timeRange, setTimeRange] = useState('1h');
   const [lineCount, setLineCount] = useState('100');
@@ -101,25 +103,36 @@ export function LogSourcesPanel({
   const deleteSource = useDeleteLogSource();
   const updateSource = useUpdateLogSource();
 
-  // Source options for dropdown
-  const sourceOptions = useMemo(() => {
-    const options = [
-      { value: 'process', label: 'Process Output', icon: Terminal },
-    ];
-    sources.forEach((s) => {
-      options.push({
+  // Source options for dropdown — exclusively user-defined sources. We
+  // intentionally do NOT include a 'process' option: live stdout capture
+  // from detached agent processes isn't implemented and operators were
+  // landing on a stub message. They configure explicit file or event_log
+  // sources via the Add button.
+  const sourceOptions = useMemo(
+    () =>
+      sources.map((s) => ({
         value: s.id,
         label: s.name,
         icon: s.source_type === 'file' ? FileText : Monitor,
-      });
-    });
-    return options;
-  }, [sources]);
+      })),
+    [sources],
+  );
 
-  const selectedSourceData = useMemo(() => {
-    if (selectedSource === 'process') return null;
-    return sources.find((s) => s.id === selectedSource);
-  }, [selectedSource, sources]);
+  // Auto-select the first source when the list loads (or after a delete)
+  // so the operator never has to manually pick from a single-item dropdown.
+  useEffect(() => {
+    if (!selectedSource && sources.length > 0) {
+      setSelectedSource(sources[0].id);
+    }
+    if (selectedSource && !sources.some((s) => s.id === selectedSource)) {
+      setSelectedSource(sources[0]?.id ?? '');
+    }
+  }, [sources, selectedSource]);
+
+  const selectedSourceData = useMemo(
+    () => sources.find((s) => s.id === selectedSource),
+    [selectedSource, sources],
+  );
 
   const handleDeleteSource = async (source: LogSource) => {
     if (
@@ -127,7 +140,7 @@ export function LogSourcesPanel({
     ) {
       await deleteSource.mutateAsync({ id: source.id, componentId });
       if (selectedSource === source.id) {
-        setSelectedSource('process');
+        setSelectedSource('');
       }
     }
   };

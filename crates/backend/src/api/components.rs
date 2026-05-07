@@ -56,6 +56,9 @@ pub struct CreateComponentRequest {
     pub cluster_nodes: Option<Vec<String>>,
     /// Reference to another application (for app-type synthetic components)
     pub referenced_app_id: Option<Uuid>,
+    /// Markdown shown to the operator at validation time. Only meaningful
+    /// when `component_type == "manual_task"`.
+    pub manual_description: Option<String>,
 }
 
 impl CreateComponentRequest {
@@ -104,6 +107,9 @@ pub struct UpdateComponentRequest {
     pub cluster_nodes: Option<Vec<String>>,
     /// Reference to another application (for app-type synthetic components)
     pub referenced_app_id: Option<Uuid>,
+    /// Markdown shown to the operator at validation time. Only meaningful
+    /// when `component_type == "manual_task"`.
+    pub manual_description: Option<String>,
 }
 
 impl UpdateComponentRequest {
@@ -203,6 +209,7 @@ fn component_to_json(c: &crate::repository::components::Component) -> Value {
         "cluster_health_policy": c.cluster_health_policy,
         "cluster_min_healthy_pct": c.cluster_min_healthy_pct,
         "referenced_app_id": c.referenced_app_id,
+        "manual_description": c.manual_description,
         "created_at": c.created_at,
         "updated_at": c.updated_at,
     })
@@ -303,6 +310,7 @@ pub async fn create_component(
             cluster_size: body.cluster_size,
             cluster_nodes: cluster_nodes_json.clone(),
             referenced_app_id: body.referenced_app_id,
+            manual_description: body.manual_description.clone(),
         })
         .await?;
 
@@ -399,6 +407,7 @@ pub async fn update_component(
                 cluster_size: body.cluster_size,
                 cluster_nodes: cluster_nodes_json.clone(),
                 referenced_app_id: body.referenced_app_id,
+                manual_description: body.manual_description.clone(),
             },
         )
         .await?

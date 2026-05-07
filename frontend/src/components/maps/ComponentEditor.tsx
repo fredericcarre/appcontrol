@@ -60,6 +60,9 @@ export interface ComponentFormData {
     | 'quorum'
     | 'threshold_pct';
   cluster_min_healthy_pct?: number;
+  // Manual task component: markdown describing what the operator should
+  // do at this checkpoint (only relevant when component_type === 'manual_task').
+  manual_description?: string;
 }
 
 interface ComponentEditorProps {
@@ -136,6 +139,7 @@ export function ComponentEditor({
             | 'threshold_pct'
             | undefined) ?? 'all_healthy',
         cluster_min_healthy_pct: component.cluster_min_healthy_pct ?? 100,
+        manual_description: component.manual_description ?? '',
       };
     }
     if (initialType) {
@@ -161,6 +165,7 @@ export function ComponentEditor({
         cluster_mode: 'aggregate',
         cluster_health_policy: 'all_healthy',
         cluster_min_healthy_pct: 100,
+        manual_description: '',
       };
     }
     return {
@@ -184,6 +189,7 @@ export function ComponentEditor({
       cluster_mode: 'aggregate',
       cluster_health_policy: 'all_healthy',
       cluster_min_healthy_pct: 100,
+      manual_description: '',
     };
   }, [component, initialType, catalogTypes]);
 
@@ -478,7 +484,55 @@ export function ComponentEditor({
             </TabsContent>
 
             <TabsContent value="commands" className="space-y-4 mt-4">
-              {formData.component_type === 'application' ? (
+              {formData.component_type === 'manual_task' ? (
+                // Manual task: no shell commands. The sequencer pauses on
+                // this component until an operator validates it from the
+                // dashboard. The textarea below is rendered to operators
+                // when they open the validation dialog (markdown supported).
+                <div className="space-y-4">
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      <p className="font-medium mb-2">Manual checkpoint</p>
+                      <p className="text-sm text-muted-foreground">
+                        AppControl pauses the start plan when it reaches this
+                        component and waits for an operator to validate, skip,
+                        or fail it from the dashboard. Use the description to
+                        spell out exactly what the operator should do.
+                      </p>
+                    </AlertDescription>
+                  </Alert>
+                  <div className="space-y-2">
+                    <Label htmlFor="manual_description">
+                      What the operator should do (markdown supported)
+                    </Label>
+                    <Textarea
+                      id="manual_description"
+                      rows={10}
+                      value={formData.manual_description ?? ''}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          manual_description: e.target.value,
+                        }))
+                      }
+                      placeholder={
+                        '## Disable VIP on F5\n' +
+                        '1. Log into f5-prd-01.corp\n' +
+                        '2. Navigate to Local Traffic → Virtual Servers\n' +
+                        '3. Disable `vs_payments_443`\n' +
+                        '4. Verify health monitor turns red, then click Validate.'
+                      }
+                      className="font-mono text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Image and file links inside the markdown are rendered
+                      to the operator. Anything they type into the validation
+                      comment is added to the audit log.
+                    </p>
+                  </div>
+                </div>
+              ) : formData.component_type === 'application' ? (
                 <div className="space-y-4">
                   <Alert>
                     <Folder className="h-4 w-4" />

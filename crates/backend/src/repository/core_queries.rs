@@ -2931,3 +2931,39 @@ pub async fn fetch_cluster_policy(
         Ok(row)
     }
 }
+
+/// Look up the (app_id, hostname) pair for a cluster member, used when
+/// building a `ClusterMemberStateChange` WebSocket event payload. Returns
+/// None if the member or its application can't be found — the broadcast
+/// becomes a no-op rather than a hard error.
+pub async fn fetch_member_app_and_hostname(
+    pool: &DbPool,
+    member_id: Uuid,
+) -> Result<Option<(Uuid, String)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        let row: Option<(Uuid, String)> = sqlx::query_as(
+            "SELECT c.application_id, cm.hostname \
+             FROM cluster_members cm \
+             JOIN components c ON c.id = cm.component_id \
+             WHERE cm.id = $1",
+        )
+        .bind(crate::db::bind_id(member_id))
+        .fetch_optional(pool)
+        .await?;
+        Ok(row)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let row: Option<(DbUuid, String)> = sqlx::query_as(
+            "SELECT c.application_id, cm.hostname \
+             FROM cluster_members cm \
+             JOIN components c ON c.id = cm.component_id \
+             WHERE cm.id = $1",
+        )
+        .bind(DbUuid::from(member_id))
+        .fetch_optional(pool)
+        .await?;
+        Ok(row.map(|(app_id, hostname)| (app_id.into_inner(), hostname)))
+    }
+}

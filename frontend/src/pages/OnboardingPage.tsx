@@ -40,6 +40,9 @@ interface NewComponent {
   check_cmd: string;
   start_cmd: string;
   stop_cmd: string;
+  /** Markdown shown to the operator at validation time. Only meaningful
+   *  when component_type === 'manual_task'. */
+  manual_description?: string;
 }
 
 interface NewDependency {
@@ -211,6 +214,10 @@ export function OnboardingPage() {
           check_cmd: comp.check_cmd || undefined,
           start_cmd: comp.start_cmd || undefined,
           stop_cmd: comp.stop_cmd || undefined,
+          manual_description:
+            comp.component_type === 'manual_task'
+              ? comp.manual_description || undefined
+              : undefined,
         });
         componentIds.push(created.id);
         componentNameToId[comp.name] = created.id;
@@ -623,6 +630,7 @@ export function OnboardingPage() {
                                 <SelectItem value="webfront">Web Frontend</SelectItem>
                                 <SelectItem value="service">Service</SelectItem>
                                 <SelectItem value="batch">Batch</SelectItem>
+                                <SelectItem value="manual_task">Manual task (operator checkpoint)</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
@@ -632,30 +640,49 @@ export function OnboardingPage() {
                         </Button>
                       </div>
 
-                      {/* Primary Site Commands */}
-                      <div className="space-y-2 pt-2 border-t border-border/50">
-                        <p className="text-xs text-muted-foreground font-medium">Commands (shell) - used by default on all sites</p>
-                        <Input
-                          placeholder="Check command (e.g., pgrep -f myprocess)"
-                          value={comp.check_cmd}
-                          onChange={(e) => updateComponent(i, 'check_cmd', e.target.value)}
-                          className="font-mono text-sm"
-                        />
-                        <div className="grid grid-cols-2 gap-2">
-                          <Input
-                            placeholder="Start command"
-                            value={comp.start_cmd}
-                            onChange={(e) => updateComponent(i, 'start_cmd', e.target.value)}
-                            className="font-mono text-sm"
-                          />
-                          <Input
-                            placeholder="Stop command"
-                            value={comp.stop_cmd}
-                            onChange={(e) => updateComponent(i, 'stop_cmd', e.target.value)}
-                            className="font-mono text-sm"
+                      {/* Primary Site Commands. Manual-task components
+                          have no shell commands — they're operator
+                          checkpoints that pause the DAG until validated. */}
+                      {comp.component_type === 'manual_task' ? (
+                        <div className="space-y-2 pt-2 border-t border-border/50">
+                          <p className="text-xs text-muted-foreground font-medium">
+                            What the operator should do (markdown supported)
+                          </p>
+                          <textarea
+                            rows={5}
+                            placeholder={'## Disable VIP on F5\n1. Log into …\n2. …'}
+                            value={comp.manual_description ?? ''}
+                            onChange={(e) =>
+                              updateComponent(i, 'manual_description', e.target.value)
+                            }
+                            className="w-full rounded-md border bg-background p-2 font-mono text-sm"
                           />
                         </div>
-                      </div>
+                      ) : (
+                        <div className="space-y-2 pt-2 border-t border-border/50">
+                          <p className="text-xs text-muted-foreground font-medium">Commands (shell) - used by default on all sites</p>
+                          <Input
+                            placeholder="Check command (e.g., pgrep -f myprocess)"
+                            value={comp.check_cmd}
+                            onChange={(e) => updateComponent(i, 'check_cmd', e.target.value)}
+                            className="font-mono text-sm"
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input
+                              placeholder="Start command"
+                              value={comp.start_cmd}
+                              onChange={(e) => updateComponent(i, 'start_cmd', e.target.value)}
+                              className="font-mono text-sm"
+                            />
+                            <Input
+                              placeholder="Stop command"
+                              value={comp.stop_cmd}
+                              onChange={(e) => updateComponent(i, 'stop_cmd', e.target.value)}
+                              className="font-mono text-sm"
+                            />
+                          </div>
+                        </div>
+                      )}
 
                       {/* Site Agent Assignments */}
                       <div className="space-y-2 pt-2 border-t border-border/50">

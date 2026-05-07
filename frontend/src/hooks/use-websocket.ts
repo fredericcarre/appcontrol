@@ -122,6 +122,17 @@ export function useWebSocket() {
           // Invalidate the apps list (dashboard) too for immediate update
           queryClient.invalidateQueries({ queryKey: ['apps'], exact: true });
         }
+
+        // Cluster member state changes don't always cause a parent
+        // StateChange (e.g. one DEGRADED → another DEGRADED keeps the
+        // parent DEGRADED). Force an app refetch so the fan-out badge
+        // counts (`running/total`) and the Members tab reflect reality
+        // in real time.
+        if (msg.type === 'ClusterMemberStateChange' && msg.payload?.app_id) {
+          const appId = msg.payload.app_id;
+          queryClient.invalidateQueries({ queryKey: ['apps', appId] });
+          queryClient.invalidateQueries({ queryKey: ['cluster-members'] });
+        }
       } catch {
         // ignore parse errors
       }

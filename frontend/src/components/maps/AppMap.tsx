@@ -22,9 +22,7 @@ import '@xyflow/react/dist/style.css';
 import Dagre from '@dagrejs/dagre';
 import { toast } from 'sonner';
 import { ComponentNode } from './ComponentNode';
-import { MemberNode } from './MemberNode';
 import { MapToolbar } from './MapToolbar';
-import type { ClusterMember } from '@/api/clusterMembers';
 import type { MapDisplayOptions } from '@/api/mapSettings';
 import { isFlagOn } from '@/api/mapSettings';
 import { InfrastructureSummary } from './InfrastructureSummary';
@@ -37,8 +35,6 @@ import { ComponentState, ComponentType, STATE_COLORS } from '@/lib/colors';
 const nodeTypes: NodeTypes = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   component: ComponentNode as any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  member: MemberNode as any,
 };
 
 export interface BranchHighlight {
@@ -113,14 +109,6 @@ interface AppMapProps {
   onDeleteGroup?: (groupId: string) => Promise<void>;
   activeGroupFilter?: string | null;
   onGroupFilterChange?: (groupId: string | null) => void;
-  // Fan-out display: when 'expanded' and members are provided, every fan-out
-  // component is rendered with its enabled members as small sub-nodes below
-  // the parent. 'badge' (default) only shows the fan-out · X/Y pill on the
-  // parent.
-  fanOutDisplay?: 'badge' | 'expanded';
-  clusterMembers?: ClusterMember[];
-  onStartMember?: (memberId: string) => void;
-  onStopMember?: (memberId: string) => void;
   /** Per-app display options (host/metrics/cluster badge/etc.). When
    *  undefined or absent keys, the renderer assumes all flags are on. */
   mapDisplayOptions?: MapDisplayOptions;
@@ -270,10 +258,6 @@ function buildNodes(
   siteBindingsMap?: Map<string, SiteBinding[]>,
   primarySite?: SiteInfo | null,
   activeGroupFilter?: string | null,
-  fanOutDisplay: 'badge' | 'expanded' = 'badge',
-  clusterMembers?: ClusterMember[],
-  onStartMember?: (memberId: string) => void,
-  onStopMember?: (memberId: string) => void,
   mapDisplayOptions?: MapDisplayOptions,
 ): Node[] {
   const groupColorMap: Record<string, string> = {};
@@ -397,173 +381,13 @@ function buildNodes(
     };
   });
 
-  // Append member sub-nodes when fan-out display is "expanded".
-  // Layout strategy by cluster size:
-  //   * N ≤ 30     : 140×50 tile per member, grid clamp(ceil(√N), 2, 12) cols
-  //   * 30 < N ≤ 50: 110×40 compact tile, hostname only, same grid rule
-  //   * N > 50     : single "summary" tile that points the operator to the
-  //                  Members tab. Rendering 200 individual nodes wrecks the
-  //                  React Flow viewport even with pan/zoom — the Members
-  //                  tab has Search + state filter and is the right tool
-  //                  for that scale.
-  // Members are centred horizontally under their parent.
-  //
-  // Sibling overlap fix: dropping a 6×60 px grid 110 px below a parent at
-  // y=350 ends at y=570. Any sibling component at y≥460 (e.g. Oracle RAC
-  // at y=500 in the demo) would visually clip through the member grid. To
-  // keep the map readable when expanded, every component whose stored y
-  // sits below a fan-out parent's grid gets nudged down by the grid
-  // height + a margin before we emit its node. We do this in-place on the
-  // already-built `parentNodes` so the layout reflows for THIS render
-  // only — saved positions in the DB are unchanged.
-  const EXPANDED_DETAIL_LIMIT = 50;
-
-  if (fanOutDisplay === 'expanded' && clusterMembers && clusterMembers.length > 0) {
-    const componentNodeMap = new Map(parentNodes.map((n) => [n.id, n]));
-    const membersByComponent = new Map<string, ClusterMember[]>();
-    for (const m of clusterMembers) {
-      if (!m.is_enabled) continue;
-      const arr = membersByComponent.get(m.component_id) || [];
-      arr.push(m);
-      membersByComponent.set(m.component_id, arr);
-    }
-
-    const PARENT_WIDTH = 180; // matches NODE_WIDTH used by buildNodes
-    const Y_OFFSET = 110;
-    const GAP_X = 10;
-    const GAP_Y = 10;
-    const SIBLING_MARGIN = 30;
-
-    // Compute the grid height each fan-out parent will need so we can
-    // shift everything below it.
-    type FanOutLayout = {
-      parentY: number;
-      gridHeight: number;
-    };
-    const fanOutLayouts: FanOutLayout[] = [];
-
-    for (const [componentId, members] of membersByComponent) {
-      const parent = componentNodeMap.get(componentId);
-      if (!parent) continue;
-
-      const n = members.length;
-
-      // Above the detail limit → render a single summary tile instead of
-      // a giant grid. Keeps the map navigable even for 200-node tiers.
-      if (n > EXPANDED_DETAIL_LIMIT) {
-        const running = members.filter((m) => m.current_state === 'RUNNING').length;
-        const degraded = members.filter((m) => m.current_state === 'DEGRADED').length;
-        const failed = members.filter((m) => m.current_state === 'FAILED').length;
-        const stopped = members.filter((m) => m.current_state === 'STOPPED').length;
-        // Worst-state colour, mirrors FanOutBadge so the cue is consistent
-        let summaryState: ComponentState = 'RUNNING';
-        if (failed > 0) summaryState = 'FAILED';
-        else if (degraded > 0) summaryState = 'DEGRADED';
-        else if (running === 0 && stopped === n) summaryState = 'STOPPED';
-        else if (running < n) summaryState = 'DEGRADED';
-
-        const tileW = 280;
-        const tileH = 40;
-        const startX = parent.position.x + PARENT_WIDTH / 2 - tileW / 2;
-        parentNodes.push({
-          id: `member-summary-${componentId}`,
-          type: 'member',
-          position: { x: startX, y: parent.position.y + Y_OFFSET },
-          draggable: false,
-          selectable: false,
-          data: {
-            memberId: 'summary',
-            hostname: `${n} members · ${running} RUNNING / ${degraded} DEG / ${failed} FAIL / ${stopped} STOP`,
-            state: summaryState,
-            isEnabled: true,
-            compact: true,
-          },
-        });
-        fanOutLayouts.push({
-          parentY: parent.position.y,
-          gridHeight: Y_OFFSET + tileH + SIBLING_MARGIN,
-        });
-        continue;
-      }
-
-      const compact = n > 30;
-      const tileW = compact ? 110 : 140;
-      const tileH = compact ? 40 : 50;
-      const cols = Math.min(12, Math.max(2, Math.ceil(Math.sqrt(n))));
-      const rows = Math.ceil(n / cols);
-      const gridWidth = cols * tileW + (cols - 1) * GAP_X;
-      const gridHeight = rows * tileH + (rows - 1) * GAP_Y;
-      const startX = parent.position.x + PARENT_WIDTH / 2 - gridWidth / 2;
-      const startY = parent.position.y + Y_OFFSET;
-
-      members.forEach((m, idx) => {
-        const row = Math.floor(idx / cols);
-        const col = idx % cols;
-        parentNodes.push({
-          id: `member-${m.id}`,
-          type: 'member',
-          position: {
-            x: startX + col * (tileW + GAP_X),
-            y: startY + row * (tileH + GAP_Y),
-          },
-          draggable: false,
-          selectable: false,
-          data: {
-            // Pass the un-prefixed cluster_members.id separately — the React
-            // Flow node id has to be prefixed (member-…) to avoid collisions
-            // with regular component nodes, but Start/Stop dispatch needs
-            // the raw uuid to look the member up in clusterMembers[].
-            memberId: m.id,
-            hostname: m.hostname,
-            state: (m.current_state || 'UNKNOWN') as ComponentState,
-            isEnabled: m.is_enabled,
-            compact,
-            onStart: onStartMember,
-            onStop: onStopMember,
-          },
-        });
-      });
-      fanOutLayouts.push({
-        parentY: parent.position.y,
-        gridHeight: Y_OFFSET + gridHeight + SIBLING_MARGIN,
-      });
-    }
-
-    // Shift every component / dependency-edge attachment that sits below
-    // a fan-out parent's expanded grid. Member nodes themselves were
-    // positioned with the offset already factored in, so we skip them.
-    if (fanOutLayouts.length > 0) {
-      // Sort top-down so multiple fan-outs cascade their offsets.
-      fanOutLayouts.sort((a, b) => a.parentY - b.parentY);
-      for (const node of parentNodes) {
-        if (node.type === 'member') continue;
-        let cumulativeShift = 0;
-        for (const lo of fanOutLayouts) {
-          if (node.position.y > lo.parentY + 1) {
-            cumulativeShift += lo.gridHeight;
-          }
-        }
-        if (cumulativeShift > 0) {
-          node.position = { x: node.position.x, y: node.position.y + cumulativeShift };
-        }
-      }
-      // Member tiles also need the shift from any fan-out ABOVE their
-      // own parent (e.g. two stacked fan-out tiers in one app).
-      for (const node of parentNodes) {
-        if (node.type !== 'member') continue;
-        const ownParentY = (node.position.y as number) - Y_OFFSET;
-        let cumulativeShift = 0;
-        for (const lo of fanOutLayouts) {
-          if (lo.parentY < ownParentY - 1) {
-            cumulativeShift += lo.gridHeight;
-          }
-        }
-        if (cumulativeShift > 0) {
-          node.position = { x: node.position.x, y: node.position.y + cumulativeShift };
-        }
-      }
-    }
-  }
+  // Fan-out cluster members are managed exclusively from the Members
+  // table in the side panel / component editor. v1.18.2 had an "explode
+  // members on the map" mode but it never laid out cleanly past a handful
+  // of nodes (sibling overlap, unclickable 110×40 tiles past 30 members)
+  // and the table is strictly better for search, batch ops and large
+  // clusters. The badge on the parent (`fan-out · X/Y`) is the only
+  // map-level affordance now.
 
   return parentNodes;
 }
@@ -680,10 +504,6 @@ function AppMapInner({
   onDeleteGroup,
   activeGroupFilter,
   onGroupFilterChange,
-  fanOutDisplay = 'badge',
-  clusterMembers,
-  onStartMember,
-  onStopMember,
   mapDisplayOptions,
 }: AppMapProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
@@ -773,13 +593,9 @@ function AppMapInner({
       siteBindingsMap,
       primarySite,
       activeGroupFilter,
-      fanOutDisplay,
-      clusterMembers,
-      onStartMember,
-      onStopMember,
       mapDisplayOptions,
     ),
-    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteBindingsMap, primarySite, activeGroupFilter, fanOutDisplay, clusterMembers, onStartMember, onStopMember, mapDisplayOptions],
+    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteBindingsMap, primarySite, activeGroupFilter, mapDisplayOptions],
   );
 
   const initialEdges = useMemo(

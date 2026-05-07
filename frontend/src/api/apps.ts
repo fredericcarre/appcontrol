@@ -75,6 +75,9 @@ export interface Component {
   // Application reference (for app-type synthetic components)
   referenced_app_id?: string | null;
   referenced_app_name?: string | null;
+  // Manual task component: markdown describing what the operator should
+  // do. Only meaningful when component_type === 'manual_task'.
+  manual_description?: string | null;
   created_at: string;
   updated_at: string;
   // Connectivity status (from enriched API response)
