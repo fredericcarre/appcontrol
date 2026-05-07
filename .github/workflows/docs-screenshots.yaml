@@ -12,6 +12,7 @@ on:
     paths:
       - 'frontend/src/**'
       - 'docs/**'
+      - 'README.md'
   workflow_dispatch:
 
 env:
@@ -84,13 +85,18 @@ jobs:
 
       - name: Embed screenshots in documentation
         run: |
-          # Replace <!-- SCREENSHOT:name --> markers with actual image references
+          # Replace <!-- SCREENSHOT:name --> markers with actual image references.
+          # Two targets, two relative paths:
+          #   - docs/USER_GUIDE.md  → screenshots/<name>.png   (sibling directory)
+          #   - README.md           → docs/screenshots/<name>.png (from repo root)
           if [ -d docs/screenshots ]; then
             for img in docs/screenshots/*.png; do
               name=$(basename "$img" .png)
-              # Replace the marker in USER_GUIDE.md
               if [ -f docs/USER_GUIDE.md ]; then
                 sed -i "s|<!-- SCREENSHOT:${name} -->|![${name}](screenshots/${name}.png)|g" docs/USER_GUIDE.md
+              fi
+              if [ -f README.md ]; then
+                sed -i "s|<!-- SCREENSHOT:${name} -->|![${name}](docs/screenshots/${name}.png)|g" README.md
               fi
             done
           fi
@@ -99,7 +105,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/screenshots/ docs/USER_GUIDE.md
+          git add docs/screenshots/ docs/USER_GUIDE.md README.md
           if git diff --cached --quiet; then
             echo "No screenshot changes to commit"
           else

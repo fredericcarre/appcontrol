@@ -231,4 +231,77 @@ test.describe('Documentation Screenshots', () => {
     await page.waitForTimeout(2000);
     await capture(page, 'supervision');
   });
+
+  // ── README Screenshots ──────────────────────────────────────
+  // These fill the <!-- SCREENSHOT:name --> markers in README.md.
+  // The CI workflow substitutes them with image references after capture.
+
+  async function openFirstAppMap(page: Page) {
+    await page.goto('/');
+    await page.waitForTimeout(1000);
+    const appCard = page.locator('[data-testid="app-card"]').first();
+    if (await appCard.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await appCard.click();
+      await page.waitForTimeout(2000);
+    } else {
+      // Fallback: navigate directly to the demo app
+      await page.goto('/apps/demo');
+      await page.waitForTimeout(1500);
+    }
+  }
+
+  test('map-overview', async ({ page }) => {
+    // Hero shot used at the top of README.md.
+    await openFirstAppMap(page);
+    await capture(page, 'map-overview');
+  });
+
+  test('incident-recovery', async ({ page }) => {
+    // Used in the "Dimanche 3h17" section. Ideally captured against
+    // a seeded fixture with a failed branch; for now, captures the map
+    // in its natural state and lets the reader project the scenario.
+    await openFirstAppMap(page);
+    // Try to surface a node detail panel to give the shot more depth
+    const node = page.locator('.react-flow__node').first();
+    if (await node.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await node.click();
+      await page.waitForTimeout(800);
+    }
+    await capture(page, 'incident-recovery');
+  });
+
+  test('dr-switchover', async ({ page }) => {
+    // Used in the "Mardi 14h" section. Best-effort: navigate to the map,
+    // try to open the Switchover panel via the toolbar button. If the
+    // button is not reachable (no data-testid yet), capture the map.
+    await openFirstAppMap(page);
+    const candidates = [
+      'button:has-text("Switchover")',
+      'button:has-text("Bascule")',
+      'button[title*="witchover"]',
+      'button[aria-label*="witchover"]',
+    ];
+    for (const selector of candidates) {
+      const btn = page.locator(selector).first();
+      if (await btn.isVisible({ timeout: 800 }).catch(() => false)) {
+        await btn.click().catch(() => {});
+        await page.waitForTimeout(1200);
+        break;
+      }
+    }
+    await capture(page, 'dr-switchover');
+  });
+
+  test('audit-export', async ({ page }) => {
+    // Used in the "Vendredi 10h" section. Reports page already exists.
+    await page.goto('/reports');
+    await page.waitForTimeout(1500);
+    await capture(page, 'audit-export');
+  });
+
+  // mcp-claude-control: pending the in-product chat bubble component.
+  // Currently the MCP server is exposed by the `mcp/` Rust crate but
+  // the frontend does not yet embed an inline chat surface that can
+  // be captured. Once <McpChatBubble /> ships, add a test here that
+  // navigates to the dashboard and types a sample question.
 });
