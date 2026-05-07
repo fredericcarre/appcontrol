@@ -109,13 +109,32 @@ jobs:
       - name: Dump backend, gateway and agent logs (always, post-seed)
         if: always()
         run: |
-          for svc in backend gateway demo-agent; do
-            echo "============================================================"
-            echo "Logs from $svc"
-            echo "============================================================"
-            docker compose -f docker/docker-compose.yaml logs --no-color "$svc" 2>&1 \
-              | tail -120 || true
-          done
+          echo "============================================================"
+          echo " Backend: sequencer / start / dispatch / failure lines"
+          echo "============================================================"
+          docker compose -f docker/docker-compose.yaml logs --no-color backend 2>&1 \
+            | grep -E "sequencer|start_app|dispatch|Successfully started|Failed to start|GatewayUnavail|ExecuteCommand|action_log" \
+            | tail -200 || true
+          echo
+          echo "============================================================"
+          echo " Backend: last 200 raw lines (in case the grep above misses)"
+          echo "============================================================"
+          docker compose -f docker/docker-compose.yaml logs --no-color backend 2>&1 \
+            | tail -200 || true
+          echo
+          echo "============================================================"
+          echo " Gateway: messages forwarded to agent (Send * to agent / agent <-)"
+          echo "============================================================"
+          docker compose -f docker/docker-compose.yaml logs --no-color gateway 2>&1 \
+            | grep -E "to agent|agent <-|Forwarding to agent|ExecuteCommand|Send.*agent" \
+            | tail -120 || true
+          echo
+          echo "============================================================"
+          echo " Demo agent: anything other than scheduler ticks"
+          echo "============================================================"
+          docker compose -f docker/docker-compose.yaml logs --no-color demo-agent 2>&1 \
+            | grep -vE "Scheduler tick|run_due_checks|No targets due|Scheduler waiting|Sending heartbeat" \
+            | tail -120 || true
 
       - name: Wait for FSM to detect the injected failure
         run: |
