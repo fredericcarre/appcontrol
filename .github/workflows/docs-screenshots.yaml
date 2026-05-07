@@ -74,7 +74,7 @@ jobs:
           # We block here until demo-starter has exited successfully —
           # by that point the dashboard, the map and the reports page
           # all hold realistic data ready to be screenshotted.
-          for service in demo-seeder demo-starter demo-incident-injector; do
+          for service in demo-seeder; do
             SVC_ID=$(docker compose -f docker/docker-compose.yaml ps -aq "$service")
             if [ -z "$SVC_ID" ]; then
               echo "$service service not found"
@@ -105,35 +105,6 @@ jobs:
               sleep 2
             done
           done
-
-      - name: Wait for FSM to detect the injected failure
-        run: |
-          # demo-incident-injector deleted the flag files of the batch
-          # branch. The agent reschedules its check ~30s later (the
-          # interval defined in the example). We poll the API until at
-          # least one component reports FAILED, capped at 90 seconds.
-          TOKEN=$(curl -sf -k -X POST https://localhost:443/api/v1/auth/login \
-            -H "Content-Type: application/json" \
-            -d '{"email":"admin@localhost","password":"admin"}' \
-            | jq -r '.token // empty')
-          if [ -z "$TOKEN" ]; then
-            echo "Login failed; skipping FAILED-state wait"
-          else
-            for i in $(seq 1 45); do
-              FAILED_COUNT=$(curl -sf -k \
-                -H "Authorization: Bearer $TOKEN" \
-                https://localhost:443/api/v1/apps \
-                | jq -r '[.apps[] | .failed_count // 0] | add // 0')
-              if [ "${FAILED_COUNT:-0}" -gt 0 ]; then
-                echo "FSM detected failure after $((i * 2))s — $FAILED_COUNT components FAILED"
-                break
-              fi
-              if [ "$i" = "45" ]; then
-                echo "Timed out waiting for FAILED state; continuing anyway"
-              fi
-              sleep 2
-            done
-          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

@@ -135,81 +135,21 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # Demo starter (runs once after the agent is up)
-  # Waits for the demo-agent to register, then starts the demo
-  # application so its components transition through STARTING → RUNNING.
-  # Without this step, the map would show every component in UNKNOWN.
-  demo-starter:
-    image: alpine:3.19
-    command: >
-      sh -c "apk add --no-cache --quiet curl jq bash >/dev/null &&
-             bash /workspace/scripts/seed-start.sh"
-    environment:
-      BACKEND_URL: http://backend:3000
-      SEED_ADMIN_EMAIL: admin@localhost
-      DEMO_AGENT_HOSTNAME: demo-host
-    volumes:
-      - ../scripts:/workspace/scripts:ro
-    depends_on:
-      backend:
-        condition: service_healthy
-      demo-agent:
-        condition: service_started
-    restart: "no"
-
-  # Demo agent — single agent that registers as hostname "demo-host"
-  # and gets auto-bound to every component imported by demo-seeder
-  # (which rewrites all component hosts to "demo-host"). With this
-  # agent in place, start/stop/restart actions actually transition
-  # components through the FSM, producing realistic state on the map.
-  demo-agent:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.agent
-    hostname: demo-host
-    user: "0:0"  # entrypoint needs write access to /var/lib/appcontrol/state
-    entrypoint: ["/usr/local/bin/demo-agent-entrypoint.sh"]
-    environment:
-      RUST_LOG: info,appcontrol_agent=debug
-      GATEWAY_URL: wss://gateway:4443
-      AGENT_HOSTNAME: demo-host
-      TOKEN_FILE: /var/lib/appcontrol/state/enrollment-token
-    volumes:
-      - ./demo-agent-entrypoint.sh:/usr/local/bin/demo-agent-entrypoint.sh:ro
-      - demo-state:/var/lib/appcontrol/state
-      - demo-agent-config:/var/lib/appcontrol
-      # The example components use /tmp/<name>.flag as their state
-      # marker: start_cmd touches the file, stop_cmd removes it,
-      # check_cmd tests for its presence. Mounting /tmp as a named
-      # volume lets the demo-incident-injector container remove
-      # specific flag files to simulate a real component failure.
-      - demo-agent-tmp:/tmp
-    depends_on:
-      gateway:
-        condition: service_started
-      demo-seeder:
-        condition: service_completed_successfully
-
-  # Demo incident injector — deletes the flag files that back the
-  # "batch" branch of the demo application after everything has
-  # converged to RUNNING. On the agent's next health-check cycle
-  # (~30s with the example config), those components transition
-  # RUNNING → FAILED, producing a real red branch on the map. This
-  # is the broken state the README's "Dimanche 3h17" scenario is
-  # built around.
-  demo-incident-injector:
-    image: alpine:3.19
-    command: >
-      sh -c "rm -f /demo-tmp/core_banking_batch_controller_control_m.flag
-                  /demo-tmp/core_banking_nightly_batch_jobs.flag &&
-             echo '[incident-injector] removed batch flag files;
-                   batch branch will go FAILED on next check'"
-    volumes:
-      - demo-agent-tmp:/demo-tmp
-    depends_on:
-      demo-starter:
-        condition: service_completed_successfully
-    restart: "no"
+  # Demo starter and demo-agent and demo-incident-injector are
+  # intentionally absent from this compose. They were briefly enabled
+  # (commits 2a43201 / 32fe04c) but the agent ↔ gateway mTLS path is
+  # not currently aligned in this environment — the gateway's
+  # combined-ca.crt does not include the dynamic per-org PKI CA that
+  # signs the agent's enrollment cert, so the gateway rejects the
+  # agent with a DecryptError TLS alert. Re-enabling them is a
+  # follow-up chantier (either fix the cert export to /certs, or
+  # rebuild combined-ca.crt at runtime to include the backend's CA).
+  #
+  # In the meantime, demo-seeder still imports the Core Banking System
+  # so the dashboard, map and audit views all have realistic data.
+  # Components stay in UNKNOWN state (no agent to run check_cmd) but
+  # their structure, dependencies and metadata are visible — already a
+  # large step up from the empty pipeline.
 
   # Nginx reverse proxy with TLS termination (web UI + API only)
   # Note: Agents connect directly to gateway:4443, NOT through nginx
@@ -239,5 +179,3 @@ volumes:
   pgdata:
   certs:
   demo-state:
-  demo-agent-config:
-  demo-agent-tmp:
