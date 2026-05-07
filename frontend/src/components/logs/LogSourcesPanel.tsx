@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import {
   FileText,
   Monitor,
@@ -129,18 +129,19 @@ export function LogSourcesPanel({
     [sources],
   );
 
-  // Keep the synthetic source available even when no user sources exist —
-  // no auto-switch needed since COMMAND_OUTPUT_SOURCE is the default.
-  useEffect(() => {
-    if (
-      selectedSource &&
-      selectedSource !== COMMAND_OUTPUT_SOURCE &&
-      !sources.some((s) => s.id === selectedSource)
-    ) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setSelectedSource(COMMAND_OUTPUT_SOURCE);
-    }
-  }, [sources, selectedSource]);
+  // If the previously selected source no longer exists (e.g. it was just
+  // deleted), fall back to COMMAND_OUTPUT_SOURCE. We adjust state during
+  // render rather than in an effect — React documents this pattern for
+  // "deriving state from changing props/state without a re-render round
+  // trip" (see https://react.dev/reference/react/useState — "Storing
+  // information from previous renders"). The condition stops being true
+  // on the next render, so this cannot loop.
+  if (
+    selectedSource !== COMMAND_OUTPUT_SOURCE &&
+    !sources.some((s) => s.id === selectedSource)
+  ) {
+    setSelectedSource(COMMAND_OUTPUT_SOURCE);
+  }
 
   const selectedSourceData = useMemo(
     () => sources.find((s) => s.id === selectedSource),
