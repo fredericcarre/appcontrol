@@ -523,6 +523,7 @@ pub async fn start_single_component(
             state,
             component_id,
             info.start_cmd.as_deref(),
+            info.start_native.as_ref(),
             info.start_timeout_seconds,
             info.cluster_concurrency_mode.as_deref(),
             info.cluster_batch_size,
@@ -723,6 +724,7 @@ pub async fn stop_single_component(
             component_id,
             info.application_id,
             info.stop_cmd.as_deref(),
+            info.stop_native.as_ref(),
             info.stop_timeout_seconds,
             info.cluster_concurrency_mode.as_deref(),
             info.cluster_batch_size,
@@ -1523,6 +1525,7 @@ async fn start_fan_out_component(
     state: &Arc<AppState>,
     component_id: Uuid,
     parent_start_cmd: Option<&str>,
+    parent_start_native: Option<&appcontrol_common::types::NativeCommand>,
     start_timeout_seconds: i32,
     concurrency_mode: Option<&str>,
     batch_size: Option<i32>,
@@ -1558,6 +1561,14 @@ async fn start_fan_out_component(
 
     let mut dispatched = 0usize;
     for (idx, m) in enabled.iter().enumerate() {
+        // Native dispatch wins over shell, same precedence as the agent's
+        // scheduler: explicit per-member override → templated parent native.
+        let native = m.member.start_native_override.clone().or_else(|| {
+            parent_start_native.map(|n| {
+                n.templated_for_member(&m.member.hostname, m.member.install_path.as_deref())
+            })
+        });
+
         let cmd = m
             .member
             .start_cmd_override
@@ -1567,15 +1578,18 @@ async fn start_fan_out_component(
             .map(|s| s.to_string())
             .or_else(|| parent_cmd.map(|s| s.to_string()));
 
-        let Some(command) = cmd else {
+        // Skip only if BOTH paths are empty. With native we don't need a
+        // shell command — the agent ignores `command` when `native` is set.
+        if native.is_none() && cmd.is_none() {
             tracing::warn!(
                 component_id = %component_id,
                 member_id = %m.member.id,
                 hostname = %m.member.hostname,
-                "Skipping member with neither start_cmd_override nor parent start_cmd"
+                "Skipping member with neither start_native, start_cmd_override nor parent start"
             );
             continue;
-        };
+        }
+        let command = cmd.unwrap_or_default();
 
         let request_id = Uuid::new_v4();
         let message = BackendMessage::ExecuteCommand {
@@ -1585,7 +1599,7 @@ async fn start_fan_out_component(
             timeout_seconds: start_timeout_seconds as u32,
             exec_mode: "detached".to_string(),
             cluster_member_id: Some(m.member.id),
-            native: None,
+            native,
         };
 
         crate::repository::core_queries::record_command_dispatch(
@@ -1706,6 +1720,7 @@ async fn stop_fan_out_component(
     component_id: Uuid,
     _application_id: Uuid,
     parent_stop_cmd: Option<&str>,
+    parent_stop_native: Option<&appcontrol_common::types::NativeCommand>,
     stop_timeout_seconds: i32,
     concurrency_mode: Option<&str>,
     batch_size: Option<i32>,
@@ -1735,6 +1750,12 @@ async fn stop_fan_out_component(
     let batch = resolve_batch_size(concurrency_mode, batch_size, enabled.len());
 
     for (idx, m) in enabled.iter().enumerate() {
+        let native = m.member.stop_native_override.clone().or_else(|| {
+            parent_stop_native.map(|n| {
+                n.templated_for_member(&m.member.hostname, m.member.install_path.as_deref())
+            })
+        });
+
         let cmd = m
             .member
             .stop_cmd_override
@@ -1744,14 +1765,15 @@ async fn stop_fan_out_component(
             .map(|s| s.to_string())
             .or_else(|| parent_cmd.map(|s| s.to_string()));
 
-        let Some(command) = cmd else {
+        if native.is_none() && cmd.is_none() {
             tracing::warn!(
                 component_id = %component_id,
                 member_id = %m.member.id,
-                "Skipping member with neither stop_cmd_override nor parent stop_cmd"
+                "Skipping member with neither stop_native, stop_cmd_override nor parent stop"
             );
             continue;
-        };
+        }
+        let command = cmd.unwrap_or_default();
 
         let request_id = Uuid::new_v4();
         let message = BackendMessage::ExecuteCommand {
@@ -1761,7 +1783,7 @@ async fn stop_fan_out_component(
             timeout_seconds: stop_timeout_seconds as u32,
             exec_mode: "detached".to_string(),
             cluster_member_id: Some(m.member.id),
-            native: None,
+            native,
         };
 
         crate::repository::core_queries::record_command_dispatch(

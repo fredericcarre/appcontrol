@@ -633,14 +633,14 @@ mod tests {
         assert!(hub
             .app_subscriptions
             .get(&app)
-            .map_or(false, |s| s.contains(&conn)));
+            .is_some_and(|s| s.contains(&conn)));
 
         hub.unsubscribe(conn, app);
 
         assert!(hub
             .app_subscriptions
             .get(&app)
-            .map_or(true, |s| !s.contains(&conn)));
+            .is_none_or(|s| !s.contains(&conn)));
     }
 
     #[test]
@@ -658,7 +658,7 @@ mod tests {
         assert!(hub
             .app_subscriptions
             .get(&app)
-            .map_or(true, |s| !s.contains(&conn)));
+            .is_none_or(|s| !s.contains(&conn)));
         assert_eq!(hub.connection_count(), 0);
     }
 }

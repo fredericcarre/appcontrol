@@ -26,6 +26,7 @@ pub async fn run(cmd: &NativeCommand) -> ExecResult {
             method,
             url,
             headers,
+            bearer_token,
             body,
             expect_status,
             expect_body_contains,
@@ -58,6 +59,11 @@ pub async fn run(cmd: &NativeCommand) -> ExecResult {
                 }
             };
             let mut req = client.request(method_parsed, url);
+            // Bearer token is set first so an explicit `Authorization` entry
+            // in `headers` (e.g. for non-bearer schemes like `Basic …`) wins.
+            if let Some(token) = bearer_token {
+                req = req.header("Authorization", format!("Bearer {token}"));
+            }
             for (k, v) in headers {
                 req = req.header(k, v);
             }

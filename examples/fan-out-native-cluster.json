@@ -1,0 +1,106 @@
+{
+  "name": "Fan-out + Native Probes Demo",
+  "description": "Showcases v1.18.2 native commands on cluster members. The IIS tier has 8 nodes; instead of duplicating the same /health URL 8 times, the parent declares a SINGLE `check_native` with `{hostname}` placeholders and the agent templates it per member at run-time. Two members override the parent (`check_native_override`) to demo the precedence rule: per-member override wins, otherwise the parent's native is templated, otherwise the shell fallback is used. No installer needed — every probe is HTTP/TCP from the agent's own reqwest/tokio runtime.",
+  "tags": { "env": "demo", "feature": "fan-out-native", "os": "any" },
+  "components": [
+    {
+      "name": "Postgres",
+      "display_name": "Postgres (TCP probe)",
+      "component_type": "database",
+      "host": "db.corp",
+      "check_native": {
+        "kind": "tcp_connect",
+        "host": "db.corp",
+        "port": 5432,
+        "timeout_seconds": 2
+      },
+      "check_interval_seconds": 10,
+      "start_timeout_seconds": 60,
+      "stop_timeout_seconds": 30,
+      "position": { "x": 500, "y": 500 }
+    },
+    {
+      "name": "IIS Tier",
+      "display_name": "IIS Pool (8 members, native HTTP probes)",
+      "component_type": "appserver",
+      "host": "lb.corp",
+      "cluster_mode": "fan_out",
+      "cluster_health_policy": "threshold_pct",
+      "cluster_min_healthy_pct": 75,
+      "cluster_concurrency_mode": "batched",
+      "cluster_batch_size": 3,
+      "// templating": "The parent's `check_native.url` contains `{hostname}`. The agent substitutes it with each member's own `hostname` field at dispatch time, so a single declaration here probes 8 different URLs. `{install_path}` is also supported for native fields that need it. Bearer tokens go on the parent and are reused per member; they're masked in audit logs (Debug impl).",
+      "check_native": {
+        "kind": "http",
+        "method": "GET",
+        "url": "https://{hostname}:8443/health",
+        "expect_status": 200,
+        "bearer_token": "demo-token-replace-me",
+        "insecure": true,
+        "timeout_seconds": 3
+      },
+      "start_native": {
+        "kind": "http",
+        "method": "POST",
+        "url": "https://lifecycle.corp/api/iis/{hostname}/start",
+        "expect_status": 202,
+        "bearer_token": "demo-token-replace-me",
+        "timeout_seconds": 10
+      },
+      "stop_native": {
+        "kind": "http",
+        "method": "POST",
+        "url": "https://lifecycle.corp/api/iis/{hostname}/stop",
+        "expect_status": 202,
+        "bearer_token": "demo-token-replace-me",
+        "timeout_seconds": 10
+      },
+      "check_interval_seconds": 10,
+      "start_timeout_seconds": 60,
+      "stop_timeout_seconds": 30,
+      "cluster_members": [
+        { "hostname": "iis-prd-001.corp", "install_path": "C:\\inetpub\\app1" },
+        { "hostname": "iis-prd-002.corp", "install_path": "C:\\inetpub\\app1" },
+        { "hostname": "iis-prd-003.corp", "install_path": "C:\\inetpub\\app1" },
+        { "hostname": "iis-prd-004.corp", "install_path": "C:\\inetpub\\app1" },
+        { "hostname": "iis-prd-005.corp", "install_path": "C:\\inetpub\\app1" },
+        { "hostname": "iis-prd-006.corp", "install_path": "C:\\inetpub\\app1" },
+        {
+          "hostname": "iis-prd-007.corp",
+          "install_path": "C:\\inetpub\\app1",
+          "// override_explanation": "This member exposes /healthz instead of /health (legacy build), so it carries its own `check_native_override`. Per-member override wins over the templated parent.",
+          "check_native_override": {
+            "kind": "http",
+            "method": "GET",
+            "url": "https://iis-prd-007.corp:8443/healthz",
+            "expect_status": 200,
+            "insecure": true,
+            "timeout_seconds": 3
+          }
+        },
+        {
+          "hostname": "iis-prd-008.corp",
+          "install_path": "C:\\inetpub\\app1",
+          "// override_explanation": "And this one is on a non-standard port. `check_native_override` again — fully replaces the parent's templated probe.",
+          "check_native_override": {
+            "kind": "http",
+            "method": "GET",
+            "url": "https://iis-prd-008.corp:9443/health",
+            "expect_status": 200,
+            "insecure": true,
+            "timeout_seconds": 3
+          }
+        }
+      ],
+      "position": { "x": 500, "y": 200 }
+    }
+  ],
+  "dependencies": [
+    { "from": "IIS Tier", "to": "Postgres", "type": "strong" }
+  ],
+  "notes": {
+    "precedence": "Per slot (check / start / stop), the agent picks: 1) member.*_native_override, 2) parent.*_native templated for this member, 3) member.*_cmd_override (shell), 4) parent.*_cmd (shell).",
+    "templating": "Recognised placeholders: `{hostname}` (always set), `{install_path}` (empty string if the member has none). Substituted in HTTP url/headers/body/expect_body_contains and TCP host. Anything else (incl. stray `{}`) is left untouched.",
+    "audit": "`bearer_token` and Authorization/X-API-Key/Cookie headers are masked in tracing output and audit details — search for `***` in your log aggregator to verify."
+  }
+}

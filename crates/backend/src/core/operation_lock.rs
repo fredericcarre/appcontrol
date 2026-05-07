@@ -333,21 +333,21 @@ mod tests {
 
     #[test]
     fn test_stale_threshold_reasonable() {
-        assert!(
+        const _: () = assert!(
             STALE_THRESHOLD_SECONDS >= 30,
-            "Stale threshold should be at least 30s"
+            "Stale threshold should be at least 30s",
         );
-        assert!(
+        const _: () = assert!(
             STALE_THRESHOLD_SECONDS <= 300,
-            "Stale threshold shouldn't be too long"
+            "Stale threshold shouldn't be too long",
         );
     }
 
     #[test]
     fn test_heartbeat_interval_reasonable() {
-        assert!(
+        const _: () = assert!(
             HEARTBEAT_INTERVAL_SECONDS >= 3,
-            "Heartbeat shouldn't be too frequent"
+            "Heartbeat shouldn't be too frequent",
         );
         assert!(
             HEARTBEAT_INTERVAL_SECONDS < STALE_THRESHOLD_SECONDS as u64,

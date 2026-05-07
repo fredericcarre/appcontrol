@@ -221,16 +221,20 @@ impl CheckScheduler {
         // Flatten components into check targets.
         // Aggregate component → one target with key (comp_id, None).
         // Fan-out component → one target per member with key (comp_id, Some(member_id)).
-        struct CheckTarget<'a> {
+        //
+        // Owned `String`/`NativeCommand` so a member's native target can
+        // carry a freshly templated copy of the parent's probe (URL with
+        // its hostname filled in) without lifetime gymnastics.
+        struct CheckTarget {
             key: CheckKey,
             /// Shell command — used when `native` is None.
-            check_cmd: &'a str,
+            check_cmd: String,
             /// Typed native check (HTTP/TCP). When Some, takes precedence over
             /// `check_cmd` and runs through `native_runner` instead of a shell.
-            native: Option<&'a appcontrol_common::types::NativeCommand>,
+            native: Option<appcontrol_common::types::NativeCommand>,
             interval_secs: i64,
         }
-        let mut targets: Vec<CheckTarget<'_>> = Vec::new();
+        let mut targets: Vec<CheckTarget> = Vec::new();
         for (comp_id, config) in components.iter() {
             let interval_secs = if config.check_interval_seconds > 0 {
                 config.check_interval_seconds as i64
@@ -244,30 +248,44 @@ impl CheckScheduler {
                 if let Some(native) = config.check_native.as_ref() {
                     targets.push(CheckTarget {
                         key: (*comp_id, None),
-                        check_cmd: "",
-                        native: Some(native),
+                        check_cmd: String::new(),
+                        native: Some(native.clone()),
                         interval_secs,
                     });
                 } else if let Some(cmd) = config.check_cmd.as_ref() {
                     targets.push(CheckTarget {
                         key: (*comp_id, None),
-                        check_cmd: cmd.as_str(),
+                        check_cmd: cmd.clone(),
                         native: None,
                         interval_secs,
                     });
                 }
             } else {
-                // Fan-out: one target per member with its resolved check_cmd.
-                // (Per-member native checks not exposed yet — members keep
-                // using shell. Most fan-out tiers have one homogeneous probe
-                // anyway, so defining `check_native` on the parent and letting
-                // it apply to all members would also work — but that requires
-                // rewriting the URL/host per member, which we don't model yet.)
+                // Fan-out: one target per member. Resolution order, top wins:
+                //   1. member.check_native      (explicit override on the row)
+                //   2. parent.check_native      (templated for THIS member)
+                //   3. member.check_cmd         (per-member shell override)
+                //   4. parent.check_cmd         — never reached here because
+                //      ClusterMemberConfig.check_cmd is already pre-resolved
+                //      by the backend (override OR inherited parent value).
                 for m in &config.cluster_members {
-                    if let Some(cmd) = m.check_cmd.as_ref() {
+                    let templated_parent = config
+                        .check_native
+                        .as_ref()
+                        .map(|n| n.templated_for_member(&m.hostname, m.install_path.as_deref()));
+                    let native = m.check_native.clone().or(templated_parent);
+
+                    if let Some(native_cmd) = native {
                         targets.push(CheckTarget {
                             key: (*comp_id, Some(m.member_id)),
-                            check_cmd: cmd.as_str(),
+                            check_cmd: String::new(),
+                            native: Some(native_cmd),
+                            interval_secs,
+                        });
+                    } else if let Some(cmd) = m.check_cmd.as_ref() {
+                        targets.push(CheckTarget {
+                            key: (*comp_id, Some(m.member_id)),
+                            check_cmd: cmd.clone(),
                             native: None,
                             interval_secs,
                         });
@@ -277,7 +295,7 @@ impl CheckScheduler {
         }
 
         // Determine which targets are due
-        let mut due_targets: Vec<CheckTarget<'_>> = Vec::new();
+        let mut due_targets: Vec<CheckTarget> = Vec::new();
         {
             let check_state = self.check_state.read().await;
             for t in targets {
@@ -328,17 +346,17 @@ impl CheckScheduler {
             // Dedup key: native specs hash their JSON, shell uses the
             // command string. Two components sharing the same probe still
             // execute it once per cycle.
-            let cmd_hash = if let Some(native) = t.native {
+            let cmd_hash = if let Some(native) = t.native.as_ref() {
                 hash_command(&serde_json::to_string(native).unwrap_or_else(|_| String::new()))
             } else {
-                hash_command(t.check_cmd)
+                hash_command(&t.check_cmd)
             };
             let (comp_id, member_id) = t.key;
 
             let (exit_code, stdout, duration_ms) =
                 if let Some(cached) = executed_cmds.get(&cmd_hash) {
                     cached.clone()
-                } else if let Some(native) = t.native {
+                } else if let Some(native) = t.native.as_ref() {
                     // Native runner — HTTP/TCP probe. Always sync, fast.
                     let result = crate::native_runner::run(native).await;
                     if result.exit_code != 0 && !result.stderr.is_empty() {
@@ -363,7 +381,7 @@ impl CheckScheduler {
                 } else {
                     let timeout = Duration::from_secs(30);
                     let start = std::time::Instant::now();
-                    match crate::executor::execute_sync(t.check_cmd, timeout).await {
+                    match crate::executor::execute_sync(&t.check_cmd, timeout).await {
                         Ok(result) => {
                             if result.exit_code != 0 && !result.stderr.is_empty() {
                                 tracing::warn!(
@@ -522,6 +540,9 @@ mod tests {
             stop_timeout_seconds: 60,
             env_vars: serde_json::json!({}),
             cluster_members: vec![],
+            check_native: None,
+            start_native: None,
+            stop_native: None,
         }
     }
 
@@ -545,6 +566,9 @@ mod tests {
             start_timeout_seconds: 120,
             stop_timeout_seconds: 60,
             env_vars: serde_json::json!({}),
+            check_native: None,
+            start_native: None,
+            stop_native: None,
             cluster_members: members
                 .into_iter()
                 .enumerate()
@@ -555,6 +579,10 @@ mod tests {
                     start_cmd: None,
                     stop_cmd: None,
                     env_vars: serde_json::json!({}),
+                    install_path: None,
+                    check_native: None,
+                    start_native: None,
+                    stop_native: None,
                 })
                 .collect(),
         }

@@ -17,11 +17,13 @@
         "expect_body_contains": "ok",
         "timeout_seconds": 3
       },
+      "// auth_explanation": "Use `bearer_token` for the common Authorization: Bearer pattern — the agent emits the header for you and the value is masked in logs/audit. For other schemes (Basic, mTLS, custom), set the full `Authorization` header in `headers` directly; that wins over `bearer_token`.",
       "start_native": {
         "kind": "http",
         "method": "POST",
         "url": "http://admin.local/lifecycle/api/start",
         "headers": { "Content-Type": "application/json" },
+        "bearer_token": "demo-token-replace-me",
         "body": "{\"target\":\"backing-api\"}",
         "expect_status": 202,
         "timeout_seconds": 10
@@ -31,6 +33,7 @@
         "method": "POST",
         "url": "http://admin.local/lifecycle/api/stop",
         "headers": { "Content-Type": "application/json" },
+        "bearer_token": "demo-token-replace-me",
         "body": "{\"target\":\"backing-api\",\"graceful\":true}",
         "expect_status": 202,
         "timeout_seconds": 10
