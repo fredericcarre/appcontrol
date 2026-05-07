@@ -1265,7 +1265,7 @@ export function ComponentEditor({
                           type="number"
                           min={2}
                           max={1000}
-                          value={formData.cluster_size}
+                          value={formData.cluster_size ?? 2}
                           onChange={(e) => {
                             const val = parseInt(e.target.value, 10);
                             setFormData((prev) => ({
