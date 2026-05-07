@@ -68,7 +68,22 @@ log "Logged in"
 
 AUTH_HEADER="Authorization: Bearer $TOKEN"
 
-# 3. Import the demo app (idempotent)
+# 3. Ensure at least one site exists in the org. The import endpoint
+#    fails with 400 "No site_id provided and no sites exist in the
+#    organization" if there is none. The backend's seed creates an
+#    org + admin user only — no default site — so we have to add one.
+EXISTING_SITES=$(curl -sf -H "$AUTH_HEADER" "$BACKEND_URL/api/v1/sites" \
+  | jq -r '(.sites // .) | length' 2>/dev/null || echo 0)
+if [ "${EXISTING_SITES:-0}" = "0" ]; then
+  log "Creating default site"
+  curl -sf -X POST "$BACKEND_URL/api/v1/sites" \
+    -H "$AUTH_HEADER" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"Default","code":"default","site_type":"primary"}' >/dev/null \
+    || fail "Failed to create default site"
+fi
+
+# 4. Import the demo app (idempotent)
 EXISTING=$(curl -sf -H "$AUTH_HEADER" "$BACKEND_URL/api/v1/apps" \
   | jq -r --arg n "$DEMO_APP_NAME" '.apps[] | select(.name == $n) | .id' \
   | head -n 1)
@@ -109,7 +124,7 @@ else
   log "Imported demo app: ${APP_ID:-?}"
 fi
 
-# 4. Provision an enrollment token for the demo agent
+# 5. Provision an enrollment token for the demo agent
 mkdir -p "$(dirname "$TOKEN_OUT")"
 if [ -s "$TOKEN_OUT" ]; then
   log "Enrollment token already present at $TOKEN_OUT — leaving it"
