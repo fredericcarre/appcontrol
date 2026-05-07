@@ -1,8 +1,21 @@
 # AppControl
 
-**AppControl ne remplace aucun de vos outils. Il leur ajoute la couche qui leur manque.**
+AppControl est une **plateforme d'exploitation pour applications critiques** — pour les équipes de production qui font tourner des systèmes où la disponibilité, la traçabilité régulatoire et la maîtrise du redémarrage ne sont pas négociables. Banques, assurances, télécoms, énergie, santé, opérateurs d'importance vitale, intégrateurs et MSP en charge de leurs applications.
 
-Vos applications critiques s'appuient sur cinq familles d'outils — supervision, CMDB, ordonnanceur, hyperviseur, orchestrateur de conteneurs — qui font chacune leur métier. Aucune n'a été conçue pour répondre aux questions que vous vous posez vraiment quand quelque chose se passe :
+Le projet est né d'un constat simple : depuis vingt ans, chaque famille d'outils ops s'est perfectionnée dans son métier — et aucune n'a été conçue pour lire l'application en mouvement. AppControl est **à cheval entre cinq familles d'outils existants** (supervision, CMDB, ordonnanceur, hyperviseur, orchestrateur de conteneurs) sans en remplacer aucune. C'est la couche qui leur manquait.
+
+<!-- SCREENSHOT:map-overview -->
+
+[![CI](https://github.com/fredericcarre/appcontrol/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/fredericcarre/appcontrol/actions/workflows/ci.yaml)
+[![codecov](https://codecov.io/gh/fredericcarre/appcontrol/graph/badge.svg)](https://codecov.io/gh/fredericcarre/appcontrol)
+[![Release](https://img.shields.io/github/v/release/fredericcarre/appcontrol?display_name=tag&sort=semver)](https://github.com/fredericcarre/appcontrol/releases/latest)
+[![License: Proprietary](https://img.shields.io/badge/license-Proprietary-red.svg)](#license)
+
+---
+
+## Les cinq questions auxquelles AppControl répond
+
+Vos outils ops disent beaucoup de choses. Aucun n'a été conçu pour répondre aux questions que vous vous posez vraiment quand quelque chose se passe :
 
 - L'**état réel** de vos processus, là, maintenant
 - L'**impact** d'une panne sur le service rendu à l'utilisateur
@@ -13,11 +26,6 @@ Vos applications critiques s'appuient sur cinq familles d'outils — supervision
 AppControl répond à ces cinq questions. Il s'intègre avec les outils en place, ne demande aucun remplacement, et apporte la **vue d'ensemble exécutable** qui manquait.
 
 > *La promenade en prod la plus simple que vous ayez jamais faite.*
-
-[![CI](https://github.com/fredericcarre/appcontrol/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/fredericcarre/appcontrol/actions/workflows/ci.yaml)
-[![codecov](https://codecov.io/gh/fredericcarre/appcontrol/graph/badge.svg)](https://codecov.io/gh/fredericcarre/appcontrol)
-[![Release](https://img.shields.io/github/v/release/fredericcarre/appcontrol?display_name=tag&sort=semver)](https://github.com/fredericcarre/appcontrol/releases/latest)
-[![License: Proprietary](https://img.shields.io/badge/license-Proprietary-red.svg)](#license)
 
 ---
 
@@ -34,7 +42,7 @@ Votre senior sysadmin est en vacances. La doc d'exploitation a deux ans de retar
 
 Vous ouvrez AppControl. La carte de l'application est déjà à l'écran. La branche en erreur est en rouge.
 Un clic sur **Restart error branch**. Les composants redémarrent dans le bon ordre, en parallèle quand c'est possible.
-Quatre minutes plus tard, tout est vert. L'audit signé est dans votre boîte mail.
+Quatre minutes plus tard, tout est vert. L'audit est chaîné, signé, prêt à exporter.
 
 <!-- SCREENSHOT:incident-recovery -->
 
