@@ -343,24 +343,68 @@ pub async fn process_member_check_result(
     duration_ms: u32,
     stdout: Option<&str>,
 ) -> Result<(), FsmError> {
-    let member_state_str = match exit_code {
+    let new_member_state_str = match exit_code {
         0 => "RUNNING",
         1 => "DEGRADED",
         c if c >= 2 => "FAILED",
         _ => "UNREACHABLE",
     };
 
+    // Snapshot the member's previous state BEFORE we upsert so the
+    // ClusterMemberStateChange broadcast carries an accurate `from`.
+    let prev_member_state = state
+        .cluster_member_repo
+        .get_states_for_component(component_id)
+        .await
+        .map_err(|e| FsmError::Database(e.to_string()))?
+        .into_iter()
+        .find(|s| s.cluster_member_id == member_id)
+        .map(|s| s.current_state)
+        .unwrap_or_else(|| "UNKNOWN".to_string());
+
     state
         .cluster_member_repo
         .upsert_state(
             member_id,
-            member_state_str,
+            new_member_state_str,
             exit_code as i16,
             duration_ms as i32,
             stdout,
         )
         .await
         .map_err(|e| FsmError::Database(e.to_string()))?;
+
+    // Broadcast the member-level state change even when the parent's
+    // aggregated state doesn't move. The frontend uses this to invalidate
+    // its app-detail cache so the fan-out badge counter (`running/total`)
+    // refreshes — without this, a 5/6 → 4/6 transition where the parent
+    // was already DEGRADED stayed visually stuck at the old count.
+    if prev_member_state != new_member_state_str {
+        if let (Ok(from), Ok(to)) = (
+            parse_state(&prev_member_state),
+            parse_state(new_member_state_str),
+        ) {
+            // Best-effort lookup: app_id + hostname for the event payload.
+            // If either is missing we still update DB state — the event is
+            // a UI hint, not a correctness concern.
+            if let Ok(Some((app_id, hostname))) =
+                core_queries::fetch_member_app_and_hostname(&state.db, member_id).await
+            {
+                state.ws_hub.broadcast(
+                    app_id,
+                    appcontrol_common::WsEvent::ClusterMemberStateChange {
+                        component_id,
+                        cluster_member_id: member_id,
+                        app_id,
+                        hostname,
+                        from,
+                        to,
+                        at: chrono::Utc::now(),
+                    },
+                );
+            }
+        }
+    }
 
     // Load the component's health policy + threshold.
     let (policy, min_pct) = core_queries::fetch_cluster_policy(&state.db, component_id)

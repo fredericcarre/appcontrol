@@ -663,7 +663,11 @@ fn parse_time_range_hours(since: &Option<String>) -> Option<i32> {
 }
 
 // ============================================================================
-// Agent Communication (TODO: Implement with actual agent protocol)
+// Agent Communication (TODO: implement with the agent log-streaming protocol).
+//
+// Until that lands these stubs return an empty result rather than a bogus
+// "[… not yet implemented]" log line — the frontend renders an empty state
+// instead of pretending to have one log entry that says "no log entries".
 // ============================================================================
 
 async fn get_process_logs_from_agent(
@@ -671,11 +675,7 @@ async fn get_process_logs_from_agent(
     _component: &LogComponentRow,
     _query: &GetLogsQuery,
 ) -> Result<Vec<LogEntry>, ApiError> {
-    Ok(vec![LogEntry {
-        timestamp: Some(Utc::now()),
-        level: Some("INFO".into()),
-        content: "[Process log capture not yet implemented]".into(),
-    }])
+    Ok(Vec::new())
 }
 
 async fn get_file_logs_from_agent(
@@ -684,11 +684,7 @@ async fn get_file_logs_from_agent(
     _source: &LogSourceRow,
     _query: &GetLogsQuery,
 ) -> Result<Vec<LogEntry>, ApiError> {
-    Ok(vec![LogEntry {
-        timestamp: Some(Utc::now()),
-        level: Some("INFO".into()),
-        content: "[File log retrieval not yet implemented]".into(),
-    }])
+    Ok(Vec::new())
 }
 
 async fn get_event_logs_from_agent(
@@ -697,11 +693,7 @@ async fn get_event_logs_from_agent(
     _source: &LogSourceRow,
     _query: &GetLogsQuery,
 ) -> Result<Vec<LogEntry>, ApiError> {
-    Ok(vec![LogEntry {
-        timestamp: Some(Utc::now()),
-        level: Some("INFO".into()),
-        content: "[Windows Event Log retrieval not yet implemented]".into(),
-    }])
+    Ok(Vec::new())
 }
 
 async fn execute_command_on_agent(

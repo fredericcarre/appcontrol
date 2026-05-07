@@ -31,9 +31,17 @@ const buttonVariants = cva(
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {}
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, ...props }, ref) => {
+  ({ className, variant, size, type, ...props }, ref) => {
     return (
       <button
+        // Default to type="button" so that clicking a button inside a
+        // <form> doesn't accidentally submit it. Three forms in the app
+        // intentionally rely on type="submit" (LoginPage, ComponentEditor,
+        // ScheduleDialog) and pass it explicitly. Without this default,
+        // Edit/Delete/etc. buttons inside forms close the surrounding
+        // dialog through the form-submission code path — exactly the bug
+        // we hit on the fan-out Members table inside ComponentEditor.
+        type={type ?? 'button'}
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
         {...props}

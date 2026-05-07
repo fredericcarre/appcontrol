@@ -28,6 +28,10 @@ export const FALLBACK_TYPES: ComponentTypeDefinition[] = [
   { type: 'batch',       label: 'Batch',       icon: resolveIcon('clock'),    iconName: 'clock',    color: '#4E342E', description: 'Scheduled jobs, ETL' },
   { type: 'custom',      label: 'Custom',      icon: resolveIcon('box'),      iconName: 'box',      color: '#455A64', description: 'Other component types' },
   { type: 'application', label: 'Application', icon: resolveIcon('folder'),   iconName: 'folder',   color: '#3B82F6', description: 'Reference to another app (synthetic)' },
+  // manual_task: pause-the-DAG checkpoint. The sequencer detects the type
+  // at runtime (see crates/backend/src/core/sequencer.rs::run_manual_task_component)
+  // and waits for an operator validation before continuing the start plan.
+  { type: 'manual_task', label: 'Manual task', icon: resolveIcon('clipboard'), iconName: 'clipboard', color: '#7C3AED', description: 'Operator checkpoint — pauses the DAG until a human validates' },
 ];
 
 /** Convert a catalog API entry into a ComponentTypeDefinition. */

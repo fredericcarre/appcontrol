@@ -626,14 +626,19 @@ function FanOutBadge({
   }
 
   const { total, running, degraded, failed, stopped } = counts;
-  const healthy = running + degraded;
 
-  // Pick a colour from the worst-state-first rule
+  // Active pool excludes intentionally-stopped members — same rule as the
+  // backend's derive_component_state. A 5-RUNNING + 1-STOPPED tier is a
+  // fully healthy 5-of-5, not a degraded 5-of-6, and the colour should
+  // reflect that.
+  const active = Math.max(0, total - stopped);
+
+  // Worst-state-first colour rule (mirrors the parent component's state).
   let cls = 'bg-emerald-100 text-emerald-700';
   if (failed > 0) cls = 'bg-red-100 text-red-700';
   else if (degraded > 0) cls = 'bg-amber-100 text-amber-700';
-  else if (running === 0 && stopped === total) cls = 'bg-gray-200 text-gray-700';
-  else if (running < total) cls = 'bg-amber-100 text-amber-700';
+  else if (active === 0) cls = 'bg-gray-200 text-gray-700';
+  else if (running < active) cls = 'bg-amber-100 text-amber-700';
 
   const policyLabel = policy
     ? policy === 'threshold_pct' && minPct
@@ -645,6 +650,9 @@ function FanOutBadge({
     `Fan-out cluster — ${total} members · ${policyLabel}\n` +
     `  ${running} RUNNING, ${degraded} DEGRADED, ${failed} FAILED, ${stopped} STOPPED`;
 
+  // Show running/total — *not* (running+degraded)/total. Calling a
+  // DEGRADED member "healthy" was the bug behind "always 6/6 even when
+  // a member was degraded" (v1.18.3).
   return (
     <span
       className={cn(
@@ -654,7 +662,7 @@ function FanOutBadge({
       title={tip}
     >
       <Server className="h-2.5 w-2.5" />
-      fan-out · {healthy}/{total}
+      fan-out · {running}/{total}
     </span>
   );
 }

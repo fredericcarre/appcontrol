@@ -23,7 +23,6 @@ import {
   useDeleteGroup,
 } from '@/api/apps';
 import { useStartComponent, useStopComponent, useForceStopComponent, useStartWithDeps, useRestartWithDependents } from '@/api/components';
-import { useAppClusterMembers, useMemberAction } from '@/api/clusterMembers';
 import { useMapSettings, useUpdateMapSettings, type MapDisplayOptions, isFlagOn } from '@/api/mapSettings';
 import { usePendingManualTasks } from '@/api/manualTasks';
 import { usePermission } from '@/hooks/use-permission';
@@ -64,7 +63,7 @@ import {
   Pencil, Download, Save, ArrowLeft, Play, Square, Loader2,
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   MoreVertical, Trash2, Pause, PlayCircle, Maximize, Minimize,
-  Monitor, History, X, Calendar, Server, SlidersHorizontal, FileText, Clock,
+  Monitor, History, X, Calendar, SlidersHorizontal, FileText, Clock,
 } from 'lucide-react';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 
@@ -92,7 +91,6 @@ export function MapViewPage() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
   const { data: app, isLoading } = useApp(appId || '');
-  const memberAction = useMemberAction();
   const { data: mapDisplayOptions } = useMapSettings(appId);
   // Subset of pending manual tasks that belong to THIS app — drives the
   // "PAUSED · N manual task(s) awaiting validation" badge in the header.
@@ -178,41 +176,12 @@ export function MapViewPage() {
   const [historyTime, setHistoryTime] = useState<Date | null>(null);
   const [historySnapshot, setHistorySnapshot] = useState<TimeSnapshot | null>(null);
 
-  // Fan-out display: 'badge' (compact, on the parent) or 'expanded' (one
-  // sub-node per member). Persists across reloads via localStorage so an
-  // operator's preference survives navigation.
-  const [fanOutDisplay, setFanOutDisplay] = useState<'badge' | 'expanded'>(() => {
-    const saved = typeof window !== 'undefined'
-      ? window.localStorage.getItem('appcontrol.fanOutDisplay')
-      : null;
-    return saved === 'expanded' ? 'expanded' : 'badge';
-  });
-  useEffect(() => {
-    window.localStorage.setItem('appcontrol.fanOutDisplay', fanOutDisplay);
-  }, [fanOutDisplay]);
-
-  // Only fetch the per-app member list when the operator actually wants
-  // the expanded view — saves a roundtrip + 5s poll for every map open.
-  const { data: clusterMembers } = useAppClusterMembers(
-    appId,
-    fanOutDisplay === 'expanded',
-  );
-  const handleStartMember = useCallback(
-    (memberId: string) => {
-      const m = clusterMembers?.find((cm) => cm.id === memberId);
-      if (!m) return;
-      memberAction.mutate({ componentId: m.component_id, memberId, action: 'start' });
-    },
-    [clusterMembers, memberAction],
-  );
-  const handleStopMember = useCallback(
-    (memberId: string) => {
-      const m = clusterMembers?.find((cm) => cm.id === memberId);
-      if (!m) return;
-      memberAction.mutate({ componentId: m.component_id, memberId, action: 'stop' });
-    },
-    [clusterMembers, memberAction],
-  );
+  // Fan-out cluster members are shown via the ClusterMembersPanel (table
+  // with search, batch start/stop, per-member edit) reachable from the
+  // detail panel and the component editor. The earlier "explode members on
+  // the map" mode was removed in v1.18.3 — at scale (100+ members) the
+  // exploded nodes never laid out cleanly and operators couldn't action
+  // members reliably from a 110×40 tile. The table is the canonical view.
 
   // Subscribe to app events via WebSocket
   useEffect(() => {
@@ -1033,28 +1002,6 @@ export function MapViewPage() {
                 <MapViewOptionsMenu appId={appId} canEdit={canEdit} />
               )}
 
-              {/* Fan-out display toggle: badge ⇄ exploded sub-nodes */}
-              {!editMode && (
-                <Button
-                  variant={fanOutDisplay === 'expanded' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() =>
-                    setFanOutDisplay((m) => (m === 'expanded' ? 'badge' : 'expanded'))
-                  }
-                  title={
-                    fanOutDisplay === 'expanded'
-                      ? 'Collapse fan-out members back to a badge'
-                      : 'Show fan-out cluster members as individual nodes on the map'
-                  }
-                  aria-pressed={fanOutDisplay === 'expanded'}
-                >
-                  <Server className="h-4 w-4" />
-                  <span className="hidden sm:inline ml-1">
-                    {fanOutDisplay === 'expanded' ? 'Collapse members' : 'Show members'}
-                  </span>
-                </Button>
-              )}
-
               {/* History mode toggle */}
               {!editMode && (
                 <>
@@ -1226,11 +1173,6 @@ export function MapViewPage() {
             onDeleteGroup={handleDeleteGroup}
             activeGroupFilter={activeGroupFilter}
             onGroupFilterChange={setActiveGroupFilter}
-            // Fan-out display
-            fanOutDisplay={fanOutDisplay}
-            clusterMembers={clusterMembers}
-            onStartMember={historyMode ? undefined : handleStartMember}
-            onStopMember={historyMode ? undefined : handleStopMember}
             // Per-app display options (host/metrics/links/etc.)
             mapDisplayOptions={mapDisplayOptions}
           />

@@ -1,8 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   FileText,
   Monitor,
-  Terminal,
   Plus,
   Search,
   Clock,
@@ -49,7 +48,12 @@ import {
   type LogSource,
   type LogEntry,
 } from '@/api/logs';
+import { useCommandExecutions } from '@/api/components';
 import { cn } from '@/lib/utils';
+
+/** Sentinel id for the synthetic "Command output" source — there's no row
+ *  in `log_sources` for it; we render command_executions instead. */
+const COMMAND_OUTPUT_SOURCE = '__command_output__';
 
 interface LogSourcesPanelProps {
   componentId: string;
@@ -75,8 +79,13 @@ export function LogSourcesPanel({
   componentId,
   componentName,
 }: LogSourcesPanelProps) {
-  // State
-  const [selectedSource, setSelectedSource] = useState<string>('process');
+  // Default to the synthetic "Command output" source — captures stdout/
+  // stderr of every start/stop/check the agent ran, with exit code and
+  // duration. This is the operator's go-to view when something doesn't
+  // start: no need to define a log source first.
+  const [selectedSource, setSelectedSource] = useState<string>(
+    COMMAND_OUTPUT_SOURCE,
+  );
   const [filter, setFilter] = useState('');
   const [timeRange, setTimeRange] = useState('1h');
   const [lineCount, setLineCount] = useState('100');
@@ -101,25 +110,41 @@ export function LogSourcesPanel({
   const deleteSource = useDeleteLogSource();
   const updateSource = useUpdateLogSource();
 
-  // Source options for dropdown
-  const sourceOptions = useMemo(() => {
-    const options = [
-      { value: 'process', label: 'Process Output', icon: Terminal },
-    ];
-    sources.forEach((s) => {
-      options.push({
+  // Source options: the synthetic "Command output" entry is always first
+  // (it captures every start/stop/check stdout+stderr), followed by any
+  // user-defined `file` / `event_log` sources.
+  const sourceOptions = useMemo(
+    () => [
+      {
+        value: COMMAND_OUTPUT_SOURCE,
+        label: 'Command output (start / stop / check)',
+        icon: Monitor,
+      },
+      ...sources.map((s) => ({
         value: s.id,
         label: s.name,
         icon: s.source_type === 'file' ? FileText : Monitor,
-      });
-    });
-    return options;
-  }, [sources]);
+      })),
+    ],
+    [sources],
+  );
 
-  const selectedSourceData = useMemo(() => {
-    if (selectedSource === 'process') return null;
-    return sources.find((s) => s.id === selectedSource);
-  }, [selectedSource, sources]);
+  // Keep the synthetic source available even when no user sources exist —
+  // no auto-switch needed since COMMAND_OUTPUT_SOURCE is the default.
+  useEffect(() => {
+    if (
+      selectedSource &&
+      selectedSource !== COMMAND_OUTPUT_SOURCE &&
+      !sources.some((s) => s.id === selectedSource)
+    ) {
+      setSelectedSource(COMMAND_OUTPUT_SOURCE);
+    }
+  }, [sources, selectedSource]);
+
+  const selectedSourceData = useMemo(
+    () => sources.find((s) => s.id === selectedSource),
+    [selectedSource, sources],
+  );
 
   const handleDeleteSource = async (source: LogSource) => {
     if (
@@ -127,7 +152,7 @@ export function LogSourcesPanel({
     ) {
       await deleteSource.mutateAsync({ id: source.id, componentId });
       if (selectedSource === source.id) {
-        setSelectedSource('process');
+        setSelectedSource(COMMAND_OUTPUT_SOURCE);
       }
     }
   };
@@ -266,7 +291,9 @@ export function LogSourcesPanel({
 
       {/* Log entries */}
       <ScrollArea className="flex-1">
-        {logsLoading || sourcesLoading ? (
+        {selectedSource === COMMAND_OUTPUT_SOURCE ? (
+          <CommandOutputView componentId={componentId} filter={filter} />
+        ) : logsLoading || sourcesLoading ? (
           <div className="flex items-center justify-center h-32 text-muted-foreground">
             <RefreshCw className="h-4 w-4 animate-spin mr-2" />
             Loading logs...
@@ -494,6 +521,137 @@ function AddLogSourceDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Command output (synthetic source) ────────────────────────────
+//
+// Renders the recent start/stop/check command_executions for this
+// component: per-execution stdout + stderr blocks with exit code,
+// duration and command type. Polls every 5s while the panel is open
+// (the API hook itself refetches on a 10s interval; here we keep the
+// view live without manually clicking Refresh).
+//
+// We deliberately don't wire the global filter input to a backend
+// query — there's nothing to push it to — but we apply it client-side
+// so an operator can grep through the displayed output.
+function CommandOutputView({
+  componentId,
+  filter,
+}: {
+  componentId: string;
+  filter: string;
+}) {
+  const { data: executions = [], isLoading } = useCommandExecutions(componentId, 50);
+
+  const filtered = useMemo(() => {
+    if (!filter) return executions;
+    const needle = filter.toLowerCase();
+    return executions.filter((e) =>
+      [e.stdout, e.stderr, e.command_type, e.status]
+        .filter(Boolean)
+        .some((s) => (s as string).toLowerCase().includes(needle)),
+    );
+  }, [executions, filter]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-32 text-muted-foreground">
+        <RefreshCw className="h-4 w-4 animate-spin mr-2" />
+        Loading command output...
+      </div>
+    );
+  }
+
+  if (executions.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
+        <AlertCircle className="h-5 w-5 mb-2" />
+        <span className="text-sm">No commands have run yet</span>
+        <span className="text-xs">
+          Start, stop or check the component to populate this view.
+        </span>
+      </div>
+    );
+  }
+
+  if (filtered.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
+        <AlertCircle className="h-5 w-5 mb-2" />
+        <span className="text-sm">
+          No command output matches the current filter
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-2 space-y-3 font-mono text-xs">
+      {filtered.map((e) => {
+        const ok = e.exit_code === 0;
+        const dispatched = new Date(e.dispatched_at).toLocaleString();
+        return (
+          <div
+            key={e.id}
+            className="rounded-md border p-2 space-y-1.5 bg-background"
+          >
+            <div className="flex items-center justify-between flex-wrap gap-1 text-[11px]">
+              <div className="flex items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    'h-4 text-[10px] px-1 capitalize',
+                    e.command_type === 'start'
+                      ? 'border-emerald-500 text-emerald-700 dark:text-emerald-400'
+                      : e.command_type === 'stop'
+                        ? 'border-red-500 text-red-700 dark:text-red-400'
+                        : 'border-blue-500 text-blue-700 dark:text-blue-400',
+                  )}
+                >
+                  {e.command_type}
+                </Badge>
+                <span className="text-muted-foreground">{dispatched}</span>
+                {e.duration_ms != null && (
+                  <span className="text-muted-foreground">
+                    · {e.duration_ms} ms
+                  </span>
+                )}
+              </div>
+              <Badge
+                variant="outline"
+                className={cn(
+                  'h-4 text-[10px] px-1',
+                  e.status === 'completed' && ok
+                    ? 'border-emerald-500 text-emerald-700 dark:text-emerald-400'
+                    : e.status === 'completed'
+                      ? 'border-red-500 text-red-700 dark:text-red-400'
+                      : 'border-amber-500 text-amber-700 dark:text-amber-400',
+                )}
+              >
+                {e.status}
+                {e.exit_code != null ? ` · exit ${e.exit_code}` : ''}
+              </Badge>
+            </div>
+            {e.stdout && (
+              <pre className="whitespace-pre-wrap break-words bg-muted/50 rounded px-2 py-1 text-[11px]">
+                {e.stdout}
+              </pre>
+            )}
+            {e.stderr && (
+              <pre className="whitespace-pre-wrap break-words bg-red-50 dark:bg-red-950/30 rounded px-2 py-1 text-[11px] text-red-800 dark:text-red-300">
+                {e.stderr}
+              </pre>
+            )}
+            {!e.stdout && !e.stderr && e.status === 'completed' && (
+              <p className="text-[11px] text-muted-foreground italic">
+                (no output captured)
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

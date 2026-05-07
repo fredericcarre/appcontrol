@@ -1190,16 +1190,28 @@ pub fn create_cluster_member_repository(pool: DbPool) -> Box<dyn ClusterMemberRe
 
 /// Derive the parent component's state from a snapshot of member states.
 ///
-/// Policies:
-/// - `all_healthy`: all RUNNING → RUNNING; any non-RUNNING and ≥1 RUNNING → DEGRADED;
-///   0 RUNNING → FAILED (or STOPPED if all STOPPED).
-/// - `any_healthy`: any RUNNING → RUNNING; else FAILED.
-/// - `quorum`: count(RUNNING) ≥ ⌈N/2⌉+1 → RUNNING; ≥1 → DEGRADED; 0 → FAILED.
-/// - `threshold_pct`: %RUNNING ≥ `min_healthy_pct` → RUNNING; ≥50% → DEGRADED;
-///   <50% → FAILED.
+/// Treatment of member states:
+/// - `RUNNING` is the only "in-pool" healthy state.
+/// - `STOPPED` and `STOPPING` are *intentional* — the operator deliberately
+///   took those members out of rotation. They are excluded from the health
+///   denominator so the cluster doesn't drop to DEGRADED just because one
+///   member out of N is paused. This matches the semantic of regular
+///   components, where stopping a thing puts it in STOPPED, not DEGRADED.
+/// - Everything else (`FAILED`, `DEGRADED`, `UNREACHABLE`, `UNKNOWN`,
+///   `STARTING`) counts as a non-healthy member in the pool.
 ///
-/// Returns `None` for empty/disabled clusters (caller keeps the component's
-/// manually-set state, e.g. STOPPED before first member is added).
+/// Policies, applied to the **active pool** (`total - stopped - stopping`):
+/// - `all_healthy`: all active RUNNING → RUNNING; ≥1 RUNNING < active → DEGRADED;
+///   0 RUNNING in a non-empty active pool → FAILED.
+/// - `any_healthy`: any RUNNING → RUNNING; else FAILED.
+/// - `quorum`: RUNNING ≥ ⌈active/2⌉+1 → RUNNING; ≥1 → DEGRADED; 0 → FAILED.
+/// - `threshold_pct`: %RUNNING of the active pool vs `min_healthy_pct`.
+///
+/// Special cases:
+/// - All members STOPPED (or STOPPING + STOPPED, with the last STOPPING) → STOPPED.
+/// - All members STOPPING (no STOPPED yet) → STOPPING.
+/// - Empty pool (everyone disabled / pulled out) → caller keeps the
+///   component's own state.
 pub fn derive_component_state(
     member_states: &[ClusterMemberState],
     policy: &str,
@@ -1209,16 +1221,29 @@ pub fn derive_component_state(
     if total == 0 {
         return None;
     }
-    let running = member_states
-        .iter()
-        .filter(|s| s.current_state == "RUNNING")
-        .count();
-    let stopped = member_states
-        .iter()
-        .filter(|s| s.current_state == "STOPPED")
-        .count();
+    let count = |s: &str| {
+        member_states
+            .iter()
+            .filter(|m| m.current_state == s)
+            .count()
+    };
+    let running = count("RUNNING");
+    let stopped = count("STOPPED");
+    let stopping = count("STOPPING");
 
-    if stopped == total {
+    // Whole-cluster intentional shutdown: every member is on its way down.
+    // Surface STOPPING / STOPPED on the parent so the map matches operator
+    // intent instead of flashing FAILED for the duration of a Stop All.
+    if stopped + stopping == total {
+        return Some(if stopping > 0 { "STOPPING" } else { "STOPPED" });
+    }
+
+    // Active pool excludes intentionally-paused members. A 5-node cluster
+    // with 4 RUNNING + 1 STOPPED is a 4-node active pool and should look
+    // like a healthy 4-of-4 cluster, not a degraded 4-of-5.
+    let active = total - stopped - stopping;
+    if active == 0 {
+        // Already covered above, but defensive: no one to evaluate.
         return Some("STOPPED");
     }
 
@@ -1231,7 +1256,7 @@ pub fn derive_component_state(
             }
         }
         "quorum" => {
-            let quorum = total / 2 + 1;
+            let quorum = active / 2 + 1;
             if running >= quorum {
                 Some("RUNNING")
             } else if running > 0 {
@@ -1241,7 +1266,7 @@ pub fn derive_component_state(
             }
         }
         "threshold_pct" => {
-            let pct = (running as f64 / total as f64) * 100.0;
+            let pct = (running as f64 / active as f64) * 100.0;
             if pct >= min_healthy_pct as f64 {
                 Some("RUNNING")
             } else if pct >= 50.0 {
@@ -1254,7 +1279,7 @@ pub fn derive_component_state(
         }
         _ => {
             // all_healthy (default)
-            if running == total {
+            if running == active {
                 Some("RUNNING")
             } else if running == 0 {
                 Some("FAILED")
@@ -1385,5 +1410,86 @@ mod tests {
     #[test]
     fn empty_members_returns_none() {
         assert_eq!(derive_component_state(&[], "all_healthy", 100), None);
+    }
+
+    // STOPPED is intentional, not a failure — the cluster shouldn't
+    // degrade just because an operator paused one member. v1.18.3.
+
+    #[test]
+    fn stopped_member_is_excluded_from_pool_running_clean() {
+        // 4 RUNNING + 1 STOPPED → active pool = 4-of-4 RUNNING → RUNNING.
+        let states = vec![
+            make_state("RUNNING"),
+            make_state("RUNNING"),
+            make_state("RUNNING"),
+            make_state("RUNNING"),
+            make_state("STOPPED"),
+        ];
+        assert_eq!(
+            derive_component_state(&states, "all_healthy", 100),
+            Some("RUNNING")
+        );
+    }
+
+    #[test]
+    fn stopped_member_excluded_threshold_pct_clean() {
+        // 3 RUNNING + 1 FAILED + 1 STOPPED. Active pool = 4 (RUNNING+FAILED).
+        // 75% running of active pool ≥ threshold 75 → RUNNING.
+        let states = vec![
+            make_state("RUNNING"),
+            make_state("RUNNING"),
+            make_state("RUNNING"),
+            make_state("FAILED"),
+            make_state("STOPPED"),
+        ];
+        assert_eq!(
+            derive_component_state(&states, "threshold_pct", 75),
+            Some("RUNNING")
+        );
+    }
+
+    #[test]
+    fn whole_cluster_stopping_surfaces_stopping() {
+        // Mid Stop All: some members already STOPPED, some still STOPPING.
+        // The aggregate must be STOPPING, not FAILED.
+        let states = vec![
+            make_state("STOPPING"),
+            make_state("STOPPED"),
+            make_state("STOPPING"),
+        ];
+        assert_eq!(
+            derive_component_state(&states, "all_healthy", 100),
+            Some("STOPPING")
+        );
+    }
+
+    #[test]
+    fn all_stopped_some_stopping_still_stopped_when_no_stopping() {
+        let states = vec![
+            make_state("STOPPED"),
+            make_state("STOPPED"),
+            make_state("STOPPED"),
+        ];
+        assert_eq!(
+            derive_component_state(&states, "all_healthy", 100),
+            Some("STOPPED")
+        );
+    }
+
+    #[test]
+    fn quorum_excludes_stopped_from_denominator() {
+        // 5-node tier, operator stopped 2 deliberately. Active pool = 3.
+        // Quorum = ceil(3/2)+1 = 2. 2 RUNNING → meets quorum → RUNNING.
+        let states = vec![
+            make_state("RUNNING"),
+            make_state("RUNNING"),
+            make_state("FAILED"),
+            make_state("STOPPED"),
+            make_state("STOPPED"),
+        ];
+        assert_eq!(
+            derive_component_state(&states, "quorum", 100),
+            Some("RUNNING")
+        );
     }
 }

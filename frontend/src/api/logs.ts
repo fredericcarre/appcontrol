@@ -158,7 +158,10 @@ export function useComponentLogs(
       );
       return data;
     },
-    enabled: !!componentId,
+    // Skip when there's no source selected — the legacy 'process' default
+    // hit a backend stub. Today the panel auto-picks the first defined
+    // source; if none exist we render an empty state instead of querying.
+    enabled: !!componentId && !!source,
     refetchInterval: 10000, // Refresh every 10s for near-realtime
   });
 }

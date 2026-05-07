@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Component, useComponentGroups, useApps } from '@/api/apps';
+import { Component, useComponentGroups, useApps, type NativeCommand } from '@/api/apps';
 import { useAgents } from '@/api/reports';
 import { useSites, useComponentSiteOverrides, useUpsertSiteOverride, useDeleteSiteOverride } from '@/api/sites';
 import { Button } from '@/components/ui/button';
@@ -60,6 +60,14 @@ export interface ComponentFormData {
     | 'quorum'
     | 'threshold_pct';
   cluster_min_healthy_pct?: number;
+  // Manual task component: markdown describing what the operator should
+  // do at this checkpoint (only relevant when component_type === 'manual_task').
+  manual_description?: string;
+  // Optional native (HTTP / TCP) probes, taking precedence over the
+  // matching shell command when set. Stored as the on-wire JSON shape.
+  check_native?: NativeCommand | null;
+  start_native?: NativeCommand | null;
+  stop_native?: NativeCommand | null;
 }
 
 interface ComponentEditorProps {
@@ -136,6 +144,10 @@ export function ComponentEditor({
             | 'threshold_pct'
             | undefined) ?? 'all_healthy',
         cluster_min_healthy_pct: component.cluster_min_healthy_pct ?? 100,
+        manual_description: component.manual_description ?? '',
+        check_native: component.check_native ?? null,
+        start_native: component.start_native ?? null,
+        stop_native: component.stop_native ?? null,
       };
     }
     if (initialType) {
@@ -161,6 +173,10 @@ export function ComponentEditor({
         cluster_mode: 'aggregate',
         cluster_health_policy: 'all_healthy',
         cluster_min_healthy_pct: 100,
+        manual_description: '',
+        check_native: null,
+        start_native: null,
+        stop_native: null,
       };
     }
     return {
@@ -184,6 +200,10 @@ export function ComponentEditor({
       cluster_mode: 'aggregate',
       cluster_health_policy: 'all_healthy',
       cluster_min_healthy_pct: 100,
+      manual_description: '',
+      check_native: null,
+      start_native: null,
+      stop_native: null,
     };
   }, [component, initialType, catalogTypes]);
 
@@ -478,7 +498,55 @@ export function ComponentEditor({
             </TabsContent>
 
             <TabsContent value="commands" className="space-y-4 mt-4">
-              {formData.component_type === 'application' ? (
+              {formData.component_type === 'manual_task' ? (
+                // Manual task: no shell commands. The sequencer pauses on
+                // this component until an operator validates it from the
+                // dashboard. The textarea below is rendered to operators
+                // when they open the validation dialog (markdown supported).
+                <div className="space-y-4">
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      <p className="font-medium mb-2">Manual checkpoint</p>
+                      <p className="text-sm text-muted-foreground">
+                        AppControl pauses the start plan when it reaches this
+                        component and waits for an operator to validate, skip,
+                        or fail it from the dashboard. Use the description to
+                        spell out exactly what the operator should do.
+                      </p>
+                    </AlertDescription>
+                  </Alert>
+                  <div className="space-y-2">
+                    <Label htmlFor="manual_description">
+                      What the operator should do (markdown supported)
+                    </Label>
+                    <Textarea
+                      id="manual_description"
+                      rows={10}
+                      value={formData.manual_description ?? ''}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          manual_description: e.target.value,
+                        }))
+                      }
+                      placeholder={
+                        '## Disable VIP on F5\n' +
+                        '1. Log into f5-prd-01.corp\n' +
+                        '2. Navigate to Local Traffic → Virtual Servers\n' +
+                        '3. Disable `vs_payments_443`\n' +
+                        '4. Verify health monitor turns red, then click Validate.'
+                      }
+                      className="font-mono text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Image and file links inside the markdown are rendered
+                      to the operator. Anything they type into the validation
+                      comment is added to the audit log.
+                    </p>
+                  </div>
+                </div>
+              ) : formData.component_type === 'application' ? (
                 <div className="space-y-4">
                   <Alert>
                     <Folder className="h-4 w-4" />
@@ -555,44 +623,37 @@ export function ComponentEditor({
                 </div>
               ) : (
                 <>
-                  <div className="space-y-2">
-                    <Label htmlFor="check_cmd">Check Command</Label>
-                    <Textarea
-                      id="check_cmd"
-                      value={formData.check_cmd}
-                      onChange={(e) => handleChange('check_cmd', e.target.value)}
-                      placeholder="pgrep -f myapp || exit 1"
-                      rows={2}
-                      className="font-mono text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Exit 0 = running, non-zero = stopped/failed
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="start_cmd">Start Command</Label>
-                    <Textarea
-                      id="start_cmd"
-                      value={formData.start_cmd}
-                      onChange={(e) => handleChange('start_cmd', e.target.value)}
-                      placeholder="systemctl start myapp"
-                      rows={2}
-                      className="font-mono text-sm"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="stop_cmd">Stop Command</Label>
-                    <Textarea
-                      id="stop_cmd"
-                      value={formData.stop_cmd}
-                      onChange={(e) => handleChange('stop_cmd', e.target.value)}
-                      placeholder="systemctl stop myapp"
-                      rows={2}
-                      className="font-mono text-sm"
-                    />
-                  </div>
+                  <CommandSlotEditor
+                    label="Check Command"
+                    helpText="Exit 0 = running, non-zero = stopped/failed"
+                    cmd={formData.check_cmd}
+                    onCmdChange={(v) => handleChange('check_cmd', v)}
+                    cmdPlaceholder="pgrep -f myapp || exit 1"
+                    native={formData.check_native ?? null}
+                    onNativeChange={(n) =>
+                      setFormData((p) => ({ ...p, check_native: n }))
+                    }
+                  />
+                  <CommandSlotEditor
+                    label="Start Command"
+                    cmd={formData.start_cmd}
+                    onCmdChange={(v) => handleChange('start_cmd', v)}
+                    cmdPlaceholder="systemctl start myapp"
+                    native={formData.start_native ?? null}
+                    onNativeChange={(n) =>
+                      setFormData((p) => ({ ...p, start_native: n }))
+                    }
+                  />
+                  <CommandSlotEditor
+                    label="Stop Command"
+                    cmd={formData.stop_cmd}
+                    onCmdChange={(v) => handleChange('stop_cmd', v)}
+                    cmdPlaceholder="systemctl stop myapp"
+                    native={formData.stop_native ?? null}
+                    onNativeChange={(n) =>
+                      setFormData((p) => ({ ...p, stop_native: n }))
+                    }
+                  />
                 </>
               )}
             </TabsContent>
@@ -1127,7 +1188,17 @@ export function ComponentEditor({
                     </p>
                   </div>
                   <Switch
-                    checked={!!formData.cluster_size && formData.cluster_size >= 2}
+                    // Cluster is "on" when EITHER the legacy cluster_size
+                    // sentinel is set OR the component is in fan-out mode.
+                    // Fan-out components don't use cluster_size (they have
+                    // first-class cluster_members rows) so testing only
+                    // cluster_size left the toggle stuck OFF when editing
+                    // an existing fan-out — the cluster type select then
+                    // hid itself and the Members panel never rendered.
+                    checked={
+                      (!!formData.cluster_size && formData.cluster_size >= 2) ||
+                      formData.cluster_mode === 'fan_out'
+                    }
                     onCheckedChange={(checked: boolean) => {
                       if (!checked) {
                         setFormData((prev) => ({
@@ -1139,15 +1210,17 @@ export function ComponentEditor({
                       } else {
                         setFormData((prev) => ({
                           ...prev,
-                          cluster_size: 2,
+                          cluster_size: prev.cluster_size ?? 2,
                           cluster_nodes: prev.cluster_nodes || [],
+                          cluster_mode: prev.cluster_mode ?? 'aggregate',
                         }));
                       }
                     }}
                   />
                 </div>
 
-                {formData.cluster_size && formData.cluster_size >= 2 && (
+                {((formData.cluster_size && formData.cluster_size >= 2) ||
+                  formData.cluster_mode === 'fan_out') && (
                   <>
                     <div className="space-y-2">
                       <Label htmlFor="cluster_mode_select">Cluster Type</Label>
@@ -1192,7 +1265,7 @@ export function ComponentEditor({
                           type="number"
                           min={2}
                           max={1000}
-                          value={formData.cluster_size}
+                          value={formData.cluster_size ?? 2}
                           onChange={(e) => {
                             const val = parseInt(e.target.value, 10);
                             setFormData((prev) => ({
@@ -1333,5 +1406,283 @@ export function ComponentEditor({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── CommandSlotEditor ────────────────────────────────────────────────
+// Renders one of the three command slots (check / start / stop) with a
+// kind toggle: Shell, HTTP, or TCP. Shell is the existing textarea.
+// HTTP / TCP show typed inputs that map to NativeCommand on the wire.
+//
+// Precedence on the agent matches the v1.18.0 contract: when `native`
+// is non-null the agent runs it through native_runner and ignores the
+// shell `cmd`. Switching kind clears the *other* representation so the
+// payload sent to the backend is unambiguous.
+//
+// Bearer tokens come back redacted from the backend (string `***`).
+// We treat the placeholder as "leave the stored value alone" — the
+// operator only has to retype the token if they actively want to
+// change it. Empty string means "clear it".
+function CommandSlotEditor({
+  label,
+  helpText,
+  cmd,
+  onCmdChange,
+  cmdPlaceholder,
+  native,
+  onNativeChange,
+}: {
+  label: string;
+  helpText?: string;
+  cmd: string;
+  onCmdChange: (v: string) => void;
+  cmdPlaceholder?: string;
+  native: NativeCommand | null;
+  onNativeChange: (n: NativeCommand | null) => void;
+}) {
+  type Kind = 'shell' | 'http' | 'tcp_connect';
+  const currentKind: Kind = native?.kind ?? 'shell';
+
+  const switchKind = (next: Kind) => {
+    if (next === currentKind) return;
+    if (next === 'shell') {
+      onNativeChange(null);
+      return;
+    }
+    if (next === 'http') {
+      onNativeChange({
+        kind: 'http',
+        method: 'GET',
+        url: '',
+        timeout_seconds: 5,
+      });
+      // The shell command is overridden by native — clear it so a stale
+      // textarea value doesn't confuse the operator.
+      onCmdChange('');
+      return;
+    }
+    if (next === 'tcp_connect') {
+      onNativeChange({
+        kind: 'tcp_connect',
+        host: '',
+        port: 80,
+        timeout_seconds: 3,
+      });
+      onCmdChange('');
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <Label>{label}</Label>
+        <div className="flex rounded-md border bg-background p-0.5 text-xs">
+          {(['shell', 'http', 'tcp_connect'] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => switchKind(k)}
+              className={
+                'px-2 py-0.5 rounded ' +
+                (currentKind === k
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-muted')
+              }
+            >
+              {k === 'shell' ? 'Shell' : k === 'http' ? 'HTTP' : 'TCP'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {currentKind === 'shell' && (
+        <>
+          <Textarea
+            value={cmd}
+            onChange={(e) => onCmdChange(e.target.value)}
+            placeholder={cmdPlaceholder}
+            rows={2}
+            className="font-mono text-sm"
+          />
+          {helpText && (
+            <p className="text-xs text-muted-foreground">{helpText}</p>
+          )}
+        </>
+      )}
+
+      {currentKind === 'http' && native?.kind === 'http' && (
+        <NativeHttpFields
+          value={native}
+          onChange={onNativeChange}
+          helpText={helpText}
+        />
+      )}
+
+      {currentKind === 'tcp_connect' && native?.kind === 'tcp_connect' && (
+        <NativeTcpFields value={native} onChange={onNativeChange} />
+      )}
+    </div>
+  );
+}
+
+function NativeHttpFields({
+  value,
+  onChange,
+  helpText,
+}: {
+  value: Extract<NativeCommand, { kind: 'http' }>;
+  onChange: (n: NativeCommand | null) => void;
+  helpText?: string;
+}) {
+  const set = <K extends keyof typeof value>(k: K, v: (typeof value)[K]) =>
+    onChange({ ...value, [k]: v });
+
+  return (
+    <div className="space-y-2 rounded-md border border-dashed p-2">
+      <div className="grid grid-cols-[100px_1fr] gap-2">
+        <select
+          className="rounded-md border bg-background px-2 text-sm"
+          value={value.method ?? 'GET'}
+          onChange={(e) => set('method', e.target.value)}
+        >
+          {['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <Input
+          value={value.url}
+          onChange={(e) => set('url', e.target.value)}
+          placeholder="https://service.local:8443/health"
+          className="font-mono text-sm"
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Expected status</Label>
+          <Input
+            type="number"
+            min={100}
+            max={599}
+            value={value.expect_status ?? ''}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              set('expect_status', isNaN(n) ? null : n);
+            }}
+            placeholder="any 2xx"
+            className="text-sm"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Timeout (s)</Label>
+          <Input
+            type="number"
+            min={1}
+            value={value.timeout_seconds ?? 5}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              set('timeout_seconds', isNaN(n) ? 5 : Math.max(1, n));
+            }}
+            className="text-sm"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">Bearer token (optional, masked)</Label>
+        <Input
+          type="password"
+          // Backend returns '***' for redacted tokens; treat that as a
+          // sentinel and don't overwrite the stored value unless the
+          // operator types something new.
+          value={value.bearer_token === '***' ? '' : value.bearer_token ?? ''}
+          onChange={(e) =>
+            set('bearer_token', e.target.value === '' ? undefined : e.target.value)
+          }
+          placeholder={value.bearer_token === '***' ? '*** (already set — type to replace)' : ''}
+          className="font-mono text-sm"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">
+          Body must contain (optional)
+        </Label>
+        <Input
+          value={value.expect_body_contains ?? ''}
+          onChange={(e) =>
+            set('expect_body_contains', e.target.value || null)
+          }
+          placeholder='e.g. "ok"'
+          className="font-mono text-sm"
+        />
+      </div>
+
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={!!value.insecure}
+          onChange={(e) => set('insecure', e.target.checked)}
+        />
+        Skip TLS verification (for self-signed)
+      </label>
+      {helpText && (
+        <p className="text-xs text-muted-foreground">{helpText}</p>
+      )}
+    </div>
+  );
+}
+
+function NativeTcpFields({
+  value,
+  onChange,
+}: {
+  value: Extract<NativeCommand, { kind: 'tcp_connect' }>;
+  onChange: (n: NativeCommand | null) => void;
+}) {
+  const set = <K extends keyof typeof value>(k: K, v: (typeof value)[K]) =>
+    onChange({ ...value, [k]: v });
+
+  return (
+    <div className="grid grid-cols-[1fr_120px_120px] gap-2 rounded-md border border-dashed p-2">
+      <div className="space-y-1">
+        <Label className="text-xs">Host</Label>
+        <Input
+          value={value.host}
+          onChange={(e) => set('host', e.target.value)}
+          placeholder="db.local"
+          className="font-mono text-sm"
+        />
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Port</Label>
+        <Input
+          type="number"
+          min={1}
+          max={65535}
+          value={value.port}
+          onChange={(e) => {
+            const n = parseInt(e.target.value, 10);
+            set('port', isNaN(n) ? 0 : n);
+          }}
+          className="text-sm"
+        />
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Timeout (s)</Label>
+        <Input
+          type="number"
+          min={1}
+          value={value.timeout_seconds ?? 3}
+          onChange={(e) => {
+            const n = parseInt(e.target.value, 10);
+            set('timeout_seconds', isNaN(n) ? 3 : Math.max(1, n));
+          }}
+          className="text-sm"
+        />
+      </div>
+    </div>
   );
 }
