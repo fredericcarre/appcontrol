@@ -178,11 +178,38 @@ services:
       - ./demo-agent-entrypoint.sh:/usr/local/bin/demo-agent-entrypoint.sh:ro
       - demo-state:/var/lib/appcontrol/state
       - demo-agent-config:/var/lib/appcontrol
+      # The example components use /tmp/<name>.flag as their state
+      # marker: start_cmd touches the file, stop_cmd removes it,
+      # check_cmd tests for its presence. Mounting /tmp as a named
+      # volume lets the demo-incident-injector container remove
+      # specific flag files to simulate a real component failure.
+      - demo-agent-tmp:/tmp
     depends_on:
       gateway:
         condition: service_started
       demo-seeder:
         condition: service_completed_successfully
+
+  # Demo incident injector — deletes the flag files that back the
+  # "batch" branch of the demo application after everything has
+  # converged to RUNNING. On the agent's next health-check cycle
+  # (~30s with the example config), those components transition
+  # RUNNING → FAILED, producing a real red branch on the map. This
+  # is the broken state the README's "Dimanche 3h17" scenario is
+  # built around.
+  demo-incident-injector:
+    image: alpine:3.19
+    command: >
+      sh -c "rm -f /demo-tmp/core_banking_batch_controller_control_m.flag
+                  /demo-tmp/core_banking_nightly_batch_jobs.flag &&
+             echo '[incident-injector] removed batch flag files;
+                   batch branch will go FAILED on next check'"
+    volumes:
+      - demo-agent-tmp:/demo-tmp
+    depends_on:
+      demo-starter:
+        condition: service_completed_successfully
+    restart: "no"
 
   # Nginx reverse proxy with TLS termination (web UI + API only)
   # Note: Agents connect directly to gateway:4443, NOT through nginx
@@ -213,3 +240,4 @@ volumes:
   certs:
   demo-state:
   demo-agent-config:
+  demo-agent-tmp:

@@ -312,74 +312,34 @@ test.describe('README Screenshots', () => {
   });
 
   test('incident-recovery', async ({ page }) => {
-    // "Dimanche 3h17" section. Drives a real STOPPED state on one
-    // component so the map shows visual variation (one grey node on
-    // an otherwise green map). After capture the component is started
-    // back to leave the demo environment clean for sibling tests.
+    // "Dimanche 3h17" section. The compose pipeline runs the
+    // demo-incident-injector service after the app is RUNNING — it
+    // removes the flag files backing the "batch" branch so the
+    // agent's next health check transitions those components from
+    // RUNNING → FAILED. By the time this test runs, the map already
+    // shows a real red branch.
+    //
+    // Strategy: open the map, find a FAILED component, click it to
+    // expose the detail panel (state, history, checks, restart
+    // button), and capture.
     await openFirstAppMap(page);
 
-    // Find a component we can toggle. We pick the first one returned
-    // by the API for the current app — deterministic given the fixed
-    // seed file.
-    const target = await page.evaluate(async () => {
-      try {
-        const auth = localStorage.getItem('appcontrol-auth');
-        const token = auth ? JSON.parse(auth).state?.token : null;
-        if (!token) return null;
-        const apps = await fetch('/api/v1/apps', {
-          headers: { Authorization: `Bearer ${token}` },
-        }).then((r) => (r.ok ? r.json() : []));
-        if (!Array.isArray(apps) || apps.length === 0) return null;
-        const appId = apps[0].id;
-        const components = await fetch(`/api/v1/apps/${appId}/components`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }).then((r) => (r.ok ? r.json() : []));
-        if (!Array.isArray(components) || components.length === 0) return null;
-        return { token, appId, componentId: components[0].id };
-      } catch {
-        return null;
-      }
-    });
-
-    if (target) {
-      // Stop the chosen component and wait briefly for the FSM to settle.
-      await page.evaluate(async (t) => {
-        await fetch(`/api/v1/components/${t.componentId}/stop`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${t.token}`,
-            'Content-Type': 'application/json',
-          },
-          body: '{}',
-        });
-      }, target);
-      // Allow STOPPING → STOPPED to propagate through the WebSocket.
-      await page.waitForTimeout(4000);
-    }
-
-    // Surface the detail panel so the shot also exposes per-component
-    // info (state, history, checks).
-    const node = page.locator('.react-flow__node').first();
-    if (await node.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await node.click();
+    // Try to surface the detail panel of a failed component.
+    const failedNode = page.locator(
+      '.react-flow__node:has-text("Batch"), .react-flow__node:has-text("Nightly")',
+    ).first();
+    if (await failedNode.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await failedNode.click();
       await page.waitForTimeout(900);
+    } else {
+      // Fallback: any node will do.
+      const anyNode = page.locator('.react-flow__node').first();
+      if (await anyNode.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await anyNode.click();
+        await page.waitForTimeout(900);
+      }
     }
     await capture(page, 'incident-recovery');
-
-    // Restart the component so the rest of the suite sees a clean
-    // all-RUNNING state.
-    if (target) {
-      await page.evaluate(async (t) => {
-        await fetch(`/api/v1/components/${t.componentId}/start`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${t.token}`,
-            'Content-Type': 'application/json',
-          },
-          body: '{}',
-        });
-      }, target);
-    }
   });
 
   test('dr-switchover', async ({ page }) => {
