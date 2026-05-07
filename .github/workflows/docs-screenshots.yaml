@@ -196,6 +196,14 @@ jobs:
           path: docs/screenshots/
           retention-days: 30
 
+      - name: Dump all container logs on failure
+        if: failure()
+        run: |
+          echo "=========================================="
+          echo " Dumping all container logs (failure path)"
+          echo "=========================================="
+          docker compose -f docker/docker-compose.yaml logs --no-color --tail=200 || true
+
       - name: Tear down
         if: always()
         run: docker compose -f docker/docker-compose.yaml down -v

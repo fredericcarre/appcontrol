@@ -80,12 +80,25 @@ else
   fi
   log "Importing $EXAMPLE_FILE (rewriting all component hosts to '$DEMO_AGENT_HOSTNAME')"
 
-  # Rewrite all component "host" fields to DEMO_AGENT_HOSTNAME so they
-  # all bind to the single demo agent we are about to enroll. The
-  # original example uses fictitious hostnames per tier — useful for
-  # the cartography but we only have one agent in the demo stack.
-  REWRITTEN=$(jq --arg h "$DEMO_AGENT_HOSTNAME" \
-    '.components |= map(.host = $h)' "$EXAMPLE_FILE")
+  # The example is flat ({name, components, …}). The /api/v1/import/json
+  # endpoint expects the v4 native shape: { format_version, application }.
+  # We also rewrite every component's `host` to DEMO_AGENT_HOSTNAME so they
+  # all bind to the single demo agent, and we coerce the `tags` object into
+  # an array of "key=value" strings (V4Application::tags is Vec<String>).
+  REWRITTEN=$(jq --arg h "$DEMO_AGENT_HOSTNAME" '
+    {
+      format_version: "4.0",
+      application: (
+        .components |= map(.host = $h)
+        | .tags = (
+            if (.tags | type) == "object" then
+              (.tags | to_entries | map(.key + "=" + (.value | tostring)))
+            else (.tags // [])
+            end
+          )
+      )
+    }
+  ' "$EXAMPLE_FILE")
 
   IMPORT_PAYLOAD=$(jq -n --arg json "$REWRITTEN" '{json: $json}')
   IMPORT_RESPONSE=$(curl -sf -X POST "$BACKEND_URL/api/v1/import/json" \
