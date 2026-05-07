@@ -47,6 +47,10 @@ else
   log "Already enrolled (config present at $CONFIG_FILE)"
 fi
 
-# Hand off to the long-running agent process.
+# Hand off to the long-running agent process. Unset GATEWAY_URL so
+# the runtime config from agent.yaml (written by --enroll, with the
+# correct "/ws" path appended) takes precedence; otherwise the agent
+# connects to wss://gateway:4443 without "/ws" and gets 404.
 log "Starting agent with config $CONFIG_FILE"
+unset GATEWAY_URL
 exec /usr/local/bin/appcontrol-agent --config "$CONFIG_FILE"
