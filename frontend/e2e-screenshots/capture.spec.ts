@@ -1,5 +1,12 @@
 import { test, Page } from '@playwright/test';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+// frontend/package.json sets "type": "module", so __dirname is not
+// defined. Reconstruct it from import.meta.url so the resolved path
+// to docs/screenshots/ is stable both locally and in CI.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const SCREENSHOT_DIR = path.resolve(__dirname, '../../docs/screenshots');
 
