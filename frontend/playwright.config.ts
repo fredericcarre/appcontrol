@@ -15,7 +15,12 @@ export default defineConfig({
   outputDir: './e2e-screenshots/results',
   timeout: 30_000,
   retries: 1,
+  reporter: process.env.CI
+    ? [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
+    : 'list',
   use: {
+    trace: 'retain-on-failure',
+    video: 'retain-on-failure',
     // Access app through nginx (HTTPS with self-signed cert)
     baseURL: 'https://localhost:443',
     ignoreHTTPSErrors: true, // Allow self-signed certificates

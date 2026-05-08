@@ -225,6 +225,20 @@ jobs:
           name: ui-screenshots
           path: docs/screenshots/
           retention-days: 30
+          # Fail loudly if no screenshots were produced — silent "warn"
+          # used to hide all-tests-failing runs behind a green badge.
+          if-no-files-found: error
+
+      - name: Upload Playwright debug bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-debug
+          path: |
+            frontend/playwright-report/
+            frontend/e2e-screenshots/results/
+          retention-days: 30
+          if-no-files-found: warn
 
       - name: Dump all container logs on failure
         if: failure()
