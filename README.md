@@ -4,7 +4,7 @@ AppControl est une **plateforme d'exploitation pour applications critiques** —
 
 Le projet est né d'un constat simple : depuis vingt ans, chaque famille d'outils ops s'est perfectionnée dans son métier — et aucune n'a été conçue pour lire l'application en mouvement. AppControl est **à cheval entre cinq familles d'outils existants** (supervision, CMDB, ordonnanceur, hyperviseur, orchestrateur de conteneurs) sans en remplacer aucune. C'est la couche qui leur manquait.
 
-<!-- SCREENSHOT:map-overview -->
+![map-overview](docs/screenshots/map-overview.png)
 
 [![CI](https://github.com/fredericcarre/appcontrol/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/fredericcarre/appcontrol/actions/workflows/ci.yaml)
 [![codecov](https://codecov.io/gh/fredericcarre/appcontrol/graph/badge.svg)](https://codecov.io/gh/fredericcarre/appcontrol)
@@ -44,19 +44,19 @@ Vous ouvrez AppControl. La carte de l'application est déjà à l'écran. La bra
 Un clic sur **Restart error branch**. Les composants redémarrent dans le bon ordre, en parallèle quand c'est possible.
 Quatre minutes plus tard, tout est vert. L'audit est chaîné, signé, prêt à exporter.
 
-<!-- SCREENSHOT:incident-recovery -->
+![incident-recovery](docs/screenshots/incident-recovery.png)
 
 ### Mardi 14h — exercice de bascule DR Paris → Lyon
 
 Six phases, rollback possible à chaque étape. Vous voyez chaque composant changer de site en temps réel. Le rapport de conformité est prêt avant la fin de la réunion.
 
-<!-- SCREENSHOT:dr-switchover -->
+![dr-switchover](docs/screenshots/dr-switchover.png)
 
 ### Vendredi 10h — l'ACPR demande la trace de la dernière bascule
 
 Un clic sur **Export DORA**. Tout est là : signé, daté, immuable, append-only. Qui a fait quoi, quand, et pourquoi.
 
-<!-- SCREENSHOT:audit-export -->
+![audit-export](docs/screenshots/audit-export.png)
 
 ---
 
