@@ -205,11 +205,11 @@ services:
   # incident-recovery screenshot.
   demo-incident-injector:
     image: alpine:3.19
-    command: >
-      sh -c "rm -f /demo-tmp/core_banking_batch_controller_control_m.flag
-                  /demo-tmp/core_banking_nightly_batch_jobs.flag &&
-             echo '[incident-injector] removed batch flag files;
-                   batch branch will go FAILED on next check'"
+    # NOTE: keep this command on ONE shell line. The YAML > folded scalar
+    # preserved indented newlines as literal \n, which made sh treat the
+    # second flag path as a separate command and bail with
+    # "Permission denied" trying to exec it.
+    command: ["sh", "-c", "rm -f /demo-tmp/core_banking_batch_controller_control_m.flag /demo-tmp/core_banking_nightly_batch_jobs.flag && echo '[incident-injector] removed batch flag files; batch branch will go FAILED on next check'"]
     volumes:
       - demo-agent-tmp:/demo-tmp
     depends_on:
