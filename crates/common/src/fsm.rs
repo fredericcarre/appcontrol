@@ -33,14 +33,19 @@ pub fn is_valid_transition(from: ComponentState, to: ComponentState) -> bool {
         (Unknown, Starting) | (Unknown, Stopping) |
         // Stopped → Starting (explicit start) or Running (check detects external start)
         (Stopped, Starting) | (Stopped, Running) |
-        // Starting → Running or Failed
-        (Starting, Running) | (Starting, Failed) |
+        // Starting → Running or Failed, or Stopped (operator-cancelled before the
+        // process came up — without this the component sits in STARTING forever
+        // because next_state_from_check refuses to flip Starting→Failed on a
+        // non-zero exit, so the UI spinner never goes away after a Cancel.
+        // Same rationale for Stopping → Running below.
+        (Starting, Running) | (Starting, Failed) | (Starting, Stopped) |
         // Running → Degraded, Failed, Stopping
         (Running, Degraded) | (Running, Failed) | (Running, Stopping) |
         // Degraded → Running, Failed, Stopping
         (Degraded, Running) | (Degraded, Failed) | (Degraded, Stopping) |
-        // Stopping → Stopped
-        (Stopping, Stopped) |
+        // Stopping → Stopped, or back to Running (operator-cancelled a stop on a
+        // process that's still up).
+        (Stopping, Stopped) | (Stopping, Running) |
         // Failed → Starting, Stopping, Running (auto-recovery when check passes)
         (Failed, Starting) | (Failed, Stopping) | (Failed, Running)
     )
@@ -225,8 +230,19 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_stopping_to_running() {
-        assert!(!is_valid_transition(Stopping, Running));
+    fn test_valid_stopping_to_running_cancellation() {
+        // Operator cancelled a Stop while the process was still up — the
+        // sequencer-cancel path uses this transition to unstick the
+        // STOPPING state on the UI side. Cancel-rollback only, not a
+        // health-check-driven path.
+        assert!(is_valid_transition(Stopping, Running));
+    }
+
+    #[test]
+    fn test_valid_starting_to_stopped_cancellation() {
+        // Operator cancelled a Start before the process came up — same
+        // rationale as Stopping → Running above. Cancel-rollback only.
+        assert!(is_valid_transition(Starting, Stopped));
     }
 
     #[test]

@@ -2967,3 +2967,40 @@ pub async fn fetch_member_app_and_hostname(
         Ok(row.map(|(app_id, hostname)| (app_id.into_inner(), hostname)))
     }
 }
+
+/// List every component in an app that is currently STARTING or STOPPING.
+/// Drives the cancel-operation rollback that flips them back to a
+/// terminal state so the UI's "Starting…" / "Stopping…" spinner clears
+/// instead of getting stuck after a Cancel click.
+pub async fn list_app_components_in_transition(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    #[cfg(feature = "postgres")]
+    {
+        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, current_state FROM components \
+             WHERE application_id = $1 \
+             AND current_state IN ('STARTING', 'STOPPING')",
+        )
+        .bind(crate::db::bind_id(app_id))
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        let rows: Vec<(DbUuid, String)> = sqlx::query_as(
+            "SELECT id, current_state FROM components \
+             WHERE application_id = $1 \
+             AND current_state IN ('STARTING', 'STOPPING')",
+        )
+        .bind(DbUuid::from(app_id))
+        .fetch_all(pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, s)| (id.into_inner(), s))
+            .collect())
+    }
+}
