@@ -848,16 +848,37 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
         }
     }
 
-    // SQLite: if no files found on disk, use migrations embedded in the binary.
-    // This makes the standalone Windows .exe fully self-contained.
+    // SQLite: also pull migrations embedded in the binary, merged with
+    // whatever's on disk. The previous logic only fell back to embedded
+    // when the on-disk dir was empty — but the real-world failure mode
+    // is a Windows install upgraded with `appcontrol.ps1 upgrade`, which
+    // refreshes the binary while leaving a STALE migrations folder on
+    // disk. That folder has e.g. V001..V050 only, so the runner happily
+    // applies the on-disk set, reports "up to date", and skips the
+    // V051..V055 the new binary embedded — leaving `_migrations`
+    // recording everything that ran from disk but the schema missing
+    // the new columns (`components.check_native` etc.). Merging makes
+    // the binary's embedded migrations the source of truth: anything the
+    // binary knows about gets considered, with on-disk content taking
+    // priority for matching versions (in case an operator pinned a hot-
+    // fixed migration locally).
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    if migration_entries.is_empty() {
-        tracing::info!(
-            "Using {} embedded SQLite migrations (no files found on disk)",
-            embedded_sqlite::MIGRATIONS.len()
-        );
+    {
+        let on_disk_versions: std::collections::HashSet<i32> =
+            migration_entries.iter().map(|(v, _, _)| *v).collect();
+        let mut added_from_embedded = 0usize;
         for &(version, name, sql) in embedded_sqlite::MIGRATIONS {
+            if on_disk_versions.contains(&version) {
+                continue;
+            }
             migration_entries.push((version, name.to_string(), sql.to_string()));
+            added_from_embedded += 1;
+        }
+        if added_from_embedded > 0 {
+            tracing::info!(
+                "Merged {} embedded SQLite migration(s) the on-disk folder didn't have",
+                added_from_embedded
+            );
         }
     }
 
