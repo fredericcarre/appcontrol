@@ -7,7 +7,7 @@ import {
   Play, Square, RotateCcw, Search, Skull, GitBranch, Wrench,
   Server,
   ExternalLink, ArrowUp, ArrowDown, WifiOff, Unplug, Radio,
-  BarChart3, MapPin, AlertTriangle,
+  BarChart3, MapPin, AlertTriangle, Check,
 } from 'lucide-react';
 import { MetricsDisplay, MetricWidget } from './MetricsDisplay';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -288,7 +288,9 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
           )}
           <div className="flex items-center gap-1">
             {/* Hide connectivity status for application-type components */}
-            {isDisconnected && data.componentType !== 'application' && (
+            {isDisconnected &&
+              data.componentType !== 'application' &&
+              data.componentType !== 'manual_task' && (
               <span
                 className="inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded bg-red-100 text-red-700"
                 title={
@@ -374,35 +376,47 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
                 )}
               </div>
             )}
-            <div className="flex gap-1 mt-1.5 pt-1.5 border-t border-gray-200">
-              <button onClick={handleStart} className="p-1 rounded hover:bg-white/50" title="Start">
-                <Play className="h-3.5 w-3.5 text-green-600" />
-              </button>
-              <button onClick={handleStop} className="p-1 rounded hover:bg-white/50" title="Stop">
-                <Square className="h-3.5 w-3.5 text-red-600" />
-              </button>
-              <button onClick={handleRestart} className="p-1 rounded hover:bg-white/50" title="Restart">
-                <RotateCcw className="h-3.5 w-3.5 text-blue-600" />
-              </button>
-              <button onClick={handleRepair} className="p-1 rounded hover:bg-white/50" title="Repair (restart with dependents)">
-                <Wrench className="h-3.5 w-3.5 text-orange-600" />
-              </button>
-              <button onClick={handleStartWithDeps} className="p-1 rounded hover:bg-white/50" title="Start with dependencies">
-                <GitBranch className="h-3.5 w-3.5 text-teal-600" />
-              </button>
-              <button onClick={handleForceStop} className="p-1 rounded hover:bg-white/50" title="Force Kill (ignore dependencies)">
-                <Skull className="h-3.5 w-3.5 text-red-800" />
-              </button>
-              <button onClick={handleDiagnose} className="p-1 rounded hover:bg-white/50" title="Diagnose">
-                <Search className="h-3.5 w-3.5 text-purple-600" />
-              </button>
-              {/* Navigate to referenced app for application-type components */}
-              {data.componentType === 'application' && data.referencedAppId && (
-                <button onClick={handleNavigateToApp} className="p-1 rounded hover:bg-white/50" title="Open referenced application">
-                  <ExternalLink className="h-3.5 w-3.5 text-blue-600" />
+            {data.componentType === 'manual_task' ? (
+              // Manual-task nodes have no agent — Start/Stop/Force kill
+              // make no sense. Surface a single hint pointing to the
+              // Manual tab in the side panel (Validate / Skip / Fail).
+              <div className="flex items-center gap-1 mt-1.5 pt-1.5 border-t border-gray-200 text-[10px] text-purple-700">
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-100">
+                  <Check className="h-3 w-3" />
+                  Manual checkpoint — open to Validate / Skip / Fail
+                </span>
+              </div>
+            ) : (
+              <div className="flex gap-1 mt-1.5 pt-1.5 border-t border-gray-200">
+                <button onClick={handleStart} className="p-1 rounded hover:bg-white/50" title="Start">
+                  <Play className="h-3.5 w-3.5 text-green-600" />
                 </button>
-              )}
-            </div>
+                <button onClick={handleStop} className="p-1 rounded hover:bg-white/50" title="Stop">
+                  <Square className="h-3.5 w-3.5 text-red-600" />
+                </button>
+                <button onClick={handleRestart} className="p-1 rounded hover:bg-white/50" title="Restart">
+                  <RotateCcw className="h-3.5 w-3.5 text-blue-600" />
+                </button>
+                <button onClick={handleRepair} className="p-1 rounded hover:bg-white/50" title="Repair (restart with dependents)">
+                  <Wrench className="h-3.5 w-3.5 text-orange-600" />
+                </button>
+                <button onClick={handleStartWithDeps} className="p-1 rounded hover:bg-white/50" title="Start with dependencies">
+                  <GitBranch className="h-3.5 w-3.5 text-teal-600" />
+                </button>
+                <button onClick={handleForceStop} className="p-1 rounded hover:bg-white/50" title="Force Kill (ignore dependencies)">
+                  <Skull className="h-3.5 w-3.5 text-red-800" />
+                </button>
+                <button onClick={handleDiagnose} className="p-1 rounded hover:bg-white/50" title="Diagnose">
+                  <Search className="h-3.5 w-3.5 text-purple-600" />
+                </button>
+                {/* Navigate to referenced app for application-type components */}
+                {data.componentType === 'application' && data.referencedAppId && (
+                  <button onClick={handleNavigateToApp} className="p-1 rounded hover:bg-white/50" title="Open referenced application">
+                    <ExternalLink className="h-3.5 w-3.5 text-blue-600" />
+                  </button>
+                )}
+              </div>
+            )}
             {(data.showLinks ?? true) && data.links && data.links.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1.5">
                 {data.links.map((link, i) => (
