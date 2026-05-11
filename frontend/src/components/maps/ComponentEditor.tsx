@@ -293,7 +293,17 @@ export function ComponentEditor({
           <Tabs defaultValue="general" className="w-full">
             <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="general">General</TabsTrigger>
-              <TabsTrigger value="infra" disabled={formData.component_type === 'application'}>
+              <TabsTrigger
+                value="infra"
+                // Application-type components are pure DAG references and
+                // manual_task components are operator checkpoints — neither
+                // runs on an agent, so the Infrastructure (host + gateway)
+                // tab is meaningless for them.
+                disabled={
+                  formData.component_type === 'application' ||
+                  formData.component_type === 'manual_task'
+                }
+              >
                 <MapPin className="h-3 w-3 mr-1" />
                 Infrastructure
               </TabsTrigger>

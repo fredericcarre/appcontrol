@@ -323,8 +323,14 @@ export function OnboardingPage() {
     }
   };
 
-  // Check if all components have agents assigned for primary site
-  const allComponentsResolved = components.length > 0 && components.every((c) => c.name.trim() && c.agent_id);
+  // Check if all components have agents assigned for primary site.
+  // manual_task components don't need an agent — they're operator
+  // checkpoints validated from the dashboard.
+  const allComponentsResolved =
+    components.length > 0 &&
+    components.every(
+      (c) => c.name.trim() && (c.component_type === 'manual_task' || c.agent_id),
+    );
 
   // Check if all DR sites have agents assigned for each enabled component
   const allDrSitesResolved = drSites.every((drSite) => {
@@ -684,7 +690,18 @@ export function OnboardingPage() {
                         </div>
                       )}
 
-                      {/* Site Agent Assignments */}
+                      {/* Site Agent Assignments — skipped for manual_task,
+                          which is a checkpoint with no agent or host. */}
+                      {comp.component_type === 'manual_task' ? (
+                        <div className="space-y-2 pt-2 border-t border-border/50">
+                          <p className="text-xs text-muted-foreground italic">
+                            Manual checkpoint — no agent / gateway needed. The
+                            sequencer will pause on this component and wait for
+                            an operator to click Validate / Skip / Failed from
+                            the dashboard.
+                          </p>
+                        </div>
+                      ) : (
                       <div className="space-y-2 pt-2 border-t border-border/50">
                         <p className="text-xs text-muted-foreground font-medium">Site Agent Assignments</p>
 
@@ -858,6 +875,7 @@ export function OnboardingPage() {
                           );
                         })}
                       </div>
+                      )}
                     </div>
                   );
                 })}

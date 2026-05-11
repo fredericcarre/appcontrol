@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useApp, type Component, type Dependency } from '@/api/apps';
 
@@ -34,13 +34,24 @@ export default function PrintExecutionPlanPage() {
     [components, dependencies],
   );
 
-  // Auto-open the print dialog once data has loaded — the operator landed
-  // here clicking "Print plan", their next click is going to be Ctrl+P
-  // anyway. Saves a step. Skipped when nothing to print yet.
+  // Auto-open the print dialog once per page load, after the data is in
+  // and React has finished painting. Using a ref so re-renders (e.g. a
+  // dependency tick) don't re-trigger the dialog while the operator is
+  // already interacting with it. The operator can also click the
+  // "Print / Save as PDF" toolbar button to fire it manually.
+  const autoFiredRef = useRef(false);
   useEffect(() => {
+    if (autoFiredRef.current) return;
     if (!isLoading && components.length > 0) {
-      const t = setTimeout(() => window.print(), 250);
-      return () => clearTimeout(t);
+      autoFiredRef.current = true;
+      // Two animation frames give the browser time to lay out the full
+      // document before the print engine snapshots it — without this
+      // delay we've seen the dialog open against a half-rendered DOM
+      // and report "1 page total" because only the header had painted.
+      const id = window.requestAnimationFrame(() =>
+        window.requestAnimationFrame(() => window.print()),
+      );
+      return () => window.cancelAnimationFrame(id);
     }
   }, [isLoading, components.length]);
 
@@ -77,7 +88,7 @@ export default function PrintExecutionPlanPage() {
       {/* Document body — width tracks the viewport so a 200-component plan
           uses the page instead of a tall scrollable column. The print
           stylesheet relaxes the padding to A4 margins. */}
-      <article className="plan mx-auto p-8" style={{ maxWidth: '210mm' }}>
+      <article className="plan plan-body mx-auto p-8" style={{ maxWidth: '210mm' }}>
         <header className="mb-6 border-b pb-4">
           <div className="text-xs text-gray-500 uppercase tracking-wider">
             AppControl execution plan
@@ -283,28 +294,59 @@ function topologicalLevels(
   return levels;
 }
 
-// Print stylesheet:
-//   * The level-section was previously `page-break-inside: avoid`, which
-//     forces a level with many components onto a single page — for the
-//     IIS demo (8 components) or a bigger fan-out, the browser then ran
-//     the content off the page instead of paginating, which is what the
-//     operator described as "a scrollbar instead of multiple pages".
-//   * We now only protect individual `component-block` rows from being
-//     split mid-card; levels are allowed to span as many pages as they
-//     need. `page-break-after: avoid` on the heading keeps the heading
+// Print stylesheet for the execution plan page.
+//
+// Some defensive rules learned from operator reports:
+//   * `html, body, #root, .print-plan-root` must all reset `height` and
+//     `overflow` in print — without this, Tailwind's preflight or the
+//     SPA router root can cap the rendered document at viewport height,
+//     producing a single A4 page with only the header visible and the
+//     rest of the levels mysteriously missing.
+//   * The toolbar and any global SPA chrome are removed via `.no-print`.
+//   * `.plan` drops its inline `max-width: 210mm` and its `mx-auto`/
+//     `p-8` so the body fills the @page margins instead of being
+//     centered with extra padding.
+//   * `.level-section` does NOT have `page-break-inside: avoid` (a
+//     past version did, and a level with many components ran off the
+//     page instead of paginating — operators saw "a scrollbar instead
+//     of multiple pages"). Only individual `.component-block` rows
+//     are protected from mid-card splits; levels can span pages.
+//   * `page-break-after: avoid` on the heading keeps a level heading
 //     glued to its first component card.
 const PRINT_CSS = `
 @media print {
+  html, body {
+    background: white !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+  #root, .print-plan-root {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+  }
   .no-print { display: none !important; }
-  html, body { background: white !important; }
-  .plan { max-width: none !important; padding: 0 !important; }
+  .plan, .plan-body {
+    max-width: none !important;
+    width: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+  .level-section { display: block !important; }
   .level-heading { page-break-after: avoid; break-after: avoid; }
   .component-block {
     page-break-inside: avoid;
     break-inside: avoid;
     box-shadow: none !important;
   }
-  pre { font-size: 10px; }
+  pre {
+    font-size: 10px;
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+  }
 }
 
 @page {

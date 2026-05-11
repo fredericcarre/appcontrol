@@ -1,5 +1,8 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import client from '@/api/client';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   useApp,
@@ -90,6 +93,7 @@ function getWeatherVariant(weather: string) {
 export function MapViewPage() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: app, isLoading } = useApp(appId || '');
   const { data: mapDisplayOptions } = useMapSettings(appId);
   // Subset of pending manual tasks that belong to THIS app — drives the
@@ -580,6 +584,39 @@ export function MapViewPage() {
   const handleNavigateToApp = useCallback((targetAppId: string) => {
     navigate(`/apps/${targetAppId}`);
   }, [navigate]);
+
+  // Manual-task validation — fires the inline buttons on a manual_task
+  // node. The same endpoint backs the dashboard banner and the side-
+  // panel Manual tab; this gives operators a third entry point right
+  // where the checkpoint is in the DAG.
+  const handleValidateManualTask = useCallback(
+    async (componentId: string, status: 'validated' | 'skipped' | 'failed') => {
+      try {
+        await client.post(
+          `/components/${componentId}/manual-task/validate`,
+          { status },
+        );
+        // Bust the app + manual-task caches so the FSM state and the
+        // pending row disappear from the UI on the next tick.
+        queryClient.invalidateQueries({ queryKey: ['apps', appId] });
+        queryClient.invalidateQueries({ queryKey: ['manual-task', componentId] });
+        queryClient.invalidateQueries({ queryKey: ['manual-task', 'pending', 'me'] });
+        toast.success(
+          status === 'validated'
+            ? 'Manual task validated — DAG resumed'
+            : status === 'skipped'
+              ? 'Manual task skipped'
+              : 'Manual task marked as failed',
+        );
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } }).response?.data
+            ?.message ?? 'Failed to validate manual task';
+        toast.error(msg);
+      }
+    },
+    [appId, queryClient],
+  );
 
   // Group management handlers
   const handleCreateGroup = useCallback(async (name: string, color: string, description?: string) => {
@@ -1145,6 +1182,9 @@ export function MapViewPage() {
             onForceStopComponent={historyMode ? undefined : handleForceStopComponent}
             onStartWithDepsComponent={historyMode ? undefined : handleStartWithDepsPreview}
             onRepairComponent={historyMode ? undefined : handleRestartWithDependentsPreview}
+            onValidateManualTask={
+              historyMode || !canOperate ? undefined : handleValidateManualTask
+            }
             onNavigateToApp={handleNavigateToApp}
             canOperate={canOperate && !historyMode}
             // Edit mode props

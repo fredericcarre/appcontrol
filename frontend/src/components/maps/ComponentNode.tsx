@@ -78,6 +78,11 @@ interface ComponentNodeData {
   onDiagnose?: (id: string) => void;
   onForceStop?: (id: string) => void;
   onStartWithDeps?: (id: string) => void;
+  /** Manual-task validation — fired by the inline buttons on a
+   *  manual_task node. The dashboard banner uses the same backend
+   *  endpoint, but operators shouldn't need to leave the map to
+   *  validate. Status is one of validated / skipped / failed. */
+  onValidateManualTask?: (id: string, status: 'validated' | 'skipped' | 'failed') => void;
   onRepair?: (id: string) => void;
   onNavigateToApp?: (appId: string) => void;
   [key: string]: unknown;
@@ -377,14 +382,65 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
               </div>
             )}
             {data.componentType === 'manual_task' ? (
-              // Manual-task nodes have no agent — Start/Stop/Force kill
-              // make no sense. Surface a single hint pointing to the
-              // Manual tab in the side panel (Validate / Skip / Fail).
-              <div className="flex items-center gap-1 mt-1.5 pt-1.5 border-t border-gray-200 text-[10px] text-purple-700">
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-100">
-                  <Check className="h-3 w-3" />
-                  Manual checkpoint — open to Validate / Skip / Fail
-                </span>
+              // Manual-task nodes have no agent — Start/Stop/Force kill make
+              // no sense. The operator's actual action is to Validate the
+              // checkpoint; surface the three buttons directly on the node
+              // so they don't have to discover the side-panel tab. Clicking
+              // any of them dispatches `validate_manual_task` to the
+              // backend, which un-pauses the sequencer (validated/skipped)
+              // or fails the DAG step (failed).
+              <div className="mt-1.5 pt-1.5 border-t border-gray-200 space-y-1">
+                <div className="text-[10px] text-purple-700 flex items-center gap-1">
+                  <Check className="h-3 w-3" /> Manual checkpoint
+                </div>
+                {data.onValidateManualTask ? (
+                  <div className="flex gap-1 nodrag">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        data.onValidateManualTask?.(id, 'validated');
+                      }}
+                      className="flex-1 px-1.5 py-1 rounded text-[10px] font-medium bg-emerald-600 text-white hover:bg-emerald-700"
+                      title="Mark this manual task as successfully completed"
+                    >
+                      <Check className="inline h-3 w-3 mr-0.5" />
+                      Validate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        data.onValidateManualTask?.(id, 'skipped');
+                      }}
+                      className="flex-1 px-1.5 py-1 rounded text-[10px] font-medium border border-amber-500 text-amber-700 bg-white hover:bg-amber-50"
+                      title="Advance without claiming the task succeeded"
+                    >
+                      Skip
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (
+                          window.confirm(
+                            'Mark this manual task as failed? The DAG step will fail.',
+                          )
+                        ) {
+                          data.onValidateManualTask?.(id, 'failed');
+                        }
+                      }}
+                      className="flex-1 px-1.5 py-1 rounded text-[10px] font-medium border border-red-500 text-red-700 bg-white hover:bg-red-50"
+                      title="Mark this manual task as failed — DAG stops here"
+                    >
+                      Fail
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground italic">
+                    No operator permission — read-only.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="flex gap-1 mt-1.5 pt-1.5 border-t border-gray-200">
