@@ -19,6 +19,8 @@
 use crate::db::DbPool;
 
 pub async fn sqlite_schema_self_heal(pool: &DbPool) -> anyhow::Result<()> {
+    tracing::info!("Schema self-heal: starting (SQLite)");
+
     async fn column_exists(pool: &DbPool, table: &str, column: &str) -> anyhow::Result<bool> {
         let sql = format!("PRAGMA table_info({table})");
         let rows: Vec<(i32, String, String, i32, Option<String>, i32)> =
@@ -125,5 +127,6 @@ pub async fn sqlite_schema_self_heal(pool: &DbPool) -> anyhow::Result<()> {
         .await?;
     }
 
+    tracing::info!("Schema self-heal: done");
     Ok(())
 }
