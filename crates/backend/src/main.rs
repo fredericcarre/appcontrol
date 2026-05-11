@@ -79,6 +79,19 @@ async fn main() -> anyhow::Result<()> {
     run_migrations(&pool).await?;
     tracing::info!("Database migrations completed successfully");
 
+    // Schema self-heal — SQLite only. Older Windows installs upgraded the
+    // backend binary without refreshing the on-disk `migrations/` folder,
+    // so migrations recorded as applied may have run against a stale file
+    // list. Re-check the columns introduced by V051–V055 and add them
+    // when missing. Idempotent: skips columns that already exist.
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    {
+        if let Err(e) = appcontrol_backend::startup_repair::sqlite_schema_self_heal(&pool).await {
+            tracing::error!("Schema self-heal failed: {}", e);
+            return Err(e);
+        }
+    }
+
     // Auto-create partitions for check_events (current + next year)
     // PostgreSQL only - SQLite doesn't support table partitioning
     #[cfg(feature = "postgres")]

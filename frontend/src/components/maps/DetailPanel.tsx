@@ -105,7 +105,17 @@ export function DetailPanel({
           </Badge>
         </div>
 
-        {canOperate && (
+        {canOperate && component.component_type === 'manual_task' && (
+          // Manual tasks aren't agent-driven — Start/Stop/Force kill make
+          // no sense for them. The real "action" is operator validation,
+          // which lives in the Manual tab below.
+          <div className="rounded border border-dashed bg-muted/30 p-2 text-xs text-muted-foreground">
+            This is a manual-task checkpoint — no Start/Stop here. Use the
+            <strong className="mx-1">Manual</strong>tab to validate, skip
+            or fail it.
+          </div>
+        )}
+        {canOperate && component.component_type !== 'manual_task' && (
           <div className="space-y-2">
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={onStart} className="flex-1">

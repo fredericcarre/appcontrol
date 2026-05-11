@@ -13,6 +13,16 @@ pub mod websocket;
 // MCP module is internal-only
 mod mcp;
 
+/// SQLite schema repair — exported so integration tests can drive it.
+/// Wired into the startup sequence in `main.rs`.
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn sqlite_schema_self_heal_for_test(pool: &crate::db::DbPool) -> anyhow::Result<()> {
+    crate::startup_repair::sqlite_schema_self_heal(pool).await
+}
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub mod startup_repair;
+
 use axum::{
     http::{header, HeaderValue},
     routing::{get, post},
