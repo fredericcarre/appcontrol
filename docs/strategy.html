@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AppControl — Stratégie & Vision</title>
+<style>
+  :root {
+    --ink: #0f172a;
+    --ink-soft: #334155;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --bg: #ffffff;
+    --panel: #f8fafc;
+    --panel-2: #f1f5f9;
+    --accent: #0f766e;
+    --accent-soft: #ccfbf1;
+    --warn: #b45309;
+    --warn-soft: #fef3c7;
+    --danger: #b91c1c;
+    --danger-soft: #fee2e2;
+    --ok: #166534;
+    --ok-soft: #dcfce7;
+    --shadow: 0 1px 2px rgba(15,23,42,.04), 0 8px 24px rgba(15,23,42,.06);
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter",
+                 system-ui, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.55;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 56px 32px 80px; }
+
+  /* Cover */
+  .cover {
+    border-radius: var(--radius);
+    background: linear-gradient(135deg, #0f172a 0%, #134e4a 100%);
+    color: #fff;
+    padding: 56px 48px;
+    margin-bottom: 48px;
+    box-shadow: var(--shadow);
+  }
+  .cover .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; opacity: .8;
+  }
+  .cover h1 {
+    margin: 14px 0 8px;
+    font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -.02em;
+  }
+  .cover .sub {
+    font-size: 19px; opacity: .9; max-width: 720px;
+    font-weight: 400;
+  }
+  .cover .meta {
+    margin-top: 28px; display: flex; gap: 28px; flex-wrap: wrap;
+    font-size: 13px; opacity: .75;
+  }
+
+  /* TOC */
+  .toc {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 24px 28px; margin-bottom: 56px;
+  }
+  .toc h2 {
+    margin: 0 0 14px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: .14em; color: var(--muted); font-weight: 600;
+  }
+  .toc ol {
+    margin: 0; padding: 0; list-style: none;
+    columns: 2; column-gap: 32px;
+  }
+  .toc li {
+    padding: 6px 0; break-inside: avoid;
+    border-bottom: 1px dashed var(--line);
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px;
+  }
+  .toc li:last-child { border-bottom: 0; }
+  .toc a { color: var(--ink); text-decoration: none; }
+  .toc a:hover { color: var(--accent); }
+  .toc .num {
+    color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  /* Sections */
+  section {
+    margin-bottom: 56px;
+    scroll-margin-top: 16px;
+  }
+  section .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; color: var(--accent);
+    margin-bottom: 8px;
+  }
+  section h2 {
+    font-size: 30px; line-height: 1.2; letter-spacing: -.01em;
+    margin: 0 0 24px; color: var(--ink);
+  }
+  section h3 {
+    font-size: 18px; margin: 28px 0 12px; color: var(--ink);
+  }
+  p { margin: 0 0 14px; color: var(--ink-soft); }
+  ul { margin: 0 0 14px; padding-left: 22px; color: var(--ink-soft); }
+  li { margin-bottom: 6px; }
+  strong { color: var(--ink); font-weight: 600; }
+  em { color: var(--ink); font-style: italic; }
+
+  /* Cards */
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 22px 24px;
+    margin: 16px 0;
+  }
+  .grid-2 {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  }
+  .grid-3 {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;
+  }
+  .card h4 {
+    margin: 0 0 8px; font-size: 14px;
+    text-transform: uppercase; letter-spacing: .1em;
+    color: var(--accent); font-weight: 700;
+  }
+  .card.warn h4 { color: var(--warn); }
+  .card.warn { background: var(--warn-soft); border-color: #fcd34d; }
+  .card.danger h4 { color: var(--danger); }
+  .card.danger { background: var(--danger-soft); border-color: #fca5a5; }
+  .card.ok h4 { color: var(--ok); }
+  .card.ok { background: var(--ok-soft); border-color: #86efac; }
+
+  /* Quote / callout */
+  .pull {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 18px 22px; border-radius: 0 var(--radius) var(--radius) 0;
+    margin: 24px 0;
+    font-size: 17px; color: #134e4a;
+  }
+  .pull strong { color: #064e3b; }
+  .pull.warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+    color: #78350f;
+  }
+  .pull.warn strong { color: #451a03; }
+
+  /* Tables */
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 16px 0; font-size: 15px;
+    background: #fff; border-radius: var(--radius); overflow: hidden;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  th, td {
+    text-align: left; padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    background: var(--panel-2);
+    font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); font-weight: 600;
+  }
+  tr:last-child td { border-bottom: 0; }
+  td code, p code, li code {
+    background: var(--panel-2); padding: 1px 6px; border-radius: 4px;
+    font-size: 13px; font-family: "SF Mono", "JetBrains Mono", Menlo, monospace;
+    color: #0f172a;
+  }
+
+  /* Code blocks */
+  pre {
+    background: #0f172a; color: #e2e8f0;
+    padding: 18px 22px; border-radius: var(--radius);
+    overflow-x: auto; font-size: 13.5px; line-height: 1.6;
+    margin: 16px 0;
+  }
+  pre code { background: transparent; color: inherit; padding: 0; }
+
+  /* Step list */
+  .steps { list-style: none; padding: 0; counter-reset: s; }
+  .steps li {
+    counter-increment: s;
+    padding: 14px 16px 14px 56px; position: relative;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); margin-bottom: 10px;
+    color: var(--ink-soft);
+  }
+  .steps li::before {
+    content: counter(s);
+    position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+  }
+
+  /* Annex divider */
+  .annex-divider {
+    margin: 80px 0 40px; padding: 32px;
+    background: var(--panel-2);
+    border-radius: var(--radius);
+    text-align: center;
+  }
+  .annex-divider .eyebrow {
+    color: var(--muted);
+    text-transform: uppercase; letter-spacing: .2em;
+    font-size: 13px; font-weight: 600;
+  }
+  .annex-divider h2 {
+    font-size: 32px; margin: 12px 0 0; color: var(--ink);
+  }
+
+  /* Verbatim quote (DORA articles) */
+  .verbatim {
+    font-style: italic; color: var(--ink);
+    border: 1px solid var(--line);
+    background: #fff;
+    padding: 16px 20px; border-radius: var(--radius);
+    margin: 12px 0 16px;
+    font-size: 15px;
+  }
+  .verbatim::before { content: "« "; color: var(--muted); }
+  .verbatim::after  { content: " »"; color: var(--muted); }
+
+  /* Footer */
+  footer {
+    margin-top: 64px; padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+
+  /* Responsive */
+  @media (max-width: 760px) {
+    .wrap { padding: 28px 18px; }
+    .cover { padding: 36px 24px; }
+    .cover h1 { font-size: 32px; }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .toc ol { columns: 1; }
+    table { font-size: 14px; }
+    th, td { padding: 10px 12px; }
+  }
+
+  /* Print */
+  @media print {
+    body { font-size: 12.5pt; }
+    .wrap { max-width: none; padding: 0; }
+    .cover {
+      background: #0f172a !important; color: #fff !important;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      page-break-after: always;
+    }
+    section { page-break-inside: avoid; page-break-after: auto; }
+    .annex-divider { page-break-before: always; }
+    table, .card, .pull, pre { page-break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+    footer { page-break-before: avoid; }
+    .toc { page-break-after: always; }
+    h2, h3 { page-break-after: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- COVER -->
+  <header class="cover">
+    <div class="eyebrow">Présentation Direction</div>
+    <h1>AppControl</h1>
+    <div class="sub">
+      Une plateforme transverse de maîtrise opérationnelle — captation,
+      réconciliation et exploitation de la connaissance applicative,
+      au service de la résilience et de la conformité DORA.
+    </div>
+    <div class="meta">
+      <span>Document de stratégie</span>
+      <span>Branche <code style="background:rgba(255,255,255,.15);color:#fff;padding:1px 8px;border-radius:4px;">claude/appcontrol-strategy-slides-K6LoK</code></span>
+    </div>
+  </header>
+
+  <!-- TOC -->
+  <nav class="toc">
+    <h2>Sommaire</h2>
+    <ol>
+      <li><a href="#s1">Le constat</a><span class="num">1</span></li>
+      <li><a href="#s2">Phase 1 — Captation</a><span class="num">2</span></li>
+      <li><a href="#s3">Phase 2 — Exploitation</a><span class="num">3</span></li>
+      <li><a href="#s4">Le rebuild, cas d'usage critique</a><span class="num">4</span></li>
+      <li><a href="#s5">DORA — obligation, pas confort</a><span class="num">5</span></li>
+      <li><a href="#s6">Lever la peur des prods</a><span class="num">6</span></li>
+      <li><a href="#s7">Adoption graduelle</a><span class="num">7</span></li>
+      <li><a href="#s8">Transverse vs. refonte référentiels</a><span class="num">8</span></li>
+      <li><a href="#s9">Démarches complémentaires</a><span class="num">9</span></li>
+      <li><a href="#s10">Bénéfices par audience</a><span class="num">10</span></li>
+      <li><a href="#s11">Pourquoi transverse</a><span class="num">11</span></li>
+      <li><a href="#s12">Message clé</a><span class="num">12</span></li>
+      <li><a href="#s13">Prochaines étapes</a><span class="num">13</span></li>
+      <li><a href="#annex">Annexe — DORA en détail</a><span class="num">A</span></li>
+    </ol>
+  </nav>
+
+  <!-- 1 -->
+  <section id="s1">
+    <div class="eyebrow">Section 1</div>
+    <h2>Le constat — la connaissance applicative est éclatée</h2>
+    <p>Aucune source ne décrit aujourd'hui <strong>comment l'application tourne réellement en production</strong>. La connaissance est fragmentée :</p>
+    <div class="grid-2">
+      <div class="card"><h4>CMDB</h4>Briques techniques, serveurs, middlewares.</div>
+      <div class="card"><h4>XL Release / XL Deploy</h4>Pipelines, manifestes, mapping composant↔serveur, ordre de déploiement.</div>
+      <div class="card"><h4>Base d'incidents</h4>Dépendances révélées par les pannes — la vérité terrain.</div>
+      <div class="card"><h4>Schémas d'architecture</h4>Vue cible, souvent obsolète.</div>
+      <div class="card"><h4>Tickets &amp; référentiel de flux</h4>Qui parle à qui, sur quels ports.</div>
+      <div class="card"><h4>Runbooks &amp; sachants</h4>Schedulers, scripts, connaissance tribale.</div>
+    </div>
+    <div class="pull">
+      Le problème n'est pas la qualité de chaque référentiel pris isolément.
+      C'est leur <strong>absence de réconciliation et d'exploitation opérationnelle</strong>.
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section id="s2">
+    <div class="eyebrow">Section 2 — Phase 1</div>
+    <h2>Captation : reconstituer l'architecture <em>as-run</em></h2>
+    <p>Un agrégateur consomme les référentiels existants et les réconcilie en une carte vivante.</p>
+    <table>
+      <thead><tr><th style="width:32%">Source</th><th>Donnée extraite</th></tr></thead>
+      <tbody>
+        <tr><td>CMDB</td><td>Briques techniques, serveurs, OS, middlewares</td></tr>
+        <tr><td><strong>XL Release</strong></td><td>Ordre de déploiement, dépendances pipeline, environnements</td></tr>
+        <tr><td><strong>XL Deploy</strong></td><td>Manifestes applicatifs, mapping composant↔serveur, packages déployés</td></tr>
+        <tr><td>Référentiel de flux + tickets</td><td>Liens réseau entre composants, ports, protocoles</td></tr>
+        <tr><td>Base d'incidents</td><td>Dépendances cachées (co-occurrences de pannes)</td></tr>
+        <tr><td>Schémas d'architecture</td><td>Intention, regroupements logiques</td></tr>
+        <tr><td>Supervision / logs prod</td><td>Composants réellement actifs</td></tr>
+      </tbody>
+    </table>
+    <p>Sortie : un <strong>premier JSON de map par application</strong>, réconcilié, reflétant ce qui tourne aujourd'hui — pas ce qui est documenté quelque part.</p>
+    <div class="pull">
+      Force de XL : la donnée est <strong>fraîche</strong> (regénérée à chaque déploiement)
+      et <strong>opérationnelle</strong> (déjà utilisée en prod). C'est la meilleure source
+      de vérité de déploiement disponible.
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section id="s3">
+    <div class="eyebrow">Section 3 — Phase 2</div>
+    <h2>Exploitation : raffiner et opérer</h2>
+    <p>Le JSON généré devient la map AppControl de l'application :</p>
+    <ul>
+      <li><strong>Ajustement UI</strong> par les équipes (dépendance graph en drag &amp; drop)</li>
+      <li><strong>Ou via Pull Request</strong> — la map est versionnée comme du code (GitOps)</li>
+      <li><strong>Review</strong> par les sachants applicatifs et infra</li>
+      <li>Évolution continue, audit complet de chaque modification</li>
+    </ul>
+    <h3>L'application devient opérable</h3>
+    <div class="grid-2">
+      <div class="card"><h4>Start / Stop</h4>Séquencement respectant le DAG, parallélisation par niveau.</div>
+      <div class="card"><h4>Rebuild</h4>Orchestré par la map versionnée, chronométré, répétable.</div>
+      <div class="card"><h4>Bascule DR</h4>6 phases avec rollback, testable sur non-prod.</div>
+      <div class="card"><h4>Diagnostic 3 niveaux</h4>Santé · intégrité · infra, avec recommandation automatique.</div>
+    </div>
+    <div class="pull">
+      On ne demande pas aux équipes de re-documenter. On part de l'existant
+      et on leur soumet une carte qu'elles n'ont plus qu'à <strong>valider et corriger</strong>.
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section id="s4">
+    <div class="eyebrow">Section 4</div>
+    <h2>Le cas d'usage qui change tout : le <em>rebuild</em></h2>
+    <p>Reconstruire une application (cyber-incident, ransomware, perte datacenter, corruption majeure) exige de pouvoir :</p>
+    <ol class="steps">
+      <li><strong>Connaître</strong> l'inventaire exact et à jour</li>
+      <li><strong>Restaurer</strong> les composants dans le bon ordre de dépendances</li>
+      <li><strong>Vérifier</strong> que chaque composant repart sainement (health, intégrité, infra)</li>
+      <li><strong>Reconstituer</strong> les flux et redémarrer les processus métier</li>
+    </ol>
+    <div class="grid-2">
+      <div class="card danger">
+        <h4>Sans plateforme transverse</h4>
+        <ul>
+          <li>Rebuild manuel, sous stress</li>
+          <li>Non reproductible, jamais répété à blanc</li>
+          <li>Délai : jours / semaines</li>
+          <li>Dépendant des sachants disponibles</li>
+        </ul>
+      </div>
+      <div class="card ok">
+        <h4>Avec AppControl</h4>
+        <ul>
+          <li>Rebuild scripté par la map versionnée</li>
+          <li><strong>Répétable en exercice</strong> (DR drill)</li>
+          <li>Délai mesuré, optimisé, prouvé</li>
+          <li>Conforme DORA (capacité de reprise auditée)</li>
+        </ul>
+      </div>
+    </div>
+    <h3>Rebuild à blanc — deux niveaux disponibles</h3>
+    <div class="card">
+      <p style="margin:0 0 8px;"><strong>1. Dry-run (simulation pure)</strong> — <code>POST /api/v1/apps/:id/rebuild</code> avec <code>dry_run: true</code> retourne le plan DAG complet (ordre, commandes résolues, agents) sans rien exécuter.</p>
+      <p style="margin:0;"><strong>2. Drill réel sur non-prod</strong> — le même moteur (<code>core/rebuild.rs</code>) exécute sur un site staging/DR, chronométré, traçant le <strong>RTR</strong> (Recovery Time for Rebuild) dans <code>action_log</code>.</p>
+    </div>
+    <div class="pull warn">
+      Sans capacité de <strong>start / stop / check</strong>, il n'y a pas de rebuild possible.
+      Ces capacités ne sont pas un risque — ce sont l'outil.
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section id="s5">
+    <div class="eyebrow">Section 5</div>
+    <h2>DORA — pourquoi le rebuild est une obligation, pas un confort</h2>
+    <p><strong>Digital Operational Resilience Act</strong> — règlement UE 2022/2554, <strong>applicable depuis le 17 janvier 2025</strong>. Périmètre : entités financières + leurs prestataires ICT critiques (<strong>BPCE inclus</strong>).</p>
+    <table>
+      <thead><tr><th>Exigence DORA</th><th style="width:16%">Article</th><th>Réponse AppControl</th></tr></thead>
+      <tbody>
+        <tr><td>Cartographier fonctions métier, actifs ICT et <strong>interdépendances</strong></td><td>Art. 8</td><td>Phase 1 — captation + réconciliation CMDB / XLR / XLD / flux / incidents</td></tr>
+        <tr><td>Procédures de <strong>reconstruction</strong> après corruption ou cyberattaque</td><td>Art. 12</td><td>Phase 2 — rebuild orchestré par la map versionnée</td></tr>
+        <tr><td>Tests des plans de continuité, <strong>au moins annuels</strong></td><td>Art. 11</td><td>Rebuild à blanc (dry-run + drill non-prod), DR switchover 6 phases</td></tr>
+        <tr><td>Tests de <strong>scénarios cyber</strong> et reprise après corruption</td><td>Art. 25</td><td>Drills répétables, chronométrés, comparables</td></tr>
+        <tr><td><strong>Registre</strong> des incidents et actions de récupération</td><td>Art. 16</td><td>Audit log append-only (<code>action_log</code>, <code>state_transitions</code>, <code>switchover_log</code>)</td></tr>
+        <tr><td><strong>Prouver</strong> le RTO/RPO réel</td><td>Art. 11-12</td><td>RTR mesuré et tracé par exécution</td></tr>
+      </tbody>
+    </table>
+    <div class="pull">
+      DORA n'exige pas seulement d'<strong>avoir</strong> un plan de reprise.
+      Il exige de <strong>prouver</strong> qu'il fonctionne — testé, chronométré, tracé, auditable.
+      Un PRA documenté sur Confluence ne suffit pas.
+    </div>
+    <p style="font-size:14px;color:var(--muted);">Le détail des 5 piliers DORA et des articles clés est en <a href="#annex" style="color:var(--accent);">annexe</a>.</p>
+  </section>
+
+  <!-- 6 -->
+  <section id="s6">
+    <div class="eyebrow">Section 6</div>
+    <h2>Lever la peur des prods — garde-fous natifs</h2>
+    <p>Un outil qui peut arrêter de la prod <em>doit</em> être encadré. Mais un outil qui ne peut rien faire <strong>ne reconstruit rien</strong>.</p>
+    <table>
+      <thead><tr><th style="width:46%">Risque perçu</th><th>Réponse intégrée par conception</th></tr></thead>
+      <tbody>
+        <tr><td>« Quelqu'un va arrêter de la prod par erreur »</td><td><strong>RBAC granulaire</strong> par application : <code>view &lt; operate &lt; edit &lt; manage &lt; owner</code></td></tr>
+        <tr><td>« On n'aura pas confiance dans la map au début »</td><td><strong>Advisory mode</strong> : agents en observation seule, zéro exécution</td></tr>
+        <tr><td>« On ne saura pas qui a fait quoi »</td><td><strong>Audit log append-only</strong> conforme DORA</td></tr>
+        <tr><td>« On veut simuler avant »</td><td><strong>Dry-run</strong> : plan d'exécution calculé sans exécution</td></tr>
+        <tr><td>« Trafic en clair entre composants »</td><td><strong>mTLS partout</strong> (agent ↔ gateway ↔ backend)</td></tr>
+        <tr><td>« Une action doit être validée »</td><td><strong>Mode PR-only</strong> : start/stop nécessitent une PR mergée</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 7 -->
+  <section id="s7">
+    <div class="eyebrow">Section 7</div>
+    <h2>Adoption graduelle — à la main des prods</h2>
+    <p>Chaque application progresse à son rythme, niveau par niveau. AppControl ne <strong>force</strong> rien.</p>
+    <ol class="steps">
+      <li><strong>Niveau 0 — Captation seule</strong> (lecture des référentiels) · 0 risque</li>
+      <li><strong>Niveau 1 — Advisory</strong> : observation, pas d'exécution · 0 risque</li>
+      <li><strong>Niveau 2 — Diagnostic actif</strong> (<code>check_cmd</code>) — pas de start/stop · lecture process</li>
+      <li><strong>Niveau 3 — Opérations sous PR mergée</strong> (start/stop IaC-style)</li>
+      <li><strong>Niveau 4 — Opérations directes</strong> pour les rôles habilités</li>
+    </ol>
+    <div class="pull">
+      La captation et l'advisory démarrent <strong>immédiatement</strong>, sans demander la confiance des prods.
+      La confiance se construit ensuite, par paliers.
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section id="s8">
+    <div class="eyebrow">Section 8</div>
+    <h2>Outil transverse vs. refonte des référentiels</h2>
+    <p>L'alternative « refonder la CMDB et le référentiel de flux » est légitime mais <strong>ne répond pas au même problème</strong>.</p>
+    <table>
+      <thead><tr><th>Axe</th><th>Refonte des référentiels</th><th>AppControl (transverse)</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Time-to-value</strong></td><td>3 à 5 ans, fort risque d'échec</td><td>Semaines par application</td></tr>
+        <tr><td><strong>Nature de la donnée</strong></td><td>Reste <strong>déclarative</strong> (saisie humaine)</td><td><strong>Observée</strong> (agents temps réel + réconciliation)</td></tr>
+        <tr><td><strong>Problème résolu</strong></td><td>Qualité par silo</td><td><strong>Réconciliation entre silos</strong> + opération</td></tr>
+        <tr><td><strong>Coût</strong></td><td>Pur — un référentiel est un passif</td><td>Paie aussi rebuild, DR, audit</td></tr>
+        <tr><td><strong>Permet le rebuild ?</strong></td><td>Non — un référentiel ne reconstruit pas</td><td>Oui — c'est sa fonction</td></tr>
+        <tr><td><strong>Effet sur l'existant</strong></td><td>Remplace (politique)</td><td><strong>Enrichit en retour</strong> la CMDB</td></tr>
+        <tr><td><strong>Réversibilité</strong></td><td>Faible</td><td>Forte (advisory → opérationnel progressif)</td></tr>
+      </tbody>
+    </table>
+    <div class="pull">
+      Même une CMDB parfaite ne redémarre pas une application. Le vrai problème
+      n'est pas la qualité de chaque référentiel — c'est leur absence de
+      <strong>réconciliation et d'exploitation opérationnelle</strong>.
+    </div>
+  </section>
+
+  <!-- 9 -->
+  <section id="s9">
+    <div class="eyebrow">Section 9</div>
+    <h2>Les deux démarches sont complémentaires</h2>
+    <div class="grid-2">
+      <div class="card">
+        <h4>AppControl tire profit</h4>
+        d'une CMDB de qualité — meilleures sources, meilleure carte initiale.
+      </div>
+      <div class="card">
+        <h4>La CMDB s'enrichit</h4>
+        de ce qu'AppControl observe — topologie réelle, dépendances révélées en production.
+      </div>
+    </div>
+    <h3>Différence de timing</h3>
+    <div class="grid-2">
+      <div class="card warn">
+        <h4>Refonte référentiels</h4>
+        Bénéfice dans <strong>3 à 5 ans</strong> — si le projet aboutit.
+      </div>
+      <div class="card ok">
+        <h4>AppControl</h4>
+        Bénéfice <strong>dès le 1er jour</strong> (captation), opérationnel complet en quelques mois.
+      </div>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section id="s10">
+    <div class="eyebrow">Section 10</div>
+    <h2>Bénéfices par audience</h2>
+    <div class="grid-3">
+      <div class="card">
+        <h4>Production / SRE</h4>
+        <ul>
+          <li>Start / stop séquencés automatiquement</li>
+          <li>Restart ciblé sur branche en erreur (pink branch)</li>
+          <li>Bascule DR orchestrée en 6 phases</li>
+          <li>Diagnostic 3 niveaux</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>Équipes applicatives</h4>
+        <ul>
+          <li>Map vivante (agents temps réel)</li>
+          <li>Onboarding accéléré : la map est la doc</li>
+          <li>Intégration Control-M, AutoSys, $U, TWS sans rupture</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>Direction / Gouvernance</h4>
+        <ul>
+          <li>Conformité DORA — audit append-only</li>
+          <li>MTTR réduit (pas de cascade)</li>
+          <li>DR mesurable et prouvable</li>
+          <li>Dette opérationnelle réduite</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11 -->
+  <section id="s11">
+    <div class="eyebrow">Section 11</div>
+    <h2>Pourquoi une solution <em>transverse</em></h2>
+    <ol class="steps">
+      <li><strong>Effet réseau</strong> — chaque application embarquée enrichit les dépendances vues depuis les autres. La 10ᵉ app coûte moins que la 1ʳᵉ.</li>
+      <li><strong>Donnée recyclée</strong> — AppControl enrichit la CMDB en retour. On casse le cercle vicieux « CMDB jamais à jour ».</li>
+      <li><strong>Un seul point d'intégration</strong> pour schedulers, releases, monitoring — au lieu d'intégrer chacun avec chaque application.</li>
+      <li><strong>Convergence des silos</strong> — CMDB, supervision, schedulers, runbooks parlent enfin le même langage : la map.</li>
+      <li><strong>ROI croissant</strong> — plus on capte, plus précise est la base ; plus elle est précise, plus rapide la captation suivante.</li>
+    </ol>
+  </section>
+
+  <!-- 12 -->
+  <section id="s12">
+    <div class="eyebrow">Section 12</div>
+    <h2>Message clé pour la direction</h2>
+    <div class="pull">
+      <strong>Le rebuild n'est pas une option, c'est une obligation DORA.</strong><br/>
+      Et le rebuild exige un outil qui sait <em>exécuter</em>, pas seulement <em>décrire</em>.
+    </div>
+    <p>AppControl :</p>
+    <ul>
+      <li><strong>Capte</strong> la connaissance là où elle existe (CMDB, XLR/XLD, flux, incidents, schémas)</li>
+      <li><strong>Réconcilie</strong> ces sources en une carte vivante et versionnée</li>
+      <li><strong>Rend opérable</strong> cette carte (rebuild, DR, démarrage séquencé, audit DORA)</li>
+    </ul>
+    <p>La peur des prods est levée par des garde-fous natifs (RBAC, advisory, dry-run, PR-mode, audit append-only) et une <strong>adoption graduelle à la carte</strong>.</p>
+    <p>Une refonte des référentiels et AppControl ne sont pas concurrents — AppControl rend la donnée existante <strong>utile dès aujourd'hui</strong>, et <strong>améliore</strong> les référentiels en retour.</p>
+  </section>
+
+  <!-- 13 -->
+  <section id="s13">
+    <div class="eyebrow">Section 13</div>
+    <h2>Prochaines étapes proposées</h2>
+    <ol class="steps">
+      <li><strong>Sélection d'une application pilote</strong> — idéalement avec un rebuild récent ou un DR planifié</li>
+      <li><strong>Phase 1 : captation</strong> depuis CMDB, XLR/XLD, référentiel de flux → premier JSON de map</li>
+      <li><strong>Validation de la map</strong> avec l'équipe applicative et la prod (mode advisory)</li>
+      <li><strong>Exercice de rebuild à blanc</strong> sur environnement non-prod</li>
+      <li><strong>Bilan + plan d'embarquement</strong> des applications critiques (top 20 DORA)</li>
+    </ol>
+    <div class="pull">
+      Objectif : démontrer la valeur sur <strong>1 application en 3 mois</strong>,
+      embarquer <strong>20 applications critiques en 12 mois</strong>.
+    </div>
+  </section>
+
+  <!-- ANNEX DIVIDER -->
+  <div class="annex-divider" id="annex">
+    <div class="eyebrow">Annexe</div>
+    <h2>DORA en détail</h2>
+  </div>
+
+  <!-- A1 -->
+  <section id="a1">
+    <div class="eyebrow">A1</div>
+    <h2>Qu'est-ce que DORA ?</h2>
+    <p><strong>Digital Operational Resilience Act</strong> — règlement européen <strong>2022/2554</strong>, applicable depuis le <strong>17 janvier 2025</strong>.</p>
+    <p><strong>Cible</strong> : toutes les entités financières (banques, assurances, gestionnaires d'actifs, infrastructures de marché) et leurs prestataires ICT critiques. <strong>BPCE est dans le périmètre.</strong></p>
+    <p><strong>Objectif</strong> : garantir la résilience opérationnelle numérique — capacité à <em>fonctionner</em>, <em>résister</em> et <em>récupérer</em> face à des incidents ICT majeurs, y compris cyber.</p>
+    <p>DORA harmonise au niveau européen ce que chaque régulateur national imposait de façon hétérogène (ACPR, BaFin, etc.).</p>
+  </section>
+
+  <!-- A2 -->
+  <section id="a2">
+    <div class="eyebrow">A2</div>
+    <h2>Les 5 piliers de DORA</h2>
+    <table>
+      <thead><tr><th>Pilier</th><th>Articles</th><th>Sujet</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Gestion du risque ICT</strong></td><td>5–16</td><td>Gouvernance, identification, protection, détection, réponse, récupération</td></tr>
+        <tr><td><strong>Reporting d'incidents</strong></td><td>17–23</td><td>Classification, déclaration des incidents majeurs aux autorités</td></tr>
+        <tr><td><strong>Tests de résilience</strong></td><td>24–27</td><td>Tests obligatoires des plans de continuité ; <strong>TLPT</strong> tous les 3 ans pour entités significatives</td></tr>
+        <tr><td><strong>Risque tiers ICT</strong></td><td>28–44</td><td>Registre des contrats, supervision des prestataires critiques</td></tr>
+        <tr><td><strong>Partage d'information</strong></td><td>45</td><td>Échange volontaire sur les menaces cyber</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- A3 -->
+  <section id="a3">
+    <div class="eyebrow">A3</div>
+    <h2>Article 8 — Identification</h2>
+    <div class="verbatim">Les entités financières identifient et cartographient toutes les fonctions métier supportées par des ICT, les actifs ICT supportant ces fonctions, et leurs interdépendances, à un niveau de granularité approprié.</div>
+    <h3>Implication concrète</h3>
+    <ul>
+      <li>Inventaire à jour des composants ICT</li>
+      <li>Mapping fonction métier ↔ composants techniques</li>
+      <li>Dépendances entre composants (qui appelle qui, qui a besoin de qui)</li>
+      <li>Granularité suffisante pour piloter une reprise</li>
+    </ul>
+    <div class="pull">C'est exactement la <strong>Phase 1 d'AppControl</strong> : captation + réconciliation CMDB / XLR / XLD / référentiels de flux / incidents / schémas.</div>
+  </section>
+
+  <!-- A4 -->
+  <section id="a4">
+    <div class="eyebrow">A4</div>
+    <h2>Article 11 — Politique de continuité d'activité ICT</h2>
+    <div class="verbatim">Doit inclure des stratégies de réponse et de récupération, testées au moins annuellement, couvrant tous les scénarios de disruption significative.</div>
+    <h3>Implication concrète</h3>
+    <ul>
+      <li>Un plan écrit ne suffit pas — il doit être <strong>testé</strong></li>
+      <li>Fréquence minimale : <strong>annuelle</strong></li>
+      <li>Couverture : <strong>tous les scénarios</strong> de disruption significative</li>
+    </ul>
+    <div class="pull">AppControl : drill de rebuild + DR switchover répétables sur environnement non-prod, chronométrés.</div>
+  </section>
+
+  <!-- A5 -->
+  <section id="a5">
+    <div class="eyebrow">A5</div>
+    <h2>Article 12 — Sauvegarde, restauration, récupération</h2>
+    <div class="verbatim">Doivent permettre de récupérer les systèmes ICT avec un impact minimal, et inclure des procédures de reconstruction des systèmes après corruption ou cyberattaque.</div>
+    <h3>Implication concrète</h3>
+    <ul>
+      <li>Le mot <strong>« reconstruction »</strong> est explicite dans le texte</li>
+      <li>Capacité à reconstruire <strong>après corruption majeure</strong> (ransomware, attaque destructive)</li>
+      <li>Impact minimal = procédures automatisables et mesurables</li>
+    </ul>
+    <div class="pull">AppControl : moteur de rebuild dans <code>core/rebuild.rs</code> — DAG order, bastion agent pour l'infra, site overrides, protection des composants critiques, suivi de complétion, vérification post-rebuild, SUSPEND sur échec.</div>
+  </section>
+
+  <!-- A6 -->
+  <section id="a6">
+    <div class="eyebrow">A6</div>
+    <h2>Article 16 — Apprentissage et évolution</h2>
+    <div class="verbatim">Les entités tiennent des registres des incidents ICT, dont les actions menées pour la récupération.</div>
+    <h3>Implication concrète</h3>
+    <ul>
+      <li>Trace de chaque action de récupération</li>
+      <li>Qui, quoi, quand, sur quel composant, avec quel résultat</li>
+      <li>Conservation auditable</li>
+    </ul>
+    <h3>AppControl — audit log append-only</h3>
+    <div class="grid-2">
+      <div class="card"><h4>action_log</h4>Toutes les actions utilisateur, avant exécution.</div>
+      <div class="card"><h4>state_transitions</h4>Chaque changement d'état de composant.</div>
+      <div class="card"><h4>switchover_log</h4>Chaque bascule DR.</div>
+      <div class="card"><h4>check_events</h4>Chaque diagnostic.</div>
+    </div>
+    <div class="pull">Ces tables sont <strong>append-only par règle critique</strong> du projet — aucun UPDATE, aucun DELETE, jamais.</div>
+  </section>
+
+  <!-- A7 -->
+  <section id="a7">
+    <div class="eyebrow">A7</div>
+    <h2>Article 25 — Tests des outils et systèmes ICT</h2>
+    <div class="verbatim">Programmes de tests incluant des scénarios de cyber-incidents et de reprise après corruption majeure.</div>
+    <h3>Implication concrète</h3>
+    <ul>
+      <li>Tests <strong>réalistes</strong> (pas seulement théoriques)</li>
+      <li>Scénarios <strong>cyber</strong> explicitement requis</li>
+      <li>Reprise après corruption <strong>majeure</strong></li>
+    </ul>
+    <div class="pull">AppControl : drill de rebuild complet sur site non-prod, mesure du RTR (Recovery Time for Rebuild), comparaison entre drills successifs pour identifier régressions ou améliorations.</div>
+  </section>
+
+  <!-- A8 -->
+  <section id="a8">
+    <div class="eyebrow">A8</div>
+    <h2>Synthèse — exigence DORA vs. mécanisme AppControl</h2>
+    <table>
+      <thead><tr><th>Exigence DORA</th><th>Art.</th><th>Mécanisme technique</th></tr></thead>
+      <tbody>
+        <tr><td>Cartographier interdépendances ICT</td><td>8</td><td>Map JSON versionnée, Phase 1</td></tr>
+        <tr><td>Procédures de reconstruction</td><td>12</td><td><code>core/rebuild.rs</code></td></tr>
+        <tr><td>Tests annuels des plans</td><td>11</td><td><code>dry_run: true</code> + site staging</td></tr>
+        <tr><td>Scénarios cyber et corruption</td><td>25</td><td>DAG order + protection + bastion</td></tr>
+        <tr><td>Registre des actions de récupération</td><td>16</td><td><code>action_log</code>, <code>state_transitions</code>, <code>switchover_log</code></td></tr>
+        <tr><td>Mesure du RTO/RPO réel</td><td>11-12</td><td>RTR mesuré dans <code>action_log</code></td></tr>
+        <tr><td>Granularité suffisante</td><td>8</td><td>DAG + FSM par composant</td></tr>
+        <tr><td>Protection composants critiques</td><td>12</td><td>Flag <code>rebuild_protected</code></td></tr>
+        <tr><td>Suivi de complétion</td><td>12, 25</td><td><code>command_executions</code> + <code>check_cmd</code> + <code>integrity_check_cmd</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- A9 -->
+  <section id="a9">
+    <div class="eyebrow">A9</div>
+    <h2>Ce que DORA ne dit PAS — et ce que la direction doit comprendre</h2>
+    <div class="grid-2">
+      <div class="card danger">
+        <h4>DORA ne dit pas</h4>
+        <ul>
+          <li>« Vous devez utiliser tel outil »</li>
+          <li>« Vous devez avoir telle architecture »</li>
+          <li>« Le RTO doit être de X heures »</li>
+        </ul>
+      </div>
+      <div class="card ok">
+        <h4>DORA dit</h4>
+        <ul>
+          <li>« Vous devez <strong>prouver</strong> que vous savez reconstruire »</li>
+          <li>« Vous devez <strong>tester régulièrement</strong> »</li>
+          <li>« Vous devez <strong>documenter et tracer</strong> chaque action »</li>
+          <li>« Vous devez <strong>mesurer</strong> votre temps de reprise réel »</li>
+        </ul>
+      </div>
+    </div>
+    <div class="pull warn">
+      Sans outil qui exécute la reconstruction, on ne peut ni la <strong>tester</strong>
+      régulièrement, ni la <strong>chronométrer</strong>, ni la <strong>prouver</strong>.
+      Le rebuild reste théorique — et donc non conforme.
+    </div>
+  </section>
+
+  <!-- A10 -->
+  <section id="a10">
+    <div class="eyebrow">A10</div>
+    <h2>Sanctions et calendrier</h2>
+    <div class="grid-2">
+      <div class="card"><h4>Application</h4>17 janvier 2025 (déjà en vigueur).</div>
+      <div class="card"><h4>Supervision</h4>ACPR pour la France, complétée par EBA / EIOPA / ESMA au niveau européen.</div>
+      <div class="card danger"><h4>Amendes entité</h4>Jusqu'à <strong>2 % du chiffre d'affaires annuel mondial</strong>.</div>
+      <div class="card danger"><h4>Sanctions personnelles</h4>Jusqu'à <strong>1 M€</strong> pour les dirigeants.</div>
+    </div>
+    <p>Les régulateurs peuvent demander à tout moment la preuve des tests, des registres d'incidents et de la cartographie ICT.</p>
+    <div class="pull warn">
+      L'enjeu n'est pas seulement technique. L'<strong>absence de capacité de rebuild prouvable</strong>
+      est un risque financier et personnel direct pour l'entreprise et ses dirigeants.
+    </div>
+  </section>
+
+  <footer>
+    <span>AppControl — Document de stratégie interne</span>
+    <span>Imprimable en PDF · Ctrl/⌘ + P</span>
+  </footer>
+
+</div>
+</body>
+</html>
