@@ -655,10 +655,9 @@ async fn test_get_component_returns_native_columns() {
     .unwrap();
 
     let repo = create_component_repository(pool.clone());
-    let fetched = repo
-        .get_component(comp_id, org_id)
-        .await
-        .expect("get_component must not 500 — SELECT must include check_native/start_native/stop_native");
+    let fetched = repo.get_component(comp_id, org_id).await.expect(
+        "get_component must not 500 — SELECT must include check_native/start_native/stop_native",
+    );
     let fetched = fetched.expect("component should be found");
     assert!(
         fetched.check_native.is_some(),
