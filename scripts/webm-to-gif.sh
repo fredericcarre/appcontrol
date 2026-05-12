@@ -19,6 +19,14 @@ VIDEO_DIR="${VIDEO_DIR:-$ROOT/frontend/e2e-screenshots/gif-videos}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT/docs/screenshots}"
 FPS="${FPS:-15}"
 WIDTH="${WIDTH:-1024}"
+# Playwright starts recording the moment the browser context is
+# created, so every video opens with 2-3 seconds of "about:blank"
+# while realLogin() / openFirstAppMap() set up cookies and navigate.
+# GitHub renders the first frame of a GIF as the preview thumbnail,
+# so a blank first frame meant the README showed empty rectangles
+# until the reader clicked play. Skipping the dead lead lets the
+# GIF (and its thumbnail) open on rendered content.
+TRIM_START="${TRIM_START:-3}"
 
 log() { echo "[webm-to-gif] $*"; }
 fail() { echo "[webm-to-gif] ERROR: $*" >&2; exit 1; }
@@ -49,11 +57,11 @@ for video in "${videos[@]}"; do
   palette=$(mktemp --suffix=.png)
   log "→ $name.webm → $name.gif"
 
-  ffmpeg -hide_banner -loglevel error -y -i "$video" \
+  ffmpeg -hide_banner -loglevel error -y -ss "$TRIM_START" -i "$video" \
     -vf "fps=$FPS,scale=$WIDTH:-1:flags=lanczos,palettegen=max_colors=256" \
     "$palette"
 
-  ffmpeg -hide_banner -loglevel error -y -i "$video" -i "$palette" \
+  ffmpeg -hide_banner -loglevel error -y -ss "$TRIM_START" -i "$video" -i "$palette" \
     -filter_complex "fps=$FPS,scale=$WIDTH:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5" \
     -loop 0 \
     "$gif"
