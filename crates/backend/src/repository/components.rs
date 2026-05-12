@@ -508,7 +508,8 @@ impl ComponentRepository for PgComponentRepository {
             "SELECT c.id, c.application_id, c.name, c.component_type, c.display_name, c.description, c.icon, c.group_id, \
                 c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd, \
                 c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds, c.is_optional, \
-                c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.cluster_mode, c.cluster_health_policy, c.cluster_min_healthy_pct, c.referenced_app_id, c.manual_description, c.created_at, c.updated_at \
+                c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.cluster_mode, c.cluster_health_policy, c.cluster_min_healthy_pct, c.referenced_app_id, c.manual_description, \
+                c.check_native, c.start_native, c.stop_native, c.created_at, c.updated_at \
                 FROM components c JOIN applications a ON c.application_id = a.id \
                 WHERE c.id = $1 AND a.organization_id = $2"
         )
@@ -1191,7 +1192,8 @@ impl ComponentRepository for SqliteComponentRepository {
             "SELECT c.id, c.application_id, c.name, c.component_type, c.display_name, c.description, c.icon, c.group_id, \
                 c.host, c.agent_id, c.check_cmd, c.start_cmd, c.stop_cmd, \
                 c.check_interval_seconds, c.start_timeout_seconds, c.stop_timeout_seconds, c.is_optional, \
-                c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.cluster_mode, c.cluster_health_policy, c.cluster_min_healthy_pct, c.referenced_app_id, c.manual_description, c.created_at, c.updated_at \
+                c.position_x, c.position_y, c.cluster_size, c.cluster_nodes, c.cluster_mode, c.cluster_health_policy, c.cluster_min_healthy_pct, c.referenced_app_id, c.manual_description, \
+                c.check_native, c.start_native, c.stop_native, c.created_at, c.updated_at \
                 FROM components c JOIN applications a ON c.application_id = a.id \
                 WHERE c.id = $1 AND a.organization_id = $2"
         )
