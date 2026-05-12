@@ -616,8 +616,19 @@ jobs:
           # Clean existing content (except .git)
           find . -maxdepth 1 ! -name '.git' ! -name '.' -exec rm -rf {} +
 
-          # Copy corp README (pre-written with correct branding)
-          cp ../corp/README.md .
+          # Generate corp README files from the dev READMEs.
+          # README.md (dev) and README.en.md (dev) are the single source
+          # of truth for the sales narrative. They mark the boundary
+          # with <!-- RELEASE-CUT -->. We take everything before the
+          # marker (shared narrative) and append the release-only tail
+          # from corp/release-suffix.{fr,en}.md (binary install,
+          # documentation links, contact, XComponent license). Branding
+          # substitutions further down replace the dev repo slugs with
+          # the corp ones.
+          sed '/<!-- RELEASE-CUT -->/,$d' ../README.md > README.md
+          cat ../corp/release-suffix.fr.md >> README.md
+          sed '/<!-- RELEASE-CUT -->/,$d' ../README.en.md > README.en.md
+          cat ../corp/release-suffix.en.md >> README.en.md
 
           # Copy docs
           mkdir -p docs
@@ -629,12 +640,6 @@ jobs:
           # placeholders.
           mkdir -p docs/screenshots
           cp ../docs/screenshots/*.png ../docs/screenshots/*.gif docs/screenshots/ 2>/dev/null || true
-
-          # Carry the EN summary alongside the FR README. The corp
-          # README.md sits at the repo root (already copied above);
-          # README.en.md lives beside it for the GitHub-discovery
-          # audience that lands without the FR sales narrative context.
-          cp ../corp/README.en.md . 2>/dev/null || true
 
           # Copy scripts
           mkdir -p scripts
@@ -669,13 +674,14 @@ jobs:
           LICENSE_EOF
           sed -i 's/^          //' LICENSE
 
-          # ---- Substitutions (all files except README which is already correct) ----
+          # ---- Substitutions ----
+          # README.md and README.en.md are now derived from the dev READMEs
+          # (single source of truth for the sales narrative), so they
+          # carry dev-repo URLs that must be rewritten — no exclusion.
           find . -path ./.git -prune -o -type f \( -name '*.md' -o -name '*.ps1' -o -name '*.sh' -o -name '*.json' -o -name '*.yaml' \) -print \
-            | grep -v README.md \
             | xargs sed -i 's|fredericcarre/appcontrol|xcomponent/appcontrol-release|g' 2>/dev/null || true
 
           find . -path ./.git -prune -o -type f \( -name '*.md' -o -name '*.ps1' -o -name '*.sh' -o -name '*.json' -o -name '*.yaml' \) -print \
-            | grep -v README.md \
             | xargs sed -i 's|ghcr\.io/fredericcarre|ghcr.io/xcomponent|g' 2>/dev/null || true
 
           # Commit and push

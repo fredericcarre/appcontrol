@@ -33,16 +33,6 @@ See the [French README](README.md#dora--pas-du-confort-une-obligation) for the f
 
 A platform that *can* stop production *can* break it. AppControl answers by construction, not by procedure: granular 5-level RBAC per application, advisory mode (observe without executing), dry-run on every action, optional PR-only mode (start/stop via merged pull request), mTLS everywhere, append-only audit (no UPDATE, no DELETE, ever). Each application picks its autonomy level (observation → diagnostics → operations → drill → DR) and can step back at any time.
 
-## Quickstart
-
-```bash
-git clone https://github.com/fredericcarre/appcontrol.git && cd appcontrol
-docker compose -f docker/docker-compose.release.yaml up -d
-open http://localhost:8080
-```
-
-Login: `admin@localhost`, empty password.
-
 ## Three engagement modes
 
 Same product, three angles:
@@ -56,6 +46,26 @@ Same product, three angles:
 Rust 1.88+ (agent, gateway, backend) · PostgreSQL 16 or SQLite · React 18 / TypeScript / Vite · mTLS everywhere · Docker + Helm + OpenShift compatible · on-prem, private cloud or full air-gap.
 
 See [QUICKSTART](docs/QUICKSTART.md), [Architecture](docs/architecture.md), [Security](SECURITY_ARCHITECTURE.md), [Positioning](docs/POSITIONING.md).
+
+<!-- RELEASE-CUT -->
+<!--
+Everything above this marker is shared narrative — copied verbatim
+into the corp release README (xcomponent/appcontrol-release).
+Everything BELOW is dev-context-specific (git clone install, dev
+license) and is replaced at release time by corp/release-suffix.en.md
+via .github/workflows/release.yaml.
+Keep the marker on its own line; do not delete it.
+-->
+
+## Quickstart
+
+```bash
+git clone https://github.com/fredericcarre/appcontrol.git && cd appcontrol
+docker compose -f docker/docker-compose.release.yaml up -d
+open http://localhost:8080
+```
+
+Login: `admin@localhost`, empty password.
 
 ## License
 

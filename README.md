@@ -176,6 +176,16 @@ Chaque application choisit son **niveau d'autonomie** — observation → diagno
 
 ---
 
+<!-- RELEASE-CUT -->
+<!--
+Everything above this marker is shared narrative — copied verbatim
+into the corp release README (xcomponent/appcontrol-release).
+Everything BELOW is dev-context-specific (git clone install, tech
+dossier, dev license) and is replaced at release time by
+corp/release-suffix.fr.md via .github/workflows/release.yaml.
+Keep the marker on its own line; do not delete it.
+-->
+
 ## Démarrer
 
 Pas de formulaire. Pas de POC bricolé. Le bon premier pas, c'est un **engagement cadré** sur un périmètre nommé : une application critique, ou un projet de reconstruction en cours.
