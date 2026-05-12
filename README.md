@@ -1,5 +1,7 @@
 # AppControl
 
+*Read this in [English](README.en.md) — shorter, technical-first summary.*
+
 AppControl est une **plateforme d'exploitation pour applications critiques** — pour les équipes de production qui font tourner des systèmes où la disponibilité, la traçabilité régulatoire et la maîtrise du redémarrage ne sont pas négociables. Banques, assurances, télécoms, énergie, santé, opérateurs d'importance vitale, intégrateurs et MSP en charge de leurs applications.
 
 Le projet est né d'un constat simple : depuis vingt ans, chaque famille d'outils ops s'est perfectionnée dans son métier — et aucune n'a été conçue pour lire l'application en mouvement. AppControl est **à cheval entre cinq familles d'outils existants** (supervision, CMDB, ordonnanceur, hyperviseur, orchestrateur de conteneurs) sans en remplacer aucune. C'est la couche qui leur manquait.
