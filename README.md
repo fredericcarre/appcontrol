@@ -29,11 +29,6 @@ AppControl répond à ces cinq questions. Il s'intègre avec les outils en place
 
 ---
 
-> *« C'est dangereux. Mais pourquoi pas. »*
-> — Directeur de Production, banque française tier-1
-
----
-
 ## Trois moments, trois clics
 
 ### Dimanche 3h17 — le batch core banking a planté
