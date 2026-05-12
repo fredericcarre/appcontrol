@@ -88,6 +88,38 @@ Aucun de vos outils actuels ne sait faire ça seul. AppControl le fait à leur p
 
 ---
 
+## DORA — pas du confort, une obligation
+
+Règlement européen 2022/2554, applicable depuis le **17 janvier 2025**. Périmètre : entités financières et leurs prestataires ICT critiques.
+
+**Ce que DORA *ne dit pas* :**
+
+- « Vous devez utiliser tel outil »
+- « Vous devez avoir telle architecture »
+- « Votre RTO doit être de X heures »
+
+**Ce que DORA *dit* :**
+
+- *« Vous devez **prouver** que vous savez reconstruire. »*
+- *« Vous devez **tester régulièrement**. »*
+- *« Vous devez **documenter et tracer** chaque action. »*
+- *« Vous devez **mesurer** votre temps de reprise réel. »*
+
+| Exigence DORA | Article | Réponse AppControl |
+|---|:---:|---|
+| Cartographier fonctions métier, actifs ICT, interdépendances | 8 | Map JSON versionnée, captation depuis CMDB / XLR / XLD / référentiels de flux |
+| Procédures de reconstruction après corruption ou cyberattaque | 12 | Moteur de rebuild : DAG order, protection des composants critiques, vérification post-rebuild |
+| Tests des plans de continuité, au moins annuels | 11 | Dry-run + drill staging chronométrés, comparables d'une exécution à l'autre |
+| Scénarios cyber et reprise après corruption | 25 | Drills répétés, RTR mesuré, régressions détectables |
+| Registre des incidents et actions de récupération | 16 | Audit append-only (`action_log`, `state_transitions`, `switchover_log`, `check_events`) — aucun UPDATE, aucun DELETE, jamais |
+| Mesure du RTO / RPO réel | 11–12 | RTR mesuré et tracé par exécution |
+
+**Sanctions encourues :** jusqu'à **2 % du chiffre d'affaires annuel mondial** pour l'entreprise · jusqu'à **1 M€** pour les dirigeants, à titre personnel.
+
+> Sans outil qui exécute la reconstruction, on ne peut ni la tester régulièrement, ni la chronométrer, ni la prouver. Le rebuild reste théorique — et donc non conforme.
+
+---
+
 ## L'angle mort de votre stack
 
 Chaque outil de votre chaîne ops a été conçu pour répondre à une question précise — et bien faire son métier signifie ne pas déborder. C'est ce qui les rend bons individuellement, et c'est aussi ce qui crée le trou de couverture qu'AppControl comble.
@@ -122,6 +154,23 @@ Vous avez besoin de produire **une traçabilité régulatoire complète** sur vo
 Vos opérateurs d'astreinte n'ont pas l'outil qu'il leur faut à 3 h du matin. AppControl est conçu pour cette fenêtre : carte applicative immédiate, redémarrage piloté avec ordre de DAG correct, audit automatique. Une seule console à ouvrir.
 
 *Cible typique : intégrateurs, MSP, équipes SRE/ops d'organisations à criticité continue.*
+
+---
+
+## Garde-fous par conception
+
+L'objection est légitime : un outil qui *peut* arrêter de la production peut aussi la casser. AppControl répond par construction, pas par procédure :
+
+| Objection courante | Réponse intégrée |
+|---|---|
+| « Quelqu'un va arrêter de la prod par erreur » | RBAC granulaire à 5 niveaux par application (`view < operate < edit < manage < owner`). Aucun "admin global" implicite. |
+| « On n'aura pas confiance dans la map au début » | **Mode advisory** : les agents observent sans rien exécuter. Vous voyez ce que la plateforme verrait — sans risque. |
+| « On veut simuler avant d'exécuter » | **Dry-run** sur tout : `appctl start app --dry-run` retourne le plan complet (ordre DAG, commandes, agents cibles) sans rien lancer. |
+| « Une action doit passer par revue » | **Mode PR-only** disponible : start / stop nécessitent une Pull Request mergée. La map et ses commandes sont versionnées comme du code. |
+| « Trafic en clair entre composants » | **mTLS partout**. Pas de plaintext entre backend, gateway et agents. |
+| « On ne saura pas qui a fait quoi » | **Audit append-only** : aucun UPDATE, aucun DELETE, jamais. Conforme Art. 16 DORA. |
+
+Chaque application choisit son **niveau d'autonomie** — observation → diagnostic → opérations courantes → drill → DR — et peut redescendre à tout moment.
 
 ---
 
