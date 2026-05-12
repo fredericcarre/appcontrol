@@ -371,6 +371,19 @@
   }
 
   /* ============ BRANDING ============ */
+  /* Real logo (drop docs/invivoo-logo.svg) */
+  .invivoo-logo {
+    height: 26px;
+    width: auto;
+    display: block;
+  }
+  .topbar .invivoo-logo { height: 28px; }
+  .cover-brand .invivoo-logo {
+    height: 34px;
+    filter: brightness(0) invert(1); /* force white on dark cover */
+  }
+  footer .invivoo-logo { height: 22px; }
+
   /* Top branding bar */
   .topbar {
     display: flex; justify-content: space-between; align-items: center;
@@ -607,12 +620,14 @@
 
   <!-- TOP BRANDING BAR (screen only) -->
   <!--
-    Remplacer le wordmark CSS par le vrai logo SVG/PNG :
-    <img src="invivoo-logo.svg" alt="Invivoo" height="28">
+    Logo : déposer le fichier "invivoo-logo.svg" dans docs/
+    (à côté de strategy.html). Si le fichier est absent,
+    l'image sera cassée mais le wordmark CSS reste lisible
+    en remplaçant l'<img> par : <span class="brand-logo">INVIVOO<span class="dot"></span></span>
   -->
   <div class="topbar">
     <div class="brand">
-      <span class="brand-logo">INVIVOO<span class="dot"></span></span>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
       <span class="brand-tagline">Expertise &amp; conseil IT</span>
     </div>
     <div class="classification">
@@ -624,7 +639,7 @@
   <!-- COVER -->
   <header class="cover">
     <div class="cover-brand">
-      <span class="brand-logo">INVIVOO<span class="dot"></span></span>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
       <span class="cb-right">Document confidentiel</span>
     </div>
     <div class="eyebrow">Note de synthèse stratégique</div>
@@ -1339,7 +1354,7 @@
 
   <footer>
     <div class="foot-brand">
-      <span class="brand-logo">INVIVOO<span class="dot"></span></span>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
       <span class="copyright">© 2026 Invivoo — Tous droits réservés.</span>
     </div>
     <div class="foot-meta">
