@@ -94,13 +94,26 @@ export function LogSourcesPanel({
   // Queries
   const { data: sources = [], isLoading: sourcesLoading } =
     useComponentLogSources(componentId);
+
+  // Derive the *effective* selected source instead of writing back to
+  // state from an effect: when the underlying `sources` list changes
+  // (e.g. the operator just deleted the source they had selected), we
+  // fall back to the synthetic Command Output entry on the next render
+  // — no `setSelectedSource` call inside `useEffect`, no cascading
+  // re-renders. The user's next pick will set state directly.
+  const effectiveSource =
+    selectedSource === COMMAND_OUTPUT_SOURCE ||
+    sources.some((s) => s.id === selectedSource)
+      ? selectedSource
+      : COMMAND_OUTPUT_SOURCE;
+
   const {
     data: logsData,
     isLoading: logsLoading,
     refetch: refetchLogs,
     isFetching,
   } = useComponentLogs(componentId, {
-    source: selectedSource,
+    source: effectiveSource,
     lines: parseInt(lineCount),
     filter: filter || undefined,
     since: timeRange,
@@ -129,23 +142,9 @@ export function LogSourcesPanel({
     [sources],
   );
 
-  // If the previously selected source no longer exists (e.g. it was just
-  // deleted), fall back to COMMAND_OUTPUT_SOURCE. We adjust state during
-  // render rather than in an effect — React documents this pattern for
-  // "deriving state from changing props/state without a re-render round
-  // trip" (see https://react.dev/reference/react/useState — "Storing
-  // information from previous renders"). The condition stops being true
-  // on the next render, so this cannot loop.
-  if (
-    selectedSource !== COMMAND_OUTPUT_SOURCE &&
-    !sources.some((s) => s.id === selectedSource)
-  ) {
-    setSelectedSource(COMMAND_OUTPUT_SOURCE);
-  }
-
   const selectedSourceData = useMemo(
-    () => sources.find((s) => s.id === selectedSource),
-    [selectedSource, sources],
+    () => sources.find((s) => s.id === effectiveSource),
+    [effectiveSource, sources],
   );
 
   const handleDeleteSource = async (source: LogSource) => {
@@ -173,7 +172,7 @@ export function LogSourcesPanel({
       <div className="flex flex-col gap-2 p-2 border-b bg-muted/30">
         {/* Source selector row */}
         <div className="flex items-center gap-2">
-          <Select value={selectedSource} onValueChange={setSelectedSource}>
+          <Select value={effectiveSource} onValueChange={setSelectedSource}>
             <SelectTrigger className="flex-1 h-8 text-xs">
               <SelectValue placeholder="Select source" />
             </SelectTrigger>
@@ -293,7 +292,7 @@ export function LogSourcesPanel({
 
       {/* Log entries */}
       <ScrollArea className="flex-1">
-        {selectedSource === COMMAND_OUTPUT_SOURCE ? (
+        {effectiveSource === COMMAND_OUTPUT_SOURCE ? (
           <CommandOutputView componentId={componentId} filter={filter} />
         ) : logsLoading || sourcesLoading ? (
           <div className="flex items-center justify-center h-32 text-muted-foreground">

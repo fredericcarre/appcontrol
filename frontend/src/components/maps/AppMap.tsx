@@ -77,6 +77,9 @@ interface AppMapProps {
   onForceStopComponent?: (id: string) => void;
   onStartWithDepsComponent?: (id: string) => void;
   onRepairComponent?: (id: string) => void;
+  /** Manual-task validation — fires the inline Validate/Skip/Fail
+   *  buttons on a manual_task node. Hidden when undefined. */
+  onValidateManualTask?: (id: string, status: 'validated' | 'skipped' | 'failed') => void;
   onNavigateToApp?: (appId: string) => void;
   canOperate?: boolean;
   // Edit mode props
@@ -247,6 +250,7 @@ function buildNodes(
   onForceStop?: (id: string) => void,
   onStartWithDeps?: (id: string) => void,
   onRepair?: (id: string) => void,
+  onValidateManualTask?: (id: string, status: 'validated' | 'skipped' | 'failed') => void,
   onNavigateToApp?: (appId: string) => void,
   editable?: boolean,
   branchHighlight?: BranchHighlight | null,
@@ -356,6 +360,7 @@ function buildNodes(
         onForceStop: editable ? undefined : onForceStop,
         onStartWithDeps: editable ? undefined : onStartWithDeps,
         onRepair: editable ? undefined : onRepair,
+        onValidateManualTask: editable ? undefined : onValidateManualTask,
         onNavigateToApp: editable ? undefined : onNavigateToApp,
         editable,
         highlightType,
@@ -480,6 +485,7 @@ function AppMapInner({
   onForceStopComponent,
   onStartWithDepsComponent,
   onRepairComponent,
+  onValidateManualTask,
   onNavigateToApp,
   canOperate,
   editable,
@@ -582,6 +588,7 @@ function AppMapInner({
       onForceStopComponent,
       onStartWithDepsComponent,
       onRepairComponent,
+      onValidateManualTask,
       onNavigateToApp,
       editable,
       branchHighlight,
@@ -595,7 +602,7 @@ function AppMapInner({
       activeGroupFilter,
       mapDisplayOptions,
     ),
-    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteBindingsMap, primarySite, activeGroupFilter, mapDisplayOptions],
+    [components, dependencies, groups, onStartComponent, onStopComponent, onRestartComponent, onDiagnoseComponent, onForceStopComponent, onStartWithDepsComponent, onRepairComponent, onValidateManualTask, onNavigateToApp, editable, branchHighlight, impactPreview, edgeHighlight, infraHighlight, forceAutoLayout, allowDrag, siteBindingsMap, primarySite, activeGroupFilter, mapDisplayOptions],
   );
 
   const initialEdges = useMemo(

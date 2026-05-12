@@ -8,6 +8,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use appcontrol_common::ComponentState;
+
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
 use crate::db::{DbJson, DbUuid};
@@ -768,9 +770,44 @@ pub async fn cancel_operation(
             user_id = %user.user_id,
             "Operation cancellation requested"
         );
+
+        // Roll back every component still in a transitional state so the
+        // UI's "Starting…" / "Stopping…" spinner clears immediately.
+        // Without this the sequencer's wait-loop bails out on the cancel
+        // (good) but the components stay in STARTING forever — the FSM
+        // refuses to flip STARTING → FAILED on a non-zero check, and no
+        // one ever rewrites the cached state. The component then looks
+        // permanently stuck even though the operation is dead.
+        //
+        // STARTING → STOPPED: safe because the next health check
+        //   reveals whether the process actually came up (STOPPED →
+        //   RUNNING is a valid auto-recovery transition for an external
+        //   start). If the start_cmd was bogus, the agent's check stays
+        //   non-zero and the component just stays STOPPED.
+        // STOPPING → RUNNING: same logic in reverse.
+        let in_transition =
+            crate::repository::core_queries::list_app_components_in_transition(&state.db, id)
+                .await
+                .unwrap_or_default();
+        for (comp_id, current) in in_transition {
+            let target = match current.as_str() {
+                "STARTING" => ComponentState::Stopped,
+                "STOPPING" => ComponentState::Running,
+                _ => continue,
+            };
+            let from = match current.as_str() {
+                "STARTING" => ComponentState::Starting,
+                "STOPPING" => ComponentState::Stopping,
+                _ => continue,
+            };
+            if appcontrol_common::fsm::is_valid_transition(from, target) {
+                let _ = crate::core::fsm::transition_component(&state, comp_id, target).await;
+            }
+        }
+
         Ok(Json(json!({
             "status": "cancelling",
-            "message": "Cancellation requested. The operation will stop at the next check point."
+            "message": "Cancellation requested. Components in transition have been rolled back."
         })))
     } else {
         Ok(Json(json!({

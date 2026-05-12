@@ -1,5 +1,8 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import client from '@/api/client';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   useApp,
@@ -48,6 +51,7 @@ import { ComponentPalette } from '@/components/maps/ComponentPalette';
 import { ComponentEditor, ComponentFormData } from '@/components/maps/ComponentEditor';
 import { ImpactPreviewDialog } from '@/components/maps/ImpactPreviewDialog';
 import { SwitchoverPanel } from '@/components/maps/SwitchoverPanel';
+import { DryRunDialog } from '@/components/maps/DryRunDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -63,7 +67,7 @@ import {
   Pencil, Download, Save, ArrowLeft, Play, Square, Loader2,
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   MoreVertical, Trash2, Pause, PlayCircle, Maximize, Minimize,
-  Monitor, History, X, Calendar, SlidersHorizontal, FileText, Clock,
+  Monitor, History, X, Calendar, SlidersHorizontal, FileText, Clock, Eye,
 } from 'lucide-react';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 
@@ -90,6 +94,7 @@ function getWeatherVariant(weather: string) {
 export function MapViewPage() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: app, isLoading } = useApp(appId || '');
   const { data: mapDisplayOptions } = useMapSettings(appId);
   // Subset of pending manual tasks that belong to THIS app — drives the
@@ -175,6 +180,7 @@ export function MapViewPage() {
   const [historyMode, setHistoryMode] = useState(false);
   const [historyTime, setHistoryTime] = useState<Date | null>(null);
   const [historySnapshot, setHistorySnapshot] = useState<TimeSnapshot | null>(null);
+  const [dryRunOpen, setDryRunOpen] = useState(false);
 
   // Fan-out cluster members are shown via the ClusterMembersPanel (table
   // with search, batch start/stop, per-member edit) reachable from the
@@ -580,6 +586,39 @@ export function MapViewPage() {
   const handleNavigateToApp = useCallback((targetAppId: string) => {
     navigate(`/apps/${targetAppId}`);
   }, [navigate]);
+
+  // Manual-task validation — fires the inline buttons on a manual_task
+  // node. The same endpoint backs the dashboard banner and the side-
+  // panel Manual tab; this gives operators a third entry point right
+  // where the checkpoint is in the DAG.
+  const handleValidateManualTask = useCallback(
+    async (componentId: string, status: 'validated' | 'skipped' | 'failed') => {
+      try {
+        await client.post(
+          `/components/${componentId}/manual-task/validate`,
+          { status },
+        );
+        // Bust the app + manual-task caches so the FSM state and the
+        // pending row disappear from the UI on the next tick.
+        queryClient.invalidateQueries({ queryKey: ['apps', appId] });
+        queryClient.invalidateQueries({ queryKey: ['manual-task', componentId] });
+        queryClient.invalidateQueries({ queryKey: ['manual-task', 'pending', 'me'] });
+        toast.success(
+          status === 'validated'
+            ? 'Manual task validated — DAG resumed'
+            : status === 'skipped'
+              ? 'Manual task skipped'
+              : 'Manual task marked as failed',
+        );
+      } catch (e: unknown) {
+        const msg =
+          (e as { response?: { data?: { message?: string } } }).response?.data
+            ?.message ?? 'Failed to validate manual task';
+        toast.error(msg);
+      }
+    },
+    [appId, queryClient],
+  );
 
   // Group management handlers
   const handleCreateGroup = useCallback(async (name: string, color: string, description?: string) => {
@@ -1046,6 +1085,10 @@ export function MapViewPage() {
                     <FileText className="h-4 w-4 mr-2" />
                     Print plan / Save as PDF
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setDryRunOpen(true)}>
+                    <Eye className="h-4 w-4 mr-2" />
+                    Dry run — preview Start/Stop
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={toggleFullscreen}>
                     {isFullscreen ? (
                       <Minimize className="h-4 w-4 mr-2" />
@@ -1145,6 +1188,9 @@ export function MapViewPage() {
             onForceStopComponent={historyMode ? undefined : handleForceStopComponent}
             onStartWithDepsComponent={historyMode ? undefined : handleStartWithDepsPreview}
             onRepairComponent={historyMode ? undefined : handleRestartWithDependentsPreview}
+            onValidateManualTask={
+              historyMode || !canOperate ? undefined : handleValidateManualTask
+            }
             onNavigateToApp={handleNavigateToApp}
             canOperate={canOperate && !historyMode}
             // Edit mode props
@@ -1279,6 +1325,22 @@ export function MapViewPage() {
         variant={confirmDialog.variant}
         onConfirm={confirmDialog.onConfirm}
       />
+      {appId && (
+        <DryRunDialog
+          open={dryRunOpen}
+          onOpenChange={setDryRunOpen}
+          appId={appId}
+          appName={app?.name}
+          // "Run this plan now" buttons in the dialog re-use the
+          // existing Start All / Stop All flows — which already log
+          // the action, check the operation lock and surface the
+          // sequencer progress in the toolbar. The dialog just hands
+          // off; it doesn't duplicate that logic.
+          onConfirmStart={canOperate && !historyMode ? handleStartAll : undefined}
+          onConfirmStop={canOperate && !historyMode ? handleStopAll : undefined}
+          canOperate={canOperate && !historyMode}
+        />
+      )}
     </div>
   );
 }

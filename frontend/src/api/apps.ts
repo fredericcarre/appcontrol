@@ -103,11 +103,8 @@ export interface Component {
   // runs these typed probes instead of the corresponding shell command.
   // Bearer tokens / Authorization / X-API-Key / Cookie come back redacted
   // from the backend (string '***') so the UI never displays a real secret.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   check_native?: NativeCommand | null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   start_native?: NativeCommand | null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   stop_native?: NativeCommand | null;
   created_at: string;
   updated_at: string;
@@ -286,6 +283,52 @@ export function useCancelOperation() {
       return data;
     },
     onSuccess: (_, appId) => qc.invalidateQueries({ queryKey: ['apps', appId] }),
+  });
+}
+
+/** One entry in the plan returned by the start/stop dry-run endpoints. */
+export interface DryRunPlanEntry {
+  component_id: string;
+  name: string;
+}
+
+/** Response shape from POST /apps/:id/{start,stop} when `dry_run: true`. */
+export interface DryRunResponse {
+  dry_run: true;
+  plan: {
+    levels: DryRunPlanEntry[][];
+    total_levels: number;
+  };
+}
+
+/**
+ * Ask the backend to produce a start/stop plan WITHOUT dispatching
+ * anything. Same code path that `execute_start` / `execute_stop`
+ * would walk — DAG topological sort, level-by-level. Used by the map
+ * toolbar's "Dry run" button to show operators exactly what would
+ * happen before they pull the trigger.
+ */
+export function useDryRunStart() {
+  return useMutation({
+    mutationFn: async (appId: string): Promise<DryRunResponse> => {
+      const { data } = await client.post<DryRunResponse>(
+        `/apps/${appId}/start`,
+        { dry_run: true },
+      );
+      return data;
+    },
+  });
+}
+
+export function useDryRunStop() {
+  return useMutation({
+    mutationFn: async (appId: string): Promise<DryRunResponse> => {
+      const { data } = await client.post<DryRunResponse>(
+        `/apps/${appId}/stop`,
+        { dry_run: true },
+      );
+      return data;
+    },
   });
 }
 

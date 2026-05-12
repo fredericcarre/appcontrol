@@ -498,6 +498,366 @@ async fn test_runtime_sql_queries() {
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
+/// Regression: GET /api/v1/components/:id/members 500'd in v1.18.5 on
+/// upgraded installs missing the V055 columns — make sure the repo path
+/// that drives the endpoint works end-to-end on a real SQLite DB.
+#[tokio::test]
+async fn test_cluster_member_list_by_component() {
+    use appcontrol_backend::db::DbUuid;
+    use appcontrol_backend::repository::cluster_members::{
+        create_cluster_member_repository, CreateClusterMember,
+    };
+
+    let tmp_dir = std::env::temp_dir().join(format!("appcontrol_e2e_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let db_url = format!("sqlite:{}", tmp_dir.join("test.db").display());
+    let pool = create_test_pool(&db_url).await;
+    run_sqlite_migrations(&pool).await;
+
+    let org_id = uuid::Uuid::new_v4();
+    let site_id = uuid::Uuid::new_v4();
+    let app_id = uuid::Uuid::new_v4();
+    let comp_id = uuid::Uuid::new_v4();
+    let agent_id = uuid::Uuid::new_v4();
+
+    sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'O', 'o')")
+        .bind(DbUuid::from(org_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')",
+    )
+    .bind(DbUuid::from(site_id))
+    .bind(DbUuid::from(org_id))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO applications (id, organization_id, site_id, name) VALUES ($1, $2, $3, 'A')",
+    )
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(org_id))
+    .bind(DbUuid::from(site_id))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agents (id, organization_id, hostname, is_active) VALUES ($1, $2, 'h', 1)",
+    )
+    .bind(DbUuid::from(agent_id))
+    .bind(DbUuid::from(org_id))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO components (id, application_id, name, component_type, cluster_mode, \
+         check_interval_seconds, start_timeout_seconds, stop_timeout_seconds) \
+         VALUES ($1, $2, 'JBoss', 'appserver', 'fan_out', 30, 60, 30)",
+    )
+    .bind(DbUuid::from(comp_id))
+    .bind(DbUuid::from(app_id))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let repo = create_cluster_member_repository(pool.clone());
+    let _ = repo
+        .create(CreateClusterMember {
+            component_id: comp_id,
+            hostname: "srv-001".to_string(),
+            agent_id,
+            site_id: None,
+            check_cmd_override: None,
+            start_cmd_override: None,
+            stop_cmd_override: None,
+            install_path: None,
+            env_vars_override: None,
+            check_native_override: None,
+            start_native_override: None,
+            stop_native_override: None,
+            member_order: 0,
+            is_enabled: true,
+            tags: serde_json::json!([]),
+        })
+        .await
+        .expect("create member");
+
+    let listed = repo
+        .list_by_component(comp_id)
+        .await
+        .expect("list_by_component must not 500");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].member.hostname, "srv-001");
+
+    drop(pool);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+/// Regression: GET /components/:id/members returned 500 in v1.18.10 with
+/// `Database error: no column found for name: check_native`. Root cause:
+/// the hand-written SELECT in `get_component` omitted the V053 native
+/// columns even though `SqliteComponentRow` requires them. The handler
+/// runs `get_component` *before* `list_by_component`, so the failure
+/// surfaces on the members endpoint even when the cluster_members table
+/// itself is fine.
+#[tokio::test]
+async fn test_get_component_returns_native_columns() {
+    use appcontrol_backend::db::DbUuid;
+    use appcontrol_backend::repository::components::create_component_repository;
+
+    let tmp_dir = std::env::temp_dir().join(format!("appcontrol_e2e_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let db_url = format!("sqlite:{}", tmp_dir.join("test.db").display());
+    let pool = create_test_pool(&db_url).await;
+    run_sqlite_migrations(&pool).await;
+
+    let org_id = uuid::Uuid::new_v4();
+    let site_id = uuid::Uuid::new_v4();
+    let app_id = uuid::Uuid::new_v4();
+    let comp_id = uuid::Uuid::new_v4();
+
+    sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'O', 'o')")
+        .bind(DbUuid::from(org_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')",
+    )
+    .bind(DbUuid::from(site_id))
+    .bind(DbUuid::from(org_id))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO applications (id, organization_id, site_id, name) VALUES ($1, $2, $3, 'A')",
+    )
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(org_id))
+    .bind(DbUuid::from(site_id))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO components (id, application_id, name, component_type, \
+         check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, \
+         check_native, start_native, stop_native) \
+         VALUES ($1, $2, 'JBoss', 'appserver', 30, 60, 30, $3, $4, $5)",
+    )
+    .bind(DbUuid::from(comp_id))
+    .bind(DbUuid::from(app_id))
+    .bind(r#"{"kind":"shell","cmd":"echo check"}"#)
+    .bind(r#"{"kind":"shell","cmd":"echo start"}"#)
+    .bind(r#"{"kind":"shell","cmd":"echo stop"}"#)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let repo = create_component_repository(pool.clone());
+    let fetched = repo.get_component(comp_id, org_id).await.expect(
+        "get_component must not 500 — SELECT must include check_native/start_native/stop_native",
+    );
+    let fetched = fetched.expect("component should be found");
+    assert!(
+        fetched.check_native.is_some(),
+        "check_native should be hydrated"
+    );
+    assert!(
+        fetched.start_native.is_some(),
+        "start_native should be hydrated"
+    );
+    assert!(
+        fetched.stop_native.is_some(),
+        "stop_native should be hydrated"
+    );
+
+    drop(pool);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+/// Regression: a Windows install that upgraded the binary without
+/// refreshing the on-disk `migrations/` folder had `_migrations` listing
+/// V050 as latest but the live binary expects V053 columns. The schema
+/// self-heal at startup detects the gap and adds the missing columns.
+#[tokio::test]
+async fn test_sqlite_schema_self_heal() {
+    use appcontrol_backend::db::DbUuid;
+
+    let tmp_dir = std::env::temp_dir().join(format!("appcontrol_e2e_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let db_url = format!("sqlite:{}", tmp_dir.join("test.db").display());
+    let pool = create_test_pool(&db_url).await;
+    run_sqlite_migrations(&pool).await;
+
+    // Simulate the broken state: drop the V051–V055 columns and table
+    // even though `_migrations` says they were applied.
+    for col in [
+        "check_native",
+        "start_native",
+        "stop_native",
+        "manual_description",
+        "cluster_concurrency_mode",
+        "cluster_batch_size",
+    ] {
+        let _ = sqlx::query(&format!("ALTER TABLE components DROP COLUMN {col}"))
+            .execute(&pool)
+            .await;
+    }
+    for col in [
+        "check_native_override",
+        "start_native_override",
+        "stop_native_override",
+    ] {
+        let _ = sqlx::query(&format!("ALTER TABLE cluster_members DROP COLUMN {col}"))
+            .execute(&pool)
+            .await;
+    }
+    let _ = sqlx::query("DROP TABLE manual_task_validations")
+        .execute(&pool)
+        .await;
+
+    let row: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM pragma_table_info('components') WHERE name='check_native'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        row.is_none(),
+        "precondition: check_native should be missing"
+    );
+
+    appcontrol_backend::sqlite_schema_self_heal_for_test(&pool)
+        .await
+        .expect("self-heal pass 1");
+    appcontrol_backend::sqlite_schema_self_heal_for_test(&pool)
+        .await
+        .expect("self-heal pass 2 must be idempotent");
+
+    for col in [
+        "check_native",
+        "start_native",
+        "stop_native",
+        "manual_description",
+        "cluster_concurrency_mode",
+        "cluster_batch_size",
+    ] {
+        let exists: Option<i64> = sqlx::query_scalar(&format!(
+            "SELECT 1 FROM pragma_table_info('components') WHERE name='{col}'"
+        ))
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert!(exists.is_some(), "self-heal must add components.{col} back");
+    }
+    for col in [
+        "check_native_override",
+        "start_native_override",
+        "stop_native_override",
+    ] {
+        let exists: Option<i64> = sqlx::query_scalar(&format!(
+            "SELECT 1 FROM pragma_table_info('cluster_members') WHERE name='{col}'"
+        ))
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert!(
+            exists.is_some(),
+            "self-heal must add cluster_members.{col} back"
+        );
+    }
+    let mt_exists: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='manual_task_validations'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        mt_exists.is_some(),
+        "self-heal must recreate manual_task_validations"
+    );
+
+    // The original GET /members regression is unblocked after the heal.
+    let org_id = uuid::Uuid::new_v4();
+    let site_id = uuid::Uuid::new_v4();
+    let app_id = uuid::Uuid::new_v4();
+    let comp_id = uuid::Uuid::new_v4();
+    let agent_id = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'O2', 'o2')")
+        .bind(DbUuid::from(org_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'D2', 'D2')")
+        .bind(DbUuid::from(site_id))
+        .bind(DbUuid::from(org_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO applications (id, organization_id, site_id, name) VALUES ($1, $2, $3, 'A2')",
+    )
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(org_id))
+    .bind(DbUuid::from(site_id))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agents (id, organization_id, hostname, is_active) VALUES ($1, $2, 'h2', 1)",
+    )
+    .bind(DbUuid::from(agent_id))
+    .bind(DbUuid::from(org_id))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO components (id, application_id, name, component_type, cluster_mode, \
+         check_interval_seconds, start_timeout_seconds, stop_timeout_seconds) \
+         VALUES ($1, $2, 'C', 'appserver', 'fan_out', 30, 60, 30)",
+    )
+    .bind(DbUuid::from(comp_id))
+    .bind(DbUuid::from(app_id))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let repo = appcontrol_backend::repository::cluster_members::create_cluster_member_repository(
+        pool.clone(),
+    );
+    let _ = repo
+        .create(
+            appcontrol_backend::repository::cluster_members::CreateClusterMember {
+                component_id: comp_id,
+                hostname: "h".to_string(),
+                agent_id,
+                site_id: None,
+                check_cmd_override: None,
+                start_cmd_override: None,
+                stop_cmd_override: None,
+                install_path: None,
+                env_vars_override: None,
+                check_native_override: None,
+                start_native_override: None,
+                stop_native_override: None,
+                member_order: 0,
+                is_enabled: true,
+                tags: serde_json::json!([]),
+            },
+        )
+        .await
+        .expect("create after heal");
+    let listed = repo
+        .list_by_component(comp_id)
+        .await
+        .expect("list_by_component after heal must not 500");
+    assert_eq!(listed.len(), 1);
+
+    drop(pool);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
 /// Test 3: Full backend startup — health, login, authenticated API call.
 #[tokio::test]
 async fn test_sqlite_startup_full() {

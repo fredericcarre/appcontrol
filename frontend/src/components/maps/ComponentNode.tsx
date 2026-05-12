@@ -7,7 +7,7 @@ import {
   Play, Square, RotateCcw, Search, Skull, GitBranch, Wrench,
   Server,
   ExternalLink, ArrowUp, ArrowDown, WifiOff, Unplug, Radio,
-  BarChart3, MapPin, AlertTriangle,
+  BarChart3, MapPin, AlertTriangle, Check,
 } from 'lucide-react';
 import { MetricsDisplay, MetricWidget } from './MetricsDisplay';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -78,6 +78,11 @@ interface ComponentNodeData {
   onDiagnose?: (id: string) => void;
   onForceStop?: (id: string) => void;
   onStartWithDeps?: (id: string) => void;
+  /** Manual-task validation — fired by the inline buttons on a
+   *  manual_task node. The dashboard banner uses the same backend
+   *  endpoint, but operators shouldn't need to leave the map to
+   *  validate. Status is one of validated / skipped / failed. */
+  onValidateManualTask?: (id: string, status: 'validated' | 'skipped' | 'failed') => void;
   onRepair?: (id: string) => void;
   onNavigateToApp?: (appId: string) => void;
   [key: string]: unknown;
@@ -288,7 +293,9 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
           )}
           <div className="flex items-center gap-1">
             {/* Hide connectivity status for application-type components */}
-            {isDisconnected && data.componentType !== 'application' && (
+            {isDisconnected &&
+              data.componentType !== 'application' &&
+              data.componentType !== 'manual_task' && (
               <span
                 className="inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded bg-red-100 text-red-700"
                 title={
@@ -374,35 +381,98 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
                 )}
               </div>
             )}
-            <div className="flex gap-1 mt-1.5 pt-1.5 border-t border-gray-200">
-              <button onClick={handleStart} className="p-1 rounded hover:bg-white/50" title="Start">
-                <Play className="h-3.5 w-3.5 text-green-600" />
-              </button>
-              <button onClick={handleStop} className="p-1 rounded hover:bg-white/50" title="Stop">
-                <Square className="h-3.5 w-3.5 text-red-600" />
-              </button>
-              <button onClick={handleRestart} className="p-1 rounded hover:bg-white/50" title="Restart">
-                <RotateCcw className="h-3.5 w-3.5 text-blue-600" />
-              </button>
-              <button onClick={handleRepair} className="p-1 rounded hover:bg-white/50" title="Repair (restart with dependents)">
-                <Wrench className="h-3.5 w-3.5 text-orange-600" />
-              </button>
-              <button onClick={handleStartWithDeps} className="p-1 rounded hover:bg-white/50" title="Start with dependencies">
-                <GitBranch className="h-3.5 w-3.5 text-teal-600" />
-              </button>
-              <button onClick={handleForceStop} className="p-1 rounded hover:bg-white/50" title="Force Kill (ignore dependencies)">
-                <Skull className="h-3.5 w-3.5 text-red-800" />
-              </button>
-              <button onClick={handleDiagnose} className="p-1 rounded hover:bg-white/50" title="Diagnose">
-                <Search className="h-3.5 w-3.5 text-purple-600" />
-              </button>
-              {/* Navigate to referenced app for application-type components */}
-              {data.componentType === 'application' && data.referencedAppId && (
-                <button onClick={handleNavigateToApp} className="p-1 rounded hover:bg-white/50" title="Open referenced application">
-                  <ExternalLink className="h-3.5 w-3.5 text-blue-600" />
+            {data.componentType === 'manual_task' ? (
+              // Manual-task nodes have no agent — Start/Stop/Force kill make
+              // no sense. The operator's actual action is to Validate the
+              // checkpoint; surface the three buttons directly on the node
+              // so they don't have to discover the side-panel tab. Clicking
+              // any of them dispatches `validate_manual_task` to the
+              // backend, which un-pauses the sequencer (validated/skipped)
+              // or fails the DAG step (failed).
+              <div className="mt-1.5 pt-1.5 border-t border-gray-200 space-y-1">
+                <div className="text-[10px] text-purple-700 flex items-center gap-1">
+                  <Check className="h-3 w-3" /> Manual checkpoint
+                </div>
+                {data.onValidateManualTask ? (
+                  <div className="flex gap-1 nodrag">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        data.onValidateManualTask?.(id, 'validated');
+                      }}
+                      className="flex-1 px-1.5 py-1 rounded text-[10px] font-medium bg-emerald-600 text-white hover:bg-emerald-700"
+                      title="Mark this manual task as successfully completed"
+                    >
+                      <Check className="inline h-3 w-3 mr-0.5" />
+                      Validate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        data.onValidateManualTask?.(id, 'skipped');
+                      }}
+                      className="flex-1 px-1.5 py-1 rounded text-[10px] font-medium border border-amber-500 text-amber-700 bg-white hover:bg-amber-50"
+                      title="Advance without claiming the task succeeded"
+                    >
+                      Skip
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (
+                          window.confirm(
+                            'Mark this manual task as failed? The DAG step will fail.',
+                          )
+                        ) {
+                          data.onValidateManualTask?.(id, 'failed');
+                        }
+                      }}
+                      className="flex-1 px-1.5 py-1 rounded text-[10px] font-medium border border-red-500 text-red-700 bg-white hover:bg-red-50"
+                      title="Mark this manual task as failed — DAG stops here"
+                    >
+                      Fail
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground italic">
+                    No operator permission — read-only.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="flex gap-1 mt-1.5 pt-1.5 border-t border-gray-200">
+                <button onClick={handleStart} className="p-1 rounded hover:bg-white/50" title="Start">
+                  <Play className="h-3.5 w-3.5 text-green-600" />
                 </button>
-              )}
-            </div>
+                <button onClick={handleStop} className="p-1 rounded hover:bg-white/50" title="Stop">
+                  <Square className="h-3.5 w-3.5 text-red-600" />
+                </button>
+                <button onClick={handleRestart} className="p-1 rounded hover:bg-white/50" title="Restart">
+                  <RotateCcw className="h-3.5 w-3.5 text-blue-600" />
+                </button>
+                <button onClick={handleRepair} className="p-1 rounded hover:bg-white/50" title="Repair (restart with dependents)">
+                  <Wrench className="h-3.5 w-3.5 text-orange-600" />
+                </button>
+                <button onClick={handleStartWithDeps} className="p-1 rounded hover:bg-white/50" title="Start with dependencies">
+                  <GitBranch className="h-3.5 w-3.5 text-teal-600" />
+                </button>
+                <button onClick={handleForceStop} className="p-1 rounded hover:bg-white/50" title="Force Kill (ignore dependencies)">
+                  <Skull className="h-3.5 w-3.5 text-red-800" />
+                </button>
+                <button onClick={handleDiagnose} className="p-1 rounded hover:bg-white/50" title="Diagnose">
+                  <Search className="h-3.5 w-3.5 text-purple-600" />
+                </button>
+                {/* Navigate to referenced app for application-type components */}
+                {data.componentType === 'application' && data.referencedAppId && (
+                  <button onClick={handleNavigateToApp} className="p-1 rounded hover:bg-white/50" title="Open referenced application">
+                    <ExternalLink className="h-3.5 w-3.5 text-blue-600" />
+                  </button>
+                )}
+              </div>
+            )}
             {(data.showLinks ?? true) && data.links && data.links.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1.5">
                 {data.links.map((link, i) => (
