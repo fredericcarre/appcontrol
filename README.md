@@ -44,19 +44,19 @@ Vous ouvrez AppControl. La carte de l'application est déjà à l'écran. La bra
 Un clic sur **Restart error branch**. Les composants redémarrent dans le bon ordre, en parallèle quand c'est possible.
 Quatre minutes plus tard, tout est vert. L'audit est chaîné, signé, prêt à exporter.
 
-![incident-recovery](docs/screenshots/incident-recovery.png)
+![incident-recovery](docs/screenshots/incident-recovery.gif)
 
 ### Mardi 14h — exercice de bascule DR Paris → Lyon
 
 Six phases, rollback possible à chaque étape. Vous voyez chaque composant changer de site en temps réel. Le rapport de conformité est prêt avant la fin de la réunion.
 
-![dr-switchover](docs/screenshots/dr-switchover.png)
+![dr-switchover](docs/screenshots/dr-switchover.gif)
 
 ### Vendredi 10h — l'ACPR demande la trace de la dernière bascule
 
 Un clic sur **Export DORA**. Tout est là : signé, daté, immuable, append-only. Qui a fait quoi, quand, et pourquoi.
 
-![audit-export](docs/screenshots/audit-export.png)
+![audit-export](docs/screenshots/audit-export.gif)
 
 ---
 

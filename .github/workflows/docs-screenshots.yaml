@@ -185,6 +185,24 @@ jobs:
         run: npm run screenshots
         continue-on-error: true  # Don't fail the build if some pages have no data
 
+      - name: Capture GIF videos
+        working-directory: frontend
+        run: npm run gifs
+        # The three GIF scenarios script real user interactions (click
+        # FAILED node → Start with deps, open Switchover modal, navigate
+        # to Reports). Like the screenshot step we tolerate partial
+        # failures; the convert step downstream simply produces fewer
+        # GIFs and the README will fall back to whatever PNG is present.
+        continue-on-error: true
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+
+      - name: Convert WebM → GIF
+        run: bash scripts/webm-to-gif.sh
+
       - name: List captured screenshots
         run: ls -la docs/screenshots/ || echo "No screenshots directory"
 
