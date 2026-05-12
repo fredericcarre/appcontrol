@@ -66,6 +66,10 @@
     display: flex; gap: 28px; flex-wrap: wrap;
     font-size: 13px; opacity: .8;
   }
+  /* Fix dark-on-dark: strong/em on cover must stay readable */
+  .cover strong, .cover em {
+    color: #fff;
+  }
 
   /* Executive summary */
   .exec {
@@ -499,10 +503,15 @@
     .tl-badge { left: -36px; }
   }
 
+  /* Print page running header/footer (screen-hidden, repeats on each print page) */
+  .print-header, .print-footer {
+    display: none;
+  }
+
   /* Print */
   @page {
     size: A4;
-    margin: 16mm 14mm 14mm 14mm;
+    margin: 22mm 14mm 20mm 14mm;
   }
   @media print {
     html, body {
@@ -612,10 +621,75 @@
 
     /* Hide topbar on print — branding is on the cover page already */
     .topbar { display: none; }
+
+    /* Running header and footer on every printed page
+       Projected into the @page margin area via negative offsets.
+       Works in Chrome/Edge/Safari; in Firefox may appear only on page 1. */
+    .print-header, .print-footer {
+      display: flex;
+      position: fixed;
+      left: 0; right: 0;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 8.5pt;
+      color: #475569;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      z-index: 1;
+    }
+    .print-header {
+      top: -14mm;
+      height: 8mm;
+      padding-bottom: 3mm;
+      border-bottom: 1px solid var(--line);
+    }
+    .print-footer {
+      bottom: -12mm;
+      height: 7mm;
+      padding-top: 3mm;
+      border-top: 1px solid var(--line);
+    }
+    .print-header .ph-left, .print-footer .pf-left {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .print-header .ph-logo, .print-footer .pf-logo {
+      height: 12pt; width: auto;
+    }
+    .print-header .ph-right, .print-footer .pf-right {
+      color: #64748b;
+      font-size: 8pt;
+      letter-spacing: .04em;
+    }
+    .print-footer .pf-draft {
+      background: var(--danger);
+      color: #fff;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 7.5pt; font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
   }
 </style>
 </head>
 <body>
+<!-- Running header and footer for printed pages (hidden on screen) -->
+<div class="print-header" aria-hidden="true">
+  <div class="ph-left">
+    <img src="invivoo-logo.svg" alt="Invivoo" class="ph-logo" />
+    <span>Confidentiel</span>
+  </div>
+  <div class="ph-right">Répondre avec sérénité aux exigences de DORA — AppControl</div>
+</div>
+<div class="print-footer" aria-hidden="true">
+  <div class="pf-left">
+    <span>© 2026 Invivoo — Tous droits réservés</span>
+  </div>
+  <div class="pf-right">
+    <span class="pf-draft">Draft · v0.9 · Ne pas diffuser</span>
+  </div>
+</div>
+
 <div class="wrap">
 
   <!-- TOP BRANDING BAR (screen only) -->
