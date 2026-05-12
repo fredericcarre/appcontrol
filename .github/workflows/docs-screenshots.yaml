@@ -207,16 +207,35 @@ jobs:
           fi
 
       - name: Commit updated screenshots
+        # A push from a developer to the same branch while screenshots are
+        # being captured (the job takes a few minutes) used to make this
+        # step explode the whole workflow with a non-fast-forward reject.
+        # Pull + rebase + retry on each attempt; never block the workflow
+        # on a missed auto-commit — the screenshots themselves are
+        # already uploaded as the `ui-screenshots` artifact below.
+        continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/screenshots/ docs/USER_GUIDE.md README.md
           if git diff --cached --quiet; then
             echo "No screenshot changes to commit"
-          else
-            git commit -m "docs: auto-update UI screenshots [skip ci]"
-            git push
+            exit 0
           fi
+          git commit -m "docs: auto-update UI screenshots [skip ci]"
+          for attempt in 1 2 3 4; do
+            if git push; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push attempt $attempt rejected — rebasing on remote tip"
+            git pull --rebase origin "${GITHUB_REF_NAME}" || {
+              echo "Rebase failed; aborting auto-commit"
+              exit 0
+            }
+          done
+          echo "Could not push auto-commit after 4 attempts; giving up"
+          exit 0
 
       - name: Upload screenshots as artifact
         if: always()
