@@ -348,6 +348,129 @@
     border-top: 1px solid var(--line);
     color: var(--muted); font-size: 13px;
     display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    align-items: center;
+  }
+  footer .foot-brand {
+    display: flex; align-items: center; gap: 12px;
+  }
+  footer .brand-logo { font-size: 15px; }
+  footer .copyright { color: var(--muted); }
+  footer .foot-meta {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  }
+  footer .pill {
+    background: var(--panel-2);
+    color: var(--ink-soft);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+  }
+  footer .pill.draft {
+    background: var(--danger-soft); color: var(--danger);
+    border: 1px solid #fca5a5;
+  }
+
+  /* ============ BRANDING ============ */
+  /* Top branding bar */
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 20px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin-bottom: 18px;
+    box-shadow: 0 1px 2px rgba(15,23,42,.03);
+    gap: 16px; flex-wrap: wrap;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .brand-logo {
+    font-weight: 900;
+    font-size: 22px;
+    letter-spacing: .03em;
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    display: inline-flex; align-items: baseline; gap: 1px;
+  }
+  .brand-logo .dot {
+    width: 8px; height: 8px;
+    background: var(--accent);
+    border-radius: 50%;
+    display: inline-block;
+    margin-left: 5px;
+    transform: translateY(-1px);
+  }
+  .brand-tagline {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
+    color: var(--muted);
+    padding-left: 14px;
+    border-left: 1px solid var(--line);
+  }
+  .classification {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+  .badge-draft {
+    background: var(--danger); color: #fff;
+    padding: 5px 11px; border-radius: 6px;
+    font-size: 11px; font-weight: 800; letter-spacing: .14em;
+    text-transform: uppercase;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .badge-confid {
+    color: var(--warn);
+    background: var(--warn-soft);
+    border: 1px solid #fcd34d;
+    padding: 4px 10px; border-radius: 6px;
+    font-size: 11px; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+
+  /* Cover branding additions */
+  .cover-brand {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 28px; padding-bottom: 20px;
+    border-bottom: 1px solid rgba(255,255,255,.18);
+  }
+  .cover-brand .brand-logo { color: #fff; font-size: 24px; }
+  .cover-brand .brand-logo .dot { background: #5eead4; }
+  .cover-brand .cb-right {
+    font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    opacity: .85; font-weight: 600;
+  }
+
+  .version-pill {
+    display: inline-flex; align-items: center; gap: 10px;
+    margin-top: 26px;
+    padding: 7px 14px;
+    background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.25);
+    border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+  .version-pill .pulse {
+    width: 7px; height: 7px;
+    background: #fbbf24;
+    border-radius: 50%;
+    box-shadow: 0 0 0 3px rgba(251,191,36,.25);
+  }
+
+  /* Screen draft indicator (corner) */
+  @media screen {
+    body::before {
+      content: "DRAFT · Ne pas diffuser";
+      position: fixed;
+      bottom: 20px; right: 20px;
+      background: var(--danger); color: #fff;
+      padding: 8px 16px; border-radius: 999px;
+      font-size: 11px; font-weight: 700; letter-spacing: .12em;
+      text-transform: uppercase;
+      box-shadow: 0 6px 20px rgba(185,28,28,.4);
+      z-index: 1000;
+      pointer-events: none;
+    }
   }
 
   /* Responsive */
@@ -453,20 +576,67 @@
 
     /* Hide footer on print (page numbers come from @page if needed) */
     footer { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 12px; }
+
+    /* Hide the screen-only corner badge */
+    body::before { display: none !important; }
+
+    /* Diagonal DRAFT watermark — appears on each printed page in Chrome/Edge/Safari */
+    body::after {
+      content: "DRAFT";
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) rotate(-30deg);
+      font-size: 160pt;
+      font-weight: 900;
+      color: rgba(185, 28, 28, 0.07);
+      letter-spacing: .05em;
+      pointer-events: none;
+      z-index: 9999;
+      white-space: nowrap;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    /* Hide topbar on print — branding is on the cover page already */
+    .topbar { display: none; }
   }
 </style>
 </head>
 <body>
 <div class="wrap">
 
+  <!-- TOP BRANDING BAR (screen only) -->
+  <!--
+    Remplacer le wordmark CSS par le vrai logo SVG/PNG :
+    <img src="invivoo-logo.svg" alt="Invivoo" height="28">
+  -->
+  <div class="topbar">
+    <div class="brand">
+      <span class="brand-logo">INVIVOO<span class="dot"></span></span>
+      <span class="brand-tagline">Expertise &amp; conseil IT</span>
+    </div>
+    <div class="classification">
+      <span class="badge-draft">Draft</span>
+      <span class="badge-confid">Confidentiel · Ne pas diffuser</span>
+    </div>
+  </div>
+
   <!-- COVER -->
   <header class="cover">
+    <div class="cover-brand">
+      <span class="brand-logo">INVIVOO<span class="dot"></span></span>
+      <span class="cb-right">Document confidentiel</span>
+    </div>
     <div class="eyebrow">Note de synthèse stratégique</div>
     <h1>Répondre avec sérénité<br/>aux exigences de DORA</h1>
     <div class="sub">
       avec <strong>AppControl</strong> — capter, réconcilier et exploiter
       la connaissance applicative pour industrialiser la résilience
       opérationnelle et prouver la conformité réglementaire.
+    </div>
+    <div class="version-pill">
+      <span class="pulse"></span>
+      Version 0.9 · Draft · Mai 2026
     </div>
     <div class="meta">
       <span>Document de référence</span>
@@ -1168,8 +1338,14 @@
   </section>
 
   <footer>
-    <span>Répondre aux exigences de DORA avec AppControl — note de synthèse</span>
-    <span>Imprimable en PDF · Ctrl/⌘ + P</span>
+    <div class="foot-brand">
+      <span class="brand-logo">INVIVOO<span class="dot"></span></span>
+      <span class="copyright">© 2026 Invivoo — Tous droits réservés.</span>
+    </div>
+    <div class="foot-meta">
+      <span class="pill">v0.9</span>
+      <span class="pill draft">Draft · Ne pas diffuser</span>
+    </div>
   </footer>
 
 </div>
