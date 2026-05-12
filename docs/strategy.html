@@ -503,10 +503,28 @@
     .tl-badge { left: -36px; }
   }
 
-  /* Print page running header/footer (screen-hidden, repeats on each print page) */
-  .print-header, .print-footer {
-    display: none;
+  /* ===== Print-shell table (running header/footer trick) =====
+     The most reliable cross-browser way to repeat a header and a
+     footer on each printed page is to wrap content in a <table>
+     with <thead> and <tfoot>. Browsers natively repeat thead/tfoot
+     on each printed page. */
+  .print-shell {
+    width: 100%;
+    border-collapse: collapse;
+    border-spacing: 0;
   }
+  .print-shell > thead > tr > td,
+  .print-shell > tbody > tr > td,
+  .print-shell > tfoot > tr > td {
+    padding: 0; border: 0; background: transparent;
+  }
+  /* Hide running header/footer on screen — branding is already in topbar/footer */
+  @media screen {
+    .print-shell > thead, .print-shell > tfoot { display: none; }
+  }
+
+  /* Running header (prh) and footer (prf) content — print only */
+  .prh, .prf { display: none; }
 
   /* Print */
   @page {
@@ -622,75 +640,59 @@
     /* Hide topbar on print — branding is on the cover page already */
     .topbar { display: none; }
 
-    /* Running header and footer on every printed page
-       Projected into the @page margin area via negative offsets.
-       Works in Chrome/Edge/Safari; in Firefox may appear only on page 1. */
-    .print-header, .print-footer {
-      display: flex;
-      position: fixed;
-      left: 0; right: 0;
+    /* Cover-wrap takes a full page; rest is in the print-shell table */
+    .cover-wrap { page-break-after: always; break-after: page; }
+
+    /* Each chapter starts on a new page — prevents headings at page bottom */
+    section {
+      page-break-before: always;
+      break-before: page;
+    }
+    /* Avoid double breaks: exec follows cover directly (already on new page) */
+    .exec { page-break-before: avoid; break-before: avoid; }
+
+    /* Show running header and footer (repeat per page) */
+    .print-shell > thead { display: table-header-group; }
+    .print-shell > tfoot { display: table-footer-group; }
+
+    .prh, .prf {
+      display: flex !important;
       justify-content: space-between;
       align-items: center;
       font-size: 8.5pt;
       color: #475569;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
-      z-index: 1;
     }
-    .print-header {
-      top: -14mm;
-      height: 8mm;
-      padding-bottom: 3mm;
+    .prh {
+      padding: 0 0 4mm;
+      margin-bottom: 6mm;
       border-bottom: 1px solid var(--line);
     }
-    .print-footer {
-      bottom: -12mm;
-      height: 7mm;
-      padding-top: 3mm;
+    .prf {
+      padding: 4mm 0 0;
+      margin-top: 6mm;
       border-top: 1px solid var(--line);
     }
-    .print-header .ph-left, .print-footer .pf-left {
-      display: flex; align-items: center; gap: 8px;
+    .prh-left, .prf-left, .prf-right {
+      display: inline-flex; align-items: center; gap: 6px;
     }
-    .print-header .ph-logo, .print-footer .pf-logo {
-      height: 12pt; width: auto;
-    }
-    .print-header .ph-right, .print-footer .pf-right {
-      color: #64748b;
-      font-size: 8pt;
-      letter-spacing: .04em;
-    }
-    .print-footer .pf-draft {
-      background: var(--danger);
-      color: #fff;
-      padding: 2px 8px;
-      border-radius: 4px;
+    .prh-logo, .prf-logo { height: 11pt; width: auto; }
+    .prh-sep, .prf-sep { color: var(--line); }
+    .prh-tag { font-weight: 600; color: var(--warn); }
+    .prh-right { color: #64748b; font-size: 8pt; letter-spacing: .03em; }
+    .prf-draft {
+      background: var(--danger); color: #fff;
+      padding: 2px 8px; border-radius: 4px;
       font-size: 7.5pt; font-weight: 800;
-      letter-spacing: .12em;
-      text-transform: uppercase;
+      letter-spacing: .12em; text-transform: uppercase;
     }
   }
 </style>
 </head>
 <body>
-<!-- Running header and footer for printed pages (hidden on screen) -->
-<div class="print-header" aria-hidden="true">
-  <div class="ph-left">
-    <img src="invivoo-logo.svg" alt="Invivoo" class="ph-logo" />
-    <span>Confidentiel</span>
-  </div>
-  <div class="ph-right">Répondre avec sérénité aux exigences de DORA — AppControl</div>
-</div>
-<div class="print-footer" aria-hidden="true">
-  <div class="pf-left">
-    <span>© 2026 Invivoo — Tous droits réservés</span>
-  </div>
-  <div class="pf-right">
-    <span class="pf-draft">Draft · v0.9 · Ne pas diffuser</span>
-  </div>
-</div>
-
-<div class="wrap">
+<!-- Page 1: cover only (no running header/footer) -->
+<div class="wrap cover-wrap">
 
   <!-- TOP BRANDING BAR (screen only) -->
   <!--
@@ -732,6 +734,27 @@
       <span>Argumentaire direction · interne ou externe</span>
     </div>
   </header>
+</div>
+
+<!-- Page 2+: rest of content, wrapped in a table whose thead/tfoot
+     repeat on each printed page (the only reliable cross-browser
+     way to get running headers and footers in browser-generated PDFs). -->
+<table class="print-shell">
+  <thead>
+    <tr><td>
+      <div class="prh">
+        <span class="prh-left">
+          <img src="invivoo-logo.svg" alt="Invivoo" class="prh-logo" />
+          <span class="prh-sep">·</span>
+          <span class="prh-tag">Confidentiel</span>
+        </span>
+        <span class="prh-right">Répondre avec sérénité aux exigences de DORA</span>
+      </div>
+    </td></tr>
+  </thead>
+  <tbody>
+    <tr><td>
+      <div class="wrap content-wrap">
 
   <!-- EXEC SUMMARY -->
   <div class="exec">
@@ -1437,6 +1460,25 @@
     </div>
   </footer>
 
-</div>
+      </div>
+    </td></tr>
+  </tbody>
+  <tfoot>
+    <tr><td>
+      <div class="prf">
+        <span class="prf-left">
+          <img src="invivoo-logo.svg" alt="Invivoo" class="prf-logo" />
+          <span class="prf-sep">·</span>
+          <span>© 2026 Invivoo — Tous droits réservés</span>
+        </span>
+        <span class="prf-right">
+          <span class="prf-draft">Draft · v0.9</span>
+          <span class="prf-sep">·</span>
+          <span>Ne pas diffuser</span>
+        </span>
+      </div>
+    </td></tr>
+  </tfoot>
+</table>
 </body>
 </html>
