@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "screenshots": "playwright test --project=screenshots"
+    "screenshots": "playwright test --project=screenshots",
+    "gifs": "playwright test --project=gifs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^2.0.4",
