@@ -623,6 +623,19 @@ jobs:
           mkdir -p docs
           cp ../docs/*.md docs/ 2>/dev/null || true
 
+          # Copy docs/screenshots — PNGs + GIFs referenced by the corp
+          # README's "Trois moments, trois clics" section. Without this,
+          # the release repo's README would render broken image
+          # placeholders.
+          mkdir -p docs/screenshots
+          cp ../docs/screenshots/*.png ../docs/screenshots/*.gif docs/screenshots/ 2>/dev/null || true
+
+          # Carry the EN summary alongside the FR README. The corp
+          # README.md sits at the repo root (already copied above);
+          # README.en.md lives beside it for the GitHub-discovery
+          # audience that lands without the FR sales narrative context.
+          cp ../corp/README.en.md . 2>/dev/null || true
+
           # Copy scripts
           mkdir -p scripts
           cp ../scripts/*.ps1 ../scripts/*.sh ../scripts/*.json ../scripts/*.md scripts/ 2>/dev/null || true
