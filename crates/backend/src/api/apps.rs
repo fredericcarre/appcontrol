@@ -18,7 +18,7 @@ use crate::middleware::audit::{complete_action_failed, complete_action_success, 
 use crate::AppState;
 use appcontrol_common::PermissionLevel;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ListAppsQuery {
     pub search: Option<String>,
     pub site_id: Option<Uuid>,
@@ -26,24 +26,26 @@ pub struct ListAppsQuery {
     pub offset: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateAppRequest {
     pub name: String,
     pub description: Option<String>,
     /// Site ID (optional - auto-selects default site if not provided)
     pub site_id: Option<Uuid>,
+    #[schema(value_type = Option<Object>)]
     pub tags: Option<Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateAppRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub site_id: Option<Uuid>,
+    #[schema(value_type = Option<Object>)]
     pub tags: Option<Value>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct AppRow {
     pub id: DbUuid,
     pub name: String,
@@ -55,7 +57,7 @@ pub struct AppRow {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ComponentRow {
     pub id: DbUuid,
     pub application_id: DbUuid,
@@ -81,37 +83,37 @@ pub struct ComponentRow {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct DependencyRow {
     pub id: DbUuid,
     pub from_component_id: DbUuid,
     pub to_component_id: DbUuid,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct StartAppRequest {
     pub dry_run: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct StopAppRequest {
     pub dry_run: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct StartBranchRequest {
     pub component_id: Option<DbUuid>,
     pub dry_run: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct StartToRequest {
     pub target_component_id: DbUuid,
     pub dry_run: Option<bool>,
 }
 
 /// Computed application status based on component states
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AppWithStatus {
     #[serde(flatten)]
     pub app: AppRow,
@@ -170,6 +172,17 @@ fn compute_app_status(
     (global_state, weather)
 }
 
+#[utoipa::path(
+    get,
+    path = "/apps",
+    params(ListAppsQuery),
+    responses(
+        (status = 200, description = "List of applications visible to the caller, each annotated with computed global state and weather"),
+        (status = 401, description = "Unauthorized", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn list_apps(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -246,6 +259,18 @@ pub async fn list_apps(
     Ok(Json(json!({ "apps": apps_with_status, "total": total })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/apps/{id}",
+    params(("id" = Uuid, Path, description = "Application id")),
+    responses(
+        (status = 200, description = "Application details with components and topology"),
+        (status = 403, description = "Forbidden", body = crate::error::ApiErrorBody),
+        (status = 404, description = "Not found", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn get_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -417,6 +442,18 @@ pub async fn get_app(
     })))
 }
 
+#[utoipa::path(
+    post,
+    path = "/apps",
+    request_body = CreateAppRequest,
+    responses(
+        (status = 201, description = "Application created"),
+        (status = 400, description = "Validation error", body = crate::error::ApiErrorBody),
+        (status = 403, description = "Forbidden", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn create_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -496,6 +533,20 @@ pub async fn create_app(
     ))
 }
 
+#[utoipa::path(
+    put,
+    path = "/apps/{id}",
+    params(("id" = Uuid, Path, description = "Application id")),
+    request_body = UpdateAppRequest,
+    responses(
+        (status = 200, description = "Updated application"),
+        (status = 400, description = "Validation error", body = crate::error::ApiErrorBody),
+        (status = 403, description = "Forbidden", body = crate::error::ApiErrorBody),
+        (status = 404, description = "Not found", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn update_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -569,6 +620,18 @@ pub async fn update_app(
     Ok(Json(after_snapshot))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/apps/{id}",
+    params(("id" = Uuid, Path, description = "Application id")),
+    responses(
+        (status = 204, description = "Application deleted"),
+        (status = 403, description = "Forbidden", body = crate::error::ApiErrorBody),
+        (status = 404, description = "Not found", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn delete_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -605,6 +668,20 @@ pub async fn delete_app(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/apps/{id}/start",
+    params(("id" = Uuid, Path, description = "Application id")),
+    request_body(content = StartAppRequest, description = "Optional `dry_run` flag — when true, returns the planned sequence without dispatching commands"),
+    responses(
+        (status = 200, description = "Start sequence dispatched (or simulated when dry_run=true)"),
+        (status = 403, description = "Forbidden", body = crate::error::ApiErrorBody),
+        (status = 404, description = "Not found", body = crate::error::ApiErrorBody),
+        (status = 409, description = "Another operation is already running on this app", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn start_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -671,6 +748,20 @@ pub async fn start_app(
     Ok(Json(json!({ "status": "starting", "plan": plan })))
 }
 
+#[utoipa::path(
+    post,
+    path = "/apps/{id}/stop",
+    params(("id" = Uuid, Path, description = "Application id")),
+    request_body(content = StopAppRequest, description = "Optional `dry_run` flag — when true, returns the planned reverse-DAG sequence without dispatching commands"),
+    responses(
+        (status = 200, description = "Stop sequence dispatched (or simulated when dry_run=true)"),
+        (status = 403, description = "Forbidden", body = crate::error::ApiErrorBody),
+        (status = 404, description = "Not found", body = crate::error::ApiErrorBody),
+        (status = 409, description = "Another operation is already running on this app", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn stop_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -731,6 +822,17 @@ pub async fn stop_app(
 
 /// Request cancellation of a running operation on an application.
 /// The operation will check for cancellation and stop gracefully.
+#[utoipa::path(
+    post,
+    path = "/apps/{id}/cancel",
+    params(("id" = Uuid, Path, description = "Application id")),
+    responses(
+        (status = 200, description = "Cancellation requested. Body indicates whether an active operation was found"),
+        (status = 403, description = "Forbidden", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn cancel_operation(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -819,6 +921,17 @@ pub async fn cancel_operation(
 
 /// Force-release an operation lock. Use as last resort when cancel doesn't work.
 /// This immediately removes the lock, potentially leaving the operation orphaned.
+#[utoipa::path(
+    post,
+    path = "/apps/{id}/force-unlock",
+    params(("id" = Uuid, Path, description = "Application id")),
+    responses(
+        (status = 200, description = "Lock force-released or no lock found"),
+        (status = 403, description = "Forbidden (requires Manage permission)", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn force_unlock_operation(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -871,6 +984,20 @@ pub async fn force_unlock_operation(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/apps/{id}/start-branch",
+    params(("id" = Uuid, Path, description = "Application id")),
+    request_body = StartBranchRequest,
+    responses(
+        (status = 200, description = "Error-branch restart dispatched"),
+        (status = 403, description = "Forbidden", body = crate::error::ApiErrorBody),
+        (status = 404, description = "Not found", body = crate::error::ApiErrorBody),
+        (status = 409, description = "Another operation is already running on this app", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn start_branch(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -953,6 +1080,20 @@ pub async fn start_branch(
     ))
 }
 
+#[utoipa::path(
+    post,
+    path = "/apps/{id}/start-to",
+    params(("id" = Uuid, Path, description = "Application id")),
+    request_body = StartToRequest,
+    responses(
+        (status = 200, description = "Partial start dispatched (upstream subset of target)"),
+        (status = 403, description = "Forbidden", body = crate::error::ApiErrorBody),
+        (status = 404, description = "Target component not found", body = crate::error::ApiErrorBody),
+        (status = 409, description = "Target component does not belong to this app, or operation already running", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn start_to(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -1065,6 +1206,18 @@ pub async fn start_to(
 ///
 /// Suspend an application. The agent will stop health checks for all components
 /// in this application until it is resumed.
+#[utoipa::path(
+    put,
+    path = "/apps/{id}/suspend",
+    params(("id" = Uuid, Path, description = "Application id")),
+    responses(
+        (status = 200, description = "Application suspended"),
+        (status = 403, description = "Forbidden (requires Manage permission)", body = crate::error::ApiErrorBody),
+        (status = 409, description = "Already suspended", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn suspend_application(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -1137,6 +1290,18 @@ pub async fn suspend_application(
 ///
 /// Resume a suspended application. The agent will restart health checks for all
 /// components in this application.
+#[utoipa::path(
+    put,
+    path = "/apps/{id}/resume",
+    params(("id" = Uuid, Path, description = "Application id")),
+    responses(
+        (status = 200, description = "Application resumed"),
+        (status = 403, description = "Forbidden (requires Manage permission)", body = crate::error::ApiErrorBody),
+        (status = 409, description = "Not suspended", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn resume_application(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -1215,6 +1380,18 @@ pub async fn resume_application(
 /// - The agent assigned for each site
 /// - Any command overrides for that site (from site_overrides)
 /// - Whether this is the active profile
+#[utoipa::path(
+    get,
+    path = "/apps/{app_id}/site-overrides",
+    params(("app_id" = Uuid, Path, description = "Application id")),
+    responses(
+        (status = 200, description = "Per-site command/agent overrides for this application"),
+        (status = 403, description = "Forbidden", body = crate::error::ApiErrorBody),
+        (status = 404, description = "Not found", body = crate::error::ApiErrorBody),
+    ),
+    security(("bearerAuth" = []), ("apiKeyAuth" = [])),
+    tag = "Applications",
+)]
 pub async fn get_site_overrides(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
