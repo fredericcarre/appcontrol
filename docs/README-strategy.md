@@ -40,15 +40,35 @@ Le DOCX généré utilise des styles Word natifs (Titre 1, Titre 2, etc.), ce qu
 - Modifications directes du contenu
 - Export PDF depuis Word si besoin
 
-### Personnaliser le style Word
+### Gabarit Invivoo intégré
 
-Pour appliquer les styles Invivoo (police, couleurs, logo en en-tête, etc.) :
+Le fichier `docs/invivoo-reference.docx` (versionné dans le repo) sert de gabarit Pandoc et apporte au DOCX généré :
 
-1. Générer une première fois `strategy.docx` (sans gabarit)
-2. Ouvrir le résultat dans Word
-3. Modifier les styles (Titre 1, Titre 2, Normal…) à la charte Invivoo
-4. Enregistrer sous `docs/invivoo-reference.docx`
-5. Relancer `./build-docx.sh` — le script détecte le gabarit et l'applique automatiquement
+- **Titres colorés** (Heading 1 sarcelle profond, Heading 2 sarcelle, Heading 3 sombre)
+- **Saut de page automatique avant chaque Heading 1** — chaque chapitre démarre sur une nouvelle page
+- **Pied de page sur chaque page** : `© 2026 Invivoo — Tous droits réservés · DRAFT v0.9 · numéro de page / total`
+- **En-tête sur chaque page** : `INVIVOO · Confidentiel · Répondre avec sérénité aux exigences de DORA`
+- **Styles personnalisés** invoqués par le Markdown via `::: {custom-style="..."}`  :
+    - `DraftBanner` — bandeau Draft rouge centré (haut et bas du doc)
+    - `PullQuote` — citation sarcelle avec bordure
+    - `PullQuoteWarn` — citation ambre pour les avertissements
+    - `CalloutOK` / `CalloutWarn` / `CalloutDanger` / `CalloutIndigo` — cartes de comparaison colorées
+    - `Eyebrow` — kicker (petit texte en capitales sarcelle)
+    - `TimelinePhaseA` / `TimelinePhaseB` — bannières de phases
+
+### Régénérer ou modifier le gabarit
+
+Le gabarit est produit par un script Python pour rester reproductible :
+
+```bash
+cd docs
+pip install python-docx  # une fois
+python3 build-reference-docx.py
+```
+
+Ouvre la palette de couleurs / polices / styles en haut de `build-reference-docx.py` pour ajuster la charte sans avoir à éditer le Word à la main.
+
+Alternative manuelle : ouvrir `invivoo-reference.docx` dans Word, modifier les styles (Titre 1, Titre 2, DraftBanner, PullQuote, etc.), enregistrer — le prochain `./build-docx.sh` utilisera les modifications.
 
 ## Maintenir les deux sources synchronisés
 

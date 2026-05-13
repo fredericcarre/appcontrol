@@ -235,13 +235,23 @@ Reconstruire une application — après cyber-incident, ransomware, perte de dat
 | Délai | Jours / semaines | Mesuré, optimisé, prouvé |
 | Dépendance | Sachants disponibles | Conforme DORA — audité |
 
+::: {custom-style="CalloutDanger"}
+**Sans plateforme transverse** — rebuild manuel et sous stress, non reproductible, jamais répété à blanc, délais en jours ou semaines, totalement dépendant des sachants disponibles.
+:::
+
+::: {custom-style="CalloutOK"}
+**Avec AppControl** — rebuild scripté par la map versionnée, répétable en exercice (drill), délai mesuré et optimisé, conforme DORA avec capacité de reprise auditée.
+:::
+
 ## Le rebuild à blanc — deux modes complémentaires
 
 **1. Dry-run (simulation pure)** — un appel API avec `dry_run: true` retourne le plan complet (ordre DAG, commandes résolues, agents cibles) sans rien exécuter. Idéal pour revue et validation.
 
 **2. Drill réel sur non-prod** — le même moteur exécute sur un site staging ou DR, chronométré, traçant le RTR dans l'audit log. C'est l'exercice qui prouve la conformité DORA.
 
-> Sans capacité de **start, stop et check**, il n'y a pas de rebuild possible. Ces capacités ne sont pas un risque — ce sont l'outil lui-même. Tout l'enjeu est de les rendre **sûres**, ce que les sections suivantes détaillent.
+::: {custom-style="PullQuoteWarn"}
+Sans capacité de **start, stop et check**, il n'y a pas de rebuild possible. Ces capacités ne sont pas un risque — ce sont l'outil lui-même. Tout l'enjeu est de les rendre **sûres**, ce que les sections suivantes détaillent.
+:::
 
 ---
 
@@ -258,7 +268,9 @@ Reconstruire une application — après cyber-incident, ransomware, perte de dat
 | **Registre** des incidents et actions de récupération | Art. 16 | Audit log append-only |
 | **Prouver** le RTO / RPO réel | Art. 11-12 | RTR mesuré et tracé par exécution |
 
-> DORA n'exige pas seulement d'**avoir** un plan de reprise. Il exige de **prouver** qu'il fonctionne — testé, chronométré, tracé, auditable. Un PRA documenté sur Confluence ne suffit pas.
+::: {custom-style="PullQuote"}
+DORA n'exige pas seulement d'**avoir** un plan de reprise. Il exige de **prouver** qu'il fonctionne — testé, chronométré, tracé, auditable. Un PRA documenté sur Confluence ne suffit pas.
+:::
 
 Détail complet des cinq piliers et des articles clés en **annexe** (sections A1 à A10).
 
@@ -352,7 +364,9 @@ L'alternative classique — « refondons la CMDB et le référentiel de flux » 
 
 # 11. Message clé
 
-> **Le rebuild n'est pas une option, c'est une obligation DORA.** Et le rebuild exige un outil qui sait *exécuter*, pas seulement *décrire*.
+::: {custom-style="PullQuote"}
+**Le rebuild n'est pas une option, c'est une obligation DORA.** Et le rebuild exige un outil qui sait *exécuter*, pas seulement *décrire*.
+:::
 
 AppControl capte la connaissance là où elle existe (CMDB, XLR, XLD, flux, incidents, schémas), la réconcilie en une carte vivante et versionnée, puis la rend opérable — rebuild, DR, démarrage séquencé, audit. Le caractère transverse n'est pas un détail : c'est ce qui permet l'effet réseau, le recyclage des données vers les référentiels d'origine, et la mutualisation des intégrations.
 
@@ -360,7 +374,9 @@ La peur des équipes de production est levée par des garde-fous natifs (RBAC, a
 
 Une refonte des référentiels et AppControl ne sont pas concurrents — la première produit ses effets dans 3 à 5 ans *si* le projet aboutit, AppControl produit de la valeur dès le premier jour et améliore les référentiels en retour.
 
-> L'absence de capacité de rebuild prouvable n'est pas un confort manquant — c'est un **risque financier et personnel direct** dans le cadre DORA.
+::: {custom-style="PullQuoteWarn"}
+L'absence de capacité de rebuild prouvable n'est pas un confort manquant — c'est un **risque financier et personnel direct** dans le cadre DORA.
+:::
 
 ---
 
@@ -488,20 +504,17 @@ AppControl : drill de rebuild complet sur site non-prod, mesure du RTR, comparai
 
 # A9. Ce que DORA ne dit PAS
 
-## DORA ne dit pas
+::: {custom-style="CalloutDanger"}
+**DORA ne dit pas** : « Vous devez utiliser tel outil » · « Vous devez avoir telle architecture » · « Le RTO doit être de X heures ».
+:::
 
-- « Vous devez utiliser tel outil »
-- « Vous devez avoir telle architecture »
-- « Le RTO doit être de X heures »
+::: {custom-style="CalloutOK"}
+**DORA dit** : « Vous devez **prouver** que vous savez reconstruire » · « Vous devez **tester régulièrement** » · « Vous devez **documenter et tracer** chaque action » · « Vous devez **mesurer** votre temps de reprise réel ».
+:::
 
-## DORA dit
-
-- « Vous devez **prouver** que vous savez reconstruire »
-- « Vous devez **tester régulièrement** »
-- « Vous devez **documenter et tracer** chaque action »
-- « Vous devez **mesurer** votre temps de reprise réel »
-
-> Sans outil qui exécute la reconstruction, on ne peut ni la **tester** régulièrement, ni la **chronométrer**, ni la **prouver**. Le rebuild reste théorique — et donc non conforme.
+::: {custom-style="PullQuoteWarn"}
+Sans outil qui exécute la reconstruction, on ne peut ni la **tester** régulièrement, ni la **chronométrer**, ni la **prouver**. Le rebuild reste théorique — et donc non conforme.
+:::
 
 ---
 
@@ -515,7 +528,9 @@ AppControl : drill de rebuild complet sur site non-prod, mesure du RTR, comparai
 | **Sanctions personnelles** | Jusqu'à **1 M€** pour les dirigeants |
 | **Audit** | À tout moment : preuve des tests, registres d'incidents, cartographie ICT |
 
-> L'enjeu n'est pas seulement technique. L'**absence de capacité de rebuild prouvable** est un risque financier et personnel direct pour l'entreprise et ses dirigeants.
+::: {custom-style="CalloutDanger"}
+L'enjeu n'est pas seulement technique. L'**absence de capacité de rebuild prouvable** est un risque financier et personnel direct pour l'entreprise et ses dirigeants.
+:::
 
 ---
 

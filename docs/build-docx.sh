@@ -28,9 +28,17 @@ if [[ -f "invivoo-reference.docx" ]]; then
   REFERENCE_DOC_ARG="--reference-doc=invivoo-reference.docx"
   echo "Using invivoo-reference.docx as style template."
 else
-  echo "Note: no invivoo-reference.docx found — using Pandoc default styles."
-  echo "      Drop a Word file named invivoo-reference.docx in docs/ to apply"
-  echo "      Invivoo styles (fonts, colors, headings) to the output."
+  echo "Note: invivoo-reference.docx is missing — generating it now."
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import docx" 2>/dev/null || {
+      echo "Installing python-docx ..."
+      pip install --quiet python-docx 2>/dev/null || pip3 install --quiet python-docx
+    }
+    python3 build-reference-docx.py && \
+      REFERENCE_DOC_ARG="--reference-doc=invivoo-reference.docx"
+  else
+    echo "      python3 not available — falling back to Pandoc default styles."
+  fi
 fi
 
 pandoc strategy.md \
