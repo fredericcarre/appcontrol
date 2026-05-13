@@ -629,7 +629,7 @@ For tighter pre-flight validation, run the diagnostic engine (Level 3) before a 
 
 Discovery is heuristic. Two ways to tame it:
 
-1. **Filter at the agent** — edit `agent.yaml` to set `discovery.exclude_processes: [crond, rsyslogd, ...]` (currently configured via env vars: `APPCONTROL_DISCOVERY_EXCLUDE=crond,rsyslogd,sshd`). _(verify in code; was not found at audit time)_
+1. **Filter at the agent** — set `APPCONTROL_DISCOVERY_EXCLUDE` in the agent's environment to a comma-separated deny-list. Matching is case-insensitive and uses prefix semantics, so `crond` also suppresses `crond-worker` etc. Example: `APPCONTROL_DISCOVERY_EXCLUDE=crond,rsyslogd,sshd`. The deny-list is read on every discovery scan (no agent restart needed if the variable is exported in the systemd unit and the agent is restarted, or if the variable is sourced from `/etc/environment`).
 2. **Curate in the UI** — discovery presents a draft topology; uncheck any process you do not want before promoting it to an application.
 
 If discovery produces no signal at all, check that the agent has permission to read `/proc` (Linux) or `tasklist` (Windows). Container agents may need `--pid=host` to see host processes.
