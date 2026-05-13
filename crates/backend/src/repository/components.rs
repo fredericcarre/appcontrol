@@ -1828,3 +1828,39 @@ pub fn create_component_repository(pool: DbPool) -> Box<dyn ComponentRepository>
         Box::new(SqliteComponentRepository::new(pool))
     }
 }
+
+#[cfg(test)]
+mod dependency_type_tests {
+    use super::DependencyType;
+
+    #[test]
+    fn default_is_strong() {
+        assert_eq!(DependencyType::default(), DependencyType::Strong);
+    }
+
+    #[test]
+    fn as_str_round_trips() {
+        assert_eq!(DependencyType::Strong.as_str(), "strong");
+        assert_eq!(DependencyType::Weak.as_str(), "weak");
+    }
+
+    #[test]
+    fn from_db_str_recognises_weak() {
+        assert_eq!(DependencyType::from_db_str("weak"), DependencyType::Weak);
+    }
+
+    #[test]
+    fn from_db_str_falls_back_to_strong_on_anything_else() {
+        // Pre-V056 rows decoded as empty / NULL should keep the DAG intact.
+        assert_eq!(DependencyType::from_db_str(""), DependencyType::Strong);
+        assert_eq!(
+            DependencyType::from_db_str("strong"),
+            DependencyType::Strong
+        );
+        // Unknown values must be safe.
+        assert_eq!(
+            DependencyType::from_db_str("garbage"),
+            DependencyType::Strong
+        );
+    }
+}

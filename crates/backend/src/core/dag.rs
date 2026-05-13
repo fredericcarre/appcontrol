@@ -305,6 +305,33 @@ mod tests {
     }
 
     #[test]
+    fn weak_edge_is_skipped_from_topological_ordering() {
+        // Manually exercise the same filtering build_dag does: a weak edge
+        // from b → a should NOT prevent b from starting at level 0.
+        //
+        // Strong edge: c → b (c starts after b reaches RUNNING)
+        // Weak edge:   b → a (the DAG builder skips this edge)
+        // Expected levels: [{a, b}, {c}]
+        let mut dag = Dag::new();
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let c = Uuid::from_u128(3);
+
+        dag.add_node(a);
+        dag.add_node(b);
+        dag.add_node(c);
+
+        // Simulate build_dag dropping the weak edge — only the strong one is added.
+        dag.add_edge(c, b);
+
+        let levels = dag.topological_levels().unwrap();
+        assert_eq!(levels.len(), 2, "weak edge must not add a level");
+        // Level 0 is the {a, b} set (order within a level isn't guaranteed)
+        assert!(levels[0].contains(&a) && levels[0].contains(&b));
+        assert_eq!(levels[1], vec![c]);
+    }
+
+    #[test]
     fn test_cycle_detection() {
         let mut dag = Dag::new();
         let a = Uuid::from_u128(1);

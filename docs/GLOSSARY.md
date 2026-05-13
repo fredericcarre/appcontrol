@@ -424,7 +424,7 @@ External credential store (HashiCorp Vault, AWS KMS, Azure Key Vault) that holds
 
 ### Weak dependency
 <a id="weak-dependency"></a>
-A documented but currently unimplemented concept. A weak dependency would not gate sequencing — both endpoints would start in parallel — but the UI would still draw it. Today, every edge in `dependencies` is a [strong dependency](#strong-dependency). _(verify in code; was not found at audit time)_
+A dependency edge that is **not** gated by the DAG sequencer: both endpoints start in parallel, but the edge is still drawn in the map and exported in reports. Useful for documenting "B reads from A, but B must not block on A at start-up". Stored as `dependencies.dependency_type = 'weak'` (introduced in migration V056) and exposed via the `POST /api/v1/apps/:id/dependencies` API as `{"dependency_type": "weak"}`. Defaults to [strong](#strong-dependency) so pre-V056 rows and older clients see no behaviour change.
 
 ### WebSocket hub
 <a id="websocket-hub"></a>
