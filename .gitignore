@@ -37,3 +37,11 @@ docker/frontend-dist/
 target-sqlite/
 target-sqlite-e2e/
 appcontrol.db*
+
+# MkDocs Material build output (site/) and staged-at-build-time copies
+# of the root markdown files inside docs/. The workflow stages them; we
+# don't commit duplicates that would drift from their source of truth.
+/site/
+/docs/SECURITY_ARCHITECTURE.md
+/docs/CHANGELOG.md
+/docs/RELEASE.md

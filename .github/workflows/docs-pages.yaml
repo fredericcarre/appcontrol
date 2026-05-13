@@ -1,0 +1,121 @@
+name: Documentation site (GitHub Pages)
+
+# Builds the MkDocs Material site from docs/*.md plus the root README/security
+# files and publishes it to GitHub Pages.
+#
+# Triggers:
+#   - push to main when any source markdown, mkdocs config, or screenshot changes
+#   - manual dispatch (for re-deploys without a content change, e.g. after a
+#     theme bump)
+#   - workflow_run after the screenshot capture workflow finishes on main, so
+#     freshly auto-committed screenshots immediately appear on the site
+#
+# Permissions follow the official GitHub Pages deploy pattern: minimum scopes,
+# with `pages: write` and `id-token: write` only on the deploy job.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "README.md"
+      - "README.en.md"
+      - "SECURITY_ARCHITECTURE.md"
+      - "CHANGELOG.md"
+      - "RELEASE.md"
+      - ".github/workflows/docs-pages.yaml"
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Documentation Screenshots"]
+    types: [completed]
+    branches: [main]
+
+# Cancel superseded runs on the same ref — saves CI minutes when a flurry of
+# auto-commits ("update screenshots", "fix typo") lands in quick succession.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build docs site
+    runs-on: ubuntu-latest
+    # Skip the workflow_run trigger when the upstream screenshot workflow
+    # failed — no point publishing on broken inputs.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so mkdocs-git-revision-date-localized can compute
+          # "last updated" timestamps from git.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+
+      - name: Install MkDocs and plugins
+        run: pip install -r docs/requirements.txt
+
+      - name: Stage root docs inside docs/
+        # The single source of truth for SECURITY_ARCHITECTURE.md, CHANGELOG.md
+        # and RELEASE.md lives at the repo root. MkDocs only ingests files
+        # under docs_dir, so we copy them in at build time. Doing this in CI
+        # (not via committed copies) avoids drift between the root and the
+        # docs/ duplicates.
+        run: |
+          set -euo pipefail
+          for f in SECURITY_ARCHITECTURE.md CHANGELOG.md RELEASE.md; do
+            if [ -f "$f" ]; then
+              cp "$f" "docs/$f"
+              echo "Staged $f → docs/$f"
+            fi
+          done
+
+      - name: Embed screenshots in USER_GUIDE
+        # Mirror the substitution used by docs-screenshots.yaml so the public
+        # site never shows a raw <!-- SCREENSHOT:name --> marker. The
+        # screenshot capture workflow normally commits these replacements
+        # back into USER_GUIDE.md, but a docs-only push to main (e.g. fixing
+        # a typo) would otherwise publish unresolved markers.
+        run: |
+          if [ -d docs/screenshots ] && [ -f docs/USER_GUIDE.md ]; then
+            for img in docs/screenshots/*.png; do
+              [ -e "$img" ] || continue
+              name=$(basename "$img" .png)
+              sed -i "s|<!-- SCREENSHOT:${name} -->|![${name}](screenshots/${name}.png)|g" docs/USER_GUIDE.md
+            done
+          fi
+
+      - name: Build site
+        # We do NOT pass --strict here — see mkdocs.yml for the reasoning.
+        # The build still fails on Python errors, broken Markdown extensions,
+        # or invalid theme config.
+        run: mkdocs build --clean --verbose
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

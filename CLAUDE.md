@@ -120,6 +120,18 @@ appcontrol/
 
 **When adding a new page:** Add a new test in `frontend/e2e-screenshots/capture.spec.ts` and a `<!-- SCREENSHOT:page-name -->` marker in `USER_GUIDE.md`.
 
+### Documentation site (GitHub Pages)
+
+The same Markdown files are also published as a static MkDocs Material site at `https://fredericcarre.github.io/appcontrol/`.
+
+1. **Config:** `mkdocs.yml` at the repo root defines navigation, theme and plugins. `docs/index.md` is the landing page. `docs/requirements.txt` pins the Python build deps.
+2. **Workflow:** `.github/workflows/docs-pages.yaml` builds the site on every push to `main` that touches `docs/`, `mkdocs.yml`, or the root README/security/changelog files, and deploys to GitHub Pages.
+3. **Root files** (`SECURITY_ARCHITECTURE.md`, `CHANGELOG.md`, `RELEASE.md`) live at the repo root; the workflow copies them into `docs/` at build time so MkDocs can ingest them. Do NOT commit duplicates inside `docs/`.
+4. **Local preview:** `pip install -r docs/requirements.txt && mkdocs serve` → open <http://127.0.0.1:8000>.
+5. **Strict build for verification:** `mkdocs build --strict` flags broken internal links and orphan pages.
+6. **Adding a new doc page:** create `docs/MY_PAGE.md`, then add it to the `nav` section of `mkdocs.yml`. Pages omitted from `nav` build silently if listed in `not_in_nav`.
+7. **Enabling Pages once on the repo:** GitHub → Settings → Pages → Source = "GitHub Actions" (one-time setup, not automated).
+
 ## Coding Conventions
 
 ### Rust (Agent, Gateway, Backend, CLI)
