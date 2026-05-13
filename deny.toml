@@ -1,16 +1,31 @@
 # cargo-deny configuration for AppControl
 # https://embarkstudios.github.io/cargo-deny/
+#
+# Schema: cargo-deny ≥ 0.14 (severity-per-field removed). Every
+# vulnerability hard-fails the build. Unmaintained / yanked findings
+# are surfaced as warnings and ALWAYS appear in the DORA quality
+# attestation report — there is no `ignore = [...]` block here and
+# we deliberately keep it that way (no per-advisory waivers).
 
 [advisories]
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-vulnerability = "deny"
-unmaintained = "warn"
+# Scope: scan every dependency (workspace + transitive). Findings
+# are surfaced; severity is governed by the advisory database
+# itself, not by a local override.
+unmaintained = "all"
+# Yanked crates are reported as warnings. Tighten to "deny" on a
+# specific release branch if a regulator requires it.
 yanked = "warn"
-notice = "warn"
+# `ignore = […]` is intentionally absent. If a CVE shows up here,
+# the fix is to bump the dependency — not to suppress the entry.
 
 [licenses]
-unlicensed = "deny"
+confidence-threshold = 0.8
+# Explicit allow-list. Licenses NOT listed here cause cargo-deny
+# to fail, which is the desired behaviour for a proprietary
+# distribution: every new dependency requires a conscious license
+# decision.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -26,9 +41,10 @@ allow = [
     "BSL-1.0",
     "CC0-1.0",
 ]
-copyleft = "deny"
-confidence-threshold = 0.8
 
+# `ring` declares a custom license string in its Cargo.toml that
+# cargo-deny cannot parse; clarify it manually so the SHA matches
+# the LICENSE file in the crate.
 [[licenses.clarify]]
 name = "ring"
 expression = "MIT AND ISC AND OpenSSL"
