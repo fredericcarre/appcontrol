@@ -298,7 +298,7 @@ Total: ≈ 5–10 events/s sustained, with bursts to 50/s during operations. Mul
 
 If your install consistently exceeds 100 ms agent-event → UI latency, monitor:
 
-- `agent_message_latency_warn_ms` Prometheus metric (recommended threshold: 200 ms _(verify in code; was not found at audit time)_)
+- `agent_message_latency_ms` Prometheus histogram (labels: `message_type=heartbeat|check_result|discovery_report`) — emitted by the backend on every agent message that carries a timestamp; recommended alert: P95 > 1000 ms over 5 min. The backend additionally emits a `tracing::warn!` line ("High agent → backend message latency") above the hard-coded threshold `AGENT_MESSAGE_LATENCY_WARN_MS = 10_000` ms (defined in `crates/backend/src/websocket/mod.rs`).
 - `ws_connections_active` per replica — imbalance is a hint of broken affinity
 - DB `INSERT` time — slow `state_transitions` inserts cascade
 

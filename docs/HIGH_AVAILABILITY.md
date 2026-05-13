@@ -241,7 +241,9 @@ PgBouncer absorbs the connection churn, lets you scale to 10s of backend replica
 
 ### Read replicas
 
-AppControl does not currently route any query to a read replica — the backend assumes the DB is read-write. Adding read-replica routing is on the roadmap (would benefit reports and audit queries). _(verify in code; was not found at audit time)_
+AppControl does not currently route any query to a read replica. The backend uses a single `DATABASE_URL` (set in `crates/backend/src/config.rs::AppConfig::database_url`) for both reads and writes, and every repository implementation in `crates/backend/src/repository/` is wired against that one pool.
+
+Adding read-replica routing — a separate `DATABASE_REPLICA_URL` pool that report endpoints (`/api/v1/reports/*`) and the heavier audit queries could opt into — is on the roadmap. It is not yet implemented and is not exposed as a configuration knob.
 
 ---
 
