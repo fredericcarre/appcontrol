@@ -148,7 +148,7 @@ def render(spec: dict) -> str:
     out = []
     out.append("# REST API reference")
     out.append("")
-    out.append("> Auto-generated from `crates/backend/openapi.json`. Run `scripts/docs/regen.py` to refresh. The same spec is served at `GET /api/v1/openapi.json` from a running backend — load it into Postman, Insomnia, or Swagger UI for an interactive view.")
+    out.append("> Auto-generated from the backend's code-derived OpenAPI spec (utoipa annotations on each handler). Run `scripts/docs/regen.py` to refresh — CI does this on every push. The same spec is served at `GET /api/v1/openapi.json` from a running backend, or exported offline with `appcontrol-backend --export-openapi <path>`. Load either into Postman, Insomnia, Redoc, or Swagger UI for an interactive view.")
     out.append("")
     out.append(f"**API version:** `{info.get('version', '?')}`")
     out.append("")
