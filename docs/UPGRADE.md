@@ -158,7 +158,10 @@ kubectl run migrate-check --rm -it \
   --command -- /app/appcontrol-backend --migrate-only --dry-run
 ```
 
-The `--dry-run` flag _(verify in code; was not found at audit time)_ logs the migration plan without executing it.
+Both flags are top-level options on the backend binary:
+
+- `--migrate-only` runs migrations (against `DATABASE_URL` / `SQLITE_PATH`) and exits with code 0 without starting the HTTP server. Use this to apply migrations before the rolling upgrade rotates pods.
+- `--dry-run` implies `--migrate-only` and **does not execute any statement**. It lists the migrations the binary would apply, in version order, and exits 0 — even if the plan is empty. Useful in pre-upgrade validation jobs and CI smoke tests.
 
 ### If a migration fails
 
