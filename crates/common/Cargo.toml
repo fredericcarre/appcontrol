@@ -19,6 +19,7 @@ hex = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["registry"] }
 tokio = { version = "1", features = ["sync", "time"] }
+utoipa = { version = "5", features = ["uuid", "chrono"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
