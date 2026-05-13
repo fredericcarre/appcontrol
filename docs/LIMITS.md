@@ -192,23 +192,14 @@ Each agent connection consumes one file descriptor on the gateway host. Defaults
 
 ### Per-command resource limits
 
-The agent applies these limits before `exec` for sync check commands:
+The agent today enforces a **wall-clock timeout only** on sync commands; it does not call `setrlimit(2)` on child processes. Hardening the child via `RLIMIT_CPU`, `RLIMIT_AS`, `RLIMIT_NOFILE`, `RLIMIT_NPROC` etc. is the responsibility of the system service manager that supervises the agent (systemd unit, Windows service).
 
-| Limit | Value | Configurable |
-|-------|-------|--------------|
-| `RLIMIT_CPU` | **30 seconds** | env var, _(verify in code; was not found at audit time)_ |
-| `RLIMIT_AS` | **512 MB** | env var, _(verify in code; was not found at audit time)_ |
-| `RLIMIT_NOFILE` | **512 file descriptors** | env var, _(verify in code; was not found at audit time)_ |
-| `RLIMIT_NPROC` | **64 child processes** | env var, _(verify in code; was not found at audit time)_ |
-| Default check timeout | **120 seconds** | per-component `check_interval_seconds` |
+| Mechanism | Value | Notes |
+|-----------|-------|-------|
+| Sync check timeout | per-component `check_interval_seconds` (default **120 s**) | When the deadline is hit, the agent kills the process group (SIGTERM, then SIGKILL after 5 s grace) and reports `exit_code = -1`. |
+| Async start/stop/rebuild | no agent-enforced timeout | These commands are double-forked and intentionally inherit the parent shell context to support long-running services. |
 
-**What happens at the limit:**
-
-- `RLIMIT_CPU` exceeded → process receives SIGXCPU, then SIGKILL.
-- `RLIMIT_AS` exceeded → `malloc` returns NULL; well-behaved processes exit.
-- Timeout exceeded → agent kills the process group (SIGTERM, then SIGKILL after 5s grace, returns `exit_code = -1`).
-
-Detached commands (`start_cmd`, `stop_cmd`, `rebuild_cmd`) **do not have these limits applied** — they intentionally inherit the parent shell context to support long-running services. Securing them is the responsibility of the system service manager (systemd `MemoryMax`, etc.).
+If you need OS-level resource caps on the agent itself or on the commands it spawns, configure them in your systemd unit (e.g. `LimitCPU=`, `MemoryMax=`, `LimitNOFILE=`, `LimitNPROC=`) — those are inherited by every child the agent forks. Per-command resource limits inside the agent are on the roadmap; this page will be updated if and when they ship.
 
 ### Check command deduplication
 
