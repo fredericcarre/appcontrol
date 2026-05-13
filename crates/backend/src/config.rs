@@ -88,6 +88,13 @@ pub struct AppConfig {
     /// Public backend URL for gateway connection (e.g., wss://backend.company.com/ws/gateway).
     /// If not set, frontend will use window.location with /ws/gateway path.
     pub public_backend_url: Option<String>,
+    /// Read-only failsafe mode for disaster recovery.
+    /// When true, the backend rejects every state-mutating HTTP method
+    /// (POST/PUT/PATCH/DELETE) with HTTP 503 + Retry-After. Authentication,
+    /// reads, health checks, OIDC/SAML callbacks, and the break-glass
+    /// activation endpoint remain available. Intended for emergency triage
+    /// while the database is being repaired or restored.
+    pub read_only: bool,
 }
 
 impl AppConfig {
@@ -235,6 +242,10 @@ impl AppConfig {
                 .unwrap_or(0),
             public_gateway_url: std::env::var("PUBLIC_GATEWAY_URL").ok(),
             public_backend_url: std::env::var("PUBLIC_BACKEND_URL").ok(),
+            read_only: std::env::var("READ_ONLY")
+                .ok()
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
         }
     }
 }

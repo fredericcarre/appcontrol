@@ -55,3 +55,6 @@ appcontrol.db*
 # Python bytecode cache from the docs generators in scripts/docs/.
 __pycache__/
 *.pyc
+
+# Claude Code harness scratch (per-session worktrees and agent caches).
+.claude/

@@ -239,6 +239,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     };
 
     router
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::read_only::read_only_middleware,
+        ))
         .layer(axum::middleware::from_fn(metrics_middleware))
         .layer(axum::middleware::from_fn(security_headers_middleware))
         .layer(security_headers_layer())
