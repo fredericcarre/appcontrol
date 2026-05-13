@@ -126,7 +126,7 @@ backend:
     RATE_LIMIT_READS:      "500"
 ```
 
-To **disable** rate limiting (not recommended in production), set the value to `0`. _(verify in code; was not found at audit time)_
+To **disable** rate limiting (not recommended in production), set the value to `0`. The limiter short-circuits before touching its counter, so `RATE_LIMIT_AUTH=0`, `RATE_LIMIT_OPERATIONS=0` and `RATE_LIMIT_READS=0` all behave as "unlimited". Disabling applies in both single-instance and `HA_MODE=true` deployments.
 
 ### HA mode
 
