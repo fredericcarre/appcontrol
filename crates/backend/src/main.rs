@@ -12,7 +12,8 @@ use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use appcontrol_backend::{
-    config, create_router, db, middleware, repository, terminal, websocket, AppState,
+    config, create_router, db, middleware, openapi as openapi_doc, repository, terminal,
+    websocket, AppState,
 };
 
 #[derive(Parser)]
@@ -24,16 +25,27 @@ use appcontrol_backend::{
 struct Args {
     #[command(subcommand)]
     command: Option<ServiceCommand>,
+
     /// Apply database migrations and exit (do not start the HTTP server).
     /// Useful in CI pipelines and pre-upgrade validation jobs.
     #[arg(long)]
     migrate_only: bool,
+
     /// Log the migration plan without executing anything.
     /// Implies `--migrate-only`. Lists every migration the binary would
     /// apply against the connected database, in version order, and exits
     /// with code 0 even if the plan is empty.
     #[arg(long)]
     dry_run: bool,
+
+    /// Render the code-derived OpenAPI 3 specification and exit.
+    ///
+    /// When set, the backend skips all DB / migration / network setup
+    /// and writes the JSON document to the given path. Use `-` to write
+    /// to stdout. Intended for CI doc pipelines (`scripts/docs/gen_api.py`
+    /// reads the path from `APPCONTROL_OPENAPI_JSON`).
+    #[arg(long, value_name = "PATH")]
+    export_openapi: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -58,6 +70,13 @@ enum ServiceAction {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    // --export-openapi PATH: render the code-derived OpenAPI document
+    // and exit. Runs before any DB / config / network setup so this
+    // works on a clean checkout in CI without a Postgres/SQLite handy.
+    if let Some(path) = args.export_openapi.as_deref() {
+        return export_openapi(path);
+    }
 
     // Handle service subcommands (Windows only)
     if let Some(command) = args.command {
@@ -441,6 +460,21 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Wait for SIGTERM (container stop) or Ctrl-C (interactive), with a hard timeout.
+/// Render the code-derived OpenAPI 3 document and write it to `path`.
+/// `path == "-"` writes to stdout. Used by the `--export-openapi` flag.
+fn export_openapi(path: &str) -> anyhow::Result<()> {
+    let body = openapi_doc::ApiDoc::to_pretty_json()
+        .map_err(|e| anyhow::anyhow!("Failed to render OpenAPI spec: {}", e))?;
+    if path == "-" {
+        println!("{}", body);
+    } else {
+        std::fs::write(path, &body)
+            .map_err(|e| anyhow::anyhow!("Failed to write {}: {}", path, e))?;
+        eprintln!("Wrote OpenAPI spec to {} ({} bytes)", path, body.len());
+    }
+    Ok(())
+}
+
 async fn shutdown_signal(timeout_secs: u64) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()

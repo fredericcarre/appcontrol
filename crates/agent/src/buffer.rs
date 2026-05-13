@@ -49,7 +49,9 @@ impl OfflineBuffer {
         Ok(Self { db, max_bytes: cap })
     }
 
-    /// Return the configured cap (in bytes).
+    /// Return the configured cap (in bytes). Useful for diagnostics and
+    /// tests; not currently called from runtime code.
+    #[allow(dead_code)]
     pub fn max_bytes(&self) -> u64 {
         self.max_bytes
     }

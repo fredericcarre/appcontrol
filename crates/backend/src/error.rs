@@ -8,7 +8,23 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+/// The documented shape of every error response returned by the API.
+///
+/// All non-2xx responses from this backend serialize to this body. It is the
+/// canonical schema referenced from every `#[utoipa::path(...)]` annotation.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ApiErrorBody {
+    /// Short, stable, machine-readable error category.
+    /// Examples: `not_found`, `forbidden`, `unauthorized`, `conflict`,
+    /// `validation_error`, `internal_error`, `service_unavailable`,
+    /// `database_error`.
+    pub error: String,
+    /// Human-readable description of the failure. Safe to surface to a UI.
+    pub message: String,
+}
 
 /// Unified error type for all API handlers.
 #[derive(Debug, thiserror::Error)]

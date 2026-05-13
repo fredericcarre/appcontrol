@@ -47,6 +47,12 @@ bcrypt = "0.15"
 async-trait = "0.1"
 cron = "0.12"
 chrono-tz = "0.10"
+utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.2"
+# Note: utoipa-swagger-ui 9 requires axum 0.8 — incompatible with our
+# axum 0.7 router. The OpenAPI JSON spec is still exposed at
+# /api/v1/openapi.json (rendered from `openapi::ApiDoc`) which any
+# external Swagger UI / Redoc can point at.
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

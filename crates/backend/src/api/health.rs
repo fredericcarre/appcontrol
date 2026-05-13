@@ -73,14 +73,25 @@ pub async fn metrics() -> (
 }
 
 /// OpenAPI 3.0 specification endpoint.
-pub async fn openapi_spec() -> (
-    StatusCode,
-    [(axum::http::header::HeaderName, &'static str); 1],
-    &'static str,
-) {
+///
+/// The document is generated at runtime from the `#[utoipa::path(...)]`
+/// annotations on each handler and the `#[derive(utoipa::ToSchema)]` on
+/// each DTO — see `crate::openapi::ApiDoc`. There is no longer a static
+/// `openapi.json` file checked into the repo; this handler is the single
+/// source of truth.
+pub async fn openapi_spec() -> Result<
     (
+        StatusCode,
+        [(axum::http::header::HeaderName, &'static str); 1],
+        String,
+    ),
+    ApiError,
+> {
+    let body = crate::openapi::ApiDoc::to_pretty_json()
+        .map_err(|e| ApiError::Internal(format!("Failed to render OpenAPI spec: {}", e)))?;
+    Ok((
         StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "application/json")],
-        include_str!("../../openapi.json"),
-    )
+        body,
+    ))
 }
