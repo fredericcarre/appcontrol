@@ -37,3 +37,24 @@ docker/frontend-dist/
 target-sqlite/
 target-sqlite-e2e/
 appcontrol.db*
+
+# MkDocs Material build output (site/) and staged-at-build-time copies
+# of the root markdown files inside docs/. The workflow stages them; we
+# don't commit duplicates that would drift from their source of truth.
+/site/
+/docs/SECURITY_ARCHITECTURE.md
+/docs/CHANGELOG.md
+/docs/RELEASE.md
+
+# Auto-generated reference pages — produced by `scripts/docs/regen.py` from
+# the source-of-truth code (Rust enums, openapi.json, migrations, clap
+# derives). Not committed to keep the code as the only source of truth and
+# prevent PRs from drifting. CI regenerates them before every build.
+/docs/reference/
+
+# Python bytecode cache from the docs generators in scripts/docs/.
+__pycache__/
+*.pyc
+
+# Claude Code harness scratch (per-session worktrees and agent caches).
+.claude/

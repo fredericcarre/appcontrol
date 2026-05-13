@@ -323,6 +323,7 @@ fn test_config(db_url: String) -> appcontrol_backend::config::AppConfig {
         retention_check_events_days: 0,
         public_gateway_url: None,
         public_backend_url: None,
+        read_only: false,
     }
 }
 

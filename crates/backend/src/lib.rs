@@ -6,6 +6,7 @@ pub mod core;
 pub mod db;
 pub mod error;
 pub mod middleware;
+pub mod openapi;
 pub mod repository;
 pub mod terminal;
 pub mod websocket;
@@ -199,7 +200,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/health/latency", get(api::health::latency))
         .route("/ready", get(api::health::ready))
         .route("/metrics", get(api::health::metrics))
+        // OpenAPI spec is exposed at both the legacy root location and
+        // under the /api/v1 prefix that downstream clients (UI, CLI,
+        // scheduler integrations) point at. Both render the same
+        // dynamic `openapi::ApiDoc`.
         .route("/openapi.json", get(api::health::openapi_spec))
+        .route("/api/v1/openapi.json", get(api::health::openapi_spec))
         // Auth routes (no auth middleware — these ARE the login endpoints)
         .nest("/api/v1", auth::oidc::oidc_routes())
         .nest("/api/v1", auth::saml::saml_routes())
@@ -239,6 +245,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     };
 
     router
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::read_only::read_only_middleware,
+        ))
         .layer(axum::middleware::from_fn(metrics_middleware))
         .layer(axum::middleware::from_fn(security_headers_middleware))
         .layer(security_headers_layer())

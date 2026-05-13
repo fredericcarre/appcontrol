@@ -1,0 +1,30 @@
+[package]
+name = "appcontrol-benchmarks"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Criterion micro-benchmarks for AppControl hot paths (FSM, DAG, permissions)."
+
+[dependencies]
+appcontrol-common = { path = "../common" }
+appcontrol-backend = { path = "../backend", default-features = false, features = ["sqlite"] }
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "sqlite", "uuid", "chrono"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4" }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+
+[[bench]]
+name = "fsm"
+harness = false
+
+[[bench]]
+name = "dag_topo"
+harness = false
+
+[[bench]]
+name = "permission_resolution"
+harness = false

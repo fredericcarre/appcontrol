@@ -1,0 +1,47 @@
+/* AppControl docs — small polish on top of the Material theme. */
+
+/* Wider content area for tables and code-heavy pages. */
+.md-grid {
+  max-width: 1280px;
+}
+
+/* Make GIFs and screenshots feel like product captures, not loose images. */
+.md-typeset img[src$=".gif"],
+.md-typeset img[src$=".png"] {
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.06);
+  max-width: 100%;
+}
+
+[data-md-color-scheme="slate"] .md-typeset img[src$=".gif"],
+[data-md-color-scheme="slate"] .md-typeset img[src$=".png"] {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Slightly heavier card grid on the landing page so the entry points stand
+   out from regular content. */
+.md-typeset .grid.cards > :is(ul, ol) > li,
+.md-typeset .grid > .card {
+  border-radius: 10px;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.md-typeset .grid.cards > :is(ul, ol) > li:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+/* Tame oversized admonition titles in the dense ops pages. */
+.md-typeset .admonition-title {
+  font-size: 0.78rem;
+}
+
+/* Tables: give them a little breathing room and align numeric cells right
+   when they look like numbers. */
+.md-typeset table:not([class]) {
+  font-size: 0.78rem;
+}
+
+.md-typeset table:not([class]) th {
+  font-weight: 600;
+}

@@ -20,19 +20,57 @@ use std::sync::Arc;
 
 const TABLE: TableDefinition<i128, &[u8]> = TableDefinition::new("messages");
 
-#[allow(dead_code)]
-const MAX_BUFFER_SIZE: u64 = 100 * 1024 * 1024; // 100MB
+/// Default cap for the on-disk offline buffer when `BUFFER_MAX_BYTES`
+/// is unset or unparseable. 100 MB matches the upstream guidance in
+/// `crates/agent/CLAUDE.md` and the public documentation in
+/// `docs/HIGH_AVAILABILITY.md`.
+pub const DEFAULT_BUFFER_MAX_BYTES: u64 = 100 * 1024 * 1024;
+
+/// Resolve the per-agent buffer size cap. Reads `BUFFER_MAX_BYTES` from
+/// the environment when present; falls back to `DEFAULT_BUFFER_MAX_BYTES`.
+/// A value of `0` is treated as "use default" (we never disable the cap).
+pub fn resolve_buffer_max_bytes() -> u64 {
+    std::env::var("BUFFER_MAX_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_BUFFER_MAX_BYTES)
+}
 
 /// Offline buffer using redb embedded database.
 /// Stores messages when disconnected, replays on reconnect.
-/// FIFO eviction when buffer exceeds ~100MB on disk.
+/// FIFO eviction once the row count approximates the configured byte cap
+/// (default: `DEFAULT_BUFFER_MAX_BYTES`, override with `BUFFER_MAX_BYTES`).
+///
+/// redb does not expose a cheap on-disk size metric the way sled did,
+/// so we translate the byte cap into a row cap via `AVG_ENTRY_BYTES`. The
+/// worst case is the file grows a bit beyond the configured cap before
+/// eviction kicks in, never unbounded growth.
 #[derive(Clone)]
 pub struct OfflineBuffer {
     db: Arc<Database>,
+    max_bytes: u64,
 }
+
+/// Conservative average entry size used to convert `max_bytes` into a row
+/// cap. Real entries can be larger; choose a value that errs toward
+/// evicting earlier rather than later.
+const AVG_ENTRY_BYTES: u64 = 1024;
 
 impl OfflineBuffer {
     pub fn new(path: &str) -> anyhow::Result<Self> {
+        Self::with_max_bytes(path, resolve_buffer_max_bytes())
+    }
+
+    /// Open the buffer with an explicit byte cap. Mostly used by tests
+    /// so they don't need to mutate the environment.
+    pub fn with_max_bytes(path: &str, max_bytes: u64) -> anyhow::Result<Self> {
+        let cap = if max_bytes == 0 {
+            DEFAULT_BUFFER_MAX_BYTES
+        } else {
+            max_bytes
+        };
+
         // redb opens a file, not a directory (unlike sled). If the
         // caller passed a directory path (typical for the legacy
         // sled layout) we create a `buffer.redb` file inside it; if
@@ -65,7 +103,27 @@ impl OfflineBuffer {
             write_txn.open_table(TABLE)?;
             write_txn.commit()?;
         }
-        Ok(Self { db: Arc::new(db) })
+        tracing::info!(
+            path = %resolved.display(),
+            max_bytes = cap,
+            "Opened agent offline buffer (FIFO eviction)"
+        );
+        Ok(Self {
+            db: Arc::new(db),
+            max_bytes: cap,
+        })
+    }
+
+    /// Return the configured byte cap. Useful for diagnostics and tests;
+    /// not currently called from runtime code.
+    #[allow(dead_code)]
+    pub fn max_bytes(&self) -> u64 {
+        self.max_bytes
+    }
+
+    /// Soft row cap derived from the configured byte cap. Internal.
+    fn soft_row_cap(&self) -> u64 {
+        (self.max_bytes / AVG_ENTRY_BYTES).max(1)
     }
 
     /// Store a message in the buffer (for offline mode).
@@ -76,16 +134,15 @@ impl OfflineBuffer {
         let value = serde_json::to_vec(msg)?;
 
         // FIFO eviction: redb does not expose a cheap file-size metric
-        // the way sled did (`size_on_disk()`), so we approximate the
-        // 100 MB cap via a row count: 100 000 entries × ~1 KB average
-        // payload. Conservative — real entries can be larger, but the
-        // worst case is the file grows a bit beyond 100 MB before the
-        // cap kicks in, not unbounded growth.
-        const SOFT_ROW_CAP: u64 = 100_000;
+        // the way sled did, so we approximate the configured byte cap
+        // via a row count derived from `AVG_ENTRY_BYTES`. The worst case
+        // is the file grows a bit beyond the cap before eviction kicks
+        // in, not unbounded growth.
+        let soft_row_cap = self.soft_row_cap();
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(TABLE)?;
-            if table.len()? >= SOFT_ROW_CAP {
+            if table.len()? >= soft_row_cap {
                 // Compute the oldest key in a separate scope so the
                 // iterator's immutable borrow of `table` is released
                 // before we mutably borrow it for `remove()`.
@@ -183,6 +240,41 @@ mod tests {
         let messages = buffer.drain().unwrap();
         assert_eq!(messages.len(), 1);
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_default_max_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let buffer = OfflineBuffer::new(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(buffer.max_bytes(), DEFAULT_BUFFER_MAX_BYTES);
+    }
+
+    #[test]
+    fn test_explicit_max_bytes_is_honoured() {
+        let dir = tempfile::tempdir().unwrap();
+        let buffer =
+            OfflineBuffer::with_max_bytes(dir.path().to_str().unwrap(), 64 * 1024).unwrap();
+        assert_eq!(buffer.max_bytes(), 64 * 1024);
+    }
+
+    #[test]
+    fn test_zero_max_bytes_falls_back_to_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let buffer = OfflineBuffer::with_max_bytes(dir.path().to_str().unwrap(), 0).unwrap();
+        assert_eq!(buffer.max_bytes(), DEFAULT_BUFFER_MAX_BYTES);
+    }
+
+    #[test]
+    fn test_resolve_buffer_max_bytes_reads_env_var() {
+        // Save and restore so we don't pollute the test binary's env.
+        let prev = std::env::var("BUFFER_MAX_BYTES").ok();
+        std::env::set_var("BUFFER_MAX_BYTES", "12345");
+        assert_eq!(resolve_buffer_max_bytes(), 12345);
+        std::env::remove_var("BUFFER_MAX_BYTES");
+        assert_eq!(resolve_buffer_max_bytes(), DEFAULT_BUFFER_MAX_BYTES);
+        if let Some(v) = prev {
+            std::env::set_var("BUFFER_MAX_BYTES", v);
+        }
     }
 
     #[test]

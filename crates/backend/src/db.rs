@@ -26,8 +26,21 @@ use uuid::Uuid;
 ///
 /// For PostgreSQL: transparent wrapper around `uuid::Uuid`.
 /// For SQLite: encodes as TEXT (hyphenated string), decodes via `Uuid::parse_str`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
+)]
 #[serde(transparent)]
+#[schema(value_type = String, format = "uuid")]
 pub struct DbUuid(pub Uuid);
 
 impl DbUuid {
@@ -178,8 +191,9 @@ pub fn bind_opt_id(id: Option<impl Into<Uuid>>) -> Option<DbUuid> {
 // DbJson provides a transparent wrapper that works for both.
 
 /// A JSON value type that works with both PostgreSQL (JSONB) and SQLite (TEXT).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(transparent)]
+#[schema(value_type = Object)]
 pub struct DbJson(pub serde_json::Value);
 
 impl std::ops::Deref for DbJson {

@@ -47,6 +47,16 @@ Rust 1.88+ (agent, gateway, backend) · PostgreSQL 16 or SQLite · React 18 / Ty
 
 See [QUICKSTART](docs/QUICKSTART.md), [Architecture](docs/architecture.md), [Security](SECURITY_ARCHITECTURE.md), [Positioning](docs/POSITIONING.md).
 
+## Performance
+
+Hot-path numbers come from a `criterion` suite at `crates/benchmarks/`. Measured on a GitHub-hosted runner:
+
+- FSM transition decision (`next_state_from_check`): **≈ 1 ns / call** (~1 Gelem/s) — the database INSERT dominates, never the FSM
+- DAG topological sort on a 500-component application (10×50, ~22k edges): **2.7 ms / sort**
+- Effective-permission resolution on SQLite: **≈ 360 µs / call**, flat from 10 to 10 000 users / 100 to 100 000 grants — the per-query round-trip dominates, not data volume
+
+Reproduce locally: `cargo bench -p appcontrol-benchmarks` (HTML report in `target/criterion/`). Full reference table: [docs/CAPACITY_PLANNING.md](docs/CAPACITY_PLANNING.md#benchmarks).
+
 <!-- RELEASE-CUT -->
 <!--
 Everything above this marker is shared narrative — copied verbatim

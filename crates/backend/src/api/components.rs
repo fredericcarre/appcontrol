@@ -163,6 +163,13 @@ pub struct ComponentRow {
 pub struct CreateDependencyRequest {
     pub from_component_id: DbUuid,
     pub to_component_id: DbUuid,
+    /// Optional dependency type. Accepts "strong" (default) or "weak".
+    /// A weak dependency is drawn in the map and exported in reports but
+    /// is **skipped by the DAG sequencer** — both endpoints start
+    /// independently. Defaults to "strong" so pre-V056 clients are
+    /// unchanged.
+    #[serde(default)]
+    pub dependency_type: Option<String>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -1136,7 +1143,19 @@ pub async fn list_dependencies(
     }
 
     let deps_data = state.component_repo.list_dependencies(app_id).await?;
-    let deps: Vec<serde_json::Value> = deps_data.into_iter().map(|d| serde_json::json!({"id": d.id, "application_id": d.application_id, "from_component_id": d.from_component_id, "to_component_id": d.to_component_id, "created_at": d.created_at})).collect();
+    let deps: Vec<serde_json::Value> = deps_data
+        .into_iter()
+        .map(|d| {
+            serde_json::json!({
+                "id": d.id,
+                "application_id": d.application_id,
+                "from_component_id": d.from_component_id,
+                "to_component_id": d.to_component_id,
+                "dependency_type": d.dependency_type.as_str(),
+                "created_at": d.created_at,
+            })
+        })
+        .collect();
 
     Ok(Json(json!({ "dependencies": deps })))
 }
@@ -1191,26 +1210,49 @@ pub async fn create_dependency(
     }
 
     let dep_id = Uuid::new_v4();
+    let dep_type = match body.dependency_type.as_deref() {
+        Some("weak") => crate::repository::components::DependencyType::Weak,
+        Some("strong") | None => crate::repository::components::DependencyType::Strong,
+        Some(other) => {
+            return Err(ApiError::Validation(format!(
+                "dependency_type must be 'strong' or 'weak' (got: {other})"
+            )));
+        }
+    };
     log_action(
         &state.db,
         user.user_id,
         "create_dependency",
         "dependency",
         dep_id,
-        json!({"from": body.from_component_id, "to": body.to_component_id}),
+        json!({
+            "from": body.from_component_id,
+            "to": body.to_component_id,
+            "dependency_type": dep_type.as_str(),
+        }),
     )
     .await?;
 
     let dep_domain = state
         .component_repo
-        .create_dependency(app_id, *body.from_component_id, *body.to_component_id)
+        .create_dependency(
+            app_id,
+            *body.from_component_id,
+            *body.to_component_id,
+            dep_type,
+        )
         .await?;
 
     Ok((
         StatusCode::CREATED,
-        Json(
-            json!({"id": dep_domain.id, "application_id": dep_domain.application_id, "from_component_id": dep_domain.from_component_id, "to_component_id": dep_domain.to_component_id, "created_at": dep_domain.created_at}),
-        ),
+        Json(json!({
+            "id": dep_domain.id,
+            "application_id": dep_domain.application_id,
+            "from_component_id": dep_domain.from_component_id,
+            "to_component_id": dep_domain.to_component_id,
+            "dependency_type": dep_domain.dependency_type.as_str(),
+            "created_at": dep_domain.created_at,
+        })),
     ))
 }
 

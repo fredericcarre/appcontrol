@@ -1,0 +1,8 @@
+# MkDocs Material documentation build — pinned for reproducible CI builds.
+# Bump together; verify with: pip install -r docs/requirements.txt && mkdocs build --strict
+mkdocs==1.6.1
+mkdocs-material==9.5.49
+mkdocs-material-extensions==1.3.1
+mkdocs-git-revision-date-localized-plugin==1.3.0
+pymdown-extensions==10.12
+pygments==2.18.0

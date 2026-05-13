@@ -40,6 +40,7 @@ pub mod variables;
 pub mod workspaces;
 
 use axum::{
+    extract::DefaultBodyLimit,
     middleware as axum_middleware,
     routing::{delete, get, patch, post, put},
     Router,
@@ -47,6 +48,13 @@ use axum::{
 use std::sync::Arc;
 
 use crate::AppState;
+
+/// Upper bound on the request body for the air-gap agent-binary upload
+/// endpoint (`POST /api/v1/admin/agent-binaries`). 50 MiB is large enough
+/// for the current Rust agent binaries (~8–12 MB stripped) including the
+/// base64 inflation (~4/3) and JSON envelope, while keeping the rest of
+/// the API on axum's default 2 MiB cap. Documented in docs/LIMITS.md.
+const AGENT_BINARY_UPLOAD_LIMIT_BYTES: usize = 50 * 1024 * 1024;
 
 pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
@@ -635,10 +643,14 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/catalog/component-types/:id",
             put(catalog::update_catalog_entry).delete(catalog::delete_catalog_entry),
         )
-        // Air-gap agent update
+        // Air-gap agent update — the upload endpoint overrides the default
+        // axum body-size cap (2 MiB) with a 50 MiB limit so the JSON
+        // envelope around a base64-encoded agent binary fits.
         .route(
             "/admin/agent-binaries",
-            get(agent_update::list_binaries).post(agent_update::upload_binary),
+            get(agent_update::list_binaries)
+                .post(agent_update::upload_binary)
+                .route_layer(DefaultBodyLimit::max(AGENT_BINARY_UPLOAD_LIMIT_BYTES)),
         )
         .route(
             "/admin/agents/:id/update",
@@ -656,4 +668,20 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             state,
             crate::middleware::auth::auth_middleware,
         ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Lock in the 50 MiB cap documented in docs/LIMITS.md.
+    /// Bumping this number is fine — but only if the doc is bumped too.
+    #[test]
+    fn agent_binary_upload_limit_matches_documented_50_mib() {
+        assert_eq!(
+            AGENT_BINARY_UPLOAD_LIMIT_BYTES,
+            50 * 1024 * 1024,
+            "AGENT_BINARY_UPLOAD_LIMIT_BYTES must stay at 50 MiB (see docs/LIMITS.md)"
+        );
+    }
 }
