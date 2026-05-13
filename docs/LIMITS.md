@@ -267,7 +267,7 @@ If multiple components on the same agent share the same `check_cmd` (verbatim), 
 - **What happens at the limit:** HTTP `413 Payload Too Large`.
 - **Relevant endpoints:**
   - `POST /apps/:id/import` — YAML/JSON application import. The 2 MB ceiling allows ~ 5000 components per import.
-  - `POST /admin/agent-binaries` — agent binary upload. Increased to **50 MB** for this endpoint. _(verify in code; was not found at audit time)_
+  - `POST /admin/agent-binaries` — agent binary upload. Increased to **50 MiB** via a per-route `DefaultBodyLimit::max(50 MiB)` layer (see `crates/backend/src/api/mod.rs::AGENT_BINARY_UPLOAD_LIMIT_BYTES`). Sized for a base64-encoded Rust agent binary plus its JSON envelope.
 
 ### Request timeout
 

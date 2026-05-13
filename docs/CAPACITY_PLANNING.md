@@ -6,6 +6,7 @@ For the topology these resources support, see [High Availability](HIGH_AVAILABIL
 
 ## Table of contents
 
+- [Benchmarks](#benchmarks)
 - [Headline numbers](#headline-numbers)
 - [Backend sizing](#backend-sizing)
 - [PostgreSQL sizing](#postgresql-sizing)
@@ -16,6 +17,82 @@ For the topology these resources support, see [High Availability](HIGH_AVAILABIL
 - [WebSocket fan-out and latency targets](#websocket-fan-out-and-latency-targets)
 - [Worked example: 200 apps × 30 components × 1 check / min](#worked-example-200-apps--30-components--1-check--min)
 - [Worked example: 5000 agents, mostly idle](#worked-example-5000-agents-mostly-idle)
+
+---
+
+## Benchmarks
+
+All performance numbers in this page that mention `(measured)` come from a real
+criterion benchmark suite that ships with the repository. The suite lives in
+`crates/benchmarks/` and covers three hot paths:
+
+| Benchmark | What it measures | Why it matters |
+|-----------|------------------|----------------|
+| `fsm` | `is_valid_transition` and `next_state_from_check` (pure CPU) | Runs once per health-check result — must be ≪ 1 µs |
+| `dag_topo` | `topological_levels` for chains, diamonds and a 500-component wide DAG | Runs once per `POST /apps/:id/start`, must stay sub-millisecond on real-world graphs |
+| `permission_resolution` | `effective_permission(pool, user, app)` on a seeded SQLite | Runs on every authenticated API request |
+
+### How to reproduce locally
+
+```bash
+# Full run (~10s per bench)
+cargo bench -p appcontrol-benchmarks --bench fsm
+cargo bench -p appcontrol-benchmarks --bench dag_topo
+cargo bench -p appcontrol-benchmarks --bench permission_resolution
+
+# Quick run (~2s per bench, fine for spot-checks)
+cargo bench -p appcontrol-benchmarks -- --quick
+```
+
+Criterion writes a full HTML report under `target/criterion/`; open
+`target/criterion/report/index.html` in a browser to drill into the
+per-benchmark distributions, flame plots and history.
+
+### CI artefacts
+
+The `Benchmarks` workflow (`.github/workflows/benchmarks.yaml`) runs the suite
+on `workflow_dispatch`, every Monday at 06:00 UTC, and on every push to `main`
+that touches `crates/**`. Each run uploads two artefacts (90-day retention):
+
+- `criterion-report` — the full HTML tree from `target/criterion/`
+- `bencher-results` — the single-file bencher-format output plus `lscpu` of the
+  runner so numbers can be normalised against the host
+
+The most recent baseline used in this document comes from a GitHub-hosted
+ubuntu-latest x86_64 runner. Numbers on bare-metal Xeon / EPYC are typically
+1.5–2× faster.
+
+### Baseline numbers (measured)
+
+Recorded against an ubuntu-latest GitHub-hosted runner, criterion `--quick`
+mode (mean of 3 best samples):
+
+| Bench | Per-call wall clock | Throughput |
+|-------|--------------------:|-----------:|
+| `fsm::is_valid_transition` (single call) | 1.83 ns | 545 Melem/s |
+| `fsm::is_valid_transition` (full 8×8 matrix) | 95.8 ns | 670 Melem/s per entry |
+| `fsm::next_state_from_check` (Running, exit 0 hot path) | 0.98 ns | 1.02 Gelem/s |
+| `fsm::next_state_from_check` (Running, exit 1 → Failed) | 1.63 ns | 613 Melem/s |
+| `fsm::next_state_from_check` (8×3 grid) | 27.4 ns | 876 Melem/s per entry |
+| `dag::topological_levels` (5-node linear chain) | 1.14 µs | 880 sorts/s |
+| `dag::topological_levels` (52-node diamond) | 19.85 µs | 50 400 sorts/s |
+| `dag::topological_levels` (500-node, 10×50 wide DAG) | 2.73 ms | 367 sorts/s |
+| `dag::find_all_dependencies` (500-node DAG, deepest node) | 445 µs | 2 248 lookups/s |
+| `permissions::effective_permission` (10 users / 10 teams / 10 apps / 100 grants) | 370 µs | 2 700 lookups/s |
+| `permissions::effective_permission` (1k users / 100 teams / 1k apps / 10k grants) | 345 µs | 2 900 lookups/s |
+| `permissions::effective_permission` (10k users / 1k teams / 10k apps / 100k grants) | 363 µs | 2 754 lookups/s |
+
+Two observations worth calling out:
+
+1. **The FSM is free**: `next_state_from_check` on the hot path runs in under a
+   nanosecond — i.e. one L1 cache hit. The FSM will never be the bottleneck;
+   the database INSERT that follows always dominates.
+2. **Permission resolution is constant in data set size**: the SQLite query
+   plan is two index-lookups, so the cost is dominated by the per-query
+   round-trip (~ 350 µs on SQLite, faster on PostgreSQL where pgbouncer keeps
+   connections warm). A 1000× bigger fixture does not move the number. This
+   is why we cache `effective_permission` per-request rather than caching
+   results.
 
 ---
 
@@ -287,14 +364,15 @@ Total: ≈ 5–10 events/s sustained, with bursts to 50/s during operations. Mul
 
 ### Latency budget
 
-| Hop | Target P95 |
-|-----|-----------:|
-| Agent → Gateway (WS frame) | 5 ms |
-| Gateway → Backend (WS frame) | 5 ms |
-| Backend → DB INSERT | 10 ms |
-| Backend → WS Hub fan-out | 5 ms |
-| Backend → Frontend WS frame | 10 ms |
-| **Total agent-event → UI render** | **35 ms** |
+| Hop | Target P95 | Notes |
+|-----|-----------:|-------|
+| Agent → Gateway (WS frame) | 5 ms | network-bound |
+| Gateway → Backend (WS frame) | 5 ms | network-bound |
+| Backend FSM decision | < 1 µs | _measured_ — `next_state_from_check` is ≈ 1 ns/call; FSM cost is invisible against the rest of the chain |
+| Backend → DB INSERT | 10 ms | `state_transitions` INSERT, sqlx round-trip dominates |
+| Backend → WS Hub fan-out | 5 ms | DashMap iteration; permission check is < 400 µs (_measured_) |
+| Backend → Frontend WS frame | 10 ms | network-bound |
+| **Total agent-event → UI render** | **35 ms** | |
 
 If your install consistently exceeds 100 ms agent-event → UI latency, monitor:
 

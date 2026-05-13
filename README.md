@@ -211,6 +211,16 @@ Pile entièrement open architecture, déployable on-prem, en cloud privé, ou en
 | Authentification | OIDC · SAML 2.0 · JWT RS256 · RBAC à 5 niveaux · partage par lien |
 | Déploiement | Docker · Helm · OpenShift · mode air-gap |
 
+### Performance
+
+Les chemins critiques sont couverts par une suite de micro-benchmarks `criterion` (`crates/benchmarks/`). Sur un runner GitHub-hosted standard :
+
+- FSM (`is_valid_transition`, `next_state_from_check`) : **≈ 1 ns par appel**, soit ~1 Gelem/s — le FSM n'est jamais le goulot d'étranglement, c'est l'INSERT en base qui domine.
+- Tri topologique d'un DAG de 500 composants (10 × 50, ~22k arêtes) : **2,7 ms** par tri.
+- Résolution de permission (`effective_permission`) sur SQLite : **≈ 360 µs** — indépendant de la taille du dataset (10 / 1 000 / 10 000 utilisateurs : même latence).
+
+Reproduire localement : `cargo bench -p appcontrol-benchmarks` — rapport HTML dans `target/criterion/`. Détails complets et table de référence : [docs/CAPACITY_PLANNING.md](docs/CAPACITY_PLANNING.md#benchmarks).
+
 ### Démarrage en 5 minutes
 
 ```bash
