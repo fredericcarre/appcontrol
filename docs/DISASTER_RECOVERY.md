@@ -252,7 +252,7 @@ grep -i error amcheck.log
 
 ### Read-only fallback
 
-Until corruption is resolved, switch the backend into a read-only failsafe by setting `READ_ONLY=true` _(verify in code; was not found at audit time)_. Otherwise:
+Until corruption is resolved, switch the backend into a read-only failsafe by setting `READ_ONLY=true`. In that mode the backend keeps serving authentication, all `GET` requests, health probes and the break-glass endpoint, but rejects every state-mutating request (`POST`/`PUT`/`PATCH`/`DELETE`) with HTTP `503 Service Unavailable` and `Retry-After: 60`. Authentication endpoints under `/api/v1/auth/`, `/api/v1/oidc/`, `/api/v1/saml/` and `/api/v1/break-glass/` are exempted so an operator can still log in. Otherwise:
 
 1. Scale backend to 0 to prevent writes.
    ```bash
