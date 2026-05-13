@@ -173,7 +173,7 @@ The `--dry-run` flag _(verify in code; was not found at audit time)_ logs the mi
 
 ## Agent upgrades
 
-Agents run outside Kubernetes (on monitored servers) so they need their own upgrade path. Three options are supported. The [Production Deployment guide](PRODUCTION_DEPLOYMENT.md#agent-binary-upgrades) summarizes them; this page goes deeper.
+Agents run outside Kubernetes (on monitored servers) so they need their own upgrade path. Two options are supported. The [Production Deployment guide](PRODUCTION_DEPLOYMENT.md#agent-binary-upgrades) summarizes them; this page goes deeper.
 
 ### Option A — managed update (recommended for production)
 
@@ -211,11 +211,7 @@ Backend pushes a signed binary to each agent. Centralized tracking via `agent_up
 
 The agent verifies the SHA-256 of the downloaded binary against the manifest, swaps atomically (`mv newbin oldbin`), and self-restarts. On failure, the `.old` backup is restored automatically.
 
-### Option B — direct download
-
-Each agent fetches its update directly from the backend's binary endpoint over the existing mTLS WebSocket. Same integrity check and rollback semantics as Option A. Set the agent's `update_channel: pull` in config. _(verify in code; was not found at audit time)_
-
-### Option C — manual replacement
+### Option B — manual replacement
 
 For one-offs or air-gapped hosts not eligible for managed update:
 
