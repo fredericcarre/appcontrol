@@ -194,10 +194,10 @@ done
 
 **Rationale.** The CA private key is the master credential. If the backend host is compromised, the attacker can sign any cert.
 
-**Set.** Two acceptable options:
+**Set.** Two options:
 
-- **HSM / KMS-backed CA.** Configure the backend to call HashiCorp Vault PKI / AWS KMS / Azure Key Vault for signing operations. _(verify in code; was not found at audit time)_
-- **Sealed secret with strict RBAC.** Keep the CA in a Kubernetes secret with only the backend ServiceAccount as reader; encrypt the secret at rest with a KMS-backed key.
+- **Sealed secret with strict RBAC** (supported today). Keep the CA in a Kubernetes secret with only the backend ServiceAccount as reader; encrypt the secret at rest with a KMS-backed key.
+- **HSM / KMS-backed CA** (roadmap, not yet implemented). Delegating CA signing to HashiCorp Vault PKI, AWS KMS or Azure Key Vault is planned. Today the backend signs in-process with the CA private key loaded from the database (column `organizations.ca_private_key`, encrypted at rest by PostgreSQL TDE or LUKS at the volume layer). Tracking item: hsm-ca-signing.
 
 **Verify.**
 

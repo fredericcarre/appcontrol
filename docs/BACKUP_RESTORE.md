@@ -403,7 +403,8 @@ The per-organization CA is stored encrypted in the `pki_authorities` table. If y
 - **Every agent must be re-enrolled** with a new CA — there is no other way.
 - Plan for this by including `pki_authorities` in your DB backup (it is part of the `pg_dump`).
 
-For high security, consider an **external CA**: provision the CA in HashiCorp Vault PKI or AWS KMS, and configure the backend to delegate signing. _(verify in code; was not found at audit time)_
+!!! note "Roadmap: external CA"
+    Delegating CA signing to HashiCorp Vault PKI or AWS KMS so the private key never lives in the backend database is on the roadmap. It is not yet implemented (see [Hardening](HARDENING.md#pki-and-certificate-hygiene)). Today the CA lives encrypted in `organizations.ca_private_key`; protect it via PostgreSQL TDE or volume-level encryption (LUKS, EBS encryption) and a hardened Kubernetes secret-access policy.
 
 ### `JWT_SECRET`
 
@@ -425,15 +426,19 @@ Each agent host has its own client cert at `/etc/appcontrol/tls/agent.crt`. If t
 
 Stored as Kubernetes secret `appcontrol-gateway-tls`. Re-issue at any time via `appctl pki issue-gateway`.
 
-### KMS recommendation
+### KMS recommendation (roadmap)
 
-For production, store the CA private key in a KMS (AWS KMS, GCP Cloud KMS, Azure Key Vault) or HSM and have the backend call the KMS for signing. This:
+In a future release the backend will be able to delegate CA signing to a KMS or HSM (AWS KMS, GCP Cloud KMS, Azure Key Vault, HashiCorp Vault PKI). The benefits will be:
 
-- Prevents an admin from exfiltrating the CA from the backend DB.
-- Satisfies DORA Article 9 (cryptographic key management).
-- Allows hardware-backed key rotation.
+- Prevent an admin from exfiltrating the CA from the backend DB.
+- Help satisfy DORA Article 9 (cryptographic key management).
+- Allow hardware-backed key rotation.
 
-Configuration: set `PKI_BACKEND=vault` and provide `VAULT_ADDR`, `VAULT_TOKEN` (or AppRole). _(verify in code; was not found at audit time)_
+This is not yet implemented. The CA private key is currently held encrypted in the database. Until KMS integration ships, mitigate by:
+
+- enabling at-rest encryption on the PostgreSQL volume (PostgreSQL TDE, LUKS, AWS EBS encryption);
+- restricting `SELECT` on `pki_authorities` / `organizations.ca_private_key` to the backend service account only;
+- rotating the CA on a regular cadence (see [PKI rotation](HARDENING.md#pki-and-certificate-hygiene)).
 
 ---
 
