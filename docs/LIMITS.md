@@ -55,8 +55,8 @@ For sizing the deployment to stay within these limits, see [Capacity Planning](C
 
 ### Action log row size
 
-- **`stdout` field truncation:** the agent truncates `stdout` to **4 KB per check** before sending. The full command output is captured in `command_executions` for sync commands.
-- **Why 4 KB:** A larger payload would dominate the WebSocket frame; check outputs are summaries, not full logs. To capture the full output, set `output_streaming = true` on the component (migration `V019`) and stream into the `command_executions.stdout_chunks` table. _(verify in code; was not found at audit time)_
+- **`stdout` field truncation:** the agent truncates both `stdout` and `stderr` to **4 KB per check** before sending (see `crates/agent/src/executor.rs`). The same 4 KB-truncated payload is what ultimately lands in `command_executions.stdout` for sync commands.
+- **Why 4 KB:** A larger payload would dominate the WebSocket frame; check outputs are intended to be summaries, not full logs. If you need to inspect the full output of a one-off command, run it via the live terminal session feature (`POST /api/v1/components/:id/terminal/open`) which streams stdout/stderr in real time without truncation. A `command_executions.stdout_chunks` streaming table is on the roadmap; it is not yet implemented.
 
 ### `action_log` retention
 
