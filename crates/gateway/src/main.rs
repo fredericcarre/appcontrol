@@ -972,7 +972,7 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
     };
     let register_json = serde_json::to_string(&register_msg)?;
     write
-        .send(tokio_tungstenite::tungstenite::Message::Text(register_json))
+        .send(tokio_tungstenite::tungstenite::Message::Text(register_json.into()))
         .await?;
 
     // Re-announce all currently connected agents to the backend
@@ -986,7 +986,7 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
         };
         if let Ok(json) = serde_json::to_string(&notification) {
             write
-                .send(tokio_tungstenite::tungstenite::Message::Text(json))
+                .send(tokio_tungstenite::tungstenite::Message::Text(json.into()))
                 .await?;
         }
     }
@@ -1036,7 +1036,7 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
             // Periodic ping to detect dead connections
             _ = ping_timer.tick() => {
                 tracing::debug!("Sending ping to backend");
-                match write.send(tokio_tungstenite::tungstenite::Message::Ping(vec![])).await {
+                match write.send(tokio_tungstenite::tungstenite::Message::Ping(Default::default())).await {
                     Ok(()) => {
                         waiting_for_pong = true;
                     }
@@ -1057,7 +1057,7 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
                 };
                 if let Ok(json) = serde_json::to_string(&heartbeat) {
                     tracing::debug!(agents = state.registry.connected_count(), "Sending gateway heartbeat");
-                    if let Err(e) = write.send(tokio_tungstenite::tungstenite::Message::Text(json)).await {
+                    if let Err(e) = write.send(tokio_tungstenite::tungstenite::Message::Text(json.into())).await {
                         tracing::error!(error = %e, "Failed to send heartbeat to backend");
                         return Err(e.into());
                     }
@@ -1067,7 +1067,7 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
             // Messages from agents to forward to backend
             Some(msg) = backend_rx.recv() => {
                 tracing::debug!(bytes = msg.len(), "Sending message from channel to backend WebSocket");
-                match write.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await {
+                match write.send(tokio_tungstenite::tungstenite::Message::Text(msg.into())).await {
                     Ok(()) => {
                         // Flush to ensure message is sent immediately
                         if let Err(e) = futures_util::SinkExt::flush(&mut write).await {
@@ -1163,11 +1163,20 @@ fn build_backend_tls_connector(
         tracing::info!("Backend TLS: using custom CA from {}", ca_path);
         store
     } else {
-        // No custom CA: use native system root certificates
+        // No custom CA: use native system root certificates.
+        // rustls-native-certs 0.8 returns a partial-success struct
+        // (some certs may parse while others fail); fail loud on the
+        // first error so a half-trusted store never makes it into a
+        // banking-grade backend connection.
         let mut store = rustls::RootCertStore::empty();
-        let native_certs = rustls_native_certs::load_native_certs()
-            .map_err(|e| anyhow::anyhow!("Failed to load native root certificates: {}", e))?;
-        for cert in native_certs {
+        let result = rustls_native_certs::load_native_certs();
+        if let Some(err) = result.errors.into_iter().next() {
+            return Err(anyhow::anyhow!(
+                "Failed to load native root certificates: {}",
+                err
+            ));
+        }
+        for cert in result.certs {
             store.add(cert).ok();
         }
         tracing::info!("Backend TLS: using system root certificates");
