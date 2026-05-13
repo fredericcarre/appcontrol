@@ -1,20 +1,57 @@
 use appcontrol_common::AgentMessage;
 
-#[allow(dead_code)]
-const MAX_BUFFER_SIZE: u64 = 100 * 1024 * 1024; // 100MB
+/// Default cap for the on-disk offline buffer when `BUFFER_MAX_BYTES`
+/// is unset or unparseable. 100 MB matches the upstream guidance in
+/// `crates/agent/CLAUDE.md` and the public documentation in
+/// `docs/HIGH_AVAILABILITY.md`.
+pub const DEFAULT_BUFFER_MAX_BYTES: u64 = 100 * 1024 * 1024;
+
+/// Resolve the per-agent buffer size cap. Reads `BUFFER_MAX_BYTES` from
+/// the environment when present; falls back to `DEFAULT_BUFFER_MAX_BYTES`.
+/// A value of `0` is treated as "use default" (we never disable the cap).
+pub fn resolve_buffer_max_bytes() -> u64 {
+    std::env::var("BUFFER_MAX_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_BUFFER_MAX_BYTES)
+}
 
 /// Offline buffer using sled embedded database.
 /// Stores messages when disconnected, replays on reconnect.
-/// FIFO eviction when buffer exceeds 100MB.
+/// FIFO eviction when buffer exceeds the configured cap
+/// (default: `DEFAULT_BUFFER_MAX_BYTES`, override with `BUFFER_MAX_BYTES`).
 #[derive(Clone)]
 pub struct OfflineBuffer {
     db: sled::Db,
+    max_bytes: u64,
 }
 
 impl OfflineBuffer {
     pub fn new(path: &str) -> anyhow::Result<Self> {
+        Self::with_max_bytes(path, resolve_buffer_max_bytes())
+    }
+
+    /// Open the buffer with an explicit byte cap. Mostly used by tests
+    /// so they don't need to mutate the environment.
+    pub fn with_max_bytes(path: &str, max_bytes: u64) -> anyhow::Result<Self> {
         let db = sled::open(path)?;
-        Ok(Self { db })
+        let cap = if max_bytes == 0 {
+            DEFAULT_BUFFER_MAX_BYTES
+        } else {
+            max_bytes
+        };
+        tracing::info!(
+            path,
+            max_bytes = cap,
+            "Opened agent offline buffer (FIFO eviction)"
+        );
+        Ok(Self { db, max_bytes: cap })
+    }
+
+    /// Return the configured cap (in bytes).
+    pub fn max_bytes(&self) -> u64 {
+        self.max_bytes
     }
 
     /// Store a message in the buffer (for offline mode).
@@ -26,11 +63,14 @@ impl OfflineBuffer {
             .to_be_bytes();
         let value = serde_json::to_vec(msg)?;
 
-        // Check size and evict if needed
-        if self.db.size_on_disk()? > MAX_BUFFER_SIZE {
-            // Remove oldest entries (FIFO)
-            if let Some(Ok((oldest_key, _))) = self.db.iter().next() {
-                self.db.remove(oldest_key)?;
+        // Check size and evict if needed. We loop so a backlog of small
+        // entries past the cap is drained, not just trimmed by one.
+        while self.db.size_on_disk()? > self.max_bytes {
+            match self.db.iter().next() {
+                Some(Ok((oldest_key, _))) => {
+                    self.db.remove(oldest_key)?;
+                }
+                _ => break,
             }
         }
 
@@ -96,6 +136,40 @@ mod tests {
         let messages = buffer.drain().unwrap();
         assert_eq!(messages.len(), 1);
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_default_max_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let buffer = OfflineBuffer::new(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(buffer.max_bytes(), DEFAULT_BUFFER_MAX_BYTES);
+    }
+
+    #[test]
+    fn test_explicit_max_bytes_is_honoured() {
+        let dir = tempfile::tempdir().unwrap();
+        let buffer = OfflineBuffer::with_max_bytes(dir.path().to_str().unwrap(), 64 * 1024).unwrap();
+        assert_eq!(buffer.max_bytes(), 64 * 1024);
+    }
+
+    #[test]
+    fn test_zero_max_bytes_falls_back_to_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let buffer = OfflineBuffer::with_max_bytes(dir.path().to_str().unwrap(), 0).unwrap();
+        assert_eq!(buffer.max_bytes(), DEFAULT_BUFFER_MAX_BYTES);
+    }
+
+    #[test]
+    fn test_resolve_buffer_max_bytes_reads_env_var() {
+        // Save and restore so we don't pollute the test binary's env.
+        let prev = std::env::var("BUFFER_MAX_BYTES").ok();
+        std::env::set_var("BUFFER_MAX_BYTES", "12345");
+        assert_eq!(resolve_buffer_max_bytes(), 12345);
+        std::env::remove_var("BUFFER_MAX_BYTES");
+        assert_eq!(resolve_buffer_max_bytes(), DEFAULT_BUFFER_MAX_BYTES);
+        if let Some(v) = prev {
+            std::env::set_var("BUFFER_MAX_BYTES", v);
+        }
     }
 
     #[test]

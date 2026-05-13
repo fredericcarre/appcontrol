@@ -281,7 +281,7 @@ While disconnected:
 
 - Agent continues running checks.
 - Each `CheckResult` is written to the local sled DB with a nanosecond-precision timestamp key.
-- Buffer is FIFO bounded at 100 MB (configurable via `BUFFER_MAX_BYTES` env var _(verify in code; was not found at audit time)_).
+- Buffer is FIFO bounded at 100 MB by default (override with the `BUFFER_MAX_BYTES` environment variable on the agent process; value in bytes, `0` or unparseable value falls back to the default). When the cap is exceeded, the oldest entries are evicted in order until the buffer fits again.
 - On reconnect, the buffer is drained in order, then the agent resumes real-time mode.
 
 This means a 1 h disconnect on a 50-component agent at 30 s check interval produces ≈ 6000 buffered events × 200 bytes = ~1.2 MB — well under the buffer cap.
