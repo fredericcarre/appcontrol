@@ -1142,18 +1142,17 @@ fn extract_client_cert_fingerprint(
 fn build_backend_tls_connector(
     backend_tls: &Option<BackendTlsSection>,
 ) -> anyhow::Result<tokio_tungstenite::Connector> {
+    use rustls::pki_types::pem::PemObject;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-    use std::io::BufReader;
 
     // Build the root certificate store
     let root_store = if let Some(ca_path) = backend_tls.as_ref().and_then(|t| t.ca_file.as_deref())
     {
         // Internal PKI: trust only the configured CA
-        let ca_data = std::fs::read(ca_path)
-            .map_err(|e| anyhow::anyhow!("Failed to read backend CA {}: {}", ca_path, e))?;
-        let mut ca_reader = BufReader::new(ca_data.as_slice());
         let mut store = rustls::RootCertStore::empty();
-        for cert in rustls_pemfile::certs(&mut ca_reader) {
+        for cert in CertificateDer::pem_file_iter(ca_path)
+            .map_err(|e| anyhow::anyhow!("Failed to open backend CA {}: {}", ca_path, e))?
+        {
             let cert =
                 cert.map_err(|e| anyhow::anyhow!("Failed to parse backend CA cert: {}", e))?;
             store
@@ -1194,21 +1193,17 @@ fn build_backend_tls_connector(
         let cert_path = tls.cert_file.as_deref().unwrap();
         let key_path = tls.key_file.as_deref().unwrap();
 
-        let cert_data = std::fs::read(cert_path).map_err(|e| {
-            anyhow::anyhow!("Failed to read backend client cert {}: {}", cert_path, e)
-        })?;
-        let mut cert_reader = BufReader::new(cert_data.as_slice());
-        let client_certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+        let client_certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert_path)
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to open backend client cert {}: {}", cert_path, e)
+            })?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow::anyhow!("Failed to parse backend client cert: {}", e))?;
 
-        let key_data = std::fs::read(key_path).map_err(|e| {
-            anyhow::anyhow!("Failed to read backend client key {}: {}", key_path, e)
-        })?;
-        let mut key_reader = BufReader::new(key_data.as_slice());
-        let client_key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
-            .map_err(|e| anyhow::anyhow!("Failed to parse backend client key: {}", e))?
-            .ok_or_else(|| anyhow::anyhow!("No private key found in: {}", key_path))?;
+        let client_key: PrivateKeyDer<'static> = PrivateKeyDer::from_pem_file(key_path)
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to parse backend client key from {}: {}", key_path, e)
+            })?;
 
         tracing::info!("Backend TLS: mTLS enabled (presenting client certificate)");
         rustls::ClientConfig::builder()
@@ -1232,14 +1227,12 @@ fn build_backend_tls_connector(
 /// - `/enroll` and `/health` to work without client certs (for agent enrollment)
 /// - `/ws` to require client certs (verified in the handler)
 fn build_server_tls_config(tls: &TlsSection) -> anyhow::Result<Arc<rustls::ServerConfig>> {
+    use rustls::pki_types::pem::PemObject;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-    use std::io::BufReader;
 
     // Load server certificate chain
-    let cert_data = std::fs::read(&tls.cert_file)
-        .map_err(|e| anyhow::anyhow!("Failed to read gateway cert {}: {}", tls.cert_file, e))?;
-    let mut cert_reader = BufReader::new(cert_data.as_slice());
-    let server_certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+    let server_certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(&tls.cert_file)
+        .map_err(|e| anyhow::anyhow!("Failed to open gateway cert {}: {}", tls.cert_file, e))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| anyhow::anyhow!("Failed to parse gateway cert: {}", e))?;
 
@@ -1251,20 +1244,14 @@ fn build_server_tls_config(tls: &TlsSection) -> anyhow::Result<Arc<rustls::Serve
     }
 
     // Load server private key
-    let key_data = std::fs::read(&tls.key_file)
-        .map_err(|e| anyhow::anyhow!("Failed to read gateway key {}: {}", tls.key_file, e))?;
-    let mut key_reader = BufReader::new(key_data.as_slice());
-    let server_key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
-        .map_err(|e| anyhow::anyhow!("Failed to parse gateway key: {}", e))?
-        .ok_or_else(|| anyhow::anyhow!("No private key found in: {}", tls.key_file))?;
+    let server_key: PrivateKeyDer<'static> = PrivateKeyDer::from_pem_file(&tls.key_file)
+        .map_err(|e| anyhow::anyhow!("Failed to parse gateway key {}: {}", tls.key_file, e))?;
 
     // Load CA certificates for client verification (agent certs must be signed by this CA)
-    let ca_data = std::fs::read(&tls.ca_file)
-        .map_err(|e| anyhow::anyhow!("Failed to read CA file {}: {}", tls.ca_file, e))?;
-    let mut ca_reader = BufReader::new(ca_data.as_slice());
-
     let mut root_store = rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut ca_reader) {
+    for cert in CertificateDer::pem_file_iter(&tls.ca_file)
+        .map_err(|e| anyhow::anyhow!("Failed to open CA file {}: {}", tls.ca_file, e))?
+    {
         let cert = cert.map_err(|e| anyhow::anyhow!("Failed to parse CA cert: {}", e))?;
         root_store
             .add(cert)

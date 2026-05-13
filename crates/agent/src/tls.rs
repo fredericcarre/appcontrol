@@ -1,27 +1,32 @@
 use sha2::Digest;
-use std::io::BufReader;
 use std::sync::Arc;
 
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
 use crate::config::TlsSection;
+
+// PEM parsing migrated from the unmaintained `rustls-pemfile` crate
+// (RUSTSEC-2025-0134) to the `PemObject` trait re-exported through
+// `rustls::pki_types::pem`, which is the upstream path the rustls
+// ecosystem now recommends. Same on-the-wire behaviour, same parser
+// — just a maintained source.
 
 /// Build a `tokio_rustls::TlsConnector` from the agent's TLS configuration.
 ///
 /// This connector presents the agent's client certificate to the gateway (mTLS)
 /// and validates the gateway's certificate against the configured CA.
 pub fn build_tls_connector(tls: &TlsSection) -> anyhow::Result<tokio_rustls::TlsConnector> {
-    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-
     // Load CA certificates for server verification
     let ca_path = tls
         .ca_file
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("TLS enabled but ca_file not configured"))?;
-    let ca_data = std::fs::read(ca_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read CA file {}: {}", ca_path, e))?;
-    let mut ca_reader = BufReader::new(ca_data.as_slice());
 
     let mut root_store = rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut ca_reader) {
+    for cert in CertificateDer::pem_file_iter(ca_path)
+        .map_err(|e| anyhow::anyhow!("Failed to open CA file {}: {}", ca_path, e))?
+    {
         let cert = cert.map_err(|e| anyhow::anyhow!("Failed to parse CA cert: {}", e))?;
         root_store
             .add(cert)
@@ -33,10 +38,8 @@ pub fn build_tls_connector(tls: &TlsSection) -> anyhow::Result<tokio_rustls::Tls
         .cert_file
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("TLS enabled but cert_file not configured"))?;
-    let cert_data = std::fs::read(cert_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read cert file {}: {}", cert_path, e))?;
-    let mut cert_reader = BufReader::new(cert_data.as_slice());
-    let client_certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+    let client_certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert_path)
+        .map_err(|e| anyhow::anyhow!("Failed to open cert file {}: {}", cert_path, e))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| anyhow::anyhow!("Failed to parse client cert: {}", e))?;
 
@@ -52,13 +55,8 @@ pub fn build_tls_connector(tls: &TlsSection) -> anyhow::Result<tokio_rustls::Tls
         .key_file
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("TLS enabled but key_file not configured"))?;
-    let key_data = std::fs::read(key_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read key file {}: {}", key_path, e))?;
-    let mut key_reader = BufReader::new(key_data.as_slice());
-
-    let client_key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
-        .map_err(|e| anyhow::anyhow!("Failed to parse private key: {}", e))?
-        .ok_or_else(|| anyhow::anyhow!("No private key found in key file: {}", key_path))?;
+    let client_key: PrivateKeyDer<'static> = PrivateKeyDer::from_pem_file(key_path)
+        .map_err(|e| anyhow::anyhow!("Failed to parse private key from {}: {}", key_path, e))?;
 
     // Build rustls ClientConfig with mTLS (client cert + CA verification)
     let config = rustls::ClientConfig::builder()
@@ -126,17 +124,13 @@ impl rustls::client::danger::ServerCertVerifier for InsecureCertVerifier {
 pub fn build_tls_connector_insecure(
     tls: &TlsSection,
 ) -> anyhow::Result<tokio_rustls::TlsConnector> {
-    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-
     // Load client certificate chain
     let cert_path = tls
         .cert_file
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("TLS enabled but cert_file not configured"))?;
-    let cert_data = std::fs::read(cert_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read cert file {}: {}", cert_path, e))?;
-    let mut cert_reader = BufReader::new(cert_data.as_slice());
-    let client_certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+    let client_certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert_path)
+        .map_err(|e| anyhow::anyhow!("Failed to open cert file {}: {}", cert_path, e))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| anyhow::anyhow!("Failed to parse client cert: {}", e))?;
 
@@ -152,13 +146,8 @@ pub fn build_tls_connector_insecure(
         .key_file
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("TLS enabled but key_file not configured"))?;
-    let key_data = std::fs::read(key_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read key file {}: {}", key_path, e))?;
-    let mut key_reader = BufReader::new(key_data.as_slice());
-
-    let client_key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
-        .map_err(|e| anyhow::anyhow!("Failed to parse private key: {}", e))?
-        .ok_or_else(|| anyhow::anyhow!("No private key found in key file: {}", key_path))?;
+    let client_key: PrivateKeyDer<'static> = PrivateKeyDer::from_pem_file(key_path)
+        .map_err(|e| anyhow::anyhow!("Failed to parse private key from {}: {}", key_path, e))?;
 
     // Build rustls ClientConfig with:
     // - Insecure server cert verification (accepts any certificate)
@@ -175,9 +164,7 @@ pub fn build_tls_connector_insecure(
 /// Compute SHA-256 fingerprint of the first certificate in the configured cert file.
 pub fn compute_cert_fingerprint(tls: &TlsSection) -> Option<String> {
     let cert_path = tls.cert_file.as_deref()?;
-    let cert_data = std::fs::read(cert_path).ok()?;
-    let mut reader = BufReader::new(cert_data.as_slice());
-    let cert = rustls_pemfile::certs(&mut reader).next()?.ok()?;
+    let cert = CertificateDer::pem_file_iter(cert_path).ok()?.next()?.ok()?;
     let digest = sha2::Sha256::digest(cert.as_ref());
     Some(hex::encode(digest))
 }
