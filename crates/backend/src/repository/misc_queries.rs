@@ -3958,13 +3958,16 @@ pub async fn get_links_for_export(
     .await
 }
 
-/// Fetch dependencies for export.
+/// Fetch dependencies for export. Each row is
+/// `(from_component_id, to_component_id, dependency_type)` where
+/// `dependency_type` is `"strong"` or `"weak"` (see V056).
 pub async fn get_deps_for_export(
     pool: &DbPool,
     app_id: Uuid,
-) -> Result<Vec<(DbUuid, DbUuid)>, sqlx::Error> {
-    sqlx::query_as::<_, (DbUuid, DbUuid)>(
-        "SELECT from_component_id, to_component_id FROM dependencies WHERE application_id = $1",
+) -> Result<Vec<(DbUuid, DbUuid, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (DbUuid, DbUuid, String)>(
+        "SELECT from_component_id, to_component_id, dependency_type \
+         FROM dependencies WHERE application_id = $1",
     )
     .bind(crate::db::bind_id(app_id))
     .fetch_all(pool)

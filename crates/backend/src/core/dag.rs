@@ -218,6 +218,14 @@ pub async fn build_dag(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Res
     }
 
     for d in deps {
+        // Weak dependencies are diagrammatic only: the sequencer must
+        // start both endpoints independently. We skip them when building
+        // the DAG so the topological sort treats them as if they didn't
+        // exist. They are still returned by `list_dependencies` for the
+        // UI and reports.
+        if d.dependency_type == crate::repository::components::DependencyType::Weak {
+            continue;
+        }
         dag.add_edge(d.from_component_id, d.to_component_id);
     }
 

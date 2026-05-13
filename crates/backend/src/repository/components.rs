@@ -54,6 +54,45 @@ pub struct Component {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Strength of a [Dependency] edge.
+///
+/// * [DependencyType::Strong] — the DAG sequencer waits for the upstream
+///   to reach RUNNING before starting the downstream. This is the default
+///   for every row and matches every dependency that existed before
+///   migration V056.
+/// * [DependencyType::Weak] — the edge is drawn in the map and reported
+///   on, but is **skipped by the sequencer**. Both endpoints start
+///   independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DependencyType {
+    Strong,
+    Weak,
+}
+
+impl DependencyType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DependencyType::Strong => "strong",
+            DependencyType::Weak => "weak",
+        }
+    }
+
+    pub fn from_db_str(s: &str) -> Self {
+        match s {
+            "weak" => DependencyType::Weak,
+            // Treat anything else (incl. NULL coerced to "") as strong so
+            // we never accidentally drop a row from the DAG.
+            _ => DependencyType::Strong,
+        }
+    }
+}
+
+impl Default for DependencyType {
+    fn default() -> Self {
+        DependencyType::Strong
+    }
+}
+
 /// Dependency between two components.
 #[derive(Debug)]
 pub struct Dependency {
@@ -61,6 +100,7 @@ pub struct Dependency {
     pub application_id: Uuid,
     pub from_component_id: Uuid,
     pub to_component_id: Uuid,
+    pub dependency_type: DependencyType,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -265,12 +305,14 @@ pub trait ComponentRepository: Send + Sync {
     /// List dependencies for components in an application.
     async fn list_dependencies(&self, app_id: Uuid) -> Result<Vec<Dependency>, sqlx::Error>;
 
-    /// Create a dependency.
+    /// Create a dependency. Strength defaults to
+    /// [DependencyType::Strong] to preserve pre-V056 behaviour.
     async fn create_dependency(
         &self,
         app_id: Uuid,
         from_id: Uuid,
         to_id: Uuid,
+        dep_type: DependencyType,
     ) -> Result<Dependency, sqlx::Error>;
 
     /// Delete a dependency.
@@ -459,6 +501,7 @@ struct PgDependencyRow {
     application_id: Uuid,
     from_component_id: Uuid,
     to_component_id: Uuid,
+    dependency_type: String,
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -675,7 +718,7 @@ impl ComponentRepository for PgComponentRepository {
 
     async fn list_dependencies(&self, app_id: Uuid) -> Result<Vec<Dependency>, sqlx::Error> {
         let rows = sqlx::query_as::<_, PgDependencyRow>(
-            "SELECT id, application_id, from_component_id, to_component_id, created_at \
+            "SELECT id, application_id, from_component_id, to_component_id, dependency_type, created_at \
              FROM dependencies WHERE application_id = $1",
         )
         .bind(crate::db::bind_id(app_id))
@@ -688,6 +731,7 @@ impl ComponentRepository for PgComponentRepository {
                 application_id: r.application_id,
                 from_component_id: r.from_component_id,
                 to_component_id: r.to_component_id,
+                dependency_type: DependencyType::from_db_str(&r.dependency_type),
                 created_at: r.created_at,
             })
             .collect())
@@ -698,15 +742,17 @@ impl ComponentRepository for PgComponentRepository {
         app_id: Uuid,
         from_id: Uuid,
         to_id: Uuid,
+        dep_type: DependencyType,
     ) -> Result<Dependency, sqlx::Error> {
         let row = sqlx::query_as::<_, PgDependencyRow>(
-            "INSERT INTO dependencies (application_id, from_component_id, to_component_id) \
-             VALUES ($1, $2, $3) \
-             RETURNING id, application_id, from_component_id, to_component_id, created_at",
+            "INSERT INTO dependencies (application_id, from_component_id, to_component_id, dependency_type) \
+             VALUES ($1, $2, $3, $4) \
+             RETURNING id, application_id, from_component_id, to_component_id, dependency_type, created_at",
         )
         .bind(crate::db::bind_id(app_id))
         .bind(from_id)
         .bind(to_id)
+        .bind(dep_type.as_str())
         .fetch_one(&self.pool)
         .await?;
         Ok(Dependency {
@@ -714,6 +760,7 @@ impl ComponentRepository for PgComponentRepository {
             application_id: row.application_id,
             from_component_id: row.from_component_id,
             to_component_id: row.to_component_id,
+            dependency_type: DependencyType::from_db_str(&row.dependency_type),
             created_at: row.created_at,
         })
     }
@@ -1165,6 +1212,7 @@ struct SqliteDependencyRow {
     application_id: DbUuid,
     from_component_id: DbUuid,
     to_component_id: DbUuid,
+    dependency_type: String,
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -1369,7 +1417,7 @@ impl ComponentRepository for SqliteComponentRepository {
 
     async fn list_dependencies(&self, app_id: Uuid) -> Result<Vec<Dependency>, sqlx::Error> {
         let rows = sqlx::query_as::<_, SqliteDependencyRow>(
-            "SELECT id, application_id, from_component_id, to_component_id, created_at \
+            "SELECT id, application_id, from_component_id, to_component_id, dependency_type, created_at \
              FROM dependencies WHERE application_id = $1",
         )
         .bind(DbUuid::from(app_id))
@@ -1382,6 +1430,7 @@ impl ComponentRepository for SqliteComponentRepository {
                 application_id: r.application_id.into_inner(),
                 from_component_id: r.from_component_id.into_inner(),
                 to_component_id: r.to_component_id.into_inner(),
+                dependency_type: DependencyType::from_db_str(&r.dependency_type),
                 created_at: r.created_at,
             })
             .collect())
@@ -1392,17 +1441,19 @@ impl ComponentRepository for SqliteComponentRepository {
         app_id: Uuid,
         from_id: Uuid,
         to_id: Uuid,
+        dep_type: DependencyType,
     ) -> Result<Dependency, sqlx::Error> {
         let new_id = DbUuid::new_v4();
         let row = sqlx::query_as::<_, SqliteDependencyRow>(
-            "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id) \
-             VALUES ($1, $2, $3, $4) \
-             RETURNING id, application_id, from_component_id, to_component_id, created_at",
+            "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id, dependency_type) \
+             VALUES ($1, $2, $3, $4, $5) \
+             RETURNING id, application_id, from_component_id, to_component_id, dependency_type, created_at",
         )
         .bind(new_id)
         .bind(DbUuid::from(app_id))
         .bind(DbUuid::from(from_id))
         .bind(DbUuid::from(to_id))
+        .bind(dep_type.as_str())
         .fetch_one(&self.pool)
         .await?;
         Ok(Dependency {
@@ -1410,6 +1461,7 @@ impl ComponentRepository for SqliteComponentRepository {
             application_id: row.application_id.into_inner(),
             from_component_id: row.from_component_id.into_inner(),
             to_component_id: row.to_component_id.into_inner(),
+            dependency_type: DependencyType::from_db_str(&row.dependency_type),
             created_at: row.created_at,
         })
     }
