@@ -82,6 +82,14 @@ jobs:
             fi
           done
 
+      - name: Regenerate reference docs from code
+        # Runs every gen_*.py in scripts/docs to refresh docs/reference/*.md
+        # from the source-of-truth code (Rust enums, openapi.json, SQL
+        # migrations, clap derives, metrics call sites). The build fails
+        # loudly if any generator can't parse its source — better a noisy
+        # CI failure than silently stale reference pages.
+        run: python scripts/docs/regen.py
+
       - name: Embed screenshots in USER_GUIDE
         # Mirror the substitution used by docs-screenshots.yaml so the public
         # site never shows a raw <!-- SCREENSHOT:name --> marker. The

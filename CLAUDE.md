@@ -120,17 +120,38 @@ appcontrol/
 
 **When adding a new page:** Add a new test in `frontend/e2e-screenshots/capture.spec.ts` and a `<!-- SCREENSHOT:page-name -->` marker in `USER_GUIDE.md`.
 
-### Documentation site (GitHub Pages)
+### Documentation site (GitHub Pages, served at `docs.appcontrol.io`)
 
-The same Markdown files are also published as a static MkDocs Material site at `https://fredericcarre.github.io/appcontrol/`.
+The same Markdown files are published as a static MkDocs Material site. The canonical URL is the custom domain in `docs/CNAME`; GitHub Pages also serves it at `https://fredericcarre.github.io/appcontrol/`.
 
 1. **Config:** `mkdocs.yml` at the repo root defines navigation, theme and plugins. `docs/index.md` is the landing page. `docs/requirements.txt` pins the Python build deps.
-2. **Workflow:** `.github/workflows/docs-pages.yaml` builds the site on every push to `main` that touches `docs/`, `mkdocs.yml`, or the root README/security/changelog files, and deploys to GitHub Pages.
+2. **Workflow:** `.github/workflows/docs-pages.yaml` builds the site on every push to `main` that touches `docs/`, `mkdocs.yml`, `scripts/docs/`, or the root README/security/changelog files, and deploys to GitHub Pages.
 3. **Root files** (`SECURITY_ARCHITECTURE.md`, `CHANGELOG.md`, `RELEASE.md`) live at the repo root; the workflow copies them into `docs/` at build time so MkDocs can ingest them. Do NOT commit duplicates inside `docs/`.
-4. **Local preview:** `pip install -r docs/requirements.txt && mkdocs serve` → open <http://127.0.0.1:8000>.
-5. **Strict build for verification:** `mkdocs build --strict` flags broken internal links and orphan pages.
-6. **Adding a new doc page:** create `docs/MY_PAGE.md`, then add it to the `nav` section of `mkdocs.yml`. Pages omitted from `nav` build silently if listed in `not_in_nav`.
-7. **Enabling Pages once on the repo:** GitHub → Settings → Pages → Source = "GitHub Actions" (one-time setup, not automated).
+4. **Custom domain (`docs.appcontrol.io`):** controlled by `docs/CNAME`. To change it, edit that file — Pages reads `CNAME` on each deploy. Configure the DNS at the registrar: `docs CNAME fredericcarre.github.io.` (mind the trailing dot). HTTPS is automatic once the CNAME propagates.
+5. **Local preview:** `make docs-serve` regenerates the auto-generated references and starts `mkdocs serve` at <http://127.0.0.1:8000>. Equivalent to `pip install -r docs/requirements.txt && python scripts/docs/regen.py && mkdocs serve`.
+6. **Strict build for verification:** `mkdocs build --strict` flags broken internal links and orphan pages.
+7. **Adding a new narrative doc page:** create `docs/MY_PAGE.md`, then add it to the `nav` section of `mkdocs.yml`. Pages omitted from `nav` build silently if listed in `not_in_nav`.
+8. **Enabling Pages once on the repo:** GitHub → Settings → Pages → Source = "GitHub Actions" (one-time setup, not automated).
+
+### Auto-generated reference docs (`docs/reference/`)
+
+To keep the reference documentation in sync with the code, nine generators in `scripts/docs/` parse the source of truth and emit fresh markdown pages under `docs/reference/` on every build. The directory is **not committed** — every generator runs in CI before `mkdocs build`, and locally via `make docs-reference`.
+
+| Generator | Source of truth | Output |
+|---|---|---|
+| `gen_errors.py` | `crates/backend/src/error.rs` + `crates/cli/src/main.rs` | `reference/errors.md` |
+| `gen_fsm.py` | `crates/common/src/fsm.rs` + `types.rs` | `reference/fsm.md` |
+| `gen_metrics.py` | scans `metrics::{counter,gauge,histogram}!` across `crates/**/*.rs` | `reference/metrics.md` |
+| `gen_configuration.py` | `crates/{backend,agent}/src/config.rs` | `reference/configuration.md` |
+| `gen_cli.py` | `crates/cli/src/main.rs` (clap derives) | `reference/cli.md` |
+| `gen_database_schema.py` | `migrations/V*.sql` | `reference/database.md` |
+| `gen_api.py` | `crates/backend/openapi.json` | `reference/api.md` |
+| `gen_enums.py` | `crates/common/src/types.rs` | `reference/enums.md` |
+| `gen_mcp.py` | `crates/mcp/src/tools.rs` | `reference/mcp.md` |
+
+**When you add a new enum, env var, error variant, FSM transition, migration, OpenAPI path, metric, or MCP tool — you do NOT touch any markdown.** The next CI build regenerates the reference page. If the parser cannot match the new structure, the build fails noisily and the parser must be updated in `scripts/docs/gen_*.py`.
+
+Some generators carry a hand-maintained `ANNOTATIONS` / `METRIC_META` / `TABLE_PURPOSE` table for context that cannot be inferred from the code (descriptions, units, business meaning). Add entries there when you introduce a new field.
 
 ## Coding Conventions
 

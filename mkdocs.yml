@@ -144,26 +144,47 @@ nav:
       - Quickstart: QUICKSTART.md
       - Demo scenarios: DEMO_SCENARIOS.md
       - Where it fits (positioning): POSITIONING.md
+      - Glossary: GLOSSARY.md
   - User Guide:
       - Overview: USER_GUIDE.md
       - Permissions: PERMISSIONS.md
       - Runbooks: RUNBOOKS.md
+      - Troubleshooting: TROUBLESHOOTING.md
   - Operations:
       - Integration cookbook: INTEGRATION_COOKBOOK.md
-      - Metrics: METRICS.md
+      - Check metrics: METRICS.md
       - Migration from scripts: MIGRATION_FROM_SCRIPTS.md
+      - Backup & restore: BACKUP_RESTORE.md
+      - Upgrade procedures: UPGRADE.md
+      - Disaster recovery: DISASTER_RECOVERY.md
   - Deployment:
       - Production deployment: PRODUCTION_DEPLOYMENT.md
+      - High availability: HIGH_AVAILABILITY.md
       - Agent installation: AGENT_INSTALLATION.md
       - Azure gateway: AZURE_GATEWAY.md
       - OpenShift: OPENSHIFT.md
       - Windows deployment: WINDOWS_DEPLOYMENT.md
+      - Hardening checklist: HARDENING.md
+      - Capacity planning: CAPACITY_PLANNING.md
+      - Limits & quotas: LIMITS.md
   - Configuration:
-      - Configuration reference: CONFIGURATION.md
+      - Configuration overview: CONFIGURATION.md
       - SQLite implementation: SQLITE_IMPLEMENTATION.md
+  - Reference:
+      - CLI (appctl): reference/cli.md
+      - REST API: reference/api.md
+      - Configuration env vars: reference/configuration.md
+      - Errors & exit codes: reference/errors.md
+      - FSM states: reference/fsm.md
+      - Database schema: reference/database.md
+      - Prometheus metrics: reference/metrics.md
+      - Enums: reference/enums.md
+      - MCP tools: reference/mcp.md
   - Architecture:
       - Architecture overview: architecture.md
       - Security architecture: SECURITY_ARCHITECTURE.md
+  - Compliance:
+      - DORA & NIS2 mapping: COMPLIANCE_DORA_NIS2.md
   - Release:
       - Changelog: CHANGELOG.md
       - Release process: RELEASE.md

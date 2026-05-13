@@ -45,3 +45,13 @@ appcontrol.db*
 /docs/SECURITY_ARCHITECTURE.md
 /docs/CHANGELOG.md
 /docs/RELEASE.md
+
+# Auto-generated reference pages — produced by `scripts/docs/regen.py` from
+# the source-of-truth code (Rust enums, openapi.json, migrations, clap
+# derives). Not committed to keep the code as the only source of truth and
+# prevent PRs from drifting. CI regenerates them before every build.
+/docs/reference/
+
+# Python bytecode cache from the docs generators in scripts/docs/.
+__pycache__/
+*.pyc
