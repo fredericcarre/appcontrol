@@ -120,18 +120,32 @@ appcontrol/
 
 **When adding a new page:** Add a new test in `frontend/e2e-screenshots/capture.spec.ts` and a `<!-- SCREENSHOT:page-name -->` marker in `USER_GUIDE.md`.
 
-### Documentation site (GitHub Pages, served at `docs.appcontrol.io`)
+### Documentation site (served at `docs.appcontrol.io` via the corp repo)
 
-The same Markdown files are published as a static MkDocs Material site. The canonical URL is the custom domain in `docs/CNAME`; GitHub Pages also serves it at `https://fredericcarre.github.io/appcontrol/`.
+The same Markdown files are published as a static MkDocs Material site. The site is **built in this repo** (`fredericcarre/appcontrol`, source of truth for the docs) and **served from the corp repo** (`xcomponent/appcontrol-release`, gh-pages branch) so customers never see the dev mirror's URL.
+
+```
+fredericcarre/appcontrol (this repo)
+  └─ .github/workflows/docs-pages.yaml builds with mkdocs
+                ↓
+                push to →  xcomponent/appcontrol-release@gh-pages
+                                ↓
+                                GitHub Pages serves it at docs.appcontrol.io
+```
 
 1. **Config:** `mkdocs.yml` at the repo root defines navigation, theme and plugins. `docs/index.md` is the landing page. `docs/requirements.txt` pins the Python build deps.
-2. **Workflow:** `.github/workflows/docs-pages.yaml` builds the site on every push to `main` that touches `docs/`, `mkdocs.yml`, `scripts/docs/`, or the root README/security/changelog files, and deploys to GitHub Pages.
+2. **Workflow:** `.github/workflows/docs-pages.yaml` builds the site on every push to `main` touching `docs/`, `mkdocs.yml`, `scripts/docs/`, or the root README/security/changelog files. After build it pushes the contents of `site/` to the corp repo's `gh-pages` branch using `secrets.CORP_GITHUB_TOKEN` (the same PAT the release workflow uses to mirror binaries and examples).
 3. **Root files** (`SECURITY_ARCHITECTURE.md`, `CHANGELOG.md`, `RELEASE.md`) live at the repo root; the workflow copies them into `docs/` at build time so MkDocs can ingest them. Do NOT commit duplicates inside `docs/`.
-4. **Custom domain (`docs.appcontrol.io`):** controlled by `docs/CNAME`. To change it, edit that file — Pages reads `CNAME` on each deploy. Configure the DNS at the registrar: `docs CNAME fredericcarre.github.io.` (mind the trailing dot). HTTPS is automatic once the CNAME propagates.
-5. **Local preview:** `make docs-serve` regenerates the auto-generated references and starts `mkdocs serve` at <http://127.0.0.1:8000>. Equivalent to `pip install -r docs/requirements.txt && python scripts/docs/regen.py && mkdocs serve`.
+4. **Custom domain (`docs.appcontrol.io`):** controlled by `docs/CNAME` — copied to the corp gh-pages tree at every deploy, so Pages on the corp repo reads it. Configure the DNS at the registrar: `docs CNAME xcomponent.github.io.` (mind the trailing dot — point it at the corp org, not the dev mirror). HTTPS is automatic once the CNAME propagates.
+5. **Local preview:** `make docs-serve` regenerates the auto-generated references and starts `mkdocs serve` at <http://127.0.0.1:8000>.
 6. **Strict build for verification:** `mkdocs build --strict` flags broken internal links and orphan pages.
 7. **Adding a new narrative doc page:** create `docs/MY_PAGE.md`, then add it to the `nav` section of `mkdocs.yml`. Pages omitted from `nav` build silently if listed in `not_in_nav`.
-8. **Enabling Pages once on the repo:** GitHub → Settings → Pages → Source = "GitHub Actions" (one-time setup, not automated).
+
+**One-time setup steps** (none of this is automated; perform on the corp repo, not here):
+
+- On `xcomponent/appcontrol-release`: Settings → Pages → Source = "Deploy from a branch" → branch `gh-pages`, folder `/ (root)`.
+- On `fredericcarre/appcontrol`: Settings → Secrets → Actions → add `CORP_GITHUB_TOKEN` if it isn't already there (a PAT with `contents:write` on `xcomponent/appcontrol-release`; the release workflow already requires it).
+- At the DNS registrar: `docs.appcontrol.io CNAME xcomponent.github.io.` (24h max propagation; HTTPS issued automatically by Pages once verified).
 
 ### Auto-generated reference docs (`docs/reference/`)
 

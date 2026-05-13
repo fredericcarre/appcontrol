@@ -1,17 +1,18 @@
-name: Documentation site (GitHub Pages)
+name: Documentation site (mirror to corp repo)
 
 # Builds the MkDocs Material site from docs/*.md plus the root README/security
-# files and publishes it to GitHub Pages.
+# files and publishes it to the corp repo's gh-pages branch
+# (xcomponent/appcontrol-release). Pages on the corp repo is configured to
+# serve from that branch and is fronted by the custom domain docs.appcontrol.io
+# (see docs/CNAME).
 #
 # Triggers:
-#   - push to main when any source markdown, mkdocs config, or screenshot changes
+#   - push to main when any source markdown, mkdocs config, generator script,
+#     or screenshot changes
 #   - manual dispatch (for re-deploys without a content change, e.g. after a
 #     theme bump)
 #   - workflow_run after the screenshot capture workflow finishes on main, so
 #     freshly auto-committed screenshots immediately appear on the site
-#
-# Permissions follow the official GitHub Pages deploy pattern: minimum scopes,
-# with `pages: write` and `id-token: write` only on the deploy job.
 
 on:
   push:
@@ -19,6 +20,7 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "scripts/docs/**"
       - "README.md"
       - "README.en.md"
       - "SECURITY_ARCHITECTURE.md"
@@ -37,14 +39,16 @@ concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: true
 
+# Note: this workflow does NOT use the `pages: write` permission. The corp
+# repo's Pages instance is the publish target; deployment happens by pushing
+# to xcomponent/appcontrol-release@gh-pages using a PAT (secrets.CORP_GITHUB_TOKEN,
+# same secret the release workflow already uses for the binary / docs mirror).
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
-  build:
-    name: Build docs site
+  build-and-publish:
+    name: Build and mirror to corp gh-pages
     runs-on: ubuntu-latest
     # Skip the workflow_run trigger when the upstream screenshot workflow
     # failed — no point publishing on broken inputs.
@@ -111,19 +115,88 @@ jobs:
         # or invalid theme config.
         run: mkdocs build --clean --verbose
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
+      - name: Mirror site to xcomponent/appcontrol-release@gh-pages
+        env:
+          # Same PAT the release workflow uses to push binaries / docs / examples
+          # into the corp repo. Required scopes: contents:write on
+          # xcomponent/appcontrol-release.
+          CORP_GITHUB_TOKEN: ${{ secrets.CORP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
 
-  deploy:
-    name: Deploy to GitHub Pages
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          if [ -z "${CORP_GITHUB_TOKEN:-}" ]; then
+            echo "::error::CORP_GITHUB_TOKEN is not set — cannot push to the corp repo."
+            echo "::error::Add the PAT under Settings → Secrets → Actions of fredericcarre/appcontrol."
+            exit 1
+          fi
+
+          REMOTE="https://x-access-token:${CORP_GITHUB_TOKEN}@github.com/xcomponent/appcontrol-release.git"
+
+          # Try to clone the existing gh-pages branch; if it doesn't exist yet
+          # (first deploy), clone the default branch and create gh-pages as an
+          # orphan branch.
+          if git ls-remote --exit-code --heads "${REMOTE}" gh-pages > /dev/null; then
+            git clone --branch gh-pages --single-branch --depth 1 "${REMOTE}" corp-pages
+            cd corp-pages
+            # Wipe everything except .git so we get an exact mirror of site/.
+            find . -maxdepth 1 ! -name '.git' ! -name '.' -exec rm -rf {} +
+          else
+            echo "gh-pages branch does not exist on corp repo — creating it"
+            git clone --depth 1 "${REMOTE}" corp-pages
+            cd corp-pages
+            git checkout --orphan gh-pages
+            git rm -rf . 2>/dev/null || true
+            # Same guard as above in case any stray files remain on disk.
+            find . -maxdepth 1 ! -name '.git' ! -name '.' -exec rm -rf {} +
+          fi
+
+          # Copy the freshly built site verbatim.
+          cp -r ../site/. ./
+
+          # GitHub Pages otherwise treats _* dirs (which Material uses for
+          # internal assets) as Jekyll-special. .nojekyll disables that.
+          touch .nojekyll
+
+          # docs/CNAME → site/CNAME → corp gh-pages root. This is how the
+          # custom domain docs.appcontrol.io gets registered with Pages.
+
+          git config user.name "AppControl docs CI"
+          git config user.email "ci@xcomponent.com"
+          git add -A
+
+          if git diff --staged --quiet; then
+            echo "No documentation changes vs. the corp gh-pages tip — skipping commit."
+            exit 0
+          fi
+
+          git commit -m "docs: rebuild from fredericcarre/appcontrol@${GITHUB_SHA::8}
+
+          Source commit: https://github.com/fredericcarre/appcontrol/commit/${GITHUB_SHA}
+          Triggered by: ${GITHUB_EVENT_NAME}
+          Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          # Retry the push a handful of times — concurrent docs pushes are
+          # rare but possible (e.g. a docs-screenshots auto-commit firing the
+          # workflow_run trigger while a manual push lands).
+          for attempt in 1 2 3 4; do
+            if git push origin gh-pages; then
+              echo "Pushed to xcomponent/appcontrol-release@gh-pages on attempt $attempt"
+              exit 0
+            fi
+            echo "Push attempt $attempt rejected — pulling rebase and retrying"
+            git pull --rebase origin gh-pages || true
+            sleep $((attempt * 2))
+          done
+
+          echo "::error::Failed to push to corp gh-pages after 4 attempts."
+          exit 1
+
+      - name: Upload built site as workflow artefact
+        # Kept even though we don't use it for Pages — useful for downloading
+        # the exact site contents for incident review or for a corp pipeline
+        # that wants the tarball instead of the gh-pages branch.
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: site/
+          retention-days: 14

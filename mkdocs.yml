@@ -3,12 +3,15 @@ site_description: >-
   Operational platform for IT resilience. Map applications as dependency
   graphs, monitor health in real time, orchestrate sequenced operations,
   and maintain DORA-compliant audit trails.
-site_url: https://fredericcarre.github.io/appcontrol/
+site_url: https://docs.appcontrol.io/
 site_author: AppControl
 
-repo_name: fredericcarre/appcontrol
-repo_url: https://github.com/fredericcarre/appcontrol
-edit_uri: edit/main/docs/
+# The repo link in the top bar points to the corp release repo (binaries,
+# release notes). The `edit_uri` below redirects "Edit this page" pencils to
+# the dev mirror where contributions actually happen.
+repo_name: xcomponent/appcontrol-release
+repo_url: https://github.com/xcomponent/appcontrol-release
+edit_uri: https://github.com/fredericcarre/appcontrol/edit/main/docs/
 
 copyright: >-
   Copyright &copy; AppControl &mdash;
