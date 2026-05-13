@@ -71,6 +71,28 @@ jobs:
       - name: Install MkDocs and plugins
         run: pip install -r docs/requirements.txt
 
+      - name: Install Rust toolchain (for OpenAPI export)
+        # Same stable toolchain the rest of CI uses. The Swatinem cache below
+        # keeps doc-only pushes from paying the full compile cost on every run.
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: docs-openapi
+          cache-on-failure: true
+
+      - name: Export OpenAPI spec from the backend binary
+        # The backend's OpenAPI spec is derived from #[utoipa::path] handler
+        # annotations rather than hand-maintained. `--export-openapi` runs
+        # before any DB / network setup, so no Postgres is needed.
+        # gen_api.py reads APPCONTROL_OPENAPI_JSON to locate the file.
+        run: |
+          cargo build --bin appcontrol-backend --features postgres
+          ./target/debug/appcontrol-backend --export-openapi /tmp/openapi.json
+          echo "APPCONTROL_OPENAPI_JSON=/tmp/openapi.json" >> "$GITHUB_ENV"
+          python -c "import json; s=json.load(open('/tmp/openapi.json')); print(f\"OpenAPI: {len(s.get('paths', {}))} paths, {len(s.get('components', {}).get('schemas', {}))} schemas\")"
+
       - name: Stage root docs inside docs/
         # The single source of truth for SECURITY_ARCHITECTURE.md, CHANGELOG.md
         # and RELEASE.md lives at the repo root. MkDocs only ingests files

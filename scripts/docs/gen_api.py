@@ -1,7 +1,22 @@
 #!/usr/bin/env python3
-"""Generate docs/reference/api.md from crates/backend/openapi.json.
+"""Generate docs/reference/api.md from the backend's OpenAPI spec.
 
-We render the spec as readable markdown:
+Source of the spec, in priority order:
+
+1. `APPCONTROL_OPENAPI_JSON` env var → path to a JSON file. This is the
+   CI-friendly path: `.github/workflows/docs-pages.yaml` builds the backend
+   binary, runs `appcontrol-backend --export-openapi /tmp/openapi.json`,
+   and sets `APPCONTROL_OPENAPI_JSON=/tmp/openapi.json` before invoking
+   regen.py.
+2. `cargo run -q --bin appcontrol-backend -- --export-openapi -` on a
+   developer machine. Only attempted if `cargo` is on PATH and a previous
+   build exists (we don't trigger a build implicitly because it can take
+   minutes).
+3. A `crates/backend/openapi.json` file if one is committed (legacy path —
+   the file was removed from the repo once utoipa landed, but the loader
+   still supports it for branches that haven't merged that change yet).
+
+Rendering produces:
   - Tag-grouped endpoint listing
   - One H3 per (METHOD path) with summary, parameters, request body schema,
     response codes
@@ -9,18 +24,61 @@ We render the spec as readable markdown:
   - Servers / base URL
 
 The spec is the source of truth; this script does NOT augment it. If a
-schema is missing from the spec, it is missing from the rendered doc — the
-fix is to fill in `openapi.json`, not to patch the renderer.
+schema is missing from the spec, fix it in the handler's `#[utoipa::path]`
+attribute, not here.
 """
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-SPEC = REPO / "crates/backend/openapi.json"
+LEGACY_SPEC = REPO / "crates/backend/openapi.json"
 OUTPUT = REPO / "docs/reference/api.md"
+
+
+def load_spec() -> dict:
+    """Resolve the OpenAPI spec following the precedence in the module docstring."""
+    env_path = os.environ.get("APPCONTROL_OPENAPI_JSON")
+    if env_path:
+        p = Path(env_path)
+        if not p.is_file():
+            sys.exit(
+                f"APPCONTROL_OPENAPI_JSON points at {env_path!r} but no such file exists. "
+                "Run `cargo run --bin appcontrol-backend -- --export-openapi <path>` first."
+            )
+        return json.loads(p.read_text())
+
+    # Try cargo only if a prior build already exists — we never trigger a
+    # compile here (it can take minutes).
+    if shutil.which("cargo") is not None:
+        existing = REPO / "target" / "debug" / "appcontrol-backend"
+        if existing.exists():
+            try:
+                out = subprocess.run(
+                    ["cargo", "run", "-q", "--bin", "appcontrol-backend", "--", "--export-openapi", "-"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    cwd=REPO,
+                    timeout=60,
+                )
+                return json.loads(out.stdout)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+                print(f"warning: cargo run --export-openapi failed ({exc}); falling back", file=sys.stderr)
+
+    if LEGACY_SPEC.exists():
+        return json.loads(LEGACY_SPEC.read_text())
+
+    sys.exit(
+        "Cannot resolve OpenAPI spec. Set APPCONTROL_OPENAPI_JSON to a JSON file produced by\n"
+        "  cargo run --bin appcontrol-backend -- --export-openapi /tmp/openapi.json\n"
+        "and re-run scripts/docs/regen.py."
+    )
 
 
 def render_param(p: dict) -> str:
@@ -154,7 +212,7 @@ def render(spec: dict) -> str:
 
 
 def main() -> int:
-    spec = json.loads(SPEC.read_text())
+    spec = load_spec()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(render(spec))
     n_endpoints = sum(

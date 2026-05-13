@@ -63,9 +63,15 @@ pub struct Component {
 /// * [DependencyType::Weak] — the edge is drawn in the map and reported
 ///   on, but is **skipped by the sequencer**. Both endpoints start
 ///   independently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum DependencyType {
+    /// Strong dependency: the DAG sequencer waits for the upstream to
+    /// reach RUNNING before starting the downstream. Default for every
+    /// existing row.
+    #[default]
     Strong,
+    /// Weak dependency: drawn in the map and exported in reports, but
+    /// skipped by the DAG builder so both endpoints start independently.
     Weak,
 }
 
@@ -84,12 +90,6 @@ impl DependencyType {
             // we never accidentally drop a row from the DAG.
             _ => DependencyType::Strong,
         }
-    }
-}
-
-impl Default for DependencyType {
-    fn default() -> Self {
-        DependencyType::Strong
     }
 }
 

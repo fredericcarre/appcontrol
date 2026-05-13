@@ -159,7 +159,7 @@ To keep the reference documentation in sync with the code, nine generators in `s
 | `gen_configuration.py` | `crates/{backend,agent}/src/config.rs` | `reference/configuration.md` |
 | `gen_cli.py` | `crates/cli/src/main.rs` (clap derives) | `reference/cli.md` |
 | `gen_database_schema.py` | `migrations/V*.sql` | `reference/database.md` |
-| `gen_api.py` | `crates/backend/openapi.json` | `reference/api.md` |
+| `gen_api.py` | `appcontrol-backend --export-openapi` (utoipa-derived) | `reference/api.md` |
 | `gen_enums.py` | `crates/common/src/types.rs` | `reference/enums.md` |
 | `gen_mcp.py` | `crates/mcp/src/tools.rs` | `reference/mcp.md` |
 
