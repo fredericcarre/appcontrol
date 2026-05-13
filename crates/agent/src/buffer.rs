@@ -252,7 +252,8 @@ mod tests {
     #[test]
     fn test_explicit_max_bytes_is_honoured() {
         let dir = tempfile::tempdir().unwrap();
-        let buffer = OfflineBuffer::with_max_bytes(dir.path().to_str().unwrap(), 64 * 1024).unwrap();
+        let buffer =
+            OfflineBuffer::with_max_bytes(dir.path().to_str().unwrap(), 64 * 1024).unwrap();
         assert_eq!(buffer.max_bytes(), 64 * 1024);
     }
 

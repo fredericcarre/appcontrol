@@ -82,5 +82,9 @@ fn bench_find_all_dependencies(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_topological_levels, bench_find_all_dependencies);
+criterion_group!(
+    benches,
+    bench_topological_levels,
+    bench_find_all_dependencies
+);
 criterion_main!(benches);

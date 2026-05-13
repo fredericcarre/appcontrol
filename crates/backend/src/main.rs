@@ -12,8 +12,8 @@ use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use appcontrol_backend::{
-    config, create_router, db, middleware, openapi as openapi_doc, repository, terminal,
-    websocket, AppState,
+    config, create_router, db, middleware, openapi as openapi_doc, repository, terminal, websocket,
+    AppState,
 };
 
 #[derive(Parser)]
@@ -128,7 +128,9 @@ async fn main() -> anyhow::Result<()> {
 
     // --migrate-only — applied migrations above, now exit without starting the server.
     if args.migrate_only {
-        tracing::info!("--migrate-only set: migrations applied, exiting without starting HTTP server");
+        tracing::info!(
+            "--migrate-only set: migrations applied, exiting without starting HTTP server"
+        );
         return Ok(());
     }
 

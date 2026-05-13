@@ -68,10 +68,7 @@ pub async fn read_only_middleware(
         );
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            [
-                ("Retry-After", "60"),
-                ("X-AppControl-Read-Only", "true"),
-            ],
+            [("Retry-After", "60"), ("X-AppControl-Read-Only", "true")],
             "AppControl backend is in read-only mode (READ_ONLY=true). \
              Mutating requests are temporarily refused. Clear READ_ONLY \
              after the underlying incident is resolved.",

@@ -100,5 +100,9 @@ fn bench_next_state_from_check(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_is_valid_transition, bench_next_state_from_check);
+criterion_group!(
+    benches,
+    bench_is_valid_transition,
+    bench_next_state_from_check
+);
 criterion_main!(benches);

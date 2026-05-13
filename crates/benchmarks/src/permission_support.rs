@@ -91,10 +91,12 @@ pub async fn build_seeded_db(spec: &SeedSpec) -> SeededDb {
     .await
     .expect("create team_members");
 
-    sqlx::query("CREATE INDEX idx_perms_users_app_user ON app_permissions_users(application_id, user_id);")
-        .execute(&pool)
-        .await
-        .expect("idx perms users");
+    sqlx::query(
+        "CREATE INDEX idx_perms_users_app_user ON app_permissions_users(application_id, user_id);",
+    )
+    .execute(&pool)
+    .await
+    .expect("idx perms users");
     sqlx::query("CREATE INDEX idx_perms_teams_app ON app_permissions_teams(application_id);")
         .execute(&pool)
         .await

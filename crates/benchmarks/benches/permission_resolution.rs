@@ -85,18 +85,22 @@ fn bench_effective_permission(c: &mut Criterion) {
         let app_id = fixture.db.app_ids[0];
         let pool = fixture.db.pool.clone();
 
-        group.bench_with_input(BenchmarkId::from_parameter(name), &(pool, user_id, app_id), |b, (pool, user, app)| {
-            b.to_async(&fixture.rt).iter(|| async {
-                let lvl = effective_permission(
-                    black_box(pool),
-                    black_box(*user),
-                    black_box(*app),
-                    false,
-                )
-                .await;
-                black_box(lvl)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(name),
+            &(pool, user_id, app_id),
+            |b, (pool, user, app)| {
+                b.to_async(&fixture.rt).iter(|| async {
+                    let lvl = effective_permission(
+                        black_box(pool),
+                        black_box(*user),
+                        black_box(*app),
+                        false,
+                    )
+                    .await;
+                    black_box(lvl)
+                });
+            },
+        );
     }
 
     group.finish();

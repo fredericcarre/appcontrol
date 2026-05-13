@@ -648,9 +648,9 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // envelope around a base64-encoded agent binary fits.
         .route(
             "/admin/agent-binaries",
-            get(agent_update::list_binaries).post(agent_update::upload_binary).route_layer(
-                DefaultBodyLimit::max(AGENT_BINARY_UPLOAD_LIMIT_BYTES),
-            ),
+            get(agent_update::list_binaries)
+                .post(agent_update::upload_binary)
+                .route_layer(DefaultBodyLimit::max(AGENT_BINARY_UPLOAD_LIMIT_BYTES)),
         )
         .route(
             "/admin/agents/:id/update",
