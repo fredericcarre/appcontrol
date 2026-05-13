@@ -1242,7 +1242,7 @@ async fn test_sqlite_startup_full() {
     });
     let send_result = ws_stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            register_msg.to_string(),
+            register_msg.to_string().into(),
         ))
         .await;
     assert!(
@@ -1264,7 +1264,7 @@ async fn test_sqlite_startup_full() {
     });
     let send_result = ws_stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            heartbeat_msg.to_string(),
+            heartbeat_msg.to_string().into(),
         ))
         .await;
     assert!(
