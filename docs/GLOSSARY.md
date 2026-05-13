@@ -1,6 +1,6 @@
 # Glossary
 
-This page defines every term used across the AppControl documentation. Use it as a quick reference when reading the [User Guide](USER_GUIDE.md), [Architecture](architecture.md), or [Security Architecture](../SECURITY_ARCHITECTURE.md).
+This page defines every term used across the AppControl documentation. Use it as a quick reference when reading the [User Guide](USER_GUIDE.md), [Architecture](architecture.md), or [Security Architecture](SECURITY_ARCHITECTURE.md).
 
 Entries are listed alphabetically. Each entry includes a cross-reference to the page where the concept is detailed.
 
@@ -18,7 +18,7 @@ The append-only PostgreSQL table (`action_log`) that records every user-initiate
 
 ### Advisory mode
 <a id="advisory-mode"></a>
-Operational mode in which AppControl observes components but never executes start/stop/restart. The agent reports check results normally, but the backend rejects any execute command. Used during onboarding to build confidence in the dependency map before granting operational autonomy. See [README — Garde-fous par conception](../README.md).
+Operational mode in which AppControl observes components but never executes start/stop/restart. The agent reports check results normally, but the backend rejects any execute command. Used during onboarding to build confidence in the dependency map before granting operational autonomy. See [README — Garde-fous par conception](https://github.com/fredericcarre/appcontrol/blob/main/README.md).
 
 ### Agent
 <a id="agent"></a>
@@ -38,7 +38,7 @@ The top-level operational entity in AppControl. An application is a directed acy
 
 ### Approval workflow
 <a id="approval-workflow"></a>
-The 4-eyes mechanism that requires a second approver before executing a high-risk operation (switchover, rebuild, break-glass). Configured per operation risk level. See [Security Architecture §9](../SECURITY_ARCHITECTURE.md).
+The 4-eyes mechanism that requires a second approver before executing a high-risk operation (switchover, rebuild, break-glass). Configured per operation risk level. See [Security Architecture §9](SECURITY_ARCHITECTURE.md).
 
 ### Audit
 <a id="audit"></a>
@@ -56,7 +56,7 @@ Deployment mode in which the backend generates a per-organization CA on first st
 
 ### Bastion
 <a id="bastion"></a>
-A privileged agent used to execute `rebuild_infra_cmd` against another host. Configured via `components.rebuild_agent_id`. The bastion is typically the only host with the credentials and network reach to reinstall an OS or restore a filesystem on the target. See [Backend CLAUDE.md — Rebuild Engine](../crates/backend/CLAUDE.md).
+A privileged agent used to execute `rebuild_infra_cmd` against another host. Configured via `components.rebuild_agent_id`. The bastion is typically the only host with the credentials and network reach to reinstall an OS or restore a filesystem on the target. See [Backend CLAUDE.md — Rebuild Engine](https://github.com/fredericcarre/appcontrol/blob/main/crates/backend/CLAUDE.md).
 
 ### Binding profile
 <a id="binding-profile"></a>
@@ -64,7 +64,7 @@ A named mapping of component → agent for an application, used during import an
 
 ### Break-glass
 <a id="break-glass"></a>
-Emergency access procedure using pre-provisioned accounts whose credentials are stored in an external vault. Activation triggers immediate alerts to all admins, time-limits the session (default 60 min), tags every action with `break_glass: true`, and rotates the password after use. See [Security Architecture §10](../SECURITY_ARCHITECTURE.md).
+Emergency access procedure using pre-provisioned accounts whose credentials are stored in an external vault. Activation triggers immediate alerts to all admins, time-limits the session (default 60 min), tags every action with `break_glass: true`, and rotates the password after use. See [Security Architecture §10](SECURITY_ARCHITECTURE.md).
 
 ## C
 
@@ -74,7 +74,7 @@ The root authority that signs all gateway and agent certificates. AppControl sup
 
 ### Check event
 <a id="check-event"></a>
-A single row in the `check_events` table representing one execution of a check command on one component. Includes `check_type` (`health` | `integrity` | `post_start` | `infrastructure`), `exit_code`, truncated `stdout`, and `duration_ms`. The table is partitioned by month and append-only. See [migrations/V005](../migrations/V005__event_tables.sql).
+A single row in the `check_events` table representing one execution of a check command on one component. Includes `check_type` (`health` | `integrity` | `post_start` | `infrastructure`), `exit_code`, truncated `stdout`, and `duration_ms`. The table is partitioned by month and append-only. See [migrations/V005](https://github.com/fredericcarre/appcontrol/blob/main/migrations/V005__event_tables.sql).
 
 ### Check type
 <a id="check-type"></a>
@@ -96,7 +96,7 @@ A multi-host deployment of a single logical component. AppControl supports two m
 - **[Aggregate](#aggregate-cluster)** — one FSM, one set of commands, the `check_cmd` rolls up cluster state.
 - **[Fan-out](#fan-out-cluster)** — each member is a first-class monitored entity with its own agent, commands, and state.
 
-The chosen mode is stored in `components.cluster_mode`. See migration [`V049`](../migrations/V049__fan_out_clusters.sql).
+The chosen mode is stored in `components.cluster_mode`. See migration [`V049`](https://github.com/fredericcarre/appcontrol/blob/main/migrations/V049__fan_out_clusters.sql).
 
 ### Cluster health policy
 <a id="cluster-health-policy"></a>
@@ -205,7 +205,7 @@ A stateless WebSocket relay that sits between agents and the backend. Each netwo
 
 ### Heartbeat
 <a id="heartbeat"></a>
-The 60-second-interval message an agent sends to the gateway containing CPU, memory, and system info. Missing 3 consecutive heartbeats (default 180 s — `organizations.heartbeat_timeout_seconds`) marks the agent stale; the heartbeat monitor task transitions its managed components to `UNREACHABLE`. See [Backend CLAUDE.md — Heartbeat Monitor](../crates/backend/CLAUDE.md).
+The 60-second-interval message an agent sends to the gateway containing CPU, memory, and system info. Missing 3 consecutive heartbeats (default 180 s — `organizations.heartbeat_timeout_seconds`) marks the agent stale; the heartbeat monitor task transitions its managed components to `UNREACHABLE`. See [Backend CLAUDE.md — Heartbeat Monitor](https://github.com/fredericcarre/appcontrol/blob/main/crates/backend/CLAUDE.md).
 
 ### High availability (HA)
 <a id="ha"></a>
@@ -233,7 +233,7 @@ A standardized protocol for connecting AI agents (Claude, ChatGPT, Cursor, …) 
 
 ### mTLS
 <a id="mtls"></a>
-Mutual TLS — both endpoints present X.509 certificates. AppControl requires mTLS between agent and gateway. The CA, gateway, and agent certificates are managed by the [PKI](#pki) layer. The agent's certificate `CN` must match its `agent_id` UUID derivation (verified by the gateway). See [Security Architecture §3](../SECURITY_ARCHITECTURE.md).
+Mutual TLS — both endpoints present X.509 certificates. AppControl requires mTLS between agent and gateway. The CA, gateway, and agent certificates are managed by the [PKI](#pki) layer. The agent's certificate `CN` must match its `agent_id` UUID derivation (verified by the gateway). See [Security Architecture §3](SECURITY_ARCHITECTURE.md).
 
 ## N
 
@@ -245,7 +245,7 @@ A typed JSON payload alternative to a shell `check_cmd` / `start_cmd` / `stop_cm
 - `tcp` — TCP connect to host:port (planned, same column).
 - `process` — process-name match (planned, same column).
 
-Stored in `components.check_native` / `start_native` / `stop_native` (JSONB). When non-null, the agent uses the native spec instead of the shell command. See migration [`V053`](../migrations/V053__native_command_specs.sql).
+Stored in `components.check_native` / `start_native` / `stop_native` (JSONB). When non-null, the agent uses the native spec instead of the shell command. See migration [`V053`](https://github.com/fredericcarre/appcontrol/blob/main/migrations/V053__native_command_specs.sql).
 
 ### NIS2
 <a id="nis2"></a>
@@ -295,7 +295,7 @@ See [Error branch](#error-branch). The visual color used to highlight failed com
 
 ### PR-only mode
 <a id="pr-only-mode"></a>
-Optional mode in which start/stop operations are gated behind a merged Pull Request. The map (components, commands, dependencies) is versioned as code and operations are bound to git history. Used in highly regulated environments. See [README — Garde-fous par conception](../README.md).
+Optional mode in which start/stop operations are gated behind a merged Pull Request. The map (components, commands, dependencies) is versioned as code and operations are bound to git history. Used in highly regulated environments. See [README — Garde-fous par conception](https://github.com/fredericcarre/appcontrol/blob/main/README.md).
 
 ## Q
 
@@ -316,11 +316,11 @@ Rebuild respects DAG order and skips components flagged with `rebuild_protected 
 
 ### Rebuild protection
 <a id="rebuild-protection"></a>
-The `rebuild_protected = true` flag on a component prevents the rebuild engine from touching it. Used for components whose data must never be regenerated by AppControl (databases of record, archive storage). A rebuild against a protected component returns HTTP 409. See [Backend CLAUDE.md — Rebuild Engine](../crates/backend/CLAUDE.md).
+The `rebuild_protected = true` flag on a component prevents the rebuild engine from touching it. Used for components whose data must never be regenerated by AppControl (databases of record, archive storage). A rebuild against a protected component returns HTTP 409. See [Backend CLAUDE.md — Rebuild Engine](https://github.com/fredericcarre/appcontrol/blob/main/crates/backend/CLAUDE.md).
 
 ### Referenced app
 <a id="referenced-app"></a>
-A component of type `application` with a `referenced_app_id` pointing to another application. When the parent app starts, the referenced app is recursively started first; its state is derived from its components' aggregate state, not its own cached column. See [Backend CLAUDE.md — Application-Type Components](../crates/backend/CLAUDE.md).
+A component of type `application` with a `referenced_app_id` pointing to another application. When the parent app starts, the referenced app is recursively started first; its state is derived from its components' aggregate state, not its own cached column. See [Backend CLAUDE.md — Application-Type Components](https://github.com/fredericcarre/appcontrol/blob/main/crates/backend/CLAUDE.md).
 
 ### Retention
 <a id="retention"></a>
@@ -363,7 +363,7 @@ Per-site customization of a component, stored in `site_overrides`. Lets the same
 
 ### State transition
 <a id="state-transition"></a>
-A row in the append-only `state_transitions` table recording a change of a component's FSM state. Includes `previous_state`, `next_state`, `trigger` (e.g. `health_check`, `sequencer`, `heartbeat_timeout`), and a JSON `details` blob. Used for DORA Article 16 audit. See [migrations/V005](../migrations/V005__event_tables.sql).
+A row in the append-only `state_transitions` table recording a change of a component's FSM state. Includes `previous_state`, `next_state`, `trigger` (e.g. `health_check`, `sequencer`, `heartbeat_timeout`), and a JSON `details` blob. Used for DORA Article 16 audit. See [migrations/V005](https://github.com/fredericcarre/appcontrol/blob/main/migrations/V005__event_tables.sql).
 
 ### Strong dependency
 <a id="strong-dependency"></a>
@@ -412,13 +412,13 @@ A [native command](#native-command) `kind` that attempts a TCP connect to a host
 
 ### UNREACHABLE
 <a id="unreachable"></a>
-The FSM state assigned to a component when its agent fails to send 3 consecutive heartbeats. The component's previous state is preserved in `state_transitions.details.previous_state` so the FSM can restore it on reconnect. See [Backend CLAUDE.md — Heartbeat Monitor](../crates/backend/CLAUDE.md).
+The FSM state assigned to a component when its agent fails to send 3 consecutive heartbeats. The component's previous state is preserved in `state_transitions.details.previous_state` so the FSM can restore it on reconnect. See [Backend CLAUDE.md — Heartbeat Monitor](https://github.com/fredericcarre/appcontrol/blob/main/crates/backend/CLAUDE.md).
 
 ## V
 
 ### Vault
 <a id="vault"></a>
-External credential store (HashiCorp Vault, AWS KMS, Azure Key Vault) that holds secret variable values. AppControl never sees the plaintext: it sends a placeholder (`$(secret:NAME)`) in the command, the agent resolves it from the vault at execution time, and zeroes the memory after exec. See [Security Architecture §11](../SECURITY_ARCHITECTURE.md).
+External credential store (HashiCorp Vault, AWS KMS, Azure Key Vault) that holds secret variable values. AppControl never sees the plaintext: it sends a placeholder (`$(secret:NAME)`) in the command, the agent resolves it from the vault at execution time, and zeroes the memory after exec. See [Security Architecture §11](SECURITY_ARCHITECTURE.md).
 
 ## W
 
@@ -428,7 +428,7 @@ A documented but currently unimplemented concept. A weak dependency would not ga
 
 ### WebSocket hub
 <a id="websocket-hub"></a>
-The backend component that manages per-user WebSocket subscriptions. On every `Subscribe(app_id)`, the hub computes the user's effective permission and rejects the subscription if it is below `view`. State change events are fan-out only to subscribers who pass the permission filter. See [Security Architecture §7](../SECURITY_ARCHITECTURE.md).
+The backend component that manages per-user WebSocket subscriptions. On every `Subscribe(app_id)`, the hub computes the user's effective permission and rejects the subscription if it is below `view`. State change events are fan-out only to subscribers who pass the permission filter. See [Security Architecture §7](SECURITY_ARCHITECTURE.md).
 
 ### Workspace
 <a id="workspace"></a>

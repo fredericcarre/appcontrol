@@ -22,7 +22,7 @@ For HA-specific operational details, see [High Availability](HIGH_AVAILABILITY.m
 
 Before any upgrade — major or minor — complete every item on this list.
 
-- [ ] **Read the [CHANGELOG](../CHANGELOG.md).** Identify breaking changes, deprecations, and migration steps.
+- [ ] **Read the [CHANGELOG](CHANGELOG.md).** Identify breaking changes, deprecations, and migration steps.
 - [ ] **Take a verified backup.** Run a `pg_dump`, restore it to a sandbox DB, and verify counts via the [restore validation queries](BACKUP_RESTORE.md#restore-validation).
 - [ ] **Snapshot the database.** For managed DBs, take a manual snapshot in addition to automated daily backups.
 - [ ] **Take a Helm revision snapshot.** `helm get values appcontrol -n appcontrol > pre-upgrade-values.yaml` and `helm history appcontrol -n appcontrol`.
@@ -144,7 +144,7 @@ Two patterns:
 - **Additive only (safe).** New table, new column with default, new index. Old code ignores them.
 - **Removing or renaming (multi-step).** Add the new column → ship a new release that writes both → ship another release that reads from the new column only → ship a third release that drops the old column.
 
-The project follows additive-only for minor releases. Breaking schema changes are deferred to major releases and called out in the [CHANGELOG](../CHANGELOG.md).
+The project follows additive-only for minor releases. Breaking schema changes are deferred to major releases and called out in the [CHANGELOG](CHANGELOG.md).
 
 ### Manual migration (out-of-band)
 
@@ -450,7 +450,7 @@ This table lists the supported upgrade paths between recent major and minor vers
 | 0.4.x | 0.5.x | Direct | Additive |
 | 0.5.x | 0.6.x | Direct | Additive (planned features around clustering and binding profiles) |
 
-For exact migration entry points, consult the [CHANGELOG](../CHANGELOG.md) "Upgrading from X.Y" section in each release.
+For exact migration entry points, consult the [CHANGELOG](CHANGELOG.md) "Upgrading from X.Y" section in each release.
 
 ### Verifying the path
 
@@ -476,5 +476,5 @@ If smoke tests pass, repeat in production during your maintenance window.
 - [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) — initial Helm install
 - [HIGH_AVAILABILITY.md](HIGH_AVAILABILITY.md) — HA topology and failure modes
 - [BACKUP_RESTORE.md](BACKUP_RESTORE.md) — backups consumed during rollback
-- [CHANGELOG](../CHANGELOG.md) — per-version notes
+- [CHANGELOG](CHANGELOG.md) — per-version notes
 - [AGENT_INSTALLATION.md §12](AGENT_INSTALLATION.md) — full agent upgrade detail
