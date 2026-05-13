@@ -2,6 +2,7 @@
 name = "appcontrol-agent"
 version.workspace = true
 edition = "2021"
+publish = false
 
 [dependencies]
 appcontrol-common = { path = "../common" }

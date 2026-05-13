@@ -22,6 +22,12 @@ yanked = "warn"
 
 [licenses]
 confidence-threshold = 0.8
+# Workspace crates declared `publish = false` are not redistributed
+# upstream and therefore do not need to carry a per-crate license
+# field. cargo-deny would otherwise flag them as `unlicensed`.
+# Third-party deps remain fully checked against the allow-list
+# below.
+private = { ignore = true }
 # Explicit allow-list. Licenses NOT listed here cause cargo-deny
 # to fail, which is the desired behaviour for a proprietary
 # distribution: every new dependency requires a conscious license
@@ -33,13 +39,14 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "MPL-2.0",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
     "Zlib",
-    "OpenSSL",
     "BSL-1.0",
     "CC0-1.0",
+    # Used by webpki-roots — the certificate root data is licensed
+    # under the Community Data License Agreement Permissive 2.0,
+    # an OSI-recognised permissive data license.
+    "CDLA-Permissive-2.0",
 ]
 
 # `ring` declares a custom license string in its Cargo.toml that
