@@ -972,7 +972,9 @@ async fn connect_to_backend(state: &Arc<GatewayState>) -> anyhow::Result<()> {
     };
     let register_json = serde_json::to_string(&register_msg)?;
     write
-        .send(tokio_tungstenite::tungstenite::Message::Text(register_json.into()))
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            register_json.into(),
+        ))
         .await?;
 
     // Re-announce all currently connected agents to the backend
@@ -1200,9 +1202,13 @@ fn build_backend_tls_connector(
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow::anyhow!("Failed to parse backend client cert: {}", e))?;
 
-        let client_key: PrivateKeyDer<'static> = PrivateKeyDer::from_pem_file(key_path)
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to parse backend client key from {}: {}", key_path, e)
+        let client_key: PrivateKeyDer<'static> =
+            PrivateKeyDer::from_pem_file(key_path).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to parse backend client key from {}: {}",
+                    key_path,
+                    e
+                )
             })?;
 
         tracing::info!("Backend TLS: mTLS enabled (presenting client certificate)");

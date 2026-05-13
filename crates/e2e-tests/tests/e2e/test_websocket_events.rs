@@ -63,7 +63,7 @@ mod test_websocket_events {
 
         // Subscribe to app events
         let subscribe_msg = json!({"type": "Subscribe", "app_id": app_id.to_string()});
-        ws.send(Message::Text(subscribe_msg.to_string()))
+        ws.send(Message::Text(subscribe_msg.to_string().into()))
             .await
             .unwrap();
 
@@ -104,7 +104,8 @@ mod test_websocket_events {
             json!({
                 "type": "Subscribe", "app_id": app_id.to_string()
             })
-            .to_string(),
+            .to_string()
+            .into(),
         ))
         .await
         .unwrap();
@@ -113,7 +114,8 @@ mod test_websocket_events {
             json!({
                 "type": "Unsubscribe", "app_id": app_id.to_string()
             })
-            .to_string(),
+            .to_string()
+            .into(),
         ))
         .await
         .unwrap();
@@ -140,7 +142,8 @@ mod test_websocket_events {
             json!({
                 "type": "Subscribe", "app_id": app_id.to_string()
             })
-            .to_string(),
+            .to_string()
+            .into(),
         ))
         .await
         .unwrap();
@@ -182,7 +185,8 @@ mod test_websocket_events {
             json!({
                 "type": "Subscribe", "app_id": app1_id.to_string()
             })
-            .to_string(),
+            .to_string()
+            .into(),
         ))
         .await
         .unwrap();
@@ -191,7 +195,8 @@ mod test_websocket_events {
             json!({
                 "type": "Subscribe", "app_id": app2_id.to_string()
             })
-            .to_string(),
+            .to_string()
+            .into(),
         ))
         .await
         .unwrap();

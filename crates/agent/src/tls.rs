@@ -164,7 +164,10 @@ pub fn build_tls_connector_insecure(
 /// Compute SHA-256 fingerprint of the first certificate in the configured cert file.
 pub fn compute_cert_fingerprint(tls: &TlsSection) -> Option<String> {
     let cert_path = tls.cert_file.as_deref()?;
-    let cert = CertificateDer::pem_file_iter(cert_path).ok()?.next()?.ok()?;
+    let cert = CertificateDer::pem_file_iter(cert_path)
+        .ok()?
+        .next()?
+        .ok()?;
     let digest = sha2::Sha256::digest(cert.as_ref());
     Some(hex::encode(digest))
 }
