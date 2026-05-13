@@ -2,6 +2,7 @@
 name = "appcontrol-mcp"
 version.workspace = true
 edition = "2021"
+publish = false
 description = "AppControl MCP (Model Context Protocol) server for AI integration"
 
 [dependencies]
