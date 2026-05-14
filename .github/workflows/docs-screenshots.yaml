@@ -11,8 +11,12 @@ on:
     branches: [main]
     paths:
       - 'frontend/src/**'
+      - 'frontend/e2e-screenshots/**'
+      - 'frontend/playwright-screenshots.config.ts'
+      - 'frontend/package.json'
       - 'docs/**'
       - 'README.md'
+      - '.github/workflows/docs-screenshots.yaml'
   workflow_dispatch:
 
 env:
