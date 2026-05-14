@@ -179,7 +179,7 @@ When an application is configured with **site overrides** (primary + DR), the Ma
 
 This gives operators instant visibility into both the primary and disaster recovery deployments without switching views.
 
-<!-- SCREENSHOT:map-view-multi-site -->
+![map-view-multi-site](screenshots/map-view-multi-site.png)
 *Multi-Site View — primary and DR status side by side on each component node*
 
 ---
