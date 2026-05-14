@@ -31,31 +31,49 @@ async function capture(page: Page, name: string, opts?: { fullPage?: boolean }) 
 
 test.describe('Documentation Screenshots', () => {
   test.beforeEach(async ({ page }) => {
-    // Log in first (dev mode: use the seeded admin credentials)
-    await page.goto('/login');
-    await page.waitForTimeout(1000);
+    // Real login via page.request so the resulting HttpOnly cookie ends
+    // up in the page's own cookie jar — that is the auth scheme the
+    // production frontend uses (see frontend/src/api/client.ts). Until
+    // v1.19.0 this beforeEach injected a fake `screenshot-token`, which
+    // the backend rejected on every subsequent API call. The dashboard,
+    // agents, teams, etc. all rendered an empty / error / login screen
+    // → 18 screenshots ended up byte-identical. With a real token the
+    // pages render their real seeded data.
+    //
+    // Credentials match the docker-compose demo defaults seeded by
+    // `scripts/seed-demo.sh` (see docs-screenshots.yaml).
+    const resp = await page.request.post('/api/v1/auth/login', {
+      data: { email: 'admin@localhost', password: 'admin' },
+    });
+    const data = resp.ok() ? await resp.json() : null;
 
-    // If we're still on login, inject mock auth state
-    if (page.url().includes('/login')) {
-      await page.evaluate(() => {
-        const authState = {
-          state: {
-            token: 'screenshot-token',
-            user: {
-              id: '00000000-0000-0000-0000-000000000001',
-              email: 'admin@appcontrol.local',
-              name: 'Admin User',
-              org_id: '00000000-0000-0000-0000-000000000001',
-              role: 'admin',
-            },
-          },
-          version: 0,
-        };
-        localStorage.setItem('appcontrol-auth', JSON.stringify(authState));
-      });
-      await page.goto('/');
-      await page.waitForTimeout(500);
-    }
+    await page.goto('/login');
+    await page.evaluate((d) => {
+      const fallback = {
+        token: 'screenshot-token',
+        user: {
+          id: '00000000-0000-0000-0000-000000000001',
+          email: 'admin@appcontrol.local',
+          name: 'Admin User',
+          org_id: '00000000-0000-0000-0000-000000000001',
+          role: 'admin',
+        },
+      };
+      // Write both token and user into the persisted store. The zustand
+      // persist middleware filters writes via `partialize` (user only),
+      // but rehydration reads everything that was set, so the API
+      // client picks up the token as a Bearer header on the first
+      // request after navigation. If the real login failed we keep the
+      // fallback shape so the page still renders *something* — better
+      // a blank screen than a crash.
+      const state = d ?? fallback;
+      localStorage.setItem(
+        'appcontrol-auth',
+        JSON.stringify({ state, version: 0 }),
+      );
+    }, data);
+    await page.goto('/');
+    await page.waitForTimeout(800);
   });
 
   // ── Authentication ───────────────────────────────────────────
