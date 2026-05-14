@@ -18,6 +18,12 @@ on:
       - 'README.md'
       - '.github/workflows/docs-screenshots.yaml'
   workflow_dispatch:
+  # Called from release.yaml so every published release ships with
+  # screenshots captured from the exact UI being released, instead of
+  # the lagging snapshot that happened to be on main at tag time. The
+  # `ui-screenshots` artifact uploaded at the end of the job is the
+  # contract — `mirror-release` downloads it before packaging.
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
