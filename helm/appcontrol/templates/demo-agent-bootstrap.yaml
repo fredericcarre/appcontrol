@@ -1,0 +1,129 @@
+{{- if .Values.demoAgent.enabled }}
+---
+# ---------------------------------------------------------------------------
+# Bootstrap Job: logs in as the seed admin and creates an enrollment token
+# that the demo agent uses to obtain its mTLS cert. The token is stored
+# in a Secret so the agent's init container can read it on subsequent
+# restarts without re-running this Job.
+#
+# This is a regular resource (not a helm hook) so it runs in parallel
+# with the backend / demo-agent — otherwise --wait would deadlock waiting
+# for the demo-agent pod which itself waits for the Secret this Job
+# writes.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-bootstrap
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-bootstrap
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-bootstrap
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "appcontrol.fullname" . }}-bootstrap
+roleRef:
+  kind: Role
+  name: {{ include "appcontrol.fullname" . }}-bootstrap
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-bootstrap
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bootstrap
+spec:
+  backoffLimit: 12
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "appcontrol.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: bootstrap
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "appcontrol.fullname" . }}-bootstrap
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: bootstrap
+          image: "{{ .Values.demoAgent.bootstrapImage.repository }}:{{ .Values.demoAgent.bootstrapImage.tag }}"
+          imagePullPolicy: {{ .Values.demoAgent.bootstrapImage.pullPolicy }}
+          env:
+            - name: BACKEND_URL
+              value: "http://{{ include "appcontrol.fullname" . }}-backend:{{ .Values.backend.service.port }}"
+            - name: ADMIN_EMAIL
+              value: {{ .Values.backend.seed.adminEmail | quote }}
+            - name: ADMIN_PASSWORD
+              value: {{ .Values.demoAgent.adminPassword | default "" | quote }}
+            - name: SECRET_NAME
+              value: "{{ include "appcontrol.fullname" . }}-agent-enrollment"
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "[bootstrap] waiting for backend at $BACKEND_URL"
+              for i in $(seq 1 120); do
+                if curl -sf "$BACKEND_URL/health" >/dev/null 2>&1; then
+                  echo "[bootstrap] backend healthy after $((i * 2))s"
+                  break
+                fi
+                if [ "$i" = "120" ]; then
+                  echo "[bootstrap] backend never came up"; exit 1
+                fi
+                sleep 2
+              done
+
+              echo "[bootstrap] logging in as $ADMIN_EMAIL"
+              LOGIN=$(curl -sf -X POST \
+                -H 'Content-Type: application/json' \
+                -d "$(jq -nc --arg e "$ADMIN_EMAIL" --arg p "$ADMIN_PASSWORD" '{email:$e,password:$p}')" \
+                "$BACKEND_URL/api/v1/auth/login")
+              TOKEN=$(echo "$LOGIN" | jq -r '.token // empty')
+              if [ -z "$TOKEN" ]; then
+                echo "[bootstrap] login failed. Response: $LOGIN"
+                exit 1
+              fi
+
+              echo "[bootstrap] creating enrollment token"
+              ENROLL_RESP=$(curl -sf -X POST \
+                -H 'Content-Type: application/json' \
+                -H "Authorization: Bearer $TOKEN" \
+                -d '{"name":"demo-agent","scope":"agent","valid_hours":168}' \
+                "$BACKEND_URL/api/v1/enrollment/tokens")
+              ENROLL=$(echo "$ENROLL_RESP" | jq -r '.token // empty')
+              if [ -z "$ENROLL" ]; then
+                echo "[bootstrap] failed to obtain enrollment token. Response: $ENROLL_RESP"
+                exit 1
+              fi
+
+              echo "[bootstrap] writing token to Secret/$SECRET_NAME"
+              kubectl -n "$NAMESPACE" create secret generic "$SECRET_NAME" \
+                --from-literal=token="$ENROLL" \
+                --dry-run=client -o yaml | kubectl apply -f -
+              echo "[bootstrap] done"
+{{- end }}

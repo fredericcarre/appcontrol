@@ -1,0 +1,121 @@
+{{- if .Values.demoAgent.enabled }}
+---
+# ---------------------------------------------------------------------------
+# Demo agent: enrolls with the gateway using a token from a Secret, then
+# runs as a long-lived process that can execute start/stop/check commands
+# on this pod. Useful for E2E validation in CI and demos. Not intended
+# for production — production agents run on customer hosts, not in-cluster.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-demo-agent
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+    app.kubernetes.io/component: demo-agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "appcontrol.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: demo-agent
+  template:
+    metadata:
+      labels:
+        {{- include "appcontrol.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: demo-agent
+    spec:
+      hostname: {{ .Values.demoAgent.hostname | quote }}
+      # Shares the bootstrap ServiceAccount which has `get` on secrets,
+      # used by the wait-for-secret init container below.
+      serviceAccountName: {{ include "appcontrol.fullname" . }}-bootstrap
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        # Block until the bootstrap Job has populated the enrollment Secret.
+        # Without this gate the enroll initContainer would fail-restart in a
+        # tight loop until the Job finishes.
+        - name: wait-for-secret
+          image: "{{ .Values.demoAgent.bootstrapImage.repository }}:{{ .Values.demoAgent.bootstrapImage.tag }}"
+          imagePullPolicy: {{ .Values.demoAgent.bootstrapImage.pullPolicy }}
+          env:
+            - name: SECRET_NAME
+              value: "{{ include "appcontrol.fullname" . }}-agent-enrollment"
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "[wait] waiting for Secret/$SECRET_NAME"
+              for i in $(seq 1 120); do
+                if kubectl -n "$NAMESPACE" get secret "$SECRET_NAME" >/dev/null 2>&1; then
+                  echo "[wait] secret available after $((i * 2))s"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "[wait] secret never appeared within 240s"
+              exit 1
+        - name: enroll
+          image: "{{ .Values.demoAgent.image.repository }}:{{ .Values.demoAgent.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.demoAgent.image.pullPolicy }}
+          env:
+            - name: AGENT_HOSTNAME
+              value: {{ .Values.demoAgent.hostname | quote }}
+            - name: GATEWAY_URL
+              value: "wss://{{ include "appcontrol.fullname" . }}-gateway:{{ .Values.gateway.service.port }}"
+            - name: ENROLLMENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ include "appcontrol.fullname" . }}-agent-enrollment"
+                  key: token
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              # Skip enrollment if it has already happened.
+              if [ -f /var/lib/appcontrol/agent.yaml ]; then
+                echo "[enroll] already enrolled — skipping"
+                exit 0
+              fi
+              echo "[enroll] enrolling agent $AGENT_HOSTNAME at $GATEWAY_URL"
+              exec /usr/local/bin/appcontrol-agent \
+                --enroll "$GATEWAY_URL" \
+                --token "$ENROLLMENT_TOKEN" \
+                --enroll-dir /var/lib/appcontrol
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/appcontrol
+      containers:
+        - name: agent
+          image: "{{ .Values.demoAgent.image.repository }}:{{ .Values.demoAgent.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.demoAgent.image.pullPolicy }}
+          env:
+            - name: AGENT_HOSTNAME
+              value: {{ .Values.demoAgent.hostname | quote }}
+            - name: RUST_LOG
+              value: {{ .Values.demoAgent.env.RUST_LOG | default "info" | quote }}
+          command: ["/usr/local/bin/appcontrol-agent"]
+          args: ["--config", "/var/lib/appcontrol/agent.yaml"]
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/appcontrol
+            # /tmp is the playground used by the validation script's
+            # touch/rm/test commands — keep it writable.
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.demoAgent.resources | nindent 12 }}
+      volumes:
+        - name: state
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

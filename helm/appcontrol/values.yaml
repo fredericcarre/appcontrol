@@ -249,3 +249,41 @@ openshift:
     host: ""
     # Backend route host (for gateway WebSocket and direct API access)
     backendHost: ""
+
+# ---------------------------------------------------------------
+# Demo agent (E2E validation + demo only — NOT for production).
+# Deploys a single in-cluster agent that:
+#   1. Reads an enrollment token from the post-install bootstrap Job
+#   2. Enrolls with the gateway to obtain an mTLS cert
+#   3. Runs as a long-lived process that executes start/stop/check
+#      commands when the backend dispatches them.
+# The bootstrap Job needs `kubectl` to write a Secret holding the
+# token — set bootstrapImage to an image that includes both wget
+# and kubectl (e.g., bitnami/kubectl plus an inline wget binary).
+# ---------------------------------------------------------------
+demoAgent:
+  enabled: false
+  hostname: "demo-host"
+  image:
+    repository: appcontrol/agent
+    tag: ""
+    pullPolicy: IfNotPresent
+  bootstrapImage:
+    # alpine/k8s ships kubectl, curl, jq, and bash in one image — exactly
+    # what the bootstrap script needs. Override only if you mirror images
+    # internally.
+    repository: alpine/k8s
+    tag: "1.30.0"
+    pullPolicy: IfNotPresent
+  # Password for the seeded admin login during bootstrap. Leave empty
+  # when AUTH_MODE=demo (which ignores the password).
+  adminPassword: ""
+  env:
+    RUST_LOG: "info"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi

@@ -49,6 +49,10 @@ jobs:
         run: |
           docker build -f docker/Dockerfile.gateway -t appcontrol/gateway:ci .
 
+      - name: Build agent image
+        run: |
+          docker build -f docker/Dockerfile.agent -t appcontrol/agent:ci .
+
       - name: Install kind
         uses: helm/kind-action@v1.10.0
         with:
@@ -69,6 +73,7 @@ jobs:
           kind load docker-image appcontrol/backend:ci   --name appcontrol-ci
           kind load docker-image appcontrol/frontend:ci  --name appcontrol-ci
           kind load docker-image appcontrol/gateway:ci   --name appcontrol-ci
+          kind load docker-image appcontrol/agent:ci     --name appcontrol-ci
 
       - name: Install OpenShift Route CRD
         run: |
@@ -116,6 +121,10 @@ jobs:
             --set podDisruptionBudget.enabled=false \
             --set openshift.enabled=true \
             --set openshift.route.enabled=true \
+            --set demoAgent.enabled=true \
+            --set demoAgent.image.repository=appcontrol/agent \
+            --set demoAgent.image.tag=ci \
+            --set demoAgent.image.pullPolicy=Never \
             --wait --timeout 5m || HELM_RC=$?
           # Even if --wait times out (e.g. PVC pending in kind), the validation
           # script gives a more useful diagnostic than helm. Don't fail here.
@@ -138,6 +147,8 @@ jobs:
             --release appcontrol \
             --namespace appcontrol-ci \
             --admin-email admin@localhost \
+            --agent-hostname demo-host \
+            --test-start-stop \
             --timeout 300
 
       - name: Collect diagnostics on failure

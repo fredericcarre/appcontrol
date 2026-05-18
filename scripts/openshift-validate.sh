@@ -39,6 +39,8 @@ ADMIN_EMAIL="admin@localhost"
 ROUTE_HOST=""
 TIMEOUT=300
 PF_PORT="${PF_PORT:-13000}"
+AGENT_HOSTNAME="demo-host"
+TEST_START_STOP=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -47,6 +49,8 @@ while [[ $# -gt 0 ]]; do
         --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
         --route-host) ROUTE_HOST="$2"; shift 2 ;;
         --timeout) TIMEOUT="$2"; shift 2 ;;
+        --agent-hostname) AGENT_HOSTNAME="$2"; shift 2 ;;
+        --test-start-stop) TEST_START_STOP=1; shift ;;
         -h|--help)
             sed -n '2,30p' "$0"; exit 0 ;;
         *) echo "Unknown arg: $1" >&2; exit 2 ;;
@@ -251,18 +255,111 @@ else
     fail "App $APP_ID not found in list response"
 fi
 
-# ── 8. Trigger start operation (best-effort: no agent, expect operation queued)
-log "Triggering start operation (no agent attached — operation will be created but not executed)..."
-START_STATUS=$(curl -s $CURL_OPTS -o /tmp/start.json -w '%{http_code}' \
-    -X POST "$BASE_URL/api/v1/apps/$APP_ID/start" \
-    "${AUTH_HDR[@]}")
-# 200/202/400 all acceptable: a 400 ("no components") proves auth + routing + DB write path.
-case "$START_STATUS" in
-    200|202|400)
-        ok "Start endpoint reachable (HTTP $START_STATUS)" ;;
-    *)
-        fail "Start endpoint returned unexpected HTTP $START_STATUS: $(cat /tmp/start.json)" ;;
-esac
+if [[ "$TEST_START_STOP" -eq 1 ]]; then
+    # ── 8a. Wait for the demo agent to enroll and appear in /api/v1/agents ──
+    log "Waiting for agent '$AGENT_HOSTNAME' to register..."
+    AGENT_ID=""
+    for i in $(seq 1 60); do
+        AGENTS=$(curl -sf $CURL_OPTS "${AUTH_HDR[@]}" "$BASE_URL/api/v1/agents" || echo "[]")
+        AGENT_ID=$(echo "$AGENTS" | jq -r --arg h "$AGENT_HOSTNAME" \
+            '.[] | select(.hostname == $h) | .id' | head -n1)
+        if [[ -n "$AGENT_ID" && "$AGENT_ID" != "null" ]]; then
+            ok "Agent '$AGENT_HOSTNAME' registered after ${i}s (id=$AGENT_ID)"
+            break
+        fi
+        [[ "$i" == "60" ]] && { fail "Agent never registered within 120s"; AGENTS_LOG=$(echo "$AGENTS" | head -c 500); echo "  last response: $AGENTS_LOG"; }
+        sleep 2
+    done
+
+    # ── 8b. Create a component bound to the demo agent ──────────────────────
+    log "Creating component 'test-component' on host '$AGENT_HOSTNAME'..."
+    COMP_PAYLOAD=$(jq -nc --arg h "$AGENT_HOSTNAME" '{
+        name: "test-component",
+        component_type: "application",
+        host: $h,
+        check_cmd:  "test -f /tmp/test-component.flag",
+        start_cmd:  "touch /tmp/test-component.flag",
+        stop_cmd:   "rm -f /tmp/test-component.flag",
+        check_interval_seconds: 5,
+        start_timeout_seconds: 30,
+        stop_timeout_seconds: 30
+    }')
+    COMP_RESP=$(curl -sf $CURL_OPTS \
+        -X POST "$BASE_URL/api/v1/apps/$APP_ID/components" \
+        "${AUTH_HDR[@]}" \
+        -H 'Content-Type: application/json' \
+        -d "$COMP_PAYLOAD")
+    COMP_ID=$(echo "$COMP_RESP" | jq -r '.id // empty')
+    if [[ -z "$COMP_ID" ]]; then
+        fail "Component creation failed. Response: $COMP_RESP"
+        exit 1
+    fi
+    ok "Component created: id=$COMP_ID"
+
+    # ── 8c. Start the application, wait for FSM = RUNNING ────────────────────
+    log "Starting application $APP_ID..."
+    START_RESP=$(curl -s $CURL_OPTS -o /tmp/start.json -w '%{http_code}' \
+        -X POST "$BASE_URL/api/v1/apps/$APP_ID/start" \
+        "${AUTH_HDR[@]}")
+    if [[ "$START_RESP" != "200" && "$START_RESP" != "202" ]]; then
+        fail "Start returned HTTP $START_RESP: $(cat /tmp/start.json)"
+        exit 1
+    fi
+    ok "Start command accepted (HTTP $START_RESP)"
+
+    log "Polling for global_state=RUNNING (up to 120s)..."
+    for i in $(seq 1 60); do
+        APP_STATE=$(curl -sf $CURL_OPTS "${AUTH_HDR[@]}" "$BASE_URL/api/v1/apps/$APP_ID" \
+            | jq -r '.global_state // empty')
+        if [[ "$APP_STATE" == "RUNNING" ]]; then
+            ok "Application reached RUNNING after ${i}s"
+            break
+        fi
+        if [[ "$APP_STATE" == "FAILED" ]]; then
+            fail "Application transitioned to FAILED (expected RUNNING)"
+            curl -sf $CURL_OPTS "${AUTH_HDR[@]}" "$BASE_URL/api/v1/apps/$APP_ID" | jq .
+            exit 1
+        fi
+        [[ "$i" == "60" ]] && { fail "Application never reached RUNNING (last state=$APP_STATE)"; exit 1; }
+        sleep 2
+    done
+
+    # ── 8d. Stop the application, wait for FSM = STOPPED ─────────────────────
+    log "Stopping application $APP_ID..."
+    STOP_RESP=$(curl -s $CURL_OPTS -o /tmp/stop.json -w '%{http_code}' \
+        -X POST "$BASE_URL/api/v1/apps/$APP_ID/stop" \
+        "${AUTH_HDR[@]}")
+    if [[ "$STOP_RESP" != "200" && "$STOP_RESP" != "202" ]]; then
+        fail "Stop returned HTTP $STOP_RESP: $(cat /tmp/stop.json)"
+        exit 1
+    fi
+    ok "Stop command accepted (HTTP $STOP_RESP)"
+
+    log "Polling for global_state=STOPPED (up to 120s)..."
+    for i in $(seq 1 60); do
+        APP_STATE=$(curl -sf $CURL_OPTS "${AUTH_HDR[@]}" "$BASE_URL/api/v1/apps/$APP_ID" \
+            | jq -r '.global_state // empty')
+        if [[ "$APP_STATE" == "STOPPED" ]]; then
+            ok "Application reached STOPPED after ${i}s"
+            break
+        fi
+        [[ "$i" == "60" ]] && { fail "Application never reached STOPPED (last state=$APP_STATE)"; exit 1; }
+        sleep 2
+    done
+else
+    # ── 8. Trigger start operation (no agent — operation queued, not executed) ──
+    log "Triggering start operation (no agent attached — operation will be created but not executed)..."
+    START_STATUS=$(curl -s $CURL_OPTS -o /tmp/start.json -w '%{http_code}' \
+        -X POST "$BASE_URL/api/v1/apps/$APP_ID/start" \
+        "${AUTH_HDR[@]}")
+    # 200/202/400 all acceptable: a 400 ("no components") proves auth + routing + DB write path.
+    case "$START_STATUS" in
+        200|202|400)
+            ok "Start endpoint reachable (HTTP $START_STATUS)" ;;
+        *)
+            fail "Start endpoint returned unexpected HTTP $START_STATUS: $(cat /tmp/start.json)" ;;
+    esac
+fi
 
 # ── 9. OpenShift Route presence (if openshift.enabled=true was applied) ──────
 ROUTE_CRD_PRESENT=$("$KUBECTL" get crd routes.route.openshift.io --no-headers 2>/dev/null | wc -l)
