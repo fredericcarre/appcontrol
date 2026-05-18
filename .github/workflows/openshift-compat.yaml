@@ -97,6 +97,9 @@ jobs:
             --set backend.database.url='postgres://appcontrol:ci-password@appcontrol-postgresql:5432/appcontrol' \
             --set backend.jwt.secret='ci-jwt-secret-not-for-production-use-only-32chars+' \
             --set backend.env.CORS_ORIGINS='http://localhost' \
+            --set backend.env.APP_ENV=development \
+            --set backend.env.AUTH_MODE=demo \
+            --set backend.seed.adminEmail=admin@localhost \
             --set frontend.image.repository=appcontrol/frontend \
             --set frontend.image.tag=ci \
             --set frontend.image.pullPolicy=Never \

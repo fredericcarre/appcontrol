@@ -23,10 +23,21 @@ backend:
   env:
     RUST_LOG: "info"
     CORS_ORIGINS: ""
+    # APP_ENV gates production-strict checks (CORS, JWT_SECRET length, etc.)
+    APP_ENV: "production"
+    # AUTH_MODE: demo (no password verification, looks up by email) | local | oidc | saml
+    AUTH_MODE: "demo"
     # Public URLs for enrollment command generation (optional)
     # Set these if agents/gateways connect via different URLs than the UI
     PUBLIC_GATEWAY_URL: ""
     PUBLIC_BACKEND_URL: ""
+  # Initial admin user and organization (seeded on first start only)
+  seed:
+    enabled: true
+    adminEmail: "admin@localhost"
+    adminDisplayName: "Admin"
+    orgName: "Default Organization"
+    orgSlug: "default"
   database:
     # For production: use an external managed database (RDS, CloudSQL, Azure Database).
     # Set url to the connection string or use existingSecret.
@@ -72,6 +83,17 @@ gateway:
     limits:
       cpu: "1"
       memory: 512Mi
+  env:
+    # Identifies this gateway when registering with the backend.
+    # If empty, defaults to "<release>-gateway".
+    name: ""
+    RUST_LOG: "info"
+  # mTLS configuration for agent connections.
+  # When enabled, requires a Secret with keys: gateway.crt, gateway.key, pki-ca.crt
+  # Disabled by default to keep the chart installable without bootstrapping certs.
+  tls:
+    enabled: false
+    existingSecret: ""
 
 # ---------------------------------------------------------------
 # PostgreSQL — in-cluster StatefulSet with persistent storage.

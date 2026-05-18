@@ -117,6 +117,9 @@ jobs:
             --set backend.jwt.secret='nightly-jwt-secret-not-for-production-use-32chars+' \
             --set backend.env.CORS_ORIGINS='https://${{ steps.vars.outputs.frontend_host }}' \
             --set backend.env.PUBLIC_BACKEND_URL='https://${{ steps.vars.outputs.backend_host }}' \
+            --set backend.env.APP_ENV=development \
+            --set backend.env.AUTH_MODE=demo \
+            --set backend.seed.adminEmail=admin@localhost \
             --set frontend.image.repository=ghcr.io/fredericcarre/appcontrol-frontend \
             --set frontend.image.tag=${{ steps.vars.outputs.image_tag }} \
             --set frontend.replicaCount=1 \

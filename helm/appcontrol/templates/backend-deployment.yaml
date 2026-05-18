@@ -45,6 +45,20 @@ spec:
           env:
             - name: RUST_LOG
               value: {{ .Values.backend.env.RUST_LOG | quote }}
+            - name: APP_ENV
+              value: {{ .Values.backend.env.APP_ENV | default "production" | quote }}
+            - name: AUTH_MODE
+              value: {{ .Values.backend.env.AUTH_MODE | default "demo" | quote }}
+            - name: SEED_ENABLED
+              value: {{ .Values.backend.seed.enabled | default true | quote }}
+            - name: SEED_ADMIN_EMAIL
+              value: {{ .Values.backend.seed.adminEmail | quote }}
+            - name: SEED_ADMIN_DISPLAY_NAME
+              value: {{ .Values.backend.seed.adminDisplayName | quote }}
+            - name: SEED_ORG_NAME
+              value: {{ .Values.backend.seed.orgName | quote }}
+            - name: SEED_ORG_SLUG
+              value: {{ .Values.backend.seed.orgSlug | quote }}
             - name: DATABASE_URL
               {{- if .Values.backend.database.existingSecret }}
               valueFrom:
@@ -53,14 +67,6 @@ spec:
                   key: {{ .Values.backend.database.secretKey }}
               {{- else }}
               value: {{ .Values.backend.database.url | quote }}
-              {{- end }}
-            - name: REDIS_URL
-              {{- if .Values.backend.redis.url }}
-              value: {{ .Values.backend.redis.url | quote }}
-              {{- else if .Values.redis.enabled }}
-              value: "redis://{{ include "appcontrol.fullname" . }}-redis:6379"
-              {{- else }}
-              value: ""
               {{- end }}
             {{- if .Values.backend.env.CORS_ORIGINS }}
             - name: CORS_ORIGINS
