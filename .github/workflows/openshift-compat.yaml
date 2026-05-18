@@ -1,30 +1,23 @@
-name: OpenShift Compat (PR)
+name: OpenShift Compat
 
 # ---------------------------------------------------------------------------
 # Validates the Helm chart on a kind cluster augmented with the OpenShift
 # Route CRD. This is NOT a full OpenShift cluster — it exercises the chart
 # templates (including `openshift.enabled=true`), the Route API, pod health,
-# logs, and a real login + app-create flow. The "real OpenShift" coverage
-# (HAProxy edge termination, SCC, ImageStream) is delivered by the nightly
-# Red Hat Developer Sandbox job in openshift-sandbox-nightly.yaml.
+# logs, and a real login + app-create + start + stop flow against an
+# in-cluster demo agent. The "real OpenShift" coverage (HAProxy edge
+# termination, SCC, ImageStream) is delivered by the nightly Red Hat
+# Developer Sandbox job in openshift-sandbox-nightly.yaml.
 #
-# Runs on every PR that touches Helm, OpenShift manifests, the validation
-# script, or the backend/frontend source.
+# Runs automatically on EVERY push to any branch and on every PR — no path
+# filter, so it always blocks merge when the chart breaks. Add to branch
+# protection rules to enforce it.
 # ---------------------------------------------------------------------------
 
 on:
   push:
-    branches: [main]
   pull_request:
-    paths:
-      - 'helm/**'
-      - 'openshift/**'
-      - 'scripts/openshift-validate.sh'
-      - '.github/workflows/openshift-compat.yaml'
-      - 'docker/**'
-      - 'crates/backend/**'
-      - 'crates/gateway/**'
-      - 'frontend/**'
+  workflow_dispatch:
 
 jobs:
   openshift-compat:
