@@ -101,6 +101,17 @@ appcontrol/
      - If it fails, run tests locally (`cargo test --workspace`), fix the errors, and push again
      - Repeat until CI is green. Do NOT leave a broken build.
 
+## OpenShift / Kubernetes deployment validation
+
+Two CI workflows verify the Helm chart actually deploys and serves traffic:
+
+- **`openshift-compat.yaml`** (per PR) — kind cluster + OpenShift Route CRD. Runs whenever Helm, OpenShift manifests, the validation script, or backend/frontend/gateway sources change. Validates pod health, log cleanliness, login, app creation, start endpoint.
+- **`openshift-sandbox-nightly.yaml`** (cron + manual) — deploys to a real OpenShift cluster (Red Hat Developer Sandbox) using `OPENSHIFT_SERVER`, `OPENSHIFT_TOKEN`, `OPENSHIFT_NAMESPACE`, `OPENSHIFT_ROUTE_DOMAIN` secrets. Exercises HAProxy edge TLS, SCC, and real Route admission.
+
+Both workflows call **`scripts/openshift-validate.sh`** — the same script can be run manually against any cluster (sandbox dev, CRC local, prod) after `oc login` + `helm install`. See the script header for usage.
+
+When adding a new Helm template or changing pod startup behavior, run the script locally against a kind cluster before pushing; the per-PR job will exercise it on every push but local iteration is faster.
+
 ## Documentation Maintenance
 
 **Always regenerate documentation** when modifying user-facing features:

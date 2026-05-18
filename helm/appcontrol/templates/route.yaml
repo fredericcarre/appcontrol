@@ -1,0 +1,48 @@
+{{- if and .Values.openshift.enabled .Values.openshift.route.enabled }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-frontend
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+  annotations:
+    haproxy.router.openshift.io/timeout: 86400s
+spec:
+  {{- with .Values.openshift.route.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "appcontrol.fullname" . }}-frontend
+    weight: 100
+  port:
+    targetPort: {{ .Values.frontend.service.port }}
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "appcontrol.fullname" . }}-backend
+  labels:
+    {{- include "appcontrol.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+  annotations:
+    haproxy.router.openshift.io/timeout: 86400s
+spec:
+  {{- with .Values.openshift.route.backendHost }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "appcontrol.fullname" . }}-backend
+    weight: 100
+  port:
+    targetPort: {{ .Values.backend.service.port }}
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+{{- end }}

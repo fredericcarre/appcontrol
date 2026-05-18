@@ -223,4 +223,7 @@ openshift:
   enabled: false
   route:
     enabled: false
+    # Frontend route host (auto-derived by router if empty)
     host: ""
+    # Backend route host (for gateway WebSocket and direct API access)
+    backendHost: ""

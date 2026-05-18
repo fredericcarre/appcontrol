@@ -1,0 +1,166 @@
+name: OpenShift Compat (PR)
+
+# ---------------------------------------------------------------------------
+# Validates the Helm chart on a kind cluster augmented with the OpenShift
+# Route CRD. This is NOT a full OpenShift cluster — it exercises the chart
+# templates (including `openshift.enabled=true`), the Route API, pod health,
+# logs, and a real login + app-create flow. The "real OpenShift" coverage
+# (HAProxy edge termination, SCC, ImageStream) is delivered by the nightly
+# Red Hat Developer Sandbox job in openshift-sandbox-nightly.yaml.
+#
+# Runs on every PR that touches Helm, OpenShift manifests, the validation
+# script, or the backend/frontend source.
+# ---------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'helm/**'
+      - 'openshift/**'
+      - 'scripts/openshift-validate.sh'
+      - '.github/workflows/openshift-compat.yaml'
+      - 'docker/**'
+      - 'crates/backend/**'
+      - 'crates/gateway/**'
+      - 'frontend/**'
+
+jobs:
+  openshift-compat:
+    name: OpenShift Compat (kind + Route CRD)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        run: |
+          docker build -f docker/Dockerfile.backend -t appcontrol/backend:ci .
+
+      - name: Build frontend image
+        run: |
+          docker build -f docker/Dockerfile.frontend -t appcontrol/frontend:ci .
+
+      - name: Build gateway image
+        run: |
+          docker build -f docker/Dockerfile.gateway -t appcontrol/gateway:ci .
+
+      - name: Install kind
+        uses: helm/kind-action@v1.10.0
+        with:
+          version: v0.23.0
+          cluster_name: appcontrol-ci
+          wait: 120s
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.0
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Load images into kind
+        run: |
+          kind load docker-image appcontrol/backend:ci   --name appcontrol-ci
+          kind load docker-image appcontrol/frontend:ci  --name appcontrol-ci
+          kind load docker-image appcontrol/gateway:ci   --name appcontrol-ci
+
+      - name: Install OpenShift Route CRD
+        run: |
+          # Pulls the upstream Route CRD definition so the chart's
+          # openshift.route.enabled=true path templates and applies correctly.
+          kubectl apply -f \
+            https://raw.githubusercontent.com/openshift/api/master/route/v1/zz_generated.crd-manifests/routes-Default.crd.yaml
+
+      - name: Create namespace
+        run: kubectl create namespace appcontrol-ci
+
+      - name: Helm install
+        run: |
+          # NOTE: openshift.enabled=true triggers Route template rendering.
+          # Routes are created but not served (no HAProxy router in kind);
+          # the validation script falls back to port-forward for HTTP checks
+          # and asserts Route resources exist via kubectl.
+          # NetworkPolicy is disabled here so port-forward + cross-pod traffic
+          # work in kind without a CNI that enforces NPs by default.
+          helm install appcontrol ./helm/appcontrol \
+            -n appcontrol-ci \
+            --set backend.image.repository=appcontrol/backend \
+            --set backend.image.tag=ci \
+            --set backend.image.pullPolicy=Never \
+            --set backend.replicaCount=1 \
+            --set backend.database.url='postgres://appcontrol:ci-password@appcontrol-postgresql:5432/appcontrol' \
+            --set backend.jwt.secret='ci-jwt-secret-not-for-production-use-only-32chars+' \
+            --set backend.env.CORS_ORIGINS='http://localhost' \
+            --set frontend.image.repository=appcontrol/frontend \
+            --set frontend.image.tag=ci \
+            --set frontend.image.pullPolicy=Never \
+            --set frontend.replicaCount=1 \
+            --set gateway.image.repository=appcontrol/gateway \
+            --set gateway.image.tag=ci \
+            --set gateway.image.pullPolicy=Never \
+            --set gateway.replicaCount=1 \
+            --set postgresql.enabled=true \
+            --set postgresql.auth.password='ci-password' \
+            --set postgresql.primary.persistence.size=1Gi \
+            --set redis.enabled=false \
+            --set networkPolicy.enabled=false \
+            --set podDisruptionBudget.enabled=false \
+            --set openshift.enabled=true \
+            --set openshift.route.enabled=true \
+            --wait --timeout 5m || HELM_RC=$?
+          # Even if --wait times out (e.g. PVC pending in kind), the validation
+          # script gives a more useful diagnostic than helm. Don't fail here.
+          echo "helm install rc=${HELM_RC:-0}"
+
+      - name: Show initial cluster state
+        if: always()
+        run: |
+          kubectl -n appcontrol-ci get pods -o wide
+          kubectl -n appcontrol-ci get svc
+          kubectl -n appcontrol-ci get pvc
+          kubectl -n appcontrol-ci get route 2>/dev/null || true
+
+      - name: Run validation script
+        env:
+          # Backend defaults to demo auth — password is ignored, only email matters.
+          ADMIN_PASSWORD: ""
+        run: |
+          ./scripts/openshift-validate.sh \
+            --release appcontrol \
+            --namespace appcontrol-ci \
+            --admin-email admin@localhost \
+            --timeout 300
+
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/diag
+          kubectl -n appcontrol-ci get all -o wide       > /tmp/diag/get-all.txt 2>&1 || true
+          kubectl -n appcontrol-ci describe pods         > /tmp/diag/describe-pods.txt 2>&1 || true
+          kubectl -n appcontrol-ci get events --sort-by=.lastTimestamp > /tmp/diag/events.txt 2>&1 || true
+          kubectl -n appcontrol-ci get route -o yaml     > /tmp/diag/routes.yaml 2>&1 || true
+          for pod in $(kubectl -n appcontrol-ci get pods -o name); do
+            safe=$(echo "$pod" | tr '/' '_')
+            kubectl -n appcontrol-ci logs "$pod" --all-containers --tail=300 \
+              > "/tmp/diag/logs${safe}.txt" 2>&1 || true
+          done
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openshift-compat-diagnostics
+          path: /tmp/diag/
+          retention-days: 7
+
+      - name: Tear down
+        if: always()
+        run: |
+          helm uninstall appcontrol -n appcontrol-ci --wait || true
+          kubectl delete namespace appcontrol-ci --wait=false || true

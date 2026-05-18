@@ -1,0 +1,198 @@
+name: OpenShift Sandbox (nightly)
+
+# ---------------------------------------------------------------------------
+# Deploys AppControl on a real OpenShift cluster every night to validate
+# OpenShift-specific behavior that kind cannot reproduce:
+#   - HAProxy router edge TLS termination on Routes
+#   - SecurityContextConstraints (restricted-v2) enforcement
+#   - Pod scheduling under OpenShift's default SCC
+#   - Persistent storage with the cluster's default StorageClass
+#
+# Requirements (configured once in repo Settings → Secrets):
+#   OPENSHIFT_SERVER       - API URL, e.g. https://api.sandbox.x8i5.p1.openshiftapps.com:6443
+#   OPENSHIFT_TOKEN        - Service account token with edit rights in the namespace
+#   OPENSHIFT_NAMESPACE    - Target namespace (Red Hat Sandbox: <username>-dev)
+#   OPENSHIFT_ROUTE_DOMAIN - Cluster apps domain, e.g. apps.sandbox.x8i5.p1.openshiftapps.com
+#
+# If any secret is missing the job exits successfully with a warning so a
+# missing token does not block main. Re-enable enforcement by removing the
+# `secret-presence` gate.
+# ---------------------------------------------------------------------------
+
+on:
+  schedule:
+    # 03:17 UTC daily — offset from the hour to avoid GHA cron stampede.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'GHCR image tag to deploy (default: latest)'
+        required: false
+        default: 'latest'
+
+jobs:
+  secret-presence:
+    name: Check secrets
+    runs-on: ubuntu-latest
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - id: check
+        run: |
+          if [[ -n "${{ secrets.OPENSHIFT_SERVER }}" \
+             && -n "${{ secrets.OPENSHIFT_TOKEN }}" \
+             && -n "${{ secrets.OPENSHIFT_NAMESPACE }}" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::OPENSHIFT_* secrets not configured — skipping deployment."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  sandbox-deploy:
+    name: Deploy + validate on OpenShift Sandbox
+    needs: secret-presence
+    if: needs.secret-presence.outputs.present == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install oc CLI
+        run: |
+          curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz \
+            | tar -xz -C /usr/local/bin oc kubectl
+          oc version --client
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.0
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: oc login
+        run: |
+          oc login \
+            --token="${{ secrets.OPENSHIFT_TOKEN }}" \
+            --server="${{ secrets.OPENSHIFT_SERVER }}" \
+            --insecure-skip-tls-verify=true
+          oc project "${{ secrets.OPENSHIFT_NAMESPACE }}"
+          echo "Cluster: $(oc whoami --show-server)"
+          echo "User:    $(oc whoami)"
+          echo "Project: $(oc project -q)"
+
+      - name: Compute release name and route hosts
+        id: vars
+        run: |
+          # Ephemeral release per run keeps yesterday's leftovers from clashing.
+          RELEASE="appcontrol-nightly"
+          IMAGE_TAG="${{ github.event.inputs.image_tag || 'latest' }}"
+          NAMESPACE="${{ secrets.OPENSHIFT_NAMESPACE }}"
+          ROUTE_DOMAIN="${{ secrets.OPENSHIFT_ROUTE_DOMAIN }}"
+          FRONTEND_HOST="${RELEASE}-${NAMESPACE}.${ROUTE_DOMAIN}"
+          BACKEND_HOST="${RELEASE}-api-${NAMESPACE}.${ROUTE_DOMAIN}"
+          echo "release=$RELEASE"             >> "$GITHUB_OUTPUT"
+          echo "image_tag=$IMAGE_TAG"         >> "$GITHUB_OUTPUT"
+          echo "frontend_host=$FRONTEND_HOST" >> "$GITHUB_OUTPUT"
+          echo "backend_host=$BACKEND_HOST"   >> "$GITHUB_OUTPUT"
+
+      - name: Cleanup any previous nightly release
+        run: |
+          helm uninstall "${{ steps.vars.outputs.release }}" \
+            -n "${{ secrets.OPENSHIFT_NAMESPACE }}" --wait 2>/dev/null || true
+          # Belt-and-braces: drop the PVC so we don't carry yesterday's DB state.
+          oc -n "${{ secrets.OPENSHIFT_NAMESPACE }}" delete pvc \
+            -l "app.kubernetes.io/instance=${{ steps.vars.outputs.release }}" \
+            --wait=false 2>/dev/null || true
+
+      - name: Helm install on OpenShift
+        run: |
+          helm install "${{ steps.vars.outputs.release }}" ./helm/appcontrol \
+            -n "${{ secrets.OPENSHIFT_NAMESPACE }}" \
+            --set backend.image.repository=ghcr.io/fredericcarre/appcontrol-backend \
+            --set backend.image.tag=${{ steps.vars.outputs.image_tag }} \
+            --set backend.replicaCount=1 \
+            --set backend.database.url='postgres://appcontrol:nightly-password@${{ steps.vars.outputs.release }}-postgresql:5432/appcontrol' \
+            --set backend.jwt.secret='nightly-jwt-secret-not-for-production-use-32chars+' \
+            --set backend.env.CORS_ORIGINS='https://${{ steps.vars.outputs.frontend_host }}' \
+            --set backend.env.PUBLIC_BACKEND_URL='https://${{ steps.vars.outputs.backend_host }}' \
+            --set frontend.image.repository=ghcr.io/fredericcarre/appcontrol-frontend \
+            --set frontend.image.tag=${{ steps.vars.outputs.image_tag }} \
+            --set frontend.replicaCount=1 \
+            --set gateway.image.repository=ghcr.io/fredericcarre/appcontrol-gateway \
+            --set gateway.image.tag=${{ steps.vars.outputs.image_tag }} \
+            --set gateway.replicaCount=1 \
+            --set postgresql.enabled=true \
+            --set postgresql.auth.password='nightly-password' \
+            --set postgresql.primary.persistence.size=2Gi \
+            --set redis.enabled=false \
+            --set networkPolicy.enabled=true \
+            --set podDisruptionBudget.enabled=false \
+            --set openshift.enabled=true \
+            --set openshift.route.enabled=true \
+            --set openshift.route.host=${{ steps.vars.outputs.frontend_host }} \
+            --set openshift.route.backendHost=${{ steps.vars.outputs.backend_host }} \
+            --wait --timeout 8m
+
+      - name: Show cluster state
+        if: always()
+        run: |
+          oc -n "${{ secrets.OPENSHIFT_NAMESPACE }}" get pods -o wide
+          oc -n "${{ secrets.OPENSHIFT_NAMESPACE }}" get route
+          oc -n "${{ secrets.OPENSHIFT_NAMESPACE }}" get pvc
+
+      - name: Wait for Routes to be admitted
+        run: |
+          # The router controller takes a moment to admit Routes after creation.
+          for i in $(seq 1 30); do
+            if curl -sf -k "https://${{ steps.vars.outputs.backend_host }}/health" >/dev/null 2>&1; then
+              echo "Backend route admitted after ${i}s"
+              break
+            fi
+            [[ "$i" == "30" ]] && { echo "Backend route never admitted"; exit 1; }
+            sleep 2
+          done
+
+      - name: Run validation script (via real Routes)
+        env:
+          ADMIN_PASSWORD: ""
+        run: |
+          ./scripts/openshift-validate.sh \
+            --release "${{ steps.vars.outputs.release }}" \
+            --namespace "${{ secrets.OPENSHIFT_NAMESPACE }}" \
+            --admin-email admin@localhost \
+            --route-host "${{ steps.vars.outputs.backend_host }}" \
+            --timeout 240
+
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/diag
+          NS="${{ secrets.OPENSHIFT_NAMESPACE }}"
+          oc -n "$NS" get all -o wide          > /tmp/diag/get-all.txt 2>&1 || true
+          oc -n "$NS" describe pods            > /tmp/diag/describe-pods.txt 2>&1 || true
+          oc -n "$NS" get events --sort-by=.lastTimestamp > /tmp/diag/events.txt 2>&1 || true
+          oc -n "$NS" get route -o yaml        > /tmp/diag/routes.yaml 2>&1 || true
+          for pod in $(oc -n "$NS" get pods -l "app.kubernetes.io/instance=${{ steps.vars.outputs.release }}" -o name); do
+            safe=$(echo "$pod" | tr '/' '_')
+            oc -n "$NS" logs "$pod" --all-containers --tail=500 \
+              > "/tmp/diag/logs${safe}.txt" 2>&1 || true
+          done
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openshift-sandbox-diagnostics
+          path: /tmp/diag/
+          retention-days: 14
+
+      - name: Tear down
+        if: always()
+        run: |
+          helm uninstall "${{ steps.vars.outputs.release }}" \
+            -n "${{ secrets.OPENSHIFT_NAMESPACE }}" --wait 2>/dev/null || true
+          oc -n "${{ secrets.OPENSHIFT_NAMESPACE }}" delete pvc \
+            -l "app.kubernetes.io/instance=${{ steps.vars.outputs.release }}" \
+            --wait=false 2>/dev/null || true
