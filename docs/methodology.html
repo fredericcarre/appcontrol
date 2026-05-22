@@ -1,0 +1,2038 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cartographier l'écosystème applicatif — Méthodologie AppControl</title>
+<style>
+  :root {
+    --ink: #0f172a;
+    --ink-soft: #334155;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --bg: #ffffff;
+    --panel: #f8fafc;
+    --panel-2: #f1f5f9;
+    --accent: #0f766e;
+    --accent-deep: #134e4a;
+    --accent-soft: #ccfbf1;
+    --warn: #b45309;
+    --warn-soft: #fef3c7;
+    --danger: #b91c1c;
+    --danger-soft: #fee2e2;
+    --ok: #166534;
+    --ok-soft: #dcfce7;
+    --indigo: #4338ca;
+    --indigo-soft: #e0e7ff;
+    --shadow: 0 1px 2px rgba(15,23,42,.04), 0 8px 24px rgba(15,23,42,.06);
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter",
+                 system-ui, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.6;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 56px 32px 80px; }
+
+  .cover {
+    border-radius: var(--radius);
+    background: linear-gradient(135deg, #0f172a 0%, #134e4a 100%);
+    color: #fff;
+    padding: 56px 48px;
+    margin-bottom: 40px;
+    box-shadow: var(--shadow);
+  }
+  .cover .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; opacity: .8;
+  }
+  .cover h1 {
+    margin: 14px 0 12px;
+    font-size: 46px; line-height: 1.05; font-weight: 700; letter-spacing: -.02em;
+  }
+  .cover .sub {
+    font-size: 19px; opacity: .92; max-width: 760px; font-weight: 400;
+  }
+  .cover .meta {
+    margin-top: 30px; padding-top: 22px; border-top: 1px solid rgba(255,255,255,.15);
+    display: flex; gap: 28px; flex-wrap: wrap;
+    font-size: 13px; opacity: .8;
+  }
+  .cover strong, .cover em { color: #fff; }
+
+  .exec {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 28px 32px; margin-bottom: 48px;
+  }
+  .exec .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .exec h2 { margin: 0 0 12px; font-size: 22px; color: var(--ink); }
+  .exec p { font-size: 17px; margin: 0 0 12px; color: var(--ink-soft); }
+  .exec p:last-child { margin-bottom: 0; }
+
+  .toc {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 22px 28px; margin-bottom: 56px;
+  }
+  .toc h2 {
+    margin: 0 0 14px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: .14em; color: var(--muted); font-weight: 600;
+  }
+  .toc ol {
+    margin: 0; padding: 0; list-style: none;
+    columns: 2; column-gap: 32px;
+  }
+  .toc li {
+    padding: 6px 0; break-inside: avoid;
+    border-bottom: 1px dashed var(--line);
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px;
+  }
+  .toc li:last-child { border-bottom: 0; }
+  .toc a { color: var(--ink); text-decoration: none; }
+  .toc a:hover { color: var(--accent); }
+  .toc .num {
+    color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  section { margin-bottom: 56px; scroll-margin-top: 16px; }
+  section .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; color: var(--accent);
+    margin-bottom: 8px;
+  }
+  section h2 {
+    font-size: 30px; line-height: 1.2; letter-spacing: -.01em;
+    margin: 0 0 20px; color: var(--ink);
+  }
+  section h3 { font-size: 18px; margin: 28px 0 12px; color: var(--ink); }
+  section h4 { font-size: 15px; margin: 18px 0 8px; color: var(--accent-deep); }
+  p { margin: 0 0 14px; color: var(--ink-soft); }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; color: var(--ink-soft); }
+  li { margin-bottom: 6px; }
+  strong { color: var(--ink); font-weight: 600; }
+  em { color: var(--ink); font-style: italic; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 22px 24px;
+    margin: 16px 0;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .card h4 {
+    margin: 0 0 8px; font-size: 13px;
+    text-transform: uppercase; letter-spacing: .1em;
+    color: var(--accent); font-weight: 700;
+  }
+  .card.warn h4 { color: var(--warn); }
+  .card.warn { background: var(--warn-soft); border-color: #fcd34d; }
+  .card.danger h4 { color: var(--danger); }
+  .card.danger { background: var(--danger-soft); border-color: #fca5a5; }
+  .card.ok h4 { color: var(--ok); }
+  .card.ok { background: var(--ok-soft); border-color: #86efac; }
+  .card.indigo h4 { color: var(--indigo); }
+  .card.indigo { background: var(--indigo-soft); border-color: #a5b4fc; }
+
+  .pull {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 18px 22px; border-radius: 0 var(--radius) var(--radius) 0;
+    margin: 24px 0;
+    font-size: 17px; color: #134e4a;
+  }
+  .pull strong { color: #064e3b; }
+  .pull.warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+    color: #78350f;
+  }
+  .pull.warn strong { color: #451a03; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 16px 0; font-size: 15px;
+    background: #fff; border-radius: var(--radius); overflow: hidden;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  th, td {
+    text-align: left; padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    background: var(--panel-2);
+    font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); font-weight: 600;
+  }
+  tr:last-child td { border-bottom: 0; }
+  td code, p code, li code {
+    background: var(--panel-2); padding: 1px 6px; border-radius: 4px;
+    font-size: 13px; font-family: "SF Mono", "JetBrains Mono", Menlo, monospace;
+    color: #0f172a;
+  }
+
+  pre {
+    background: #0f172a; color: #e2e8f0;
+    padding: 18px 22px; border-radius: var(--radius);
+    overflow-x: auto; font-size: 13.5px; line-height: 1.6;
+    margin: 16px 0;
+  }
+  pre code { background: transparent; color: inherit; padding: 0; }
+
+  .timeline { margin: 32px 0 8px; position: relative; }
+  .timeline-phase {
+    margin: 0 0 28px;
+    padding: 12px 18px;
+    background: linear-gradient(90deg, var(--accent-deep) 0%, var(--accent) 100%);
+    color: #fff;
+    border-radius: var(--radius);
+    font-size: 14px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .12em;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .timeline-phase.b {
+    background: linear-gradient(90deg, #312e81 0%, #4338ca 100%);
+  }
+  .timeline-phase.c {
+    background: linear-gradient(90deg, #92400e 0%, #d97706 100%);
+  }
+  .timeline-phase .tag {
+    background: rgba(255,255,255,.18);
+    padding: 4px 10px; border-radius: 6px;
+    font-size: 12px; letter-spacing: .08em;
+  }
+  .tl-step {
+    position: relative;
+    margin: 0 0 18px 28px;
+    padding: 18px 22px 20px 30px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 2px rgba(15,23,42,.03);
+  }
+  .tl-step::before {
+    content: "";
+    position: absolute;
+    left: -28px; top: 0; bottom: -18px;
+    width: 2px;
+    background: var(--line);
+  }
+  .tl-step:last-child::before { bottom: 24px; }
+  .tl-badge {
+    position: absolute;
+    left: -42px; top: 16px;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px;
+    box-shadow: 0 0 0 4px #fff, 0 0 0 5px var(--line);
+  }
+  .tl-step.b .tl-badge { background: var(--indigo); }
+  .tl-step.c .tl-badge { background: var(--warn); }
+  .tl-step h3 { margin: 0 0 10px; font-size: 17px; color: var(--ink); }
+  .tl-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 10px;
+  }
+  .tl-cell {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .tl-cell .label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase; letter-spacing: .1em;
+    color: var(--muted); font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .tl-cell.input .label { color: var(--accent); }
+  .tl-cell.output .label { color: var(--indigo); }
+  .tl-cell ul {
+    margin: 0; padding-left: 18px;
+    font-size: 14px; color: var(--ink-soft);
+  }
+  .tl-cell li { margin-bottom: 3px; }
+
+  .steps { list-style: none; padding: 0; counter-reset: s; }
+  .steps li {
+    counter-increment: s;
+    padding: 14px 16px 14px 56px; position: relative;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); margin-bottom: 10px;
+    color: var(--ink-soft);
+  }
+  .steps li::before {
+    content: counter(s);
+    position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+  }
+
+  /* Process diagram (horizontal pipeline) */
+  .pipeline {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+    margin: 24px 0;
+  }
+  .pipeline .stage {
+    background: linear-gradient(135deg, var(--accent-deep), var(--accent));
+    color: #fff;
+    border-radius: var(--radius);
+    padding: 14px 12px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 700;
+    position: relative;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .pipeline .stage .num {
+    display: block;
+    font-size: 11px;
+    opacity: .75;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+  .pipeline .stage.b { background: linear-gradient(135deg, #312e81, #4338ca); }
+  .pipeline .stage.c { background: linear-gradient(135deg, #92400e, #d97706); }
+  .feedback-loop {
+    margin: -4px 0 28px;
+    padding: 12px 18px;
+    border: 2px dashed var(--warn);
+    border-radius: var(--radius);
+    background: var(--warn-soft);
+    color: #78350f;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .feedback-loop strong { color: #451a03; }
+
+  /* Source fanout — multi-source ingestion visual */
+  .fanout {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 18px;
+    align-items: center;
+    margin: 24px 0;
+  }
+  .fanout .sources {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .fanout .src {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .fanout .src strong { color: var(--ink); }
+  .fanout .arrow {
+    color: var(--accent);
+    font-size: 28px;
+    font-weight: 900;
+    text-align: center;
+  }
+  .fanout .target {
+    background: linear-gradient(135deg, var(--accent-deep), var(--accent));
+    color: #fff;
+    padding: 22px;
+    border-radius: var(--radius);
+    text-align: center;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .fanout .target h4 {
+    margin: 0 0 8px;
+    color: #fff;
+    font-size: 16px;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .fanout .target .desc {
+    font-size: 13px;
+    opacity: .9;
+  }
+
+  /* RACI table */
+  .raci th, .raci td { text-align: center; }
+  .raci th:first-child, .raci td:first-child { text-align: left; }
+  .raci .R { color: var(--danger); font-weight: 800; }
+  .raci .A { color: var(--ok); font-weight: 800; }
+  .raci .C { color: var(--indigo); font-weight: 700; }
+  .raci .I { color: var(--muted); font-weight: 600; }
+
+  .annex-divider {
+    margin: 80px 0 40px; padding: 32px;
+    background: var(--panel-2);
+    border-radius: var(--radius);
+    text-align: center;
+  }
+  .annex-divider .eyebrow {
+    color: var(--muted);
+    text-transform: uppercase; letter-spacing: .2em;
+    font-size: 13px; font-weight: 600;
+  }
+  .annex-divider h2 { font-size: 32px; margin: 12px 0 0; color: var(--ink); }
+
+  .verbatim {
+    font-style: italic; color: var(--ink);
+    border: 1px solid var(--line);
+    background: #fff;
+    padding: 16px 20px; border-radius: var(--radius);
+    margin: 12px 0 16px;
+    font-size: 15px;
+  }
+  .verbatim::before { content: "« "; color: var(--muted); }
+  .verbatim::after  { content: " »"; color: var(--muted); }
+
+  footer {
+    margin-top: 64px; padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    align-items: center;
+  }
+  footer .foot-brand { display: flex; align-items: center; gap: 12px; }
+  footer .brand-logo { font-size: 15px; }
+  footer .copyright { color: var(--muted); }
+  footer .foot-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  footer .pill {
+    background: var(--panel-2);
+    color: var(--ink-soft);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+  }
+  footer .pill.draft {
+    background: var(--danger-soft); color: var(--danger);
+    border: 1px solid #fca5a5;
+  }
+
+  /* Branding */
+  .invivoo-logo { height: 26px; width: auto; display: block; }
+  .topbar .invivoo-logo { height: 28px; }
+  .cover-brand .invivoo-logo {
+    height: 34px;
+    filter: brightness(0) invert(1);
+  }
+  footer .invivoo-logo { height: 22px; }
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 20px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin-bottom: 18px;
+    box-shadow: 0 1px 2px rgba(15,23,42,.03);
+    gap: 16px; flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .brand-logo {
+    font-weight: 900; font-size: 22px; letter-spacing: .03em;
+    color: var(--ink);
+    display: inline-flex; align-items: baseline; gap: 1px;
+  }
+  .brand-logo .dot {
+    width: 8px; height: 8px;
+    background: var(--accent);
+    border-radius: 50%;
+    display: inline-block;
+    margin-left: 5px;
+    transform: translateY(-1px);
+  }
+  .brand-tagline {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
+    color: var(--muted);
+    padding-left: 14px;
+    border-left: 1px solid var(--line);
+  }
+  .classification { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .badge-draft {
+    background: var(--danger); color: #fff;
+    padding: 5px 11px; border-radius: 6px;
+    font-size: 11px; font-weight: 800; letter-spacing: .14em;
+    text-transform: uppercase;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .badge-confid {
+    color: var(--warn);
+    background: var(--warn-soft);
+    border: 1px solid #fcd34d;
+    padding: 4px 10px; border-radius: 6px;
+    font-size: 11px; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .cover-brand {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 28px; padding-bottom: 20px;
+    border-bottom: 1px solid rgba(255,255,255,.18);
+  }
+  .cover-brand .brand-logo { color: #fff; font-size: 24px; }
+  .cover-brand .brand-logo .dot { background: #5eead4; }
+  .cover-brand .cb-right {
+    font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    opacity: .85; font-weight: 600;
+  }
+  .version-pill {
+    display: inline-flex; align-items: center; gap: 10px;
+    margin-top: 26px;
+    padding: 7px 14px;
+    background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.25);
+    border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+  .version-pill .pulse {
+    width: 7px; height: 7px;
+    background: #fbbf24;
+    border-radius: 50%;
+    box-shadow: 0 0 0 3px rgba(251,191,36,.25);
+  }
+  @media screen {
+    body::before {
+      content: "DRAFT · Ne pas diffuser";
+      position: fixed;
+      bottom: 20px; right: 20px;
+      background: var(--danger); color: #fff;
+      padding: 8px 16px; border-radius: 999px;
+      font-size: 11px; font-weight: 700; letter-spacing: .12em;
+      text-transform: uppercase;
+      box-shadow: 0 6px 20px rgba(185,28,28,.4);
+      z-index: 1000;
+      pointer-events: none;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .wrap { padding: 28px 18px; }
+    .cover { padding: 36px 24px; }
+    .cover h1 { font-size: 32px; }
+    .grid-2, .grid-3, .tl-split { grid-template-columns: 1fr; }
+    .toc ol { columns: 1; }
+    table { font-size: 14px; }
+    th, td { padding: 10px 12px; }
+    .tl-step { margin-left: 22px; }
+    .tl-badge { left: -36px; }
+    .pipeline { grid-template-columns: 1fr 1fr; }
+    .fanout { grid-template-columns: 1fr; }
+    .fanout .arrow { transform: rotate(90deg); }
+  }
+
+  /* Print shell (running header/footer) */
+  .print-shell { width: 100%; border-collapse: collapse; border-spacing: 0; }
+  .print-shell > thead > tr > td,
+  .print-shell > tbody > tr > td,
+  .print-shell > tfoot > tr > td { padding: 0; border: 0; background: transparent; }
+  @media screen {
+    .print-shell > thead, .print-shell > tfoot { display: none; }
+  }
+  .prh, .prf { display: none; }
+
+  @page { size: A4; margin: 22mm 14mm 20mm 14mm; }
+  @media print {
+    html, body { background: #fff; font-size: 10.5pt; line-height: 1.5; }
+    .wrap { max-width: none; margin: 0; padding: 0; }
+    .cover, .timeline-phase, .tl-badge, .pull, .pull.warn,
+    .card, .card.warn, .card.ok, .card.danger, .card.indigo,
+    .annex-divider, .exec, .toc, pre, .verbatim, .tl-cell,
+    .tl-step, .steps li, .pipeline .stage, .feedback-loop,
+    .fanout .target, .fanout .src {
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .cover {
+      background: #0f172a !important; color: #fff !important;
+      padding: 36mm 18mm; margin: 0; border-radius: 0;
+      page-break-after: always; break-after: page;
+    }
+    .cover h1 { font-size: 32pt; }
+    .cover .sub { font-size: 13pt; }
+    .exec, .toc { page-break-inside: avoid; break-inside: avoid; }
+    .toc { page-break-after: always; break-after: page; }
+    .annex-divider { page-break-before: always; break-before: page; }
+    .card, .pull, table, pre, .verbatim,
+    .tl-step, .tl-split, .exec, .steps li, .fanout, .pipeline {
+      page-break-inside: avoid; break-inside: avoid;
+    }
+    h2, h3, h4 { page-break-after: avoid; break-after: avoid; }
+    section { page-break-inside: auto; margin-bottom: 28px; }
+    section h2 { font-size: 20pt; margin-bottom: 14px; }
+    section h3 { font-size: 13pt; margin: 18px 0 8px; }
+    .timeline { padding-left: 18px; }
+    .tl-step { margin-left: 26px; }
+    .tl-badge { box-shadow: 0 0 0 3px #fff, 0 0 0 4px var(--line); }
+    .grid-3 { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .grid-2 { gap: 10px; }
+    .tl-split { gap: 8px; }
+    table { font-size: 10pt; }
+    th, td { padding: 8px 10px; word-wrap: break-word; overflow-wrap: anywhere; }
+    pre { white-space: pre-wrap; word-wrap: break-word; font-size: 9.5pt; }
+    a { color: inherit; text-decoration: none; }
+    footer { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 12px; }
+    body::before { display: none !important; }
+    body::after {
+      content: "DRAFT";
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) rotate(-30deg);
+      font-size: 160pt; font-weight: 900;
+      color: rgba(185, 28, 28, 0.07);
+      letter-spacing: .05em;
+      pointer-events: none; z-index: 9999;
+      white-space: nowrap;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .topbar { display: none; }
+    .cover-wrap { page-break-after: always; break-after: page; }
+    section { page-break-before: always; break-before: page; }
+    .exec { page-break-before: avoid; break-before: avoid; }
+    .print-shell > thead { display: table-header-group; }
+    .print-shell > tfoot { display: table-footer-group; }
+    .prh, .prf {
+      display: flex !important;
+      justify-content: space-between; align-items: center;
+      font-size: 8.5pt; color: #475569;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .prh { padding: 0 0 4mm; margin-bottom: 6mm; border-bottom: 1px solid var(--line); }
+    .prf { padding: 4mm 0 0; margin-top: 6mm; border-top: 1px solid var(--line); }
+    .prh-left, .prf-left, .prf-right { display: inline-flex; align-items: center; gap: 6px; }
+    .prh-logo, .prf-logo { height: 11pt; width: auto; }
+    .prh-sep, .prf-sep { color: var(--line); }
+    .prh-tag { font-weight: 600; color: var(--warn); }
+    .prh-right { color: #64748b; font-size: 8pt; letter-spacing: .03em; }
+    .prf-draft {
+      background: var(--danger); color: #fff;
+      padding: 2px 8px; border-radius: 4px;
+      font-size: 7.5pt; font-weight: 800;
+      letter-spacing: .12em; text-transform: uppercase;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap cover-wrap">
+  <div class="topbar">
+    <div class="brand">
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
+      <span class="brand-tagline">Expertise &amp; conseil IT</span>
+    </div>
+    <div class="classification">
+      <span class="badge-draft">Draft</span>
+      <span class="badge-confid">Confidentiel · Ne pas diffuser</span>
+    </div>
+  </div>
+
+  <header class="cover">
+    <div class="cover-brand">
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
+      <span class="cb-right">Document confidentiel · Méthodologie</span>
+    </div>
+    <div class="eyebrow">Méthodologie &amp; procédé industriel</div>
+    <h1>Cartographier<br/>l'écosystème applicatif</h1>
+    <div class="sub">
+      Méthodologie de collecte, audit, construction et amélioration continue
+      des maps <strong>AppControl</strong> — du référentiel d'entreprise à la
+      boucle d'apprentissage par incident, en passant par la validation IA des
+      schémas d'architecture.
+    </div>
+    <div class="version-pill">
+      <span class="pulse"></span>
+      Version 0.9 · Draft · Mai 2026
+    </div>
+    <div class="meta">
+      <span>Document de référence méthodologique</span>
+      <span>Pour équipes architecture, ops et gouvernance</span>
+    </div>
+  </header>
+</div>
+
+<table class="print-shell">
+<thead>
+  <tr><td>
+    <div class="prh">
+      <span class="prh-left">
+        <img src="invivoo-logo.svg" alt="Invivoo" class="prh-logo" />
+        <span class="prh-sep">·</span>
+        <span class="prh-tag">Confidentiel</span>
+      </span>
+      <span class="prh-right">Méthodologie de cartographie applicative — AppControl</span>
+    </div>
+  </td></tr>
+</thead>
+<tbody>
+<tr><td>
+<div class="wrap content-wrap">
+
+  <div class="exec">
+    <div class="eyebrow">Avant-propos</div>
+    <h2>Pourquoi ce document</h2>
+    <p>
+      Une carte applicative <strong>vivante et fiable</strong> n'apparaît
+      pas spontanément. Elle est l'<strong>aboutissement d'un processus
+      industriel</strong> qui mobilise plusieurs sources de données, des
+      étapes d'audit, des outils d'intelligence artificielle, une revue
+      humaine et — surtout — un mécanisme d'apprentissage continu.
+    </p>
+    <p>
+      Ce document décrit ce processus de bout en bout : <strong>de la
+      collecte multi-sources jusqu'à la boucle d'amélioration par
+      incident</strong>. Il s'adresse aux architectes, responsables
+      opérationnels, équipes méthodologie et instances de gouvernance qui
+      doivent piloter, auditer ou industrialiser la démarche.
+    </p>
+    <p>
+      Il complète la <em>note de synthèse stratégique « Répondre avec
+      sérénité aux exigences de DORA »</em> en répondant à la question
+      <strong>« comment ? »</strong> là où la note stratégique répondait
+      au <strong>« pourquoi ? »</strong>.
+    </p>
+  </div>
+
+  <nav class="toc">
+    <h2>Sommaire</h2>
+    <ol>
+      <li><a href="#s1">Vue d'ensemble — le procédé industriel</a><span class="num">1</span></li>
+      <li><a href="#s2">Phase 1 — Collecte multi-sources</a><span class="num">2</span></li>
+      <li><a href="#s3">Phase 2 — Audit &amp; réconciliation</a><span class="num">3</span></li>
+      <li><a href="#s4">Phase 3 — Construction de la map</a><span class="num">4</span></li>
+      <li><a href="#s5">Phase 4 — Mise en service &amp; exploitation</a><span class="num">5</span></li>
+      <li><a href="#s6">Phase 5 — Cercle vertueux par incidents</a><span class="num">6</span></li>
+      <li><a href="#s7">Phase 6 — Gouvernance &amp; industrialisation</a><span class="num">7</span></li>
+      <li><a href="#s8">Articulation avec les processus IT</a><span class="num">8</span></li>
+      <li><a href="#s9">Le rôle de l'IA — synthèse transverse</a><span class="num">9</span></li>
+      <li><a href="#s10">Métriques de qualité du procédé</a><span class="num">10</span></li>
+      <li><a href="#s11">Synthèse — un procédé reproductible</a><span class="num">11</span></li>
+      <li><a href="#annex">Annexes</a><span class="num">A</span></li>
+    </ol>
+  </nav>
+
+  <!-- ============================================================
+       SECTION 1 — Vue d'ensemble
+       ============================================================ -->
+  <section id="s1">
+    <div class="eyebrow">1 — Vue d'ensemble</div>
+    <h2>Le procédé industriel en un coup d'œil</h2>
+    <p>
+      Le procédé se découpe en <strong>six phases enchaînées</strong>,
+      organisées en deux temps : un <strong>cycle d'initialisation</strong>
+      (phases 1 à 3) qui produit la première version de la map, suivi
+      d'un <strong>cycle d'exploitation et d'amélioration</strong> (phases
+      4 à 6) qui maintient la map alignée sur la réalité de la production.
+    </p>
+
+    <div class="pipeline">
+      <div class="stage">
+        <span class="num">Phase 1</span>
+        Collecte<br/>multi-sources
+      </div>
+      <div class="stage">
+        <span class="num">Phase 2</span>
+        Audit &amp;<br/>réconciliation
+      </div>
+      <div class="stage">
+        <span class="num">Phase 3</span>
+        Construction<br/>de la map
+      </div>
+      <div class="stage b">
+        <span class="num">Phase 4</span>
+        Exploitation<br/>opérationnelle
+      </div>
+      <div class="stage c">
+        <span class="num">Phase 5</span>
+        Apprentissage<br/>par incident
+      </div>
+      <div class="stage b">
+        <span class="num">Phase 6</span>
+        Gouvernance &amp;<br/>industrialisation
+      </div>
+    </div>
+
+    <div class="feedback-loop">
+      <strong>Boucle d'amélioration continue</strong> — chaque incident issu de la phase 5 réinjecte de la donnée dans les phases 2, 3 et 4 : la map s'enrichit, les contrôles se raffinent, la cartographie devient plus précise à chaque cycle.
+    </div>
+
+    <h3>Trois principes directeurs</h3>
+    <div class="grid-3">
+      <div class="card">
+        <h4>1. Multi-sources</h4>
+        <p style="margin:0;">Aucune source n'est suffisante seule. La méthode tire profit de la donnée déclarative (référentiels), de la donnée observée (agents), et de la connaissance humaine (schémas) — réconciliées.</p>
+      </div>
+      <div class="card">
+        <h4>2. Assistée par IA</h4>
+        <p style="margin:0;">L'IA accélère trois étapes critiques : validation des schémas dessinés (vision LLM), génération initiale de la map, et analyse causale des incidents.</p>
+      </div>
+      <div class="card">
+        <h4>3. Apprenante</h4>
+        <p style="margin:0;">La map n'est pas un livrable figé. Chaque incident la corrige et la précise ; au fil du temps elle devient la mémoire opérationnelle de l'application.</p>
+      </div>
+    </div>
+
+    <div class="pull">
+      Le procédé transforme une connaissance applicative <strong>artisanale,
+      dispersée et fragile</strong> en un <strong>actif structuré,
+      mesurable et reproductible</strong> — c'est l'essence de l'industrialisation.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 2 — Phase 1 — Collecte
+       ============================================================ -->
+  <section id="s2">
+    <div class="eyebrow">2 — Phase 1</div>
+    <h2>Collecte multi-sources</h2>
+    <p>
+      La phase 1 mobilise <strong>trois familles de sources</strong> distinctes
+      mais complémentaires : la <em>connaissance active</em> (ce que les
+      agents observent en production), la <em>connaissance déclarative</em>
+      (ce que les référentiels d'entreprise affirment) et la <em>connaissance
+      humaine</em> (ce que les architectes ont dessiné).
+    </p>
+
+    <div class="fanout">
+      <div class="sources">
+        <div class="src"><strong>Connaissance active</strong><br/>Agents AppControl en mode discovery</div>
+        <div class="src"><strong>Référentiels</strong><br/>CMDB, XL Release / XL Deploy, flux, incidents</div>
+        <div class="src"><strong>Schémas humains</strong><br/>Visio, PowerPoint, Confluence — validés par IA</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="target">
+        <h4>Corpus brut consolidé</h4>
+        <div class="desc">Inventaire structuré de tous les composants, dépendances et commandes candidats, indexé par source et horodaté.</div>
+      </div>
+    </div>
+
+    <h3>2.1 Cadrage initial</h3>
+    <p>
+      Avant toute collecte, un cadrage formel positionne le projet :
+    </p>
+    <ul>
+      <li><strong>Périmètre applicatif</strong> — quelles applications, quels environnements (PROD / pré-PROD / DR), quelles zones réseau</li>
+      <li><strong>Équipe</strong> — sponsor métier, application owner, architecte référent, opérateur de production, expert sécurité</li>
+      <li><strong>Sources de données identifiées</strong> — formulaire de cadrage listant chaque source (CMDB, XLR, XLD, etc.), son responsable, son mode d'accès (API, export CSV, lecture base, etc.)</li>
+      <li><strong>Livrables attendus</strong> — corpus brut, audit report, map JSON v1, runbook de mise en service</li>
+      <li><strong>Calendrier</strong> — typiquement 4 à 8 semaines selon la taille et la qualité des sources</li>
+    </ul>
+
+    <h3>2.2 Collecte active — les agents AppControl</h3>
+    <p>
+      Les agents AppControl sont déployés sur les serveurs cibles
+      <strong>en mode discovery</strong> (lecture seule, aucune exécution).
+      Ils capturent ce que la production fait <em>réellement</em> :
+    </p>
+
+    <div class="grid-2">
+      <div class="card">
+        <h4>Processus actifs</h4>
+        <ul>
+          <li>Liste des processus métier identifiables</li>
+          <li>Ligne de commande, utilisateur, PID parent</li>
+          <li>Temps CPU, mémoire, état</li>
+          <li>Filtrage des processus système</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>Empreinte réseau</h4>
+        <ul>
+          <li>Ports écoutés (TCP/UDP)</li>
+          <li>Connexions sortantes actives</li>
+          <li>Patterns de communication observés</li>
+          <li>Latences mesurées</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>Empreinte filesystem</h4>
+        <ul>
+          <li>Fichiers ouverts par les processus métier</li>
+          <li>Chemins de configuration lus</li>
+          <li>Logs émis</li>
+          <li>Données mutées</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>Empreinte système</h4>
+        <ul>
+          <li>Services systemd / init associés</li>
+          <li>Variables d'environnement critiques</li>
+          <li>Crons et scripts périodiques</li>
+          <li>Binaires installés</li>
+        </ul>
+      </div>
+    </div>
+
+    <p>
+      Cette collecte produit la <strong>vérité terrain</strong>. À ce stade
+      les agents ne reçoivent pas encore de map et n'exécutent aucune commande
+      — ils <em>observent</em> sur une fenêtre représentative (typiquement
+      7 à 14 jours pour capter les cycles métier et batchs périodiques).
+    </p>
+
+    <h3>2.3 Collecte passive — les référentiels d'entreprise</h3>
+    <p>
+      En parallèle, chaque référentiel d'entreprise est interrogé via son API
+      ou son export. La collecte est <strong>automatisée</strong> et
+      <strong>versionnée</strong> (chaque export est horodaté et stocké pour
+      audit).
+    </p>
+
+    <table>
+      <thead><tr><th style="width:24%">Source</th><th>Donnée extraite</th><th style="width:18%">Mode d'extraction</th></tr></thead>
+      <tbody>
+        <tr><td><strong>CMDB</strong></td><td>Composants techniques, serveurs, OS, middlewares, versions, propriétaires</td><td>API REST ou export</td></tr>
+        <tr><td><strong>XL Release</strong></td><td>Pipelines de déploiement, ordre des activités, environnements, dépendances applicatives entre projets</td><td>API XL Release</td></tr>
+        <tr><td><strong>XL Deploy</strong></td><td>Manifestes applicatifs (deployable packages), mapping composant↔serveur, packages déployés par environnement</td><td>API XL Deploy</td></tr>
+        <tr><td><strong>Référentiel de flux</strong></td><td>Liens réseau autorisés, ports, protocoles, sens du flux, sécurité associée</td><td>Export base + tickets</td></tr>
+        <tr><td><strong>Base d'incidents</strong></td><td>Incidents historiques, composants touchés, co-occurrences, cause racine documentée</td><td>API ITSM (ServiceNow, etc.)</td></tr>
+        <tr><td><strong>Schedulers</strong></td><td>Jobs Control-M / AutoSys / $U / TWS, enchaînements, fenêtres d'exécution</td><td>Export scheduler</td></tr>
+        <tr><td><strong>Supervision</strong></td><td>Composants surveillés, seuils, alertes émises</td><td>API Datadog / Dynatrace / Zabbix</td></tr>
+      </tbody>
+    </table>
+
+    <h3>2.4 Collecte humaine — les schémas d'architecture</h3>
+    <p>
+      Les architectes possèdent une <strong>connaissance précieuse mais
+      sous-exploitée</strong>, encapsulée dans des schémas Visio, des
+      slides PowerPoint, des pages Confluence ou des dessins sur tableau
+      blanc. Cette connaissance traduit l'<em>intention</em> et la
+      <em>structure logique</em> de l'application.
+    </p>
+
+    <ul>
+      <li><strong>Inventaire</strong> — recensement systématique : pages Confluence, dossiers SharePoint, slides de comités d'architecture, ADR (Architecture Decision Records)</li>
+      <li><strong>Tagging</strong> — chaque document est associé à l'application concernée, daté, et catégorisé (vue logique, vue physique, vue de déploiement, vue réseau)</li>
+      <li><strong>Numérisation</strong> — conversion en formats analysables (PNG haute résolution pour les Visio, extraction du texte des slides)</li>
+    </ul>
+
+    <h3>2.5 Validation IA des schémas d'architecture</h3>
+    <p>
+      C'est ici qu'intervient l'intelligence artificielle pour la première
+      fois. Un <strong>LLM multimodal</strong> (vision + langage) analyse
+      chaque schéma et en extrait une représentation structurée.
+    </p>
+
+    <div class="grid-2">
+      <div class="card">
+        <h4>Extraction</h4>
+        <ul>
+          <li>Identification des composants (boîtes, cylindres, icônes)</li>
+          <li>Lecture des libellés (OCR + interprétation)</li>
+          <li>Détection des liens (flèches, traits) et de leur direction</li>
+          <li>Inférence des technologies (logos, codes couleur, conventions)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>Structuration</h4>
+        <ul>
+          <li>Conversion en JSON intermédiaire : <code>{components, dependencies, hosting}</code></li>
+          <li>Niveau de confiance par élément (1.0 = certain, 0.5 = inféré, 0.2 = douteux)</li>
+          <li>Marquage des zones illisibles ou ambiguës</li>
+          <li>Note libre : commentaires / annotations textuelles du schéma</li>
+        </ul>
+      </div>
+    </div>
+
+    <h4>Validation croisée</h4>
+    <p>
+      Le JSON issu du schéma est immédiatement <strong>croisé avec le corpus
+      CMDB + agents</strong>. Trois types de résultats émergent :
+    </p>
+    <div class="grid-3">
+      <div class="card ok">
+        <h4>Concordant</h4>
+        <p style="margin:0;">Composant présent dans le schéma, la CMDB et observé par les agents — confiance maximale.</p>
+      </div>
+      <div class="card warn">
+        <h4>Partiel</h4>
+        <p style="margin:0;">Composant présent dans 1 ou 2 sources sur 3 — marqué pour revue humaine prioritaire.</p>
+      </div>
+      <div class="card danger">
+        <h4>Contradictoire</h4>
+        <p style="margin:0;">Composant dans le schéma mais inactif ; ou composant actif mais absent du schéma — investigation requise.</p>
+      </div>
+    </div>
+
+    <h3>2.6 Capitalisation — le corpus brut</h3>
+    <p>
+      La sortie de la phase 1 est un <strong>corpus brut consolidé</strong> :
+      un référentiel structuré qui répertorie chaque composant et chaque
+      dépendance candidate, indexé par source, horodaté, et accompagné
+      d'un score de confiance préliminaire.
+    </p>
+
+    <p>
+      Format type :
+    </p>
+    <pre><code>{
+  "applications": [
+    {
+      "id": "billing-core",
+      "components": [
+        {
+          "id": "billing-api",
+          "candidate_sources": ["cmdb", "agent:srv-12", "schema:archi-2024.pdf"],
+          "confidence": 0.95,
+          "attributes": {
+            "type": "service",
+            "technology": "Java/Spring Boot",
+            "version": "2.7.3",
+            "host": "srv-12.prod"
+          }
+        }
+      ],
+      "dependencies": [
+        {
+          "from": "billing-api",
+          "to": "billing-db",
+          "candidate_sources": ["flux-ref", "agent:netstat", "schema"],
+          "confidence": 0.88,
+          "protocol": "JDBC",
+          "port": 5432
+        }
+      ]
+    }
+  ]
+}</code></pre>
+  </section>
+
+  <!-- ============================================================
+       SECTION 3 — Phase 2 — Audit & réconciliation
+       ============================================================ -->
+  <section id="s3">
+    <div class="eyebrow">3 — Phase 2</div>
+    <h2>Audit et réconciliation</h2>
+    <p>
+      La phase 2 transforme le corpus brut en une <strong>vue qualifiée et
+      cohérente</strong>. Elle ne produit pas encore la map opérationnelle :
+      elle produit un <strong>rapport d'audit</strong> qui rend explicites
+      les certitudes, les doutes, les contradictions, et les zones d'ombre.
+    </p>
+
+    <h3>3.1 Audit de couverture</h3>
+    <p>
+      Première question : <em>la connaissance est-elle complète ?</em>
+      L'audit de couverture mesure la proportion des composants observés
+      ou déclarés qui sont effectivement référencés <strong>dans plusieurs
+      sources</strong>.
+    </p>
+
+    <table>
+      <thead><tr><th>Indicateur de couverture</th><th>Définition</th><th style="width:18%">Seuil cible</th></tr></thead>
+      <tbody>
+        <tr><td>Triple confirmation</td><td>% de composants présents dans CMDB ∩ agents ∩ schémas</td><td>&gt; 70 %</td></tr>
+        <tr><td>Double confirmation</td><td>% présents dans au moins 2 sources</td><td>&gt; 90 %</td></tr>
+        <tr><td>Composants observés non déclarés</td><td>% présents dans les agents mais absents de la CMDB</td><td>&lt; 5 %</td></tr>
+        <tr><td>Composants déclarés inactifs</td><td>% présents dans la CMDB mais non observés</td><td>&lt; 10 %</td></tr>
+        <tr><td>Dépendances multi-sources</td><td>% de dépendances confirmées par au moins 2 sources</td><td>&gt; 80 %</td></tr>
+      </tbody>
+    </table>
+
+    <h3>3.2 Détection des contradictions</h3>
+    <p>
+      Les contradictions entre sources sont des <strong>signaux précieux</strong> —
+      elles indiquent soit une donnée obsolète, soit un savoir tribal, soit
+      une dérive entre la documentation et la réalité.
+    </p>
+
+    <div class="grid-2">
+      <div class="card warn">
+        <h4>Contradictions de présence</h4>
+        <ul>
+          <li>Schéma → existe ; Agents → absent</li>
+          <li>CMDB → existe ; Agents → absent</li>
+          <li>Agents → existe ; CMDB → absent</li>
+          <li>Agents → existe ; Aucun schéma</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <h4>Contradictions de dépendances</h4>
+        <ul>
+          <li>Flux autorisé mais jamais utilisé</li>
+          <li>Communication observée hors référentiel</li>
+          <li>Schéma indique A→B, agents observent A→C</li>
+          <li>Dépendance documentée sur composant disparu</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>3.3 Scoring de confiance</h3>
+    <p>
+      Chaque composant et chaque dépendance reçoit un <strong>score
+      composite</strong> entre 0 et 1, fonction du nombre et de la nature
+      des sources qui le confirment.
+    </p>
+
+    <h4>Pondération des sources</h4>
+    <table>
+      <thead><tr><th>Source</th><th>Poids relatif</th><th>Justification</th></tr></thead>
+      <tbody>
+        <tr><td>Agents (observation prod)</td><td>0.45</td><td>Vérité terrain — la production ne ment pas</td></tr>
+        <tr><td>XL Release / XL Deploy</td><td>0.20</td><td>Donnée fraîche (regénérée à chaque déploiement)</td></tr>
+        <tr><td>Référentiel de flux</td><td>0.15</td><td>Validé pour la sécurité réseau</td></tr>
+        <tr><td>CMDB</td><td>0.10</td><td>Déclaratif, souvent en retard</td></tr>
+        <tr><td>Schémas validés par IA</td><td>0.07</td><td>Intention humaine, fiabilité variable</td></tr>
+        <tr><td>Base d'incidents (corrélation)</td><td>0.03</td><td>Faible mais probant en révélation de dépendances cachées</td></tr>
+      </tbody>
+    </table>
+
+    <h4>Règles de réconciliation</h4>
+    <ol>
+      <li><strong>Observation prime sur déclaration</strong> — si un composant est observé par les agents, il existe, point.</li>
+      <li><strong>Récent prime sur ancien</strong> — entre deux sources contradictoires, la plus récente fait foi.</li>
+      <li><strong>Multi-source prime sur mono-source</strong> — un fait confirmé par trois sources est tenu pour acquis.</li>
+      <li><strong>Toute contradiction non résolvable est listée</strong> — la phase 3 (revue humaine) tranchera.</li>
+    </ol>
+
+    <h3>3.4 Audit report — le livrable de la phase 2</h3>
+    <p>
+      L'audit report est un document partageable (HTML + PDF) qui rend la
+      qualité du corpus <strong>auditable</strong> par toutes les parties
+      prenantes avant la construction de la map.
+    </p>
+
+    <div class="card">
+      <h4>Structure type de l'audit report</h4>
+      <ol>
+        <li>Synthèse — taux de couverture, nombre de composants, nombre de contradictions</li>
+        <li>Périmètre — applications, environnements, sources utilisées</li>
+        <li>Inventaire qualifié des composants — avec source(s) et score</li>
+        <li>Inventaire qualifié des dépendances</li>
+        <li>Liste des contradictions à arbitrer</li>
+        <li>Liste des points de vigilance (composants à faible score)</li>
+        <li>Annexes — extraits bruts des sources</li>
+      </ol>
+    </div>
+
+    <div class="pull">
+      <strong>Principe de transparence</strong> — la map qui sera construite
+      en phase 3 doit pouvoir s'expliquer. Chaque décision de réconciliation
+      laisse une trace dans l'audit report et reste consultable par la suite.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 4 — Phase 3 — Construction
+       ============================================================ -->
+  <section id="s4">
+    <div class="eyebrow">4 — Phase 3</div>
+    <h2>Construction de la map</h2>
+    <p>
+      La phase 3 transforme l'audit qualifié en <strong>map AppControl
+      opérationnelle</strong>, prête à être publiée dans la plateforme.
+      Elle combine une génération automatique assistée par IA, une revue
+      humaine structurée, et une publication versionnée.
+    </p>
+
+    <h3>4.1 Génération assistée par IA</h3>
+    <p>
+      Un agent IA spécialisé prend en entrée le corpus qualifié et produit
+      le JSON AppControl correspondant. Le modèle est nourri par :
+    </p>
+    <ul>
+      <li>Le corpus brut + audit de la phase 2</li>
+      <li>Le <strong>schéma de données AppControl</strong> (composants, dépendances, FSM, commandes, agents, sites)</li>
+      <li>Une <strong>bibliothèque de patterns</strong> issus des maps déjà construites pour d'autres applications</li>
+      <li>Les <strong>runbooks et la documentation interne</strong> indexés (RAG) — pour suggérer les commandes <code>check_cmd</code>, <code>start_cmd</code>, <code>stop_cmd</code>, <code>rebuild_cmd</code></li>
+    </ul>
+
+    <h4>Ce que produit l'IA</h4>
+    <div class="grid-2">
+      <div class="card">
+        <h4>Structure</h4>
+        <ul>
+          <li>Composants avec attributs (type, host, agent)</li>
+          <li>Dépendances typées et orientées (DAG)</li>
+          <li>Niveaux de criticité par composant</li>
+          <li>Regroupements logiques (sous-systèmes)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>Commandes</h4>
+        <ul>
+          <li>Propositions de <code>check_cmd</code> (santé niveau 1)</li>
+          <li>Propositions de <code>integrity_check_cmd</code> (niveau 2)</li>
+          <li>Propositions de <code>infra_check_cmd</code> (niveau 3)</li>
+          <li>Drafts de <code>start_cmd</code> / <code>stop_cmd</code> / <code>rebuild_cmd</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <p>
+      Chaque proposition de l'IA est <strong>marquée d'un niveau de
+      confiance</strong> et accompagnée des sources qui l'ont inspirée
+      (par exemple : « <code>check_cmd</code> suggéré à partir du runbook
+      <em>billing-restart.md</em> et du pattern Spring Boot »).
+    </p>
+
+    <h3>4.2 Le format JSON AppControl</h3>
+    <p>
+      Le livrable de cette étape est un fichier JSON conforme à la spécification
+      AppControl. Sa structure conceptuelle :
+    </p>
+    <pre><code>{
+  "application": {
+    "id": "billing-core",
+    "name": "Billing Core",
+    "criticality": "tier-1",
+    "owner": "team-billing",
+    "components": [
+      {
+        "id": "billing-api",
+        "name": "Billing API",
+        "type": "service",
+        "agent_id": "agent-srv-12",
+        "check_cmd": "/usr/local/billing/health.sh",
+        "integrity_check_cmd": "/usr/local/billing/integrity.sh",
+        "infra_check_cmd": "/usr/local/billing/infra.sh",
+        "start_cmd": "systemctl start billing-api",
+        "stop_cmd": "systemctl stop billing-api",
+        "rebuild_cmd": "/usr/local/billing/rebuild.sh",
+        "rebuild_protected": false
+      }
+    ],
+    "dependencies": [
+      { "from": "billing-api", "to": "billing-db", "type": "blocking" },
+      { "from": "billing-api", "to": "auth-service", "type": "blocking" }
+    ]
+  }
+}</code></pre>
+
+    <h3>4.3 Première publication — read-only</h3>
+    <p>
+      Le JSON est publié dans AppControl en mode <strong>read-only</strong> :
+      visible dans l'interface (graphe de dépendances, vue tabulaire),
+      mais aucune commande n'est exécutable. Les équipes peuvent l'inspecter,
+      commenter, mais l'environnement de production reste intouché.
+    </p>
+
+    <h3>4.4 Revue humaine structurée</h3>
+    <p>
+      La revue est <strong>l'étape la plus critique</strong> du procédé.
+      Elle se déroule en atelier (3 à 5 demi-journées selon la taille),
+      en présence de :
+    </p>
+    <ul>
+      <li><strong>Application owner</strong> — décideur final sur le périmètre</li>
+      <li><strong>Architecte référent</strong> — valide la structure et les dépendances</li>
+      <li><strong>Opérateur de production</strong> — valide les commandes et les checks</li>
+      <li><strong>Référent infrastructure</strong> — valide les niveaux 3 (infra checks, rebuild infra)</li>
+      <li><strong>Référent sécurité</strong> — valide les protections (composants critiques flag <code>rebuild_protected</code>)</li>
+    </ul>
+
+    <h4>Méthode de revue — passage en revue par bloc</h4>
+    <ol class="steps">
+      <li>Vue d'ensemble du graphe : valider la liste des composants et leur regroupement</li>
+      <li>Vue par composant : valider les attributs, l'hôte, l'agent assigné</li>
+      <li>Vue par dépendance : valider la direction et le type (blocking, soft, ordering)</li>
+      <li>Vue par commande : tester chaque <code>check_cmd</code> manuellement, valider les retours</li>
+      <li>Cas d'usage rebuild : simuler un rebuild en dry-run, valider l'ordre DAG</li>
+      <li>Cas d'usage DR : valider les site overrides pour le site de secours</li>
+    </ol>
+
+    <h3>4.5 Modifications — UI ou Pull Request GitOps</h3>
+    <p>
+      Deux modes coexistent selon la maturité de l'équipe :
+    </p>
+
+    <div class="grid-2">
+      <div class="card">
+        <h4>Mode UI</h4>
+        <p>Édition directe via l'interface AppControl. Idéal pour les petites équipes ou les modifications mineures. Chaque modification est tracée mais sans review par pair.</p>
+      </div>
+      <div class="card indigo">
+        <h4>Mode PR — GitOps</h4>
+        <p>La map est dans un repository Git. Toute modification passe par une Pull Request, revue par pair, validée par CI (vérification de cohérence du DAG, absence de cycles, validation du schéma). Recommandé pour les applications tier-1.</p>
+      </div>
+    </div>
+
+    <h3>4.6 Validation finale et passage en advisory mode</h3>
+    <p>
+      Une fois la revue close, la map est <strong>activée en advisory
+      mode</strong> dans AppControl. Concrètement :
+    </p>
+    <ul>
+      <li>Les agents reçoivent la map et commencent à exécuter les <code>check_cmd</code> en mode lecture</li>
+      <li>L'état FSM de chaque composant est calculé en temps réel (RUNNING / DEGRADED / FAILED)</li>
+      <li>Aucune commande start/stop/rebuild n'est exécutable</li>
+      <li>Les écarts entre map déclarée et réalité observée sont remontés sous forme d'alertes</li>
+    </ul>
+
+    <div class="pull">
+      <strong>Sortie de phase 3</strong> — la map est <strong>v1.0</strong>,
+      publiée, en advisory. La production n'a pas bougé d'un cran : aucune
+      commande n'est exécutée par AppControl. Mais la <em>vérité observée</em>
+      par les agents est désormais comparable à la <em>vérité déclarée</em>
+      dans la map.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 5 — Phase 4 — Exploitation
+       ============================================================ -->
+  <section id="s5">
+    <div class="eyebrow">5 — Phase 4</div>
+    <h2>Mise en service et exploitation</h2>
+    <p>
+      La phase 4 fait passer la map du statut de <em>documentation vivante</em>
+      au statut d'<em>outil opérationnel</em>. L'activation est <strong>graduelle,
+      réversible, et pilotée par les équipes de production</strong>.
+    </p>
+
+    <h3>5.1 Activation graduelle — les cinq niveaux</h3>
+    <div class="timeline">
+      <div class="tl-step b">
+        <div class="tl-badge">1</div>
+        <h3>Niveau 1 — Advisory pur</h3>
+        <p style="margin:0;">Observation seule. Les agents observent et alimentent la map de leurs constats. Aucune action exécutée. Durée typique : 2 à 4 semaines.</p>
+      </div>
+      <div class="tl-step b">
+        <div class="tl-badge">2</div>
+        <h3>Niveau 2 — Diagnostic actif</h3>
+        <p style="margin:0;">Les <code>check_cmd</code> tournent. La santé temps réel est connue. Le diagnostic 3 niveaux est disponible. Toujours pas de start/stop.</p>
+      </div>
+      <div class="tl-step b">
+        <div class="tl-badge">3</div>
+        <h3>Niveau 3 — Opérations sous PR mergée</h3>
+        <p style="margin:0;">start/stop/restart deviennent possibles, mais uniquement via Pull Request mergée (IaC-style). Le risque humain est maîtrisé.</p>
+      </div>
+      <div class="tl-step b">
+        <div class="tl-badge">4</div>
+        <h3>Niveau 4 — Opérations directes</h3>
+        <p style="margin:0;">Les rôles habilités peuvent déclencher des opérations directement depuis l'interface. RBAC, audit log et permissions granulaires garantissent la sécurité.</p>
+      </div>
+      <div class="tl-step b">
+        <div class="tl-badge">5</div>
+        <h3>Niveau 5 — Rebuild et DR drill</h3>
+        <p style="margin:0;">Les capacités de reconstruction (rebuild complet, bascule DR) sont activées. Drill annuels chronométrés et tracés. Conformité DORA atteinte.</p>
+      </div>
+    </div>
+
+    <h3>5.2 Diagnostic actif — les trois niveaux</h3>
+    <div class="grid-3">
+      <div class="card">
+        <h4>Niveau 1 — Santé</h4>
+        <p style="margin:0;">«&nbsp;Le processus est-il vivant ?&nbsp;» — <code>check_cmd</code> exécuté toutes les 30 s. Drive le FSM.</p>
+      </div>
+      <div class="card">
+        <h4>Niveau 2 — Intégrité</h4>
+        <p style="margin:0;">«&nbsp;Les données sont-elles cohérentes ?&nbsp;» — <code>integrity_check_cmd</code> exécuté toutes les 5 min. Informatif.</p>
+      </div>
+      <div class="card">
+        <h4>Niveau 3 — Infrastructure</h4>
+        <p style="margin:0;">«&nbsp;L'OS, le filesystem, les prérequis sont-ils OK ?&nbsp;» — <code>infra_check_cmd</code> à la demande. Informatif.</p>
+      </div>
+    </div>
+
+    <h3>5.3 Enrichissement par IA contextuelle (RAG)</h3>
+    <p>
+      Une fois la map en exploitation, l'IA continue d'<strong>enrichir et
+      éclairer</strong> les équipes opérationnelles. Elle s'appuie sur un
+      moteur de RAG (Retrieval-Augmented Generation) qui indexe :
+    </p>
+    <ul>
+      <li>La map AppControl elle-même (graphe, commandes, historique d'états)</li>
+      <li>Les runbooks et procédures internes (Confluence, SharePoint, repository docs)</li>
+      <li>L'<strong>historique opérationnel</strong> — transitions FSM, actions passées, incidents corrigés</li>
+      <li>La documentation produit (notes de version, ADR)</li>
+    </ul>
+
+    <h4>Usages opérationnels de l'IA contextuelle</h4>
+    <table>
+      <thead><tr><th>Question opérateur</th><th>Réponse IA contextuelle</th></tr></thead>
+      <tbody>
+        <tr><td>« Que fait <code>billing-api</code> ? »</td><td>Résumé du composant tiré de la doc + runbooks + ses dépendances actuelles</td></tr>
+        <tr><td>« Pourquoi il est en DEGRADED ? »</td><td>Analyse des dernières transitions FSM + checks failed + corrélation avec incidents passés similaires</td></tr>
+        <tr><td>« Comment je le restart sans casser le reste ? »</td><td>Sous-graphe impacté, ordre recommandé, alerte sur les dépendants critiques</td></tr>
+        <tr><td>« Qui a touché cette map cette semaine ? »</td><td>Liste des PR mergées + commits + acteurs identifiés</td></tr>
+      </tbody>
+    </table>
+
+    <h3>5.4 Historisation et versionnement</h3>
+    <p>
+      Chaque modification de la map produit une <strong>nouvelle version
+      versionnée</strong> (Git). L'historique complet est consultable : qui
+      a modifié quoi, quand, pourquoi (via la description de la PR). Cette
+      historisation alimente directement la phase 5 (apprentissage).
+    </p>
+  </section>
+
+  <!-- ============================================================
+       SECTION 6 — Phase 5 — Cercle vertueux
+       ============================================================ -->
+  <section id="s6">
+    <div class="eyebrow">6 — Phase 5</div>
+    <h2>Le cercle vertueux par apprentissage des incidents</h2>
+
+    <div class="pull">
+      Chaque incident est une opportunité d'<strong>améliorer la map</strong>.
+      La méthode formalise cette transformation incident → enrichissement,
+      pour qu'aucun apprentissage ne soit perdu.
+    </div>
+
+    <h3>6.1 Le cycle complet — de l'incident à l'enrichissement</h3>
+    <div class="timeline">
+      <div class="tl-step c">
+        <div class="tl-badge">1</div>
+        <h3>Incident détecté</h3>
+        <div class="tl-split">
+          <div class="tl-cell input">
+            <span class="label">Entrée</span>
+            <ul>
+              <li>Alerte AppControl (check failed)</li>
+              <li>Ticket ITSM externe</li>
+              <li>Remontée utilisateur</li>
+            </ul>
+          </div>
+          <div class="tl-cell output">
+            <span class="label">Action immédiate</span>
+            <ul>
+              <li>Localisation dans la map</li>
+              <li>Composants touchés identifiés</li>
+              <li>Dépendances en aval listées</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="tl-step c">
+        <div class="tl-badge">2</div>
+        <h3>Analyse causale assistée par IA</h3>
+        <div class="tl-split">
+          <div class="tl-cell input">
+            <span class="label">Entrée</span>
+            <ul>
+              <li>État FSM et historique récent</li>
+              <li>Logs et checks failed</li>
+              <li>Incidents similaires (historique)</li>
+              <li>Documentation interne (RAG)</li>
+            </ul>
+          </div>
+          <div class="tl-cell output">
+            <span class="label">Sortie</span>
+            <ul>
+              <li>Hypothèses de cause racine, classées</li>
+              <li>Composants suspects en amont</li>
+              <li>Comparaison avec patterns connus</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="tl-step c">
+        <div class="tl-badge">3</div>
+        <h3>Identification des manquements</h3>
+        <p>L'incident révèle souvent que la map est <strong>incomplète</strong>. Quatre cas typiques :</p>
+        <div class="tl-split">
+          <div class="tl-cell input">
+            <span class="label">Type de manquement</span>
+            <ul>
+              <li>Composant manquant dans la map</li>
+              <li>Dépendance cachée (révélée par l'incident)</li>
+              <li><code>check_cmd</code> trop tardif (détection en retard)</li>
+              <li><code>check_cmd</code> absent pour cet état</li>
+            </ul>
+          </div>
+          <div class="tl-cell output">
+            <span class="label">Correctif candidat</span>
+            <ul>
+              <li>Ajout du composant + redéploiement agent</li>
+              <li>Ajout de la dépendance + revue impact DAG</li>
+              <li>Raffinage du seuil ou de la fréquence</li>
+              <li>Création d'un nouveau check ciblé</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="tl-step c">
+        <div class="tl-badge">4</div>
+        <h3>PR de remediation</h3>
+        <p>Le correctif est porté par une Pull Request explicite, qui documente : l'incident (ID ITSM), la cause identifiée, le correctif appliqué, le check ajouté pour détecter le cas plus tôt à l'avenir.</p>
+        <div class="tl-split">
+          <div class="tl-cell input">
+            <span class="label">Contenu de la PR</span>
+            <ul>
+              <li>Patch JSON sur la map</li>
+              <li>Référence incident</li>
+              <li>Description cause racine</li>
+              <li>Test de non-régression du check</li>
+            </ul>
+          </div>
+          <div class="tl-cell output">
+            <span class="label">Validation</span>
+            <ul>
+              <li>Review par pair</li>
+              <li>CI : cohérence DAG, syntaxe checks</li>
+              <li>Merge → déploiement progressif</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="tl-step c">
+        <div class="tl-badge">5</div>
+        <h3>Capitalisation transversale</h3>
+        <p>Le pattern d'incident et son correctif sont versés à une <strong>bibliothèque partagée</strong> : d'autres applications avec des composants similaires (même technologie, même rôle) bénéficient automatiquement.</p>
+      </div>
+
+      <div class="tl-step c">
+        <div class="tl-badge">6</div>
+        <h3>Mesure d'apprentissage</h3>
+        <div class="tl-split">
+          <div class="tl-cell input">
+            <span class="label">Métriques suivies</span>
+            <ul>
+              <li>Nombre d'incidents évités (check précoce)</li>
+              <li>MTTR mensuel par application</li>
+              <li>Couverture checks (% composants avec check actif)</li>
+              <li>% de causes racines anticipées</li>
+            </ul>
+          </div>
+          <div class="tl-cell output">
+            <span class="label">Pilotage</span>
+            <ul>
+              <li>Tableau de bord direction</li>
+              <li>Revue trimestrielle d'amélioration</li>
+              <li>Choix des prochains chantiers</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3>6.2 Exemple concret — le cas du JDBC pool</h3>
+    <div class="card">
+      <h4>Incident initial</h4>
+      <p style="margin:0 0 10px;"><code>billing-api</code> passe en DEGRADED en pleine journée. Les utilisateurs voient des timeouts. La map dit que <code>billing-api</code> dépend de <code>billing-db</code>, et <code>billing-db</code> est en RUNNING.</p>
+      <h4>Analyse</h4>
+      <p style="margin:0 0 10px;">L'IA suggère : « Le check actuel est un ping HTTP. Il ne détecte pas l'épuisement du pool JDBC, qui est la cause typique des timeouts dans Spring Boot ». Vérification logs : pool saturé.</p>
+      <h4>Correctif</h4>
+      <p style="margin:0 0 10px;">Ajout d'un <code>check_cmd</code> qui interroge l'endpoint <code>/actuator/health/db</code> et lit le ratio <code>active/max</code> du pool. Seuil : alerte si &gt; 80 %.</p>
+      <h4>Capitalisation</h4>
+      <p style="margin:0;">Le pattern « check pool JDBC Spring Boot » est ajouté à la bibliothèque. Les 12 autres apps utilisant Spring Boot reçoivent une PR automatique proposant le même check.</p>
+    </div>
+
+    <h3>6.3 La map comme mémoire opérationnelle vivante</h3>
+    <p>
+      Au bout de quelques cycles, la map ne contient plus seulement la
+      structure de l'application — elle contient <strong>la mémoire de
+      tous les modes de défaillance déjà rencontrés</strong>, sous forme
+      de checks raffinés et de dépendances précises. C'est ce qui en fait
+      un actif opérationnel et non plus une simple documentation.
+    </p>
+  </section>
+
+  <!-- ============================================================
+       SECTION 7 — Gouvernance
+       ============================================================ -->
+  <section id="s7">
+    <div class="eyebrow">7 — Phase 6</div>
+    <h2>Gouvernance et industrialisation</h2>
+    <p>
+      Le procédé n'est <strong>industrialisable</strong> que s'il est
+      gouverné : rôles clairs, métriques suivies, cycles de vie définis,
+      sécurité auditée.
+    </p>
+
+    <h3>7.1 RACI par rôle</h3>
+    <p>
+      Légende : <span class="raci"><span class="R">R</span></span> Réalise · <span class="raci"><span class="A">A</span></span> Approuve · <span class="raci"><span class="C">C</span></span> Consulté · <span class="raci"><span class="I">I</span></span> Informé
+    </p>
+    <table class="raci">
+      <thead>
+        <tr>
+          <th>Activité</th>
+          <th>App Owner</th>
+          <th>Archi</th>
+          <th>Ops/SRE</th>
+          <th>Sécurité</th>
+          <th>Compliance</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Cadrage initial</td><td class="A">A</td><td class="R">R</td><td class="C">C</td><td class="C">C</td><td class="I">I</td></tr>
+        <tr><td>Collecte des sources</td><td class="C">C</td><td class="R">R</td><td class="R">R</td><td class="I">I</td><td class="I">I</td></tr>
+        <tr><td>Validation IA des schémas</td><td class="C">C</td><td class="A">A</td><td class="I">I</td><td class="I">I</td><td class="I">I</td></tr>
+        <tr><td>Réconciliation et audit report</td><td class="C">C</td><td class="R">R</td><td class="C">C</td><td class="I">I</td><td class="I">I</td></tr>
+        <tr><td>Génération map IA</td><td class="I">I</td><td class="R">R</td><td class="C">C</td><td class="I">I</td><td class="I">I</td></tr>
+        <tr><td>Revue de map</td><td class="A">A</td><td class="R">R</td><td class="R">R</td><td class="C">C</td><td class="I">I</td></tr>
+        <tr><td>Activation advisory mode</td><td class="A">A</td><td class="C">C</td><td class="R">R</td><td class="C">C</td><td class="I">I</td></tr>
+        <tr><td>Passage opérations directes (niveau 4)</td><td class="A">A</td><td class="I">I</td><td class="R">R</td><td class="A">A</td><td class="I">I</td></tr>
+        <tr><td>Drill rebuild / DR</td><td class="A">A</td><td class="C">C</td><td class="R">R</td><td class="C">C</td><td class="A">A</td></tr>
+        <tr><td>PR de remediation post-incident</td><td class="C">C</td><td class="C">C</td><td class="R">R</td><td class="I">I</td><td class="I">I</td></tr>
+        <tr><td>Reporting DORA</td><td class="I">I</td><td class="C">C</td><td class="C">C</td><td class="C">C</td><td class="R">R</td></tr>
+      </tbody>
+    </table>
+
+    <h3>7.2 Cycle de vie d'une map</h3>
+    <div class="grid-2">
+      <div class="card">
+        <h4>Création</h4>
+        <p style="margin:0;">Phases 1 à 3. Aboutit à la <strong>v1.0</strong> publiée en advisory mode.</p>
+      </div>
+      <div class="card">
+        <h4>Maintenance courante</h4>
+        <p style="margin:0;">Phases 4 et 5. Petites évolutions, raffinages, remediation par PR. Versions mineures (1.1, 1.2…).</p>
+      </div>
+      <div class="card warn">
+        <h4>Refonte majeure</h4>
+        <p style="margin:0;">Sur changement structurel (migration cloud, ré-architecture). Reprise partielle des phases 1 à 3. Nouvelle version majeure (2.0).</p>
+      </div>
+      <div class="card">
+        <h4>Archivage</h4>
+        <p style="margin:0;">Décommissionnement de l'application. La map est marquée archivée mais conservée pour l'audit DORA (rétention 5 ans minimum).</p>
+      </div>
+    </div>
+
+    <h3>7.3 Sécurité et conformité</h3>
+    <ul>
+      <li><strong>RBAC granulaire</strong> par application (view &lt; operate &lt; edit &lt; manage &lt; owner)</li>
+      <li><strong>Audit log append-only</strong> de toutes les actions, exigible à tout moment par l'auditeur DORA</li>
+      <li><strong>mTLS</strong> sur tous les échanges entre agent, gateway et backend</li>
+      <li><strong>Cloisonnement par site</strong> via les workspaces — un opérateur du site Paris n'agit pas sur le site Lyon</li>
+      <li><strong>Mode PR-only</strong> pour les applications tier-1 — toute modification de map ou action critique passe par une PR mergée</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================
+       SECTION 8 — Articulation
+       ============================================================ -->
+  <section id="s8">
+    <div class="eyebrow">8 — Articulation</div>
+    <h2>Articulation avec les processus IT existants</h2>
+    <p>
+      La méthodologie ne remplace pas les processus IT en place — elle
+      <strong>s'y articule et les nourrit</strong>.
+    </p>
+
+    <h3>8.1 CMDB — alimentation retour</h3>
+    <p>
+      Là où la CMDB nourrit AppControl en phase 1 (donnée déclarative initiale),
+      AppControl <strong>nourrit la CMDB en retour</strong> :
+    </p>
+    <ul>
+      <li>Composants détectés par les agents mais absents de la CMDB → ticket de création CMDB automatique</li>
+      <li>Composants déclarés CMDB mais inactifs depuis 90 jours → ticket de validation / suppression</li>
+      <li>Dépendances observées non documentées → enrichissement du référentiel de flux</li>
+    </ul>
+    <p>
+      Cercle vertueux : la CMDB devient plus précise grâce à AppControl,
+      ce qui améliore la qualité de la phase 1 sur les applications
+      suivantes.
+    </p>
+
+    <h3>8.2 Change Management</h3>
+    <p>
+      Tout change validé (déploiement, ajout d'un composant, modification
+      réseau) <strong>déclenche une revue de la map AppControl</strong> :
+    </p>
+    <ul>
+      <li>Webhook depuis l'outil de change → AppControl ouvre une PR de revue</li>
+      <li>Diff automatique entre map actuelle et changements attendus</li>
+      <li>Si nécessaire : revue humaine et merge avant déploiement</li>
+    </ul>
+
+    <h3>8.3 Incident Management — ITSM</h3>
+    <p>
+      Intégration bidirectionnelle :
+    </p>
+    <ul>
+      <li><strong>ITSM → AppControl</strong> : un ticket d'incident référence les composants touchés (lien direct vers la map)</li>
+      <li><strong>AppControl → ITSM</strong> : une alerte AppControl crée automatiquement un ticket avec le sous-graphe impacté et l'analyse IA</li>
+    </ul>
+
+    <h3>8.4 Continuity Management — DORA</h3>
+    <p>
+      Les drills rebuild et bascule DR alimentent directement les <strong>registres
+      de continuité d'activité</strong> exigés par DORA :
+    </p>
+    <ul>
+      <li>Date et durée chronométrée de chaque drill</li>
+      <li>RTR (Recovery Time for Rebuild) mesuré par application</li>
+      <li>Actions correctives identifiées en post-drill</li>
+      <li>Conformité à l'exigence de test annuel (Art. 11 DORA)</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================
+       SECTION 9 — IA
+       ============================================================ -->
+  <section id="s9">
+    <div class="eyebrow">9 — Synthèse transverse</div>
+    <h2>Le rôle de l'IA dans la méthodologie</h2>
+    <p>
+      L'IA n'est pas un add-on cosmétique : elle est <strong>intégrée à
+      cinq endroits clés</strong> du procédé, chacun avec un usage et un
+      modèle adaptés. La gouvernance de l'IA est elle-même un sous-chantier
+      de la méthode.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Étape</th>
+          <th>Type d'IA</th>
+          <th>Tâche</th>
+          <th>Contrôle humain</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Phase 1.5 — Validation schémas</td>
+          <td>LLM vision (multimodal)</td>
+          <td>OCR + extraction structurée des schémas dessinés en JSON intermédiaire</td>
+          <td>Confiance par élément, revue priorisée sur les éléments à faible score</td>
+        </tr>
+        <tr>
+          <td>Phase 2 — Réconciliation</td>
+          <td>LLM + règles déterministes</td>
+          <td>Scoring de confiance, détection de contradictions</td>
+          <td>Audit report ouvert et lisible par tout sachant</td>
+        </tr>
+        <tr>
+          <td>Phase 3 — Génération map</td>
+          <td>LLM + bibliothèque de patterns</td>
+          <td>Production JSON AppControl initial, propositions de commandes</td>
+          <td>Revue humaine obligatoire avant publication</td>
+        </tr>
+        <tr>
+          <td>Phase 4 — Enrichissement contextuel</td>
+          <td>LLM + RAG (Retrieval-Augmented Generation)</td>
+          <td>Questions opérateur, résumés, suggestions</td>
+          <td>L'opérateur reste décideur de toute action</td>
+        </tr>
+        <tr>
+          <td>Phase 5 — Analyse causale</td>
+          <td>LLM + historique structuré</td>
+          <td>Hypothèses de cause racine, suggestions de checks à ajouter</td>
+          <td>Validation par l'opérateur, PR humaine requise</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>9.1 Principes de gouvernance IA</h3>
+    <ul>
+      <li><strong>Explicabilité</strong> — chaque sortie IA est accompagnée des sources qui l'ont nourrie (citations vérifiables)</li>
+      <li><strong>Confiance graduée</strong> — chaque proposition est marquée d'un niveau de confiance (0.0 à 1.0)</li>
+      <li><strong>Décision humaine en dernier ressort</strong> — aucune action de production n'est déclenchée sans validation humaine traçable</li>
+      <li><strong>Cloisonnement de la donnée</strong> — les LLM utilisés n'ont accès qu'aux référentiels du périmètre, jamais à des données client externes</li>
+      <li><strong>Audit des prompts</strong> — chaque interaction IA est logguée, rejouable, et auditable</li>
+    </ul>
+
+    <div class="pull">
+      L'IA accélère le procédé, mais ne le pilote pas. Le procédé reste
+      <strong>humain dans ses décisions critiques</strong>, machine dans
+      ses tâches répétitives, et auditable de bout en bout.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 10 — Métriques
+       ============================================================ -->
+  <section id="s10">
+    <div class="eyebrow">10 — Pilotage</div>
+    <h2>Métriques de qualité du procédé</h2>
+    <p>
+      Un procédé industriel se pilote par des métriques. Quatre familles
+      à suivre :
+    </p>
+
+    <h3>10.1 Couverture</h3>
+    <table>
+      <thead><tr><th>Métrique</th><th>Définition</th><th>Cible</th></tr></thead>
+      <tbody>
+        <tr><td>Applications cartographiées</td><td>% du parc applicatif avec une map publiée</td><td>100 % pour le tier-1 sous 18 mois</td></tr>
+        <tr><td>Composants avec check actif</td><td>% de composants ayant <code>check_cmd</code> opérationnel</td><td>&gt; 95 %</td></tr>
+        <tr><td>Composants observés vs déclarés</td><td>Ratio (composants observés agents / composants dans la map)</td><td>1.0 (équilibre)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>10.2 Fraîcheur</h3>
+    <table>
+      <thead><tr><th>Métrique</th><th>Définition</th><th>Cible</th></tr></thead>
+      <tbody>
+        <tr><td>Âge médian des maps</td><td>Temps depuis la dernière modification d'une map</td><td>&lt; 30 jours</td></tr>
+        <tr><td>Délai entre change et MAJ map</td><td>Temps entre un change validé et la mise à jour map correspondante</td><td>&lt; 5 jours</td></tr>
+      </tbody>
+    </table>
+
+    <h3>10.3 Qualité opérationnelle</h3>
+    <table>
+      <thead><tr><th>Métrique</th><th>Définition</th><th>Cible</th></tr></thead>
+      <tbody>
+        <tr><td>MTTR — Mean Time To Recovery</td><td>Temps moyen de remise en service après incident</td><td>Baisse de 30 % par an</td></tr>
+        <tr><td>RTR — Recovery Time for Rebuild</td><td>Temps mesuré d'un rebuild complet</td><td>&lt; SLA contractuel</td></tr>
+        <tr><td>Incidents prévenus</td><td>Nombre d'alertes émises avant impact utilisateur</td><td>Croissant</td></tr>
+        <tr><td>% causes anticipées</td><td>% d'incidents dont la cause racine était couverte par un check existant</td><td>&gt; 70 %</td></tr>
+      </tbody>
+    </table>
+
+    <h3>10.4 Apprentissage</h3>
+    <table>
+      <thead><tr><th>Métrique</th><th>Définition</th><th>Cible</th></tr></thead>
+      <tbody>
+        <tr><td>PR de remediation par mois</td><td>Nombre de PR documentant une amélioration post-incident</td><td>&gt; 1 par app tier-1 / mois</td></tr>
+        <tr><td>Patterns capitalisés</td><td>Nombre d'entrées dans la bibliothèque transversale</td><td>Croissant</td></tr>
+        <tr><td>Drills rebuild réalisés</td><td>Nombre de drills par an et par application critique</td><td>≥ 1 / an (DORA)</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============================================================
+       SECTION 11 — Synthèse
+       ============================================================ -->
+  <section id="s11">
+    <div class="eyebrow">11 — Conclusion</div>
+    <h2>Un procédé industriel reproductible</h2>
+
+    <div class="pull">
+      <strong>Le passage de la connaissance artisanale à l'actif industriel</strong>
+      ne se décrète pas — il se construit, étape après étape, par un procédé
+      reproductible et mesurable.
+    </div>
+
+    <p>
+      Cette méthodologie articule six phases dans un cycle vertueux :
+    </p>
+    <ol>
+      <li><strong>Collecter</strong> de manière multi-sources, en mobilisant agents, référentiels et schémas humains</li>
+      <li><strong>Auditer</strong> et réconcilier rigoureusement avant toute construction</li>
+      <li><strong>Construire</strong> la map en assistant l'humain par l'IA, mais en gardant la décision humaine</li>
+      <li><strong>Exploiter</strong> par paliers, à la main des équipes de production</li>
+      <li><strong>Apprendre</strong> de chaque incident pour raffiner la map et capitaliser pour les autres applications</li>
+      <li><strong>Gouverner</strong> par des rôles, des métriques et un cycle de vie clair</li>
+    </ol>
+
+    <p>
+      L'<strong>IA accélère</strong> les phases répétitives (validation
+      de schémas, scoring, génération initiale, RAG opérationnel, analyse
+      causale) mais le procédé reste piloté par l'humain dans ses décisions
+      critiques.
+    </p>
+
+    <p>
+      Le résultat n'est pas une simple cartographie : c'est un <strong>actif
+      vivant qui s'enrichit en continu</strong>, qui apprend de la production,
+      et qui rend industrielle la résilience opérationnelle que DORA exige.
+    </p>
+
+    <div class="pull warn">
+      Trois mois pour une première application, dix-huit pour le parc
+      critique. À partir de la deuxième application, le procédé capitalise
+      sur la première — et chaque cycle suivant devient plus rapide,
+      plus précis et moins cher que le précédent.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       ANNEXES
+       ============================================================ -->
+  <div class="annex-divider" id="annex">
+    <div class="eyebrow">Annexes</div>
+    <h2>Références &amp; vocabulaire</h2>
+  </div>
+
+  <section id="a1">
+    <div class="eyebrow">A1</div>
+    <h2>Inventaire détaillé des sources de données</h2>
+    <table>
+      <thead><tr><th>Famille</th><th>Source typique</th><th>Donnée extraite</th><th>Fréquence</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="3"><strong>Référentiels d'entreprise</strong></td><td>CMDB (ServiceNow CMDB, BMC Atrium, etc.)</td><td>Composants, serveurs, propriétaires</td><td>Quotidien</td></tr>
+        <tr><td>XL Release / XL Deploy</td><td>Pipelines, manifests, mapping</td><td>À chaque déploiement</td></tr>
+        <tr><td>Référentiel de flux</td><td>Liens réseau, ports, sens</td><td>Quotidien</td></tr>
+        <tr><td rowspan="2"><strong>Données opérationnelles</strong></td><td>ITSM (ServiceNow, Jira Service Mgmt)</td><td>Incidents, changes, problems</td><td>Temps réel</td></tr>
+        <tr><td>Supervision (Datadog, Dynatrace, Zabbix)</td><td>Métriques, alertes, états observés</td><td>Temps réel</td></tr>
+        <tr><td><strong>Donnée déclarative humaine</strong></td><td>Confluence, SharePoint, Visio, Lucid</td><td>Schémas, runbooks, ADR</td><td>À la demande</td></tr>
+        <tr><td><strong>Observation directe</strong></td><td>Agents AppControl</td><td>Processus, ports, fichiers, connexions</td><td>Continu (delta-sync)</td></tr>
+        <tr><td><strong>Schedulers</strong></td><td>Control-M, AutoSys, $U, TWS</td><td>Jobs, enchaînements, fenêtres</td><td>Quotidien</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="a2">
+    <div class="eyebrow">A2</div>
+    <h2>Vocabulaire AppControl</h2>
+    <table>
+      <thead><tr><th style="width:24%">Terme</th><th>Définition</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Map</strong></td><td>Représentation versionnée d'une application en graphe orienté acyclique (DAG), avec composants, dépendances et commandes.</td></tr>
+        <tr><td><strong>Composant</strong></td><td>Unité élémentaire de la map : un processus, un service, une base de données, un middleware. Possède un état (FSM), un agent assigné, et des commandes.</td></tr>
+        <tr><td><strong>Dépendance</strong></td><td>Lien orienté entre deux composants, typé : blocking (le suivant ne démarre pas sans le précédent), soft, ordering.</td></tr>
+        <tr><td><strong>Agent</strong></td><td>Binaire Rust déployé sur les serveurs, exécute les checks et commandes, remonte l'état au backend en mTLS.</td></tr>
+        <tr><td><strong>FSM</strong></td><td>Finite State Machine. États possibles d'un composant : UNKNOWN, STARTING, RUNNING, DEGRADED, STOPPING, STOPPED, FAILED, UNREACHABLE.</td></tr>
+        <tr><td><strong>check_cmd</strong> (niveau 1)</td><td>Commande de santé exécutée toutes les 30 s. Pilote le FSM. Réponse : 0 = OK, non-zéro = problème.</td></tr>
+        <tr><td><strong>integrity_check_cmd</strong> (niveau 2)</td><td>Commande de vérification d'intégrité des données. Toutes les 5 min. Informatif.</td></tr>
+        <tr><td><strong>infra_check_cmd</strong> (niveau 3)</td><td>Commande de vérification de l'infrastructure (OS, FS, prérequis). À la demande. Informatif.</td></tr>
+        <tr><td><strong>Rebuild</strong></td><td>Reconstruction orchestrée d'un composant ou d'une application complète, dans l'ordre DAG, avec vérification post-rebuild.</td></tr>
+        <tr><td><strong>RTR</strong></td><td>Recovery Time for Rebuild — chrono mesuré d'un rebuild, tracé dans l'audit log.</td></tr>
+        <tr><td><strong>Pink branch</strong></td><td>Sous-graphe en erreur lors d'un démarrage. Permet un restart ciblé sans relancer toute l'application.</td></tr>
+        <tr><td><strong>Advisory mode</strong></td><td>Mode d'exploitation où les agents observent et alimentent la map, mais sans exécuter de commande de modification d'état.</td></tr>
+        <tr><td><strong>Dry-run</strong></td><td>Simulation pure : la plateforme calcule un plan d'exécution complet sans rien lancer.</td></tr>
+        <tr><td><strong>Site override</strong></td><td>Surcharge des commandes ou hosts pour un site géographique donné (DR, multi-région).</td></tr>
+        <tr><td><strong>Append-only log</strong></td><td>Table d'audit où aucune ligne n'est jamais modifiée ni supprimée — exigée par DORA.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="a3">
+    <div class="eyebrow">A3</div>
+    <h2>Outillage IA — patterns d'usage</h2>
+
+    <h3>A3.1 Vision LLM pour la validation des schémas</h3>
+    <ul>
+      <li>Modèles candidats : GPT-4o, Claude Opus / Sonnet, Gemini Pro Vision (modèle on-premise possible selon contraintes RSSI)</li>
+      <li>Prompt structurant : « Extrais les composants visibles, leurs libellés, les liens entre composants avec leur direction, et les technologies inférables. Réponds en JSON. »</li>
+      <li>Validation : confidence par élément, post-traitement déterministe pour fusion</li>
+    </ul>
+
+    <h3>A3.2 RAG pour l'enrichissement opérationnel</h3>
+    <ul>
+      <li>Indexation : embeddings sur runbooks, ADR, historique opérationnel, état FSM courant</li>
+      <li>Récupération : top-k chunks pertinents à la question opérateur</li>
+      <li>Génération : LLM avec citations vérifiables, refus si confiance basse</li>
+    </ul>
+
+    <h3>A3.3 Bibliothèque de patterns</h3>
+    <ul>
+      <li>Base de connaissance des patterns d'application (Spring Boot, .NET Core, Postgres, Kafka, etc.)</li>
+      <li>Chaque pattern apporte : checks recommandés, modes de défaillance typiques, séquence de démarrage standard</li>
+      <li>Enrichie automatiquement à chaque PR de remediation (phase 5)</li>
+    </ul>
+
+    <h3>A3.4 Garde-fous</h3>
+    <ul>
+      <li>Aucun déclenchement d'action de production par l'IA seule</li>
+      <li>Limitation du contexte aux référentiels du périmètre cadré</li>
+      <li>Logs de prompts et de réponses, conservés pour audit</li>
+      <li>Test régulier de robustesse (prompt injection, hallucinations)</li>
+    </ul>
+  </section>
+
+  <section id="a4">
+    <div class="eyebrow">A4</div>
+    <h2>Templates &amp; livrables</h2>
+
+    <h3>A4.1 Formulaire de cadrage (phase 1)</h3>
+    <p>Champs minimum :</p>
+    <ul>
+      <li>Identifiant et nom de l'application</li>
+      <li>Sponsor, application owner, équipe projet</li>
+      <li>Périmètre (environnements, sites, composants connus)</li>
+      <li>Liste des sources de données disponibles avec responsable</li>
+      <li>Calendrier prévisionnel</li>
+      <li>Critères de succès du livrable</li>
+    </ul>
+
+    <h3>A4.2 Audit report (phase 2)</h3>
+    <p>Sections minimum :</p>
+    <ul>
+      <li>Synthèse exécutive (taux de couverture, contradictions majeures)</li>
+      <li>Inventaire qualifié des composants (table avec sources et scores)</li>
+      <li>Inventaire qualifié des dépendances</li>
+      <li>Liste des contradictions à arbitrer (avec proposition de résolution)</li>
+      <li>Points de vigilance et zones d'ombre</li>
+      <li>Annexes : extraits bruts des sources</li>
+    </ul>
+
+    <h3>A4.3 PR de remediation post-incident (phase 5)</h3>
+    <p>Description type :</p>
+    <pre><code># PR : Ajout check pool JDBC sur billing-api
+
+## Contexte
+- Incident : INC-2026-04-118
+- Date : 2026-04-12
+- Composant impacté : billing-api
+- Cause racine : épuisement du pool JDBC, non détecté par check_cmd actuel
+
+## Correctif
+- Ajout d'un check ciblé sur /actuator/health/db
+- Seuil : alerte si pool active/max > 80%
+
+## Capitalisation
+- Pattern ajouté à la bibliothèque "Spring Boot JDBC"
+- Application à 12 autres applications utilisant Spring Boot via PR auto
+
+## Tests
+- Simulation de saturation en pré-prod : check passe en FAILED comme attendu
+- Régénération du check : OK
+
+## Reviewers
+- @architecte-billing, @sre-team, @app-owner-billing</code></pre>
+
+    <h3>A4.4 Compte-rendu de drill rebuild (phase 4-5)</h3>
+    <ul>
+      <li>Date, durée, environnement</li>
+      <li>RTR mesuré (Recovery Time for Rebuild)</li>
+      <li>Difficultés rencontrées</li>
+      <li>Améliorations identifiées (composants à ajouter, checks à raffiner)</li>
+      <li>PRs de remediation associées</li>
+      <li>Signature compliance pour le registre DORA</li>
+    </ul>
+  </section>
+
+  <footer>
+    <div class="foot-brand">
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
+      <span class="copyright">© 2026 Invivoo — Tous droits réservés.</span>
+    </div>
+    <div class="foot-meta">
+      <span class="pill">v0.9</span>
+      <span class="pill draft">Draft · Ne pas diffuser</span>
+    </div>
+  </footer>
+
+</div>
+</td></tr>
+</tbody>
+<tfoot>
+  <tr><td>
+    <div class="prf">
+      <span class="prf-left">
+        <img src="invivoo-logo.svg" alt="Invivoo" class="prf-logo" />
+        <span class="prf-sep">·</span>
+        <span>© 2026 Invivoo — Tous droits réservés</span>
+      </span>
+      <span class="prf-right">
+        <span class="prf-draft">Draft · v0.9</span>
+        <span class="prf-sep">·</span>
+        <span>Ne pas diffuser</span>
+      </span>
+    </div>
+  </td></tr>
+</tfoot>
+</table>
+
+</body>
+</html>
