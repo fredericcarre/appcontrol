@@ -730,7 +730,7 @@
         <ul>
           <li>PRA documenté sur Confluence, jamais joué intégralement</li>
           <li>Bascule DR testée sur 1 à 2 applications par an</li>
-          <li>RTO/RPO contractuels jamais validés en réel</li>
+          <li>RTO/RPO (Recovery Time Objective / Recovery Point Objective — temps de reprise et fraîcheur des données contractuels) jamais validés en réel</li>
           <li>Reprise après cyber-incident estimée en semaines</li>
           <li>Auditeur reçoit des PDF, pas des preuves d'exécution</li>
         </ul>
@@ -751,8 +751,8 @@
     <h3>Conséquences stratégiques</h3>
     <ul>
       <li><strong>Baisse possible des primes d'assurance cyber</strong> — la capacité de reprise prouvée modifie le profil de risque</li>
-      <li><strong>Avantage commercial</strong> — appels d'offres exigeant des garanties de continuité (collectivités, hôpitaux, OIV) : barrière à l'entrée pour les concurrents non outillés</li>
-      <li><strong>Réduction du risque de sanction</strong> — DORA, NIS2, secteur santé : la conformité devient une preuve, pas une déclaration</li>
+      <li><strong>Avantage commercial</strong> — appels d'offres exigeant des garanties de continuité (collectivités, hôpitaux, OIV — Opérateurs d'Importance Vitale) : barrière à l'entrée pour les concurrents non outillés</li>
+      <li><strong>Réduction du risque de sanction</strong> — DORA, NIS2 (directive européenne sur la sécurité des réseaux et systèmes d'information), secteur santé : la conformité devient une preuve, pas une déclaration</li>
       <li><strong>Confiance interne</strong> — les directions métier reprennent confiance dans la capacité IT à tenir ses engagements</li>
     </ul>
   </section>
@@ -799,7 +799,7 @@
     <h3>Conséquences stratégiques</h3>
     <ul>
       <li><strong>Élargissement du périmètre managé sans embauche</strong> — l'IT absorbe la croissance applicative sans linéarisation du coût</li>
-      <li><strong>Repositionnement des équipes</strong> — les ops cessent d'être des « exécutants de scripts » et deviennent des ingénieurs de fiabilité (SRE)</li>
+      <li><strong>Repositionnement des équipes</strong> — les ops cessent d'être des « exécutants de scripts » et deviennent des ingénieurs de fiabilité (SRE — <em>Site Reliability Engineering</em>, ingénierie de la fiabilité)</li>
       <li><strong>Réduction du turnover</strong> — métier requalifié, intérêt remonté, fuite des talents réduite</li>
       <li><strong>Internalisation possible de compétences rares</strong> — ce qui était trop coûteux à internaliser (sécurité, observabilité avancée) devient finançable par les gains</li>
     </ul>
@@ -819,7 +819,7 @@
     <div class="eyebrow">5 — Mutation 4</div>
     <h2>De la conformité ponctuelle à la conformité native</h2>
     <p>
-      Chaque audit (DORA, NIS2, ISO 27001, SOC 2, audit interne, audit
+      Chaque audit (DORA, NIS2, ISO 27001, SOC 2 — audit international des contrôles d'organismes de service, audit interne, audit
       assureur) déclenche aujourd'hui une mobilisation lourde : recherche
       de preuves, reconstruction d'évidences, rédaction de dossiers,
       réponses aux questions de l'auditeur. Cette mobilisation se répète
@@ -853,7 +853,7 @@
     <h3>Conséquences stratégiques</h3>
     <ul>
       <li><strong>Économies récurrentes</strong> — gain net par audit majeur, multiplié par le nombre d'audits annuels</li>
-      <li><strong>Agilité réglementaire</strong> — une nouvelle régulation (IA Act, CSRD, futures évolutions) se traite par adaptation incrémentale, pas par nouveau projet</li>
+      <li><strong>Agilité réglementaire</strong> — une nouvelle régulation (IA Act — règlement européen sur l'IA, CSRD — Corporate Sustainability Reporting Directive, futures évolutions) se traite par adaptation incrémentale, pas par nouveau projet</li>
       <li><strong>Réduction du risque de sanction</strong> — DORA prévoit jusqu'à 2 % du CA mondial — l'évitement d'un seul incident de non-conformité paie largement l'investissement</li>
       <li><strong>Effet réputationnel</strong> — clients, investisseurs, partenaires perçoivent la maturité opérationnelle comme un signal de confiance</li>
     </ul>
@@ -869,7 +869,7 @@
       C'est la mutation la plus transformative — et celle qui exige le
       plus d'engagement. L'adoption d'AppControl à grande échelle remet
       en cause la structure même de la DSI : ses silos par technologie,
-      ses doublons d'outillage (chaque équipe a sa CMDB locale, son
+      ses doublons d'outillage (chaque équipe a sa CMDB — Configuration Management Database, base d'inventaire des actifs IT — locale, son
       monitoring, ses scripts), ses processus parallèles.
     </p>
 
@@ -1078,8 +1078,8 @@
       s'élargissent :
     </p>
     <ul>
-      <li><strong>Externalisation contrôlée du run standard</strong> — un MSP (<em>Managed Service Provider</em>, infogéreur tiers) peut opérer le niveau 4 (opérations directes encadrées par RBAC + audit log) sans crainte de perte de contrôle ou de tribal knowledge non transférable.</li>
-      <li><strong>Internalisation des compétences rares</strong> — les gains de productivité permettent de financer des compétences que l'on n'avait pas les moyens d'avoir : sécurité avancée, FinOps, observabilité de pointe.</li>
+      <li><strong>Externalisation contrôlée du run standard</strong> — un MSP (<em>Managed Service Provider</em>, infogéreur tiers) peut opérer le niveau 4 (opérations directes encadrées par RBAC — <em>Role-Based Access Control</em>, droits par rôle — et journal d'audit) sans crainte de perte de contrôle ou de tribal knowledge non transférable.</li>
+      <li><strong>Internalisation des compétences rares</strong> — les gains de productivité permettent de financer des compétences que l'on n'avait pas les moyens d'avoir : sécurité avancée, FinOps (gestion financière des coûts cloud et IT), observabilité de pointe.</li>
       <li><strong>Multi-géographique</strong> — un site de DR ou de back-office offshore opérant la même plateforme, sans dérive ni adaptation locale.</li>
     </ul>
 
@@ -1139,7 +1139,7 @@
     <h3>9.3 Intelligence artificielle opérationnelle native</h3>
     <p>
       La map est le <strong>substrat structuré</strong> sur lequel l'IA
-      opérationnelle prend tout son sens : RAG sur la documentation
+      opérationnelle prend tout son sens : RAG (<em>Retrieval-Augmented Generation</em> — IA qui s'appuie sur une base documentaire pour répondre) sur la documentation
       contextualisée, analyse causale assistée, suggestions de checks
       apprises, chatbot ops véritablement utile.
     </p>
@@ -1162,7 +1162,7 @@
     <p>
       La cartographie expose les composants sous-utilisés, les
       duplications inutiles, les redondances héritées. Elle alimente
-      une démarche FinOps + GreenOps factuelle.
+      une démarche FinOps + GreenOps (réduction de l'empreinte environnementale de l'IT) factuelle.
     </p>
     <ul>
       <li>Identification des composants inactifs (Phase 2 audit)</li>
@@ -1292,8 +1292,8 @@
       <thead><tr><th>Indicateur</th><th>Famille</th><th>Cadence</th></tr></thead>
       <tbody>
         <tr><td>Couverture du parc applicatif</td><td>Maturité</td><td>Trimestrielle</td></tr>
-        <tr><td>MTTR moyen / médian / P95</td><td>Opérationnel</td><td>Mensuelle</td></tr>
-        <tr><td>RTR mesuré par application critique</td><td>Résilience</td><td>Annuelle (drill)</td></tr>
+        <tr><td>MTTR moyen / médian / P95 (95ᵉ centile)</td><td>Opérationnel</td><td>Mensuelle</td></tr>
+        <tr><td>RTR (Recovery Time for Rebuild — temps de reconstruction complète) mesuré par application critique</td><td>Résilience</td><td>Annuelle (drill)</td></tr>
         <tr><td>Nombre d'incidents majeurs (P1)</td><td>Risque</td><td>Mensuelle</td></tr>
         <tr><td>Productivité ops (capacité / effectif)</td><td>Financier</td><td>Trimestrielle</td></tr>
         <tr><td>Coût d'audit par cycle</td><td>Financier</td><td>Annuelle</td></tr>
@@ -1442,7 +1442,7 @@
     <ul>
       <li>Licences plateforme AppControl + Invivoo conseil méthodologie</li>
       <li>Effort interne d'embarquement (typiquement 0.5 ETP par application critique sur 6 à 12 semaines)</li>
-      <li>Outillage IA (LLM vision, RAG) — coût en infrastructure et abonnement</li>
+      <li>Outillage IA (LLM — <em>Large Language Model</em>, IA générative ; vision et RAG) — coût en infrastructure et abonnement</li>
       <li>Formation équipes (5 jours par profil, sur 18 mois)</li>
     </ul>
 
@@ -1486,7 +1486,7 @@
 
     <h3>Industrie</h3>
     <ul>
-      <li>Continuité de production (MES, SCADA, ERP industriel)</li>
+      <li>Continuité de production (MES — <em>Manufacturing Execution System</em>, SCADA — <em>Supervisory Control And Data Acquisition</em>, supervision industrielle ; ERP industriel)</li>
       <li>NIS2 pour les OIV (énergie, transport, eau)</li>
       <li>Migration cloud des fonctions support</li>
       <li>Décarbonation IT chiffrée (FinOps + GreenOps)</li>
@@ -1496,14 +1496,14 @@
     <ul>
       <li>Continuité des services aux abonnés</li>
       <li>NIS2 — opérateur de service essentiel</li>
-      <li>Modernisation legacy massif (OSS/BSS)</li>
+      <li>Modernisation legacy massif (OSS / BSS — <em>Operations &amp; Business Support Systems</em>, systèmes télécom historiques)</li>
       <li>Lancement rapide de nouveaux services digitaux</li>
     </ul>
 
     <h3>Santé</h3>
     <ul>
       <li>Continuité des SIH (Systèmes d'Information Hospitaliers)</li>
-      <li>Conformité HDS et certification HDS</li>
+      <li>Conformité HDS (Hébergement de Données de Santé — certification française obligatoire pour héberger des données médicales) et certification associée</li>
       <li>Réduction des incidents critiques sur les plateaux techniques</li>
       <li>Préparation aux cyber-attaques (secteur particulièrement ciblé)</li>
     </ul>
