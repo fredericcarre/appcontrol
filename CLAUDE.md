@@ -103,7 +103,19 @@ appcontrol/
 
 ## Documentation Maintenance
 
-**Always regenerate documentation** when modifying user-facing features:
+**Every new user-facing feature MUST update the documentation in BOTH places — this is non-negotiable:**
+
+1. **Local Markdown under `docs/`** — the source of truth (committed to the repo). Update the relevant existing page, or create a new `.md` file when the feature warrants its own page.
+2. **Online docs at `docs.appcontrol.io`** — auto-published from the same `docs/` files via `.github/workflows/docs-pages.yaml` to `xcomponent/appcontrol-release@gh-pages`. **You must verify the page is reachable from the navigation** by adding/updating an entry in the `nav:` section of `mkdocs.yml`. A doc that is not in `mkdocs.yml` builds silently and never appears on the public site — that counts as undocumented.
+
+**Checklist for every PR that adds/changes a feature:**
+- [ ] Updated the relevant `docs/*.md` file (or created a new one)
+- [ ] Verified the page is listed under `mkdocs.yml > nav:` (add it if new)
+- [ ] If the feature is auto-derivable (env var, enum, error, FSM transition, migration, OpenAPI path, metric, MCP tool, CLI flag), confirmed the matching `scripts/docs/gen_*.py` parser still produces the expected `reference/` page — fix the parser if not
+- [ ] Ran `mkdocs build --strict` locally (or via `make docs-serve`) to catch broken links and orphan pages before pushing
+- [ ] For UI changes, added/updated the Playwright capture in `frontend/e2e-screenshots/capture.spec.ts` and the matching `<!-- SCREENSHOT:page-name -->` marker in `USER_GUIDE.md`
+
+**Pages that always need attention when relevant:**
 
 1. **`docs/QUICKSTART.md`** — Update if changing auth flow, Docker setup, or getting-started steps
 2. **`docs/USER_GUIDE.md`** — Update if adding/modifying UI pages, features, or API endpoints

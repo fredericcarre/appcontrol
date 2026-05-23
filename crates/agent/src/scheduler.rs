@@ -467,9 +467,11 @@ fn hash_command(cmd: &str) -> String {
 /// 1. Entire stdout is valid JSON: `{"users": 12, "queue": 150}`
 /// 2. JSON wrapped in `<appcontrol>...</appcontrol>` tags (legacy format)
 /// 3. JSON after a `---METRICS---` marker
-/// 4. Auto-detect: last JSON object found in output (for mixed logs + JSON)
+/// 4. Nagios perfdata: `STATUS | label=value[UOM];[warn];[crit];[min];[max] ...`
+///    (legacy compatibility for migrations from Nagios/Icinga/Centreon/Naemon)
+/// 5. Auto-detect: last JSON object found in output (for mixed logs + JSON)
 ///
-/// Returns `None` if no valid JSON is found (which is fine - most checks
+/// Returns `None` if no metrics are found (which is fine - most checks
 /// don't return metrics).
 fn extract_metrics_from_stdout(stdout: &str) -> Option<serde_json::Value> {
     let trimmed = stdout.trim();
@@ -503,7 +505,13 @@ fn extract_metrics_from_stdout(stdout: &str) -> Option<serde_json::Value> {
         }
     }
 
-    // 4. Auto-detect: find last line that is a valid JSON object
+    // 4. Nagios perfdata format: text after the first `|` on the status line.
+    // Tried before auto-detect to avoid matching `{...}`-shaped status text.
+    if let Some(metrics) = extract_nagios_perfdata(stdout) {
+        return Some(metrics);
+    }
+
+    // 5. Auto-detect: find last line that is a valid JSON object
     // This allows scripts to output logs and JSON mixed together
     for line in stdout.lines().rev() {
         let line_trimmed = line.trim();
@@ -517,6 +525,92 @@ fn extract_metrics_from_stdout(stdout: &str) -> Option<serde_json::Value> {
     }
 
     None
+}
+
+/// Extract metrics from Nagios-style perfdata.
+///
+/// Nagios plugin output convention: `STATUS_TEXT | label=value[UOM];warn;crit;min;max ...`
+/// The first `|` on any line separates human-readable status from perfdata; subsequent
+/// content (across newlines) is treated as additional perfdata tokens.
+///
+/// Returns a flat JSON object mapping label → numeric value. UOM and threshold fields
+/// (warn/crit/min/max) are intentionally dropped — they belong in alert policies, not
+/// in the metric stream. Tokens that fail to parse are skipped, not fatal.
+fn extract_nagios_perfdata(stdout: &str) -> Option<serde_json::Value> {
+    let pipe_pos = stdout.find('|')?;
+    let perfdata = &stdout[pipe_pos + 1..];
+
+    let mut metrics = serde_json::Map::new();
+    for token in tokenize_perfdata(perfdata) {
+        if let Some((label, value)) = parse_perfdata_token(&token) {
+            if let Some(num) = serde_json::Number::from_f64(value) {
+                metrics.insert(label, serde_json::Value::Number(num));
+            }
+        }
+    }
+
+    if metrics.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(metrics))
+    }
+}
+
+/// Split perfdata text into tokens, respecting single-quoted labels (`'my label'=42`).
+fn tokenize_perfdata(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for ch in input.chars() {
+        if ch == '\'' {
+            in_quotes = !in_quotes;
+            current.push(ch);
+        } else if ch.is_whitespace() && !in_quotes {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    tokens
+}
+
+/// Parse one perfdata token: `[label]=[value][UOM][;warn][;crit][;min][;max]`.
+/// Returns `(label, numeric_value)` or `None` if malformed.
+fn parse_perfdata_token(token: &str) -> Option<(String, f64)> {
+    let eq_pos = token.find('=')?;
+    let raw_label = &token[..eq_pos];
+    let rest = &token[eq_pos + 1..];
+
+    let label = raw_label.trim_matches('\'').trim().to_string();
+    if label.is_empty() {
+        return None;
+    }
+
+    // Value is everything up to the first ';' (thresholds) or end of token.
+    let value_field = rest.split(';').next()?;
+    if value_field.is_empty() {
+        return None;
+    }
+
+    // Strip UOM suffix: take the longest numeric prefix.
+    let numeric_end = value_field
+        .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != '+')
+        .unwrap_or(value_field.len());
+    let numeric_str = &value_field[..numeric_end];
+
+    let value = numeric_str.parse::<f64>().ok()?;
+    if !value.is_finite() {
+        return None;
+    }
+    Some((label, value))
 }
 
 #[cfg(test)]
@@ -1064,5 +1158,117 @@ Some log line
         let m = metrics.unwrap();
         assert_eq!(m["final"], "result");
         assert_eq!(m["count"], 42);
+    }
+
+    // --- Nagios perfdata format tests ---
+
+    #[test]
+    fn test_nagios_perfdata_classic_load_average() {
+        let stdout = "OK - load average: 0.42, 0.55, 0.49 \
+            | load1=0.42;1.000;2.000;0; load5=0.55;1.000;2.000;0; load15=0.49;1.000;2.000;0;";
+        let m = extract_metrics_from_stdout(stdout).expect("should parse perfdata");
+        assert_eq!(m["load1"].as_f64(), Some(0.42));
+        assert_eq!(m["load5"].as_f64(), Some(0.55));
+        assert_eq!(m["load15"].as_f64(), Some(0.49));
+    }
+
+    #[test]
+    fn test_nagios_perfdata_with_uom() {
+        let stdout = "OK - all good | response_time=145ms;500;1000 throughput=2048KB;;;0";
+        let m = extract_metrics_from_stdout(stdout).expect("should parse perfdata");
+        assert_eq!(m["response_time"].as_f64(), Some(145.0));
+        assert_eq!(m["throughput"].as_f64(), Some(2048.0));
+    }
+
+    #[test]
+    fn test_nagios_perfdata_quoted_label_with_spaces() {
+        let stdout = "OK | 'disk usage'=78;80;90 'free memory'=2048";
+        let m = extract_metrics_from_stdout(stdout).expect("should parse perfdata");
+        assert_eq!(m["disk usage"].as_f64(), Some(78.0));
+        assert_eq!(m["free memory"].as_f64(), Some(2048.0));
+    }
+
+    #[test]
+    fn test_nagios_perfdata_no_thresholds() {
+        let stdout = "STATUS OK | cpu=45 mem=2048 disk=67";
+        let m = extract_metrics_from_stdout(stdout).expect("should parse perfdata");
+        assert_eq!(m["cpu"].as_f64(), Some(45.0));
+        assert_eq!(m["mem"].as_f64(), Some(2048.0));
+        assert_eq!(m["disk"].as_f64(), Some(67.0));
+    }
+
+    #[test]
+    fn test_nagios_perfdata_percent_uom() {
+        let stdout = "WARNING - high cpu | cpu_usage=87.5%;80;95;0;100";
+        let m = extract_metrics_from_stdout(stdout).expect("should parse perfdata");
+        assert_eq!(m["cpu_usage"].as_f64(), Some(87.5));
+    }
+
+    #[test]
+    fn test_nagios_perfdata_negative_value() {
+        // Temperature sensors, balance counters, etc.
+        let stdout = "OK | temperature=-5.2 balance=-1024";
+        let m = extract_metrics_from_stdout(stdout).expect("should parse perfdata");
+        assert_eq!(m["temperature"].as_f64(), Some(-5.2));
+        assert_eq!(m["balance"].as_f64(), Some(-1024.0));
+    }
+
+    #[test]
+    fn test_nagios_perfdata_status_only_no_pipe() {
+        // No `|` means no perfdata; should fall through to None (or other parsers).
+        let stdout = "OK - nothing to report";
+        let m = extract_metrics_from_stdout(stdout);
+        assert!(m.is_none());
+    }
+
+    #[test]
+    fn test_nagios_perfdata_empty_after_pipe() {
+        let stdout = "OK |   ";
+        let m = extract_metrics_from_stdout(stdout);
+        assert!(m.is_none());
+    }
+
+    #[test]
+    fn test_nagios_perfdata_skips_malformed_tokens() {
+        // `notametric` has no `=`, `bad=` has no value, `bogus=abc` not numeric.
+        // Valid tokens should still be extracted.
+        let stdout = "OK | notametric bad= bogus=abc good=42";
+        let m = extract_metrics_from_stdout(stdout).expect("should parse the valid metric");
+        assert_eq!(m["good"].as_f64(), Some(42.0));
+        assert!(m.as_object().unwrap().len() == 1);
+    }
+
+    #[test]
+    fn test_nagios_perfdata_multiline_perfdata() {
+        // Nagios long output: extra perfdata can appear on subsequent lines after `|`.
+        let stdout = "OK - service healthy | active=42 idle=8\nmore_metric=100 another=2.71";
+        let m = extract_metrics_from_stdout(stdout).expect("should parse multiline perfdata");
+        assert_eq!(m["active"].as_f64(), Some(42.0));
+        assert_eq!(m["idle"].as_f64(), Some(8.0));
+        assert_eq!(m["more_metric"].as_f64(), Some(100.0));
+        assert_eq!(m["another"].as_f64(), Some(2.71));
+    }
+
+    #[test]
+    fn test_nagios_perfdata_pure_json_takes_precedence() {
+        // If stdout parses cleanly as JSON, format #1 wins even if it could
+        // also be misinterpreted as containing a `|` somewhere later.
+        let stdout = r#"{"queue": 12, "note": "pipe | inside string"}"#;
+        let m = extract_metrics_from_stdout(stdout).expect("pure JSON should win");
+        assert_eq!(m["queue"].as_f64(), Some(12.0));
+        assert_eq!(m["note"].as_str(), Some("pipe | inside string"));
+    }
+
+    #[test]
+    fn test_tokenize_perfdata_respects_quotes() {
+        let tokens = tokenize_perfdata("'a b'=1 c=2 'd e f'=3");
+        assert_eq!(tokens, vec!["'a b'=1", "c=2", "'d e f'=3"]);
+    }
+
+    #[test]
+    fn test_parse_perfdata_token_strips_uom_and_thresholds() {
+        let (label, value) = parse_perfdata_token("queue=1234B;500;1000;0;").unwrap();
+        assert_eq!(label, "queue");
+        assert_eq!(value, 1234.0);
     }
 }

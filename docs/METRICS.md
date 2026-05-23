@@ -15,7 +15,7 @@ This approach is **non-intrusive**: existing scripts continue to work unchanged.
 
 ## Output Formats
 
-AppControl supports four detection strategies, tried in order:
+AppControl supports five detection strategies, tried in order:
 
 ### 1. Pure JSON (Recommended for new scripts)
 
@@ -89,7 +89,39 @@ EOF
 exit 0
 ```
 
-### 4. Auto-Detect (Last JSON Line)
+### 4. Nagios Perfdata (Legacy Migration)
+
+Existing Nagios/Icinga/Centreon/Naemon plugins can be reused **as-is**: AppControl
+parses the standard perfdata convention `STATUS | label=value[UOM];warn;crit;min;max`.
+This means a check script ported from Nagios works without modification — only the
+numeric values are extracted; UOM suffixes (`s`, `ms`, `%`, `B`, `KB`, `MB`, ...) and
+threshold fields are intentionally dropped (thresholds belong in alert policies, not
+in the metric stream).
+
+```bash
+#!/bin/bash
+# Classic Nagios load-average check (compatible with check_load(1))
+
+read -r LOAD1 LOAD5 LOAD15 _ < /proc/loadavg
+echo "OK - load average: $LOAD1, $LOAD5, $LOAD15 | load1=${LOAD1};1.0;2.0;0; load5=${LOAD5};1.0;2.0;0; load15=${LOAD15};1.0;2.0;0;"
+exit 0
+```
+
+Extracted metrics: `{"load1": 0.42, "load5": 0.55, "load15": 0.49}`.
+
+Quoted labels (with spaces) and unit-of-measure suffixes are supported:
+
+```
+OK - disk healthy | 'disk usage'=78%;80;90;0;100 'free space'=2048MB;;;0
+```
+
+Extracted: `{"disk usage": 78, "free space": 2048}`.
+
+See [`examples/checks/nagios_load_average.sh`](../examples/checks/nagios_load_average.sh)
+and [`examples/checks/nagios_disk_usage.sh`](../examples/checks/nagios_disk_usage.sh)
+for ready-to-deploy scripts.
+
+### 5. Auto-Detect (Last JSON Line)
 
 AppControl scans stdout backwards for the last line that is a valid JSON object:
 
