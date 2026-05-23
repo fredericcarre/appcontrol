@@ -1,0 +1,1850 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Industrialiser l'opérationnel — Vision stratégique AppControl</title>
+<style>
+  :root {
+    --ink: #0f172a;
+    --ink-soft: #334155;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --bg: #ffffff;
+    --panel: #f8fafc;
+    --panel-2: #f1f5f9;
+    --accent: #0f766e;
+    --accent-deep: #134e4a;
+    --accent-soft: #ccfbf1;
+    --warn: #b45309;
+    --warn-soft: #fef3c7;
+    --danger: #b91c1c;
+    --danger-soft: #fee2e2;
+    --ok: #166534;
+    --ok-soft: #dcfce7;
+    --indigo: #4338ca;
+    --indigo-soft: #e0e7ff;
+    --shadow: 0 1px 2px rgba(15,23,42,.04), 0 8px 24px rgba(15,23,42,.06);
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter",
+                 system-ui, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.6;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 56px 32px 80px; }
+
+  .cover {
+    border-radius: var(--radius);
+    background: linear-gradient(135deg, #0f172a 0%, #312e81 50%, #134e4a 100%);
+    color: #fff; padding: 56px 48px; margin-bottom: 40px;
+    box-shadow: var(--shadow);
+  }
+  .cover .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; opacity: .8;
+  }
+  .cover h1 {
+    margin: 14px 0 12px;
+    font-size: 46px; line-height: 1.05; font-weight: 700; letter-spacing: -.02em;
+  }
+  .cover .sub { font-size: 19px; opacity: .92; max-width: 760px; font-weight: 400; }
+  .cover .meta {
+    margin-top: 30px; padding-top: 22px; border-top: 1px solid rgba(255,255,255,.15);
+    display: flex; gap: 28px; flex-wrap: wrap;
+    font-size: 13px; opacity: .8;
+  }
+  .cover strong, .cover em { color: #fff; }
+
+  .exec {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 28px 32px; margin-bottom: 48px;
+  }
+  .exec .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .exec h2 { margin: 0 0 12px; font-size: 22px; color: var(--ink); }
+  .exec p { font-size: 17px; margin: 0 0 12px; color: var(--ink-soft); }
+  .exec p:last-child { margin-bottom: 0; }
+
+  .toc {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 22px 28px; margin-bottom: 56px;
+  }
+  .toc h2 {
+    margin: 0 0 14px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: .14em; color: var(--muted); font-weight: 600;
+  }
+  .toc ol { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 32px; }
+  .toc li {
+    padding: 6px 0; break-inside: avoid;
+    border-bottom: 1px dashed var(--line);
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  }
+  .toc li:last-child { border-bottom: 0; }
+  .toc a { color: var(--ink); text-decoration: none; }
+  .toc a:hover { color: var(--accent); }
+  .toc .num { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; flex-shrink: 0; }
+
+  section { margin-bottom: 56px; scroll-margin-top: 16px; }
+  section .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; color: var(--accent);
+    margin-bottom: 8px;
+  }
+  section h2 {
+    font-size: 30px; line-height: 1.2; letter-spacing: -.01em;
+    margin: 0 0 20px; color: var(--ink);
+  }
+  section h3 { font-size: 18px; margin: 28px 0 12px; color: var(--ink); }
+  section h4 { font-size: 15px; margin: 18px 0 8px; color: var(--accent-deep); }
+  p { margin: 0 0 14px; color: var(--ink-soft); }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; color: var(--ink-soft); }
+  li { margin-bottom: 6px; }
+  strong { color: var(--ink); font-weight: 600; }
+  em { color: var(--ink); font-style: italic; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 22px 24px; margin: 16px 0;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .card h4 {
+    margin: 0 0 8px; font-size: 13px;
+    text-transform: uppercase; letter-spacing: .1em;
+    color: var(--accent); font-weight: 700;
+  }
+  .card.warn h4 { color: var(--warn); } .card.warn { background: var(--warn-soft); border-color: #fcd34d; }
+  .card.danger h4 { color: var(--danger); } .card.danger { background: var(--danger-soft); border-color: #fca5a5; }
+  .card.ok h4 { color: var(--ok); } .card.ok { background: var(--ok-soft); border-color: #86efac; }
+  .card.indigo h4 { color: var(--indigo); } .card.indigo { background: var(--indigo-soft); border-color: #a5b4fc; }
+
+  .pull {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 18px 22px; border-radius: 0 var(--radius) var(--radius) 0;
+    margin: 24px 0; font-size: 17px; color: #134e4a;
+  }
+  .pull strong { color: #064e3b; }
+  .pull.warn { border-left-color: var(--warn); background: var(--warn-soft); color: #78350f; }
+  .pull.warn strong { color: #451a03; }
+  .pull.indigo { border-left-color: var(--indigo); background: var(--indigo-soft); color: #1e1b4b; }
+  .pull.indigo strong { color: #1e1b4b; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 16px 0; font-size: 15px;
+    background: #fff; border-radius: var(--radius); overflow: hidden;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel-2); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td code, p code, li code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: 13px; font-family: "SF Mono", "JetBrains Mono", Menlo, monospace; color: #0f172a; }
+
+  /* Mutation cards (the 5 strategic mutations) */
+  .mutations {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;
+    margin: 24px 0;
+  }
+  .mutation {
+    background: linear-gradient(160deg, #1e1b4b 0%, #134e4a 100%);
+    color: #fff;
+    border-radius: var(--radius);
+    padding: 18px 14px;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .mutation .m-num {
+    font-size: 11px; opacity: .7;
+    text-transform: uppercase; letter-spacing: .14em; font-weight: 600;
+  }
+  .mutation .m-title { font-size: 15px; font-weight: 700; line-height: 1.3; }
+  .mutation .m-arrow {
+    margin-top: auto;
+    border-top: 1px solid rgba(255,255,255,.18);
+    padding-top: 10px;
+    font-size: 12px; opacity: .85; line-height: 1.45;
+  }
+  .mutation .m-from { display: block; opacity: .65; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 2px; }
+  .mutation .m-to { display: block; font-weight: 600; }
+
+  /* Before/After comparison */
+  .ba-block {
+    display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px;
+    align-items: stretch; margin: 18px 0;
+  }
+  .ba-side {
+    border-radius: var(--radius);
+    padding: 16px 20px;
+  }
+  .ba-side.before {
+    background: var(--danger-soft);
+    border: 1px solid #fca5a5;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .ba-side.after {
+    background: var(--ok-soft);
+    border: 1px solid #86efac;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .ba-side h4 {
+    margin: 0 0 8px; font-size: 12px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .12em;
+  }
+  .ba-side.before h4 { color: var(--danger); }
+  .ba-side.after h4 { color: var(--ok); }
+  .ba-side ul { margin: 0; padding-left: 18px; font-size: 14px; }
+  .ba-side li { margin-bottom: 4px; }
+  .ba-arrow {
+    color: var(--accent);
+    font-size: 32px; font-weight: 900;
+    align-self: center;
+    padding: 0 4px;
+  }
+
+  /* Financial gain card */
+  .roi-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-left: 6px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 16px 20px; margin: 12px 0;
+    display: grid; grid-template-columns: 1fr auto; gap: 14px;
+    align-items: center;
+  }
+  .roi-card.indigo { border-left-color: var(--indigo); }
+  .roi-card.warn { border-left-color: var(--warn); }
+  .roi-card .roi-label { color: var(--ink); font-weight: 600; font-size: 14px; }
+  .roi-card .roi-desc { color: var(--ink-soft); font-size: 13px; margin-top: 2px; }
+  .roi-card .roi-value {
+    background: var(--accent-soft);
+    color: var(--accent-deep);
+    font-weight: 800;
+    font-size: 14px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    white-space: nowrap;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .roi-card.indigo .roi-value { background: var(--indigo-soft); color: #1e1b4b; }
+  .roi-card.warn .roi-value { background: var(--warn-soft); color: #78350f; }
+
+  /* Horizon timeline (year markers) */
+  .horizon {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+    margin: 22px 0;
+  }
+  .horizon .hcol {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .horizon .hyear {
+    font-size: 12px; font-weight: 800; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--accent);
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 6px; margin-bottom: 10px;
+  }
+  .horizon .htitle { font-weight: 700; color: var(--ink); margin-bottom: 6px; font-size: 14px; }
+  .horizon ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--ink-soft); }
+  .horizon li { margin-bottom: 3px; }
+
+  /* Indicator dashboard */
+  .indic-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+    margin: 18px 0;
+  }
+  .indic {
+    background: #fff; border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 14px;
+    text-align: center;
+  }
+  .indic .ivalue { font-size: 22px; font-weight: 800; color: var(--accent); margin: 4px 0; }
+  .indic .ilabel { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
+  .indic .icontext { font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
+
+  .steps { list-style: none; padding: 0; counter-reset: s; }
+  .steps li {
+    counter-increment: s;
+    padding: 14px 16px 14px 56px; position: relative;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); margin-bottom: 10px;
+    color: var(--ink-soft);
+  }
+  .steps li::before {
+    content: counter(s);
+    position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+  }
+
+  .annex-divider {
+    margin: 80px 0 40px; padding: 32px;
+    background: var(--panel-2); border-radius: var(--radius); text-align: center;
+  }
+  .annex-divider .eyebrow {
+    color: var(--muted); text-transform: uppercase; letter-spacing: .2em;
+    font-size: 13px; font-weight: 600;
+  }
+  .annex-divider h2 { font-size: 32px; margin: 12px 0 0; color: var(--ink); }
+
+  footer {
+    margin-top: 64px; padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; align-items: center;
+  }
+  footer .foot-brand { display: flex; align-items: center; gap: 12px; }
+  footer .copyright { color: var(--muted); }
+  footer .foot-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  footer .pill {
+    background: var(--panel-2); color: var(--ink-soft);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  }
+  footer .pill.draft { background: var(--danger-soft); color: var(--danger); border: 1px solid #fca5a5; }
+
+  /* Branding */
+  .invivoo-logo { height: 26px; width: auto; display: block; }
+  .topbar .invivoo-logo { height: 28px; }
+  .cover-brand .invivoo-logo { height: 34px; filter: brightness(0) invert(1); }
+  footer .invivoo-logo { height: 22px; }
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 20px; background: #fff;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    margin-bottom: 18px; box-shadow: 0 1px 2px rgba(15,23,42,.03);
+    gap: 16px; flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .brand-tagline {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
+    color: var(--muted); padding-left: 14px; border-left: 1px solid var(--line);
+  }
+  .classification { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .badge-draft {
+    background: var(--danger); color: #fff;
+    padding: 5px 11px; border-radius: 6px;
+    font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .badge-confid {
+    color: var(--warn); background: var(--warn-soft); border: 1px solid #fcd34d;
+    padding: 4px 10px; border-radius: 6px;
+    font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .cover-brand {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 28px; padding-bottom: 20px;
+    border-bottom: 1px solid rgba(255,255,255,.18);
+  }
+  .cover-brand .cb-right {
+    font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    opacity: .85; font-weight: 600;
+  }
+  .version-pill {
+    display: inline-flex; align-items: center; gap: 10px;
+    margin-top: 26px; padding: 7px 14px;
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+  }
+  .version-pill .pulse {
+    width: 7px; height: 7px; background: #fbbf24; border-radius: 50%;
+    box-shadow: 0 0 0 3px rgba(251,191,36,.25);
+  }
+  @media screen {
+    body::before {
+      content: "DRAFT · Ne pas diffuser";
+      position: fixed; bottom: 20px; right: 20px;
+      background: var(--danger); color: #fff;
+      padding: 8px 16px; border-radius: 999px;
+      font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+      box-shadow: 0 6px 20px rgba(185,28,28,.4);
+      z-index: 1000; pointer-events: none;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .wrap { padding: 28px 18px; }
+    .cover { padding: 36px 24px; }
+    .cover h1 { font-size: 32px; }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .toc ol { columns: 1; }
+    .mutations { grid-template-columns: 1fr 1fr; }
+    .horizon { grid-template-columns: 1fr 1fr; }
+    .indic-grid { grid-template-columns: 1fr 1fr; }
+    .ba-block { grid-template-columns: 1fr; }
+    .ba-arrow { transform: rotate(90deg); align-self: center; }
+    .roi-card { grid-template-columns: 1fr; }
+    table { font-size: 14px; }
+    th, td { padding: 10px 12px; }
+  }
+
+  .print-shell { width: 100%; border-collapse: collapse; border-spacing: 0; }
+  .print-shell > thead > tr > td, .print-shell > tbody > tr > td, .print-shell > tfoot > tr > td {
+    padding: 0; border: 0; background: transparent;
+  }
+  @media screen {
+    .print-shell > thead, .print-shell > tfoot { display: none; }
+  }
+  .prh, .prf { display: none; }
+
+  @page { size: A4; margin: 22mm 14mm 20mm 14mm; }
+  @media print {
+    html, body { background: #fff; font-size: 10.5pt; line-height: 1.5; }
+    .wrap { max-width: none; margin: 0; padding: 0; }
+    .cover, .pull, .pull.warn, .pull.indigo,
+    .card, .card.warn, .card.ok, .card.danger, .card.indigo,
+    .annex-divider, .exec, .toc, .mutation, .ba-side, .roi-card,
+    .horizon .hcol, .indic, .steps li {
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .cover {
+      background: #0f172a !important; color: #fff !important;
+      padding: 36mm 18mm; margin: 0; border-radius: 0;
+      page-break-after: always; break-after: page;
+    }
+    .cover h1 { font-size: 32pt; }
+    .cover .sub { font-size: 13pt; }
+    .exec, .toc { page-break-inside: avoid; break-inside: avoid; }
+    .toc { page-break-after: always; break-after: page; }
+    .annex-divider { page-break-before: always; break-before: page; }
+    .card, .pull, table, .steps li, .ba-block, .roi-card, .mutation,
+    .horizon .hcol, .indic, .exec {
+      page-break-inside: avoid; break-inside: avoid;
+    }
+    h2, h3, h4 { page-break-after: avoid; break-after: avoid; }
+    section { page-break-inside: auto; margin-bottom: 28px; page-break-before: always; break-before: page; }
+    .exec { page-break-before: avoid; break-before: avoid; }
+    section h2 { font-size: 20pt; margin-bottom: 14px; }
+    section h3 { font-size: 13pt; margin: 18px 0 8px; }
+    .mutations { grid-template-columns: repeat(5, 1fr); gap: 6px; }
+    .mutation { padding: 12px 10px; }
+    .mutation .m-title { font-size: 12pt; }
+    .grid-3 { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .indic-grid { grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .horizon { grid-template-columns: 1fr 1fr; gap: 8px; }
+    table { font-size: 10pt; }
+    th, td { padding: 8px 10px; word-wrap: break-word; overflow-wrap: anywhere; }
+    a { color: inherit; text-decoration: none; }
+    footer { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 12px; }
+    body::before { display: none !important; }
+    body::after {
+      content: "DRAFT"; position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%) rotate(-30deg);
+      font-size: 160pt; font-weight: 900;
+      color: rgba(185, 28, 28, 0.07);
+      letter-spacing: .05em; pointer-events: none; z-index: 9999;
+      white-space: nowrap;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .topbar { display: none; }
+    .cover-wrap { page-break-after: always; break-after: page; }
+    .print-shell > thead { display: table-header-group; }
+    .print-shell > tfoot { display: table-footer-group; }
+    .prh, .prf {
+      display: flex !important;
+      justify-content: space-between; align-items: center;
+      font-size: 8.5pt; color: #475569;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .prh { padding: 0 0 4mm; margin-bottom: 6mm; border-bottom: 1px solid var(--line); }
+    .prf { padding: 4mm 0 0; margin-top: 6mm; border-top: 1px solid var(--line); }
+    .prh-left, .prf-left, .prf-right { display: inline-flex; align-items: center; gap: 6px; }
+    .prh-logo, .prf-logo { height: 11pt; width: auto; }
+    .prh-sep, .prf-sep { color: var(--line); }
+    .prh-tag { font-weight: 600; color: var(--warn); }
+    .prh-right { color: #64748b; font-size: 8pt; letter-spacing: .03em; }
+    .prf-draft {
+      background: var(--danger); color: #fff;
+      padding: 2px 8px; border-radius: 4px;
+      font-size: 7.5pt; font-weight: 800;
+      letter-spacing: .12em; text-transform: uppercase;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap cover-wrap">
+  <div class="topbar">
+    <div class="brand">
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
+      <span class="brand-tagline">Expertise &amp; conseil IT</span>
+    </div>
+    <div class="classification">
+      <span class="badge-draft">Draft</span>
+      <span class="badge-confid">Confidentiel · Ne pas diffuser</span>
+    </div>
+  </div>
+
+  <header class="cover">
+    <div class="cover-brand">
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
+      <span class="cb-right">Document confidentiel · Vision stratégique</span>
+    </div>
+    <div class="eyebrow">Vision stratégique &amp; transformation</div>
+    <h1>Industrialiser<br/>l'opérationnel</h1>
+    <div class="sub">
+      Jusqu'où une entreprise peut-elle aller en adoptant pleinement
+      <strong>AppControl</strong> ? Cinq mutations stratégiques, leurs
+      gains financiers et opérationnels, la restructuration possible,
+      et la vision à cinq ans d'une entreprise apprenante.
+    </div>
+    <div class="version-pill">
+      <span class="pulse"></span>
+      Version 0.9 · Draft · Mai 2026
+    </div>
+    <div class="meta">
+      <span>Document de vision stratégique</span>
+      <span>Pour direction générale, COMEX, conseil d'administration</span>
+    </div>
+  </header>
+</div>
+
+<table class="print-shell">
+<thead>
+  <tr><td>
+    <div class="prh">
+      <span class="prh-left">
+        <img src="invivoo-logo.svg" alt="Invivoo" class="prh-logo" />
+        <span class="prh-sep">·</span>
+        <span class="prh-tag">Confidentiel</span>
+      </span>
+      <span class="prh-right">Industrialiser l'opérationnel — Vision stratégique AppControl</span>
+    </div>
+  </td></tr>
+</thead>
+<tbody>
+<tr><td>
+<div class="wrap content-wrap">
+
+  <div class="exec">
+    <div class="eyebrow">Synthèse exécutive</div>
+    <h2>Le potentiel sous-estimé d'AppControl</h2>
+    <p>
+      AppControl est souvent présenté comme un outil de continuité d'activité
+      ou de conformité. Cette présentation est juste mais radicalement
+      <strong>réductrice</strong>. La même plateforme, déployée à l'échelle
+      du SI, devient un levier de <strong>transformation systémique</strong> :
+      elle bascule l'IT d'une posture artisanale et réactive vers une
+      posture industrielle et apprenante.
+    </p>
+    <p>
+      Ce document explore ce qui devient possible quand une entreprise
+      assume cette ambition : <strong>cinq mutations stratégiques</strong>,
+      chacune débloquant un palier de création de valeur — opérationnel,
+      financier, organisationnel. Aboutissement à 5 ans : une entreprise
+      où la maîtrise du SI cesse d'être un goulot d'étranglement pour
+      devenir un <strong>avantage compétitif mesurable</strong>.
+    </p>
+    <p>
+      Public visé : direction générale, COMEX, conseil d'administration,
+      directions IT et opérations. Pour comprendre non plus le « comment »
+      ni le « pourquoi », mais le <strong>« jusqu'où »</strong>.
+    </p>
+  </div>
+
+  <nav class="toc">
+    <h2>Sommaire</h2>
+    <ol>
+      <li><a href="#s1">Les 5 mutations stratégiques</a><span class="num">1</span></li>
+      <li><a href="#s2">Mutation 1 — La connaissance, actif structuré</a><span class="num">2</span></li>
+      <li><a href="#s3">Mutation 2 — Résilience prouvable</a><span class="num">3</span></li>
+      <li><a href="#s4">Mutation 3 — Levier de productivité</a><span class="num">4</span></li>
+      <li><a href="#s5">Mutation 4 — Conformité native</a><span class="num">5</span></li>
+      <li><a href="#s6">Mutation 5 — Plateforme transverse</a><span class="num">6</span></li>
+      <li><a href="#s7">Gains financiers — modélisation</a><span class="num">7</span></li>
+      <li><a href="#s8">Restructuration &amp; nouveau modèle</a><span class="num">8</span></li>
+      <li><a href="#s9">Accélérateurs stratégiques débloqués</a><span class="num">9</span></li>
+      <li><a href="#s10">Vision à 5 ans — l'entreprise apprenante</a><span class="num">10</span></li>
+      <li><a href="#s11">Indicateurs de succès stratégique</a><span class="num">11</span></li>
+      <li><a href="#s12">Le coût de l'inaction</a><span class="num">12</span></li>
+      <li><a href="#s13">Synthèse — le saut quantique</a><span class="num">13</span></li>
+      <li><a href="#annex">Annexes</a><span class="num">A</span></li>
+      <li><a href="#a5">A5 — Repères dirigeants (sous le coude)</a><span class="num">★</span></li>
+    </ol>
+  </nav>
+
+  <!-- ============================================================
+       SECTION 1 — Vue d'ensemble — les 5 mutations
+       ============================================================ -->
+  <section id="s1">
+    <div class="eyebrow">1 — Vue d'ensemble</div>
+    <h2>Les cinq mutations stratégiques</h2>
+    <p>
+      L'adoption pleine d'AppControl déclenche, en cascade,
+      <strong>cinq mutations</strong> qui s'enrichissent les unes les
+      autres. Aucune n'est obligatoire ; chacune crée de la valeur
+      indépendamment ; ensemble elles transforment l'IT.
+    </p>
+
+    <div class="mutations">
+      <div class="mutation">
+        <span class="m-num">Mutation 1</span>
+        <span class="m-title">Connaissance, actif structuré</span>
+        <span class="m-arrow">
+          <span class="m-from">Tribale, fragile</span>
+          <span class="m-to">Capitalisable, transmissible</span>
+        </span>
+      </div>
+      <div class="mutation">
+        <span class="m-num">Mutation 2</span>
+        <span class="m-title">Résilience prouvable</span>
+        <span class="m-arrow">
+          <span class="m-from">Théorique, jamais testée</span>
+          <span class="m-to">Mesurée, chronométrée</span>
+        </span>
+      </div>
+      <div class="mutation">
+        <span class="m-num">Mutation 3</span>
+        <span class="m-title">Levier de productivité</span>
+        <span class="m-arrow">
+          <span class="m-from">Dette opérationnelle</span>
+          <span class="m-to">Élargissement à effectif constant</span>
+        </span>
+      </div>
+      <div class="mutation">
+        <span class="m-num">Mutation 4</span>
+        <span class="m-title">Conformité native</span>
+        <span class="m-arrow">
+          <span class="m-from">Audit subi, ponctuel</span>
+          <span class="m-to">Audit en self-service</span>
+        </span>
+      </div>
+      <div class="mutation">
+        <span class="m-num">Mutation 5</span>
+        <span class="m-title">Plateforme transverse</span>
+        <span class="m-arrow">
+          <span class="m-from">Silos par techno</span>
+          <span class="m-to">Plateforme + produits</span>
+        </span>
+      </div>
+    </div>
+
+    <h3>Logique d'enchaînement</h3>
+    <p>
+      Les mutations 1 et 2 sont des <strong>fondations</strong> — sans
+      connaissance industrialisée et sans résilience prouvable, les
+      suivantes ne tiennent pas. Les mutations 3 et 4 sont des
+      <strong>retours sur investissement immédiats</strong> — productivité
+      des équipes et économies de conformité. La mutation 5 est le
+      <strong>palier transformatif</strong> — celui qui rebat les cartes
+      organisationnelles et débloque les accélérateurs stratégiques
+      (cloud, M&amp;A, modernisation legacy).
+    </p>
+
+    <div class="pull indigo">
+      Chaque mutation est <strong>réversible et fractionnable</strong>.
+      Une entreprise peut s'arrêter au palier 3 et y rester avec un ROI
+      déjà significatif. Mais les mutations qui suivent valent
+      proportionnellement bien plus que ce qu'elles coûtent.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 2 — Mutation 1
+       ============================================================ -->
+  <section id="s2">
+    <div class="eyebrow">2 — Mutation 1</div>
+    <h2>De la connaissance tribale à l'actif structuré</h2>
+    <p>
+      Dans la plupart des entreprises, la connaissance opérationnelle —
+      qui fait quoi, qui dépend de qui, comment redémarrer, comment
+      vérifier — réside dans la tête de quelques sachants. Ces personnes
+      partent en retraite, démissionnent, changent d'équipe. La
+      connaissance part avec elles.
+    </p>
+
+    <div class="ba-block">
+      <div class="ba-side before">
+        <h4>Avant</h4>
+        <ul>
+          <li>Dépendance critique à 5-10 sachants par périmètre</li>
+          <li>Risque de continuité élevé à chaque départ</li>
+          <li>Onboarding d'un nouvel opérateur : 6 à 12 mois</li>
+          <li>Tâches sensibles concentrées sur quelques personnes</li>
+          <li>Documentation Confluence souvent datée de 18 mois</li>
+        </ul>
+      </div>
+      <div class="ba-arrow">→</div>
+      <div class="ba-side after">
+        <h4>Après</h4>
+        <ul>
+          <li>Connaissance versionnée dans la map (Git)</li>
+          <li>Continuité garantie indépendamment des personnes</li>
+          <li>Onboarding ramené à 4-8 semaines</li>
+          <li>Tâches sensibles exécutables par rôle, pas par individu</li>
+          <li>Documentation auto-régénérée à chaque modification</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Conséquences stratégiques</h3>
+    <ul>
+      <li><strong>Réduction du risque humain</strong> — départ d'un sachant clé : impact opérationnel limité aux jours qui suivent, pas aux mois</li>
+      <li><strong>Externalisation contrôlée possible</strong> — l'exploitation standardisée peut être confiée à un MSP sans transfert de tribal knowledge informel</li>
+      <li><strong>Capitalisation cross-applications</strong> — la connaissance acquise sur l'app A bénéficie à l'app B (patterns partagés, checks réutilisables)</li>
+      <li><strong>Valorisation comptable</strong> — la connaissance devient un actif identifiable au bilan IT</li>
+    </ul>
+
+    <div class="pull">
+      Le départ d'un sachant historique n'est plus une crise managériale
+      à anticiper sur six mois — c'est un événement RH ordinaire.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 3 — Mutation 2
+       ============================================================ -->
+  <section id="s3">
+    <div class="eyebrow">3 — Mutation 2</div>
+    <h2>De la résilience théorique à la résilience prouvable</h2>
+    <p>
+      Beaucoup d'entreprises possèdent un PRA (Plan de Reprise d'Activité)
+      qui n'a jamais été testé en conditions réelles, ou seulement sur
+      des composants isolés. Le jour de l'incident majeur, la
+      reconstruction est improvisée — sous stress, sans répétition,
+      avec un risque de cascade.
+    </p>
+
+    <div class="ba-block">
+      <div class="ba-side before">
+        <h4>Avant</h4>
+        <ul>
+          <li>PRA documenté sur Confluence, jamais joué intégralement</li>
+          <li>Bascule DR testée sur 1 à 2 applications par an</li>
+          <li>RTO/RPO contractuels jamais validés en réel</li>
+          <li>Reprise après cyber-incident estimée en semaines</li>
+          <li>Auditeur reçoit des PDF, pas des preuves d'exécution</li>
+        </ul>
+      </div>
+      <div class="ba-arrow">→</div>
+      <div class="ba-side after">
+        <h4>Après</h4>
+        <ul>
+          <li>Drills de rebuild scriptés et répétables sur non-prod</li>
+          <li>RTO/RPO mesurés à chaque drill, comparables dans le temps</li>
+          <li>Reprise cyber chronométrée et prouvée</li>
+          <li>Audit DORA en self-service depuis l'interface AppControl</li>
+          <li>Confiance investisseurs et régulateurs renforcée</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Conséquences stratégiques</h3>
+    <ul>
+      <li><strong>Baisse possible des primes d'assurance cyber</strong> — la capacité de reprise prouvée modifie le profil de risque</li>
+      <li><strong>Avantage commercial</strong> — appels d'offres exigeant des garanties de continuité (collectivités, hôpitaux, OIV) : barrière à l'entrée pour les concurrents non outillés</li>
+      <li><strong>Réduction du risque de sanction</strong> — DORA, NIS2, secteur santé : la conformité devient une preuve, pas une déclaration</li>
+      <li><strong>Confiance interne</strong> — les directions métier reprennent confiance dans la capacité IT à tenir ses engagements</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================
+       SECTION 4 — Mutation 3
+       ============================================================ -->
+  <section id="s4">
+    <div class="eyebrow">4 — Mutation 3</div>
+    <h2>De la dette opérationnelle au levier de productivité</h2>
+    <p>
+      Dans une DSI typique, <strong>30 à 50 % du temps des équipes
+      d'exploitation</strong> est absorbé par des tâches répétitives
+      à faible valeur ajoutée : exécution de scripts, lecture de logs,
+      vérifications manuelles, contournement de procédures obsolètes.
+      Cette dette opérationnelle empêche tout investissement dans
+      l'amélioration structurelle.
+    </p>
+
+    <div class="ba-block">
+      <div class="ba-side before">
+        <h4>Avant</h4>
+        <ul>
+          <li>30-50 % du temps ops sur tâches répétitives</li>
+          <li>Élargissement du parc applicatif = embauche proportionnelle</li>
+          <li>Astreintes nuit/weekend chargées en faux positifs</li>
+          <li>Procédures dupliquées entre équipes</li>
+          <li>Turnover ops élevé (~ 20 % / an)</li>
+        </ul>
+      </div>
+      <div class="ba-arrow">→</div>
+      <div class="ba-side after">
+        <h4>Après</h4>
+        <ul>
+          <li>Tâches répétitives automatisées (start/stop/check/restart)</li>
+          <li>Capacité d'absorption +30 à +50 % à effectif constant</li>
+          <li>Astreintes recentrées sur les anomalies réelles</li>
+          <li>Procédures unifiées dans la map</li>
+          <li>Travail des ops requalifié → fidélisation</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Conséquences stratégiques</h3>
+    <ul>
+      <li><strong>Élargissement du périmètre managé sans embauche</strong> — l'IT absorbe la croissance applicative sans linéarisation du coût</li>
+      <li><strong>Repositionnement des équipes</strong> — les ops cessent d'être des « exécutants de scripts » et deviennent des ingénieurs de fiabilité (SRE)</li>
+      <li><strong>Réduction du turnover</strong> — métier requalifié, intérêt remonté, fuite des talents réduite</li>
+      <li><strong>Internalisation possible de compétences rares</strong> — ce qui était trop coûteux à internaliser (sécurité, observabilité avancée) devient finançable par les gains</li>
+    </ul>
+
+    <div class="pull">
+      Une équipe d'exploitation de 30 personnes qui gagne 30 % de capacité
+      équivaut à 9 ETP supplémentaires <strong>sans embauche</strong>.
+      Ce capital peut être réinvesti, redirigé, ou rendu à d'autres
+      besoins de l'entreprise.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 5 — Mutation 4
+       ============================================================ -->
+  <section id="s5">
+    <div class="eyebrow">5 — Mutation 4</div>
+    <h2>De la conformité ponctuelle à la conformité native</h2>
+    <p>
+      Chaque audit (DORA, NIS2, ISO 27001, SOC 2, audit interne, audit
+      assureur) déclenche aujourd'hui une mobilisation lourde : recherche
+      de preuves, reconstruction d'évidences, rédaction de dossiers,
+      réponses aux questions de l'auditeur. Cette mobilisation se répète
+      à chaque cycle, pour chaque réglementation, pour chaque audit.
+    </p>
+
+    <div class="ba-block">
+      <div class="ba-side before">
+        <h4>Avant</h4>
+        <ul>
+          <li>4 à 6 semaines de préparation par audit</li>
+          <li>Mobilisation de 5-10 personnes à temps partiel</li>
+          <li>Preuves reconstituées a posteriori, parfois absentes</li>
+          <li>Coût récurrent par audit : 50 à 200 k€</li>
+          <li>Nouveau cadre réglementaire = nouveau chantier</li>
+        </ul>
+      </div>
+      <div class="ba-arrow">→</div>
+      <div class="ba-side after">
+        <h4>Après</h4>
+        <ul>
+          <li>Preuves générées en continu (audit log append-only)</li>
+          <li>Préparation audit ramenée à quelques jours</li>
+          <li>Auditeur accède en self-service aux registres</li>
+          <li>Coût marginal d'un nouvel audit proche de zéro</li>
+          <li>Nouveau cadre réglementaire = mapping, pas reconstruction</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Conséquences stratégiques</h3>
+    <ul>
+      <li><strong>Économies récurrentes</strong> — gain net par audit majeur, multiplié par le nombre d'audits annuels</li>
+      <li><strong>Agilité réglementaire</strong> — une nouvelle régulation (IA Act, CSRD, futures évolutions) se traite par adaptation incrémentale, pas par nouveau projet</li>
+      <li><strong>Réduction du risque de sanction</strong> — DORA prévoit jusqu'à 2 % du CA mondial — l'évitement d'un seul incident de non-conformité paie largement l'investissement</li>
+      <li><strong>Effet réputationnel</strong> — clients, investisseurs, partenaires perçoivent la maturité opérationnelle comme un signal de confiance</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================
+       SECTION 6 — Mutation 5
+       ============================================================ -->
+  <section id="s6">
+    <div class="eyebrow">6 — Mutation 5</div>
+    <h2>Du silo IT à la plateforme transverse</h2>
+    <p>
+      C'est la mutation la plus transformative — et celle qui exige le
+      plus d'engagement. L'adoption d'AppControl à grande échelle remet
+      en cause la structure même de la DSI : ses silos par technologie,
+      ses doublons d'outillage (chaque équipe a sa CMDB locale, son
+      monitoring, ses scripts), ses processus parallèles.
+    </p>
+
+    <div class="ba-block">
+      <div class="ba-side before">
+        <h4>Avant</h4>
+        <ul>
+          <li>Silos par techno (mainframe, Java, .NET, cloud…)</li>
+          <li>Doublons d'outils (4 CMDB, 3 outils monitoring, etc.)</li>
+          <li>Référentiels concurrents et incohérents</li>
+          <li>Intégrations point-à-point entre outils</li>
+          <li>Coût d'intégration linéaire avec le nombre d'apps</li>
+        </ul>
+      </div>
+      <div class="ba-arrow">→</div>
+      <div class="ba-side after">
+        <h4>Après</h4>
+        <ul>
+          <li>Modèle plateforme + équipes produits</li>
+          <li>Outillage rationalisé autour d'une source unique</li>
+          <li>Référentiels alignés et auto-corrigés</li>
+          <li>Intégrations hub-and-spoke via AppControl</li>
+          <li>Coût d'intégration marginal pour chaque nouvelle app</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Conséquences stratégiques</h3>
+    <ul>
+      <li><strong>Rationalisation de l'outillage</strong> — décommissionnement progressif des outils en doublon (économies récurrentes en licences et maintenance)</li>
+      <li><strong>Réorganisation possible</strong> — équipes plateforme (run de la plateforme) + équipes produits (run des applications) — modèle Spotify-like adaptable</li>
+      <li><strong>Time-to-market accéléré</strong> — toute nouvelle application bénéficie immédiatement de l'observabilité, du séquençage, de l'audit</li>
+      <li><strong>Sourcing flexible</strong> — la plateforme étant standardisée, l'exécution peut être insourcée, outsourcée, multi-géographique selon les besoins</li>
+    </ul>
+
+    <div class="pull indigo">
+      C'est à ce palier que l'IT cesse d'être un centre de coût subi
+      pour devenir un <strong>actif organisationnel structurant</strong>
+      qui peut être piloté comme on pilote une usine — avec des
+      indicateurs de productivité, de qualité, et d'amélioration continue.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 7 — Gains financiers
+       ============================================================ -->
+  <section id="s7">
+    <div class="eyebrow">7 — Modélisation financière</div>
+    <h2>Gains financiers — où l'argent se crée</h2>
+    <p>
+      Les ordres de grandeur ci-dessous reflètent les retours observés
+      sur des programmes comparables en banque, industrie et télécom.
+      Ils dépendent fortement de la taille de l'entreprise, du niveau
+      de dette opérationnelle préalable, et du périmètre embarqué. Ils
+      sont donnés à <strong>titre indicatif</strong>, à requalifier en
+      contexte.
+    </p>
+
+    <h3>7.1 Gains directs (mesurables en année 1)</h3>
+
+    <div class="roi-card">
+      <div>
+        <div class="roi-label">Réduction du MTTR (Mean Time To Recovery)</div>
+        <div class="roi-desc">Diagnostic 3 niveaux + restart séquencé + pink branch ciblé.</div>
+      </div>
+      <div class="roi-value">-30 à -50 %</div>
+    </div>
+
+    <div class="roi-card">
+      <div>
+        <div class="roi-label">Réduction du temps de préparation d'audit</div>
+        <div class="roi-desc">Preuves générées en continu, registres exigibles à tout moment.</div>
+      </div>
+      <div class="roi-value">-70 à -90 %</div>
+    </div>
+
+    <div class="roi-card">
+      <div>
+        <div class="roi-label">Productivité des équipes d'exploitation</div>
+        <div class="roi-desc">Tâches répétitives automatisées, focus sur amélioration structurelle.</div>
+      </div>
+      <div class="roi-value">+30 à +50 %</div>
+    </div>
+
+    <div class="roi-card">
+      <div>
+        <div class="roi-label">Coût d'embarquement d'une nouvelle application</div>
+        <div class="roi-desc">Effet réseau : la 10ᵉ app coûte moins que la 1ʳᵉ.</div>
+      </div>
+      <div class="roi-value">-60 % à partir de la 10ᵉ app</div>
+    </div>
+
+    <h3>7.2 Gains indirects (mesurables à partir de l'année 2)</h3>
+
+    <div class="roi-card indigo">
+      <div>
+        <div class="roi-label">Rationalisation de l'outillage (CMDB, monitoring, scheduling)</div>
+        <div class="roi-desc">Décommissionnement progressif des outils en doublon.</div>
+      </div>
+      <div class="roi-value">5 à 15 % du budget outillage</div>
+    </div>
+
+    <div class="roi-card indigo">
+      <div>
+        <div class="roi-label">Réduction du turnover ops</div>
+        <div class="roi-desc">Métier requalifié (SRE) — fidélisation des talents.</div>
+      </div>
+      <div class="roi-value">-25 à -40 %</div>
+    </div>
+
+    <div class="roi-card indigo">
+      <div>
+        <div class="roi-label">Accélération des projets de transformation (cloud, modernisation)</div>
+        <div class="roi-desc">Cartographie exhaustive = priorisation et de-risking immédiat.</div>
+      </div>
+      <div class="roi-value">-20 à -40 % de durée projet</div>
+    </div>
+
+    <h3>7.3 Gains de risque évité (one-shot, mais déterminants)</h3>
+
+    <div class="roi-card warn">
+      <div>
+        <div class="roi-label">Sanction DORA évitée</div>
+        <div class="roi-desc">Plafond : 2 % du CA mondial annuel.</div>
+      </div>
+      <div class="roi-value">Jusqu'à plusieurs M€</div>
+    </div>
+
+    <div class="roi-card warn">
+      <div>
+        <div class="roi-label">Coût d'un incident majeur évité</div>
+        <div class="roi-desc">Indisponibilité, indemnités SLA, image, perte de clients.</div>
+      </div>
+      <div class="roi-value">100 k€ à plusieurs M€</div>
+    </div>
+
+    <div class="roi-card warn">
+      <div>
+        <div class="roi-label">Évitement d'un sinistre cyber non récupérable</div>
+        <div class="roi-desc">Rançongiciel non payé, reprise sous 48 h, continuité métier sauvée.</div>
+      </div>
+      <div class="roi-value">5 à 30 % du CA annuel</div>
+    </div>
+
+    <h3>7.4 ROI cumulé typique sur 3 ans</h3>
+    <table>
+      <thead><tr><th>Année</th><th>Investissement cumulé</th><th>Gains cumulés</th><th>ROI</th></tr></thead>
+      <tbody>
+        <tr><td>Année 1 — Pilote + 5 applications</td><td>1.0×</td><td>0.5×</td><td>négatif (investissement)</td></tr>
+        <tr><td>Année 2 — Extension à 30 applications</td><td>1.6×</td><td>1.8×</td><td>seuil de rentabilité atteint</td></tr>
+        <tr><td>Année 3 — Couverture critique + restructuration</td><td>2.0×</td><td>4.5×</td><td><strong>×2.25</strong></td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:13px;color:var(--muted);">Modèle simplifié — la valeur exacte dépend du contexte. Voir annexe A1 pour le détail des hypothèses.</p>
+  </section>
+
+  <!-- ============================================================
+       SECTION 8 — Restructuration
+       ============================================================ -->
+  <section id="s8">
+    <div class="eyebrow">8 — Restructuration</div>
+    <h2>Restructuration organisationnelle &amp; nouveau modèle opérationnel</h2>
+    <p>
+      L'adoption pleine d'AppControl ouvre des options de restructuration
+      qui étaient inaccessibles auparavant. La connaissance étant
+      industrialisée, l'organisation peut être repensée autour de la
+      <strong>valeur</strong> et non plus de la <strong>technologie</strong>.
+    </p>
+
+    <h3>8.1 Évolution des équipes</h3>
+    <table>
+      <thead><tr><th>Rôle actuel</th><th>Évolution possible</th><th>Gain</th></tr></thead>
+      <tbody>
+        <tr><td>Opérateur de production (run scripts)</td><td>SRE (ingénieur de fiabilité)</td><td>Métier qualifié, fidélisation</td></tr>
+        <tr><td>Administrateur applicatif (run d'une app)</td><td>Application owner platform-aware</td><td>Vision transverse, valeur métier</td></tr>
+        <tr><td>Responsable CMDB</td><td>Responsable cartographie &amp; data quality</td><td>Sortie du back-office, valeur stratégique</td></tr>
+        <tr><td>Équipe « scripts shell » dispersée</td><td>Équipe plateforme centralisée</td><td>Mutualisation, montée en compétence</td></tr>
+      </tbody>
+    </table>
+
+    <h3>8.2 Modèle plateforme + produits</h3>
+    <div class="grid-2">
+      <div class="card">
+        <h4>Équipe plateforme (run de la plateforme)</h4>
+        <ul>
+          <li>Maintient et fait évoluer AppControl, ses intégrations, sa CI</li>
+          <li>Gère la bibliothèque de patterns transverses</li>
+          <li>Garante de la qualité de la map et de la gouvernance IA</li>
+          <li>Équipe restreinte mais à forte expertise</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>Équipes produits (run des applications)</h4>
+        <ul>
+          <li>Possèdent la map de leur application</li>
+          <li>Utilisent AppControl en self-service</li>
+          <li>Pratiquent les drills, gèrent les PR de remediation</li>
+          <li>Découplées entre elles, autonomes opérationnellement</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>8.3 Sourcing — internalisation, externalisation, hybride</h3>
+    <p>
+      Une fois l'exploitation standardisée, les options de sourcing
+      s'élargissent :
+    </p>
+    <ul>
+      <li><strong>Externalisation contrôlée du run standard</strong> — un MSP peut opérer le niveau 4 (opérations directes encadrées par RBAC + audit log). Sans crainte de perte de contrôle ou de tribal knowledge non transférable.</li>
+      <li><strong>Internalisation des compétences rares</strong> — les gains de productivité permettent de financer des compétences que l'on n'avait pas les moyens d'avoir : sécurité avancée, FinOps, observabilité de pointe.</li>
+      <li><strong>Multi-géographique</strong> — un site de DR ou de back-office offshore opérant la même plateforme, sans dérive ni adaptation locale.</li>
+    </ul>
+
+    <h3>8.4 Cas d'une fusion-acquisition</h3>
+    <p>
+      L'absorption d'une entité acquise — typiquement 12 à 24 mois de
+      douleur d'intégration IT — est <strong>radicalement accélérée</strong> :
+    </p>
+    <ol class="steps">
+      <li>Captation rapide des applications acquises (Phase 1 méthodologie : agents + référentiels)</li>
+      <li>Audit de cartographie produit en quelques semaines</li>
+      <li>Identification des doublons applicatifs et choix d'architecture cible</li>
+      <li>Plan de migration outillé, séquencé, mesurable</li>
+      <li>Intégration opérationnelle en 6 à 9 mois au lieu de 18 à 24</li>
+    </ol>
+  </section>
+
+  <!-- ============================================================
+       SECTION 9 — Accélérateurs stratégiques
+       ============================================================ -->
+  <section id="s9">
+    <div class="eyebrow">9 — Accélérateurs</div>
+    <h2>Accélérateurs stratégiques débloqués</h2>
+    <p>
+      Une fois la base posée (mutations 1 à 5), plusieurs chantiers
+      stratégiques qui étaient bloqués par l'absence de cartographie
+      fiable deviennent réalisables. Ce sont les <strong>vrais</strong>
+      gains à moyen terme.
+    </p>
+
+    <h3>9.1 Migration cloud et hybridation</h3>
+    <p>
+      Toute migration cloud sérieuse échoue ou s'enlise sur la même
+      question : <em>qu'est-ce qui dépend de quoi ?</em> La cartographie
+      AppControl répond à cette question avec précision.
+    </p>
+    <ul>
+      <li>Priorisation factuelle des candidats à la migration</li>
+      <li>Identification des couplages cachés bloquants</li>
+      <li>Migration par lots cohérents, sans casser les dépendances</li>
+      <li>Rollback testable (la map du legacy reste opérante)</li>
+    </ul>
+
+    <h3>9.2 Modernisation du legacy</h3>
+    <p>
+      Le legacy n'est pas modernisé parce qu'il fait peur — peur de
+      casser ce qu'on ne comprend plus. La cartographie le rend
+      <strong>compréhensible et opérable</strong> avant toute refonte.
+    </p>
+    <ul>
+      <li>Inventaire exhaustif des dépendances cachées</li>
+      <li>Identification des composants « strangulables » (strangler pattern)</li>
+      <li>Tests de bascule sécurisés (dry-run + advisory mode)</li>
+      <li>Décommissionnement contrôlé sans angle mort</li>
+    </ul>
+
+    <h3>9.3 Intelligence artificielle opérationnelle native</h3>
+    <p>
+      La map est le <strong>substrat structuré</strong> sur lequel l'IA
+      opérationnelle prend tout son sens : RAG sur la documentation
+      contextualisée, analyse causale assistée, suggestions de checks
+      apprises, chatbot ops véritablement utile.
+    </p>
+    <ul>
+      <li>Diagnostic IA fondé sur l'historique réel, pas sur des suppositions</li>
+      <li>Suggestions de remediation issues des patterns capitalisés</li>
+      <li>Documentation auto-régénérée à chaque modification de map</li>
+      <li>Anticipation des incidents par corrélation historique</li>
+    </ul>
+
+    <h3>9.4 Souveraineté et conformité géographique</h3>
+    <p>
+      Multi-DC, multi-pays, multi-cloud : la map permet de garantir
+      qu'aucune donnée ne sort d'une géographie réglementée, qu'aucun
+      composant ne dépend d'un service hors juridiction. Ce qui était
+      déclaratif devient <strong>vérifié en continu</strong>.
+    </p>
+
+    <h3>9.5 Décarbonation IT (Green IT)</h3>
+    <p>
+      La cartographie expose les composants sous-utilisés, les
+      duplications inutiles, les redondances héritées. Elle alimente
+      une démarche FinOps + GreenOps factuelle.
+    </p>
+    <ul>
+      <li>Identification des composants inactifs (Phase 2 audit)</li>
+      <li>Mesure de la consommation par application</li>
+      <li>Décommissionnement chiffré en kWh évités et CO₂ évité</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================
+       SECTION 10 — Vision 5 ans
+       ============================================================ -->
+  <section id="s10">
+    <div class="eyebrow">10 — Vision</div>
+    <h2>Vision à cinq ans — l'entreprise apprenante</h2>
+    <p>
+      Au bout de cinq ans d'adoption pleine, l'entreprise n'a plus la
+      même IT. Pas seulement une IT mieux outillée — une IT
+      <strong>structurellement différente</strong>.
+    </p>
+
+    <div class="horizon">
+      <div class="hcol">
+        <div class="hyear">An 1</div>
+        <div class="htitle">Fondations</div>
+        <ul>
+          <li>Pilote sur application critique</li>
+          <li>Premier drill rebuild prouvé</li>
+          <li>Méthodologie validée en interne</li>
+          <li>Conformité DORA / NIS2 atteinte</li>
+        </ul>
+      </div>
+      <div class="hcol">
+        <div class="hyear">An 2</div>
+        <div class="htitle">Expansion</div>
+        <ul>
+          <li>30 applications critiques embarquées</li>
+          <li>Gains opérationnels visibles</li>
+          <li>Réorganisation équipes ops (SRE)</li>
+          <li>Premier outil legacy décommissionné</li>
+        </ul>
+      </div>
+      <div class="hcol">
+        <div class="hyear">An 3</div>
+        <div class="htitle">Industrialisation</div>
+        <ul>
+          <li>Couverture du parc tier-1 et tier-2</li>
+          <li>Modèle plateforme + produits opérationnel</li>
+          <li>ROI consolidé positif</li>
+          <li>Migration cloud accélérée mesurable</li>
+        </ul>
+      </div>
+      <div class="hcol">
+        <div class="hyear">An 5</div>
+        <div class="htitle">Transformation</div>
+        <ul>
+          <li>L'IT pilote des actifs, plus des coûts</li>
+          <li>IA opérationnelle native intégrée</li>
+          <li>Souveraineté géographique garantie</li>
+          <li>Avantage compétitif documenté</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Ce qui change pour le COMEX</h3>
+    <ul>
+      <li><strong>Visibilité</strong> : le SI cesse d'être une boîte noire — son état, ses risques, sa performance sont consultables au tableau de bord</li>
+      <li><strong>Prévisibilité</strong> : les incidents majeurs deviennent statistiquement rares, et leur résolution prévisible en durée</li>
+      <li><strong>Agilité</strong> : les arbitrages (lancer un projet, acquérir une société, fermer une activité) sont étayés par une donnée IT fiable et instantanée</li>
+      <li><strong>Crédibilité</strong> : auprès des régulateurs, des assureurs, des investisseurs, des clients exigeants</li>
+    </ul>
+
+    <div class="pull indigo">
+      Le SI cesse d'être un centre de coût qui freine la stratégie.
+      Il devient un <strong>actif piloté</strong> qui la rend possible —
+      au même titre que les usines, la marque, ou le capital humain.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 11 — Indicateurs board-level
+       ============================================================ -->
+  <section id="s11">
+    <div class="eyebrow">11 — Pilotage</div>
+    <h2>Indicateurs de succès stratégique</h2>
+    <p>
+      Suivre la transformation au niveau direction nécessite des
+      indicateurs simples, mesurables, comparables d'une année à
+      l'autre.
+    </p>
+
+    <h3>Tableau de bord COMEX — exemple type</h3>
+    <div class="indic-grid">
+      <div class="indic">
+        <div class="ilabel">Couverture</div>
+        <div class="ivalue">85 %</div>
+        <div class="icontext">applications critiques cartographiées</div>
+      </div>
+      <div class="indic">
+        <div class="ilabel">MTTR moyen</div>
+        <div class="ivalue">42 min</div>
+        <div class="icontext">-38 % vs N-1</div>
+      </div>
+      <div class="indic">
+        <div class="ilabel">Drills DORA</div>
+        <div class="ivalue">100 %</div>
+        <div class="icontext">apps tier-1 conformes annuellement</div>
+      </div>
+      <div class="indic">
+        <div class="ilabel">Incidents majeurs</div>
+        <div class="ivalue">-45 %</div>
+        <div class="icontext">vs année de référence</div>
+      </div>
+      <div class="indic">
+        <div class="ilabel">Capacité ops</div>
+        <div class="ivalue">+34 %</div>
+        <div class="icontext">à effectif constant</div>
+      </div>
+      <div class="indic">
+        <div class="ilabel">Coût d'audit</div>
+        <div class="ivalue">-75 %</div>
+        <div class="icontext">vs cycle précédent</div>
+      </div>
+    </div>
+
+    <h3>Indicateurs à suivre à l'échelle direction</h3>
+    <table>
+      <thead><tr><th>Indicateur</th><th>Famille</th><th>Cadence</th></tr></thead>
+      <tbody>
+        <tr><td>Couverture du parc applicatif</td><td>Maturité</td><td>Trimestrielle</td></tr>
+        <tr><td>MTTR moyen / médian / P95</td><td>Opérationnel</td><td>Mensuelle</td></tr>
+        <tr><td>RTR mesuré par application critique</td><td>Résilience</td><td>Annuelle (drill)</td></tr>
+        <tr><td>Nombre d'incidents majeurs (P1)</td><td>Risque</td><td>Mensuelle</td></tr>
+        <tr><td>Productivité ops (capacité / effectif)</td><td>Financier</td><td>Trimestrielle</td></tr>
+        <tr><td>Coût d'audit par cycle</td><td>Financier</td><td>Annuelle</td></tr>
+        <tr><td>Turnover équipes ops</td><td>RH</td><td>Annuelle</td></tr>
+        <tr><td>Conformité réglementaire (binaire)</td><td>Gouvernance</td><td>Continue</td></tr>
+        <tr><td>Nombre d'applications migrées cloud</td><td>Transformation</td><td>Trimestrielle</td></tr>
+        <tr><td>Outils décommissionnés</td><td>Rationalisation</td><td>Annuelle</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============================================================
+       SECTION 12 — Coût de l'inaction
+       ============================================================ -->
+  <section id="s12">
+    <div class="eyebrow">12 — Risque</div>
+    <h2>Le coût de l'inaction</h2>
+    <p>
+      Le coût d'une transformation est explicite et budgétable. Celui
+      de l'inaction est diffus et systémique — donc <strong>plus
+      grand</strong>.
+    </p>
+
+    <div class="grid-2">
+      <div class="card danger">
+        <h4>Risque réglementaire</h4>
+        <ul>
+          <li>DORA déjà en vigueur : audits ACPR potentiellement déclenchables à tout moment</li>
+          <li>NIS2 transposé, à appliquer pour les OIV élargis</li>
+          <li>IA Act, CSRD, nouvelles régulations à venir</li>
+          <li>Sanctions cumulatives sur incidents non conformément traités</li>
+        </ul>
+      </div>
+      <div class="card danger">
+        <h4>Risque cyber</h4>
+        <ul>
+          <li>Ransomware : 1 entreprise sur 2 ciblée dans les 3 prochaines années</li>
+          <li>Sans capacité de rebuild prouvable : reprise en semaines, pas en heures</li>
+          <li>Coût moyen d'un incident cyber majeur : plusieurs M€</li>
+          <li>Risque existentiel pour les PME et ETI</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <h4>Risque concurrentiel</h4>
+        <ul>
+          <li>Concurrents qui industrialisent prendront l'avantage time-to-market</li>
+          <li>Appels d'offres exigeant des garanties documentées de continuité</li>
+          <li>Clients B2B exigeants vérifient désormais la maturité ops</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <h4>Risque humain</h4>
+        <ul>
+          <li>Départ d'un sachant clé : crise opérationnelle imprévisible</li>
+          <li>Turnover ops élevé sur métiers non requalifiés</li>
+          <li>Difficulté à recruter sur l'IT artisanal vs. l'IT industrialisé</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Inaction chiffrée</h3>
+    <p>
+      Une organisation qui choisit le statu quo s'expose à plusieurs
+      coûts récurrents :
+    </p>
+    <ul>
+      <li>Maintien des coûts d'exploitation linéaires avec la croissance du parc</li>
+      <li>Audits récurrents au coût élevé sans amélioration de la situation</li>
+      <li>Probabilité non négligeable d'un incident majeur dont le coût absorbe plusieurs années de gain potentiel</li>
+      <li>Sanction réglementaire toujours possible — chaque audit est une roulette russe</li>
+      <li>Coût de l'inertie organisationnelle : une équipe qui ne se restructure pas finit par perdre ses meilleurs talents</li>
+    </ul>
+
+    <div class="pull warn">
+      <strong>Ne rien faire n'est pas neutre.</strong> C'est laisser les
+      coûts dériver, le risque s'accumuler, et la fenêtre d'opportunité
+      se refermer pendant que d'autres prennent l'avantage.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 13 — Synthèse
+       ============================================================ -->
+  <section id="s13">
+    <div class="eyebrow">13 — Conclusion</div>
+    <h2>Le saut quantique</h2>
+
+    <p>
+      L'adoption pleine d'AppControl n'est pas un projet outillage.
+      C'est un <strong>projet de transformation</strong> qui modifie
+      la façon dont l'entreprise conçoit, opère et valorise son SI.
+    </p>
+
+    <p>
+      <strong>Cinq mutations</strong> rendent l'IT industriellement
+      maîtrisable. <strong>Des gains financiers tangibles</strong>
+      financent le programme dès l'année 2. <strong>Une
+      restructuration progressive</strong> aligne l'organisation sur
+      la valeur. <strong>Des accélérateurs stratégiques</strong>
+      (cloud, modernisation, M&amp;A, IA, souveraineté) deviennent
+      enfin actionnables. <strong>Une entreprise apprenante</strong>
+      émerge à cinq ans.
+    </p>
+
+    <div class="pull">
+      L'IT cesse d'être un centre de coût subi pour devenir un
+      <strong>levier compétitif piloté</strong>. La maîtrise
+      opérationnelle, longtemps perçue comme une contrainte
+      réglementaire, devient le socle d'une capacité d'exécution
+      distinctive.
+    </div>
+
+    <p>
+      Le coût d'entrée est connu et budgétable. Le coût de l'inaction
+      est diffus mais structurellement plus grand. La fenêtre de
+      différenciation se referme à mesure que les concurrents et les
+      régulateurs imposent ce qui est, aujourd'hui, encore un choix
+      stratégique.
+    </p>
+
+    <div class="pull indigo">
+      <strong>La question pour la direction n'est plus « faut-il ? »
+      mais « jusqu'où ? » — et « à quelle vitesse ? ».</strong>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       ANNEXES
+       ============================================================ -->
+  <div class="annex-divider" id="annex">
+    <div class="eyebrow">Annexes</div>
+    <h2>Modèles &amp; références</h2>
+  </div>
+
+  <section id="a1">
+    <div class="eyebrow">A1</div>
+    <h2>Modèle de calcul ROI — hypothèses détaillées</h2>
+    <p>
+      Le ROI sur 3 ans donné en section 7.4 repose sur un jeu
+      d'hypothèses moyennes pour une entreprise type (parc applicatif
+      de 200 à 500 applications, dont 30 à 50 critiques, équipe ops
+      de 50 à 150 ETP).
+    </p>
+
+    <h3>Hypothèses de coût (investissement)</h3>
+    <ul>
+      <li>Licences plateforme AppControl + Invivoo conseil méthodologie</li>
+      <li>Effort interne d'embarquement (typiquement 0.5 ETP par application critique sur 6 à 12 semaines)</li>
+      <li>Outillage IA (LLM vision, RAG) — coût en infrastructure et abonnement</li>
+      <li>Formation équipes (5 jours par profil, sur 18 mois)</li>
+    </ul>
+
+    <h3>Hypothèses de gain (par catégorie)</h3>
+    <table>
+      <thead><tr><th>Catégorie</th><th>Hypothèse moyenne</th><th>Justification</th></tr></thead>
+      <tbody>
+        <tr><td>Incidents évités</td><td>2 incidents majeurs/an évités après an 1</td><td>Détection précoce via checks raffinés</td></tr>
+        <tr><td>Coût d'audit</td><td>Économie de 60 % par cycle</td><td>Preuves auto-générées</td></tr>
+        <tr><td>Productivité ops</td><td>+30 % à effectif constant</td><td>Tâches répétitives automatisées</td></tr>
+        <tr><td>Rationalisation outillage</td><td>10 % du budget OPEX outillage</td><td>Décommissionnement progressif</td></tr>
+        <tr><td>Accélération projets</td><td>-25 % de durée projets de transformation</td><td>Cartographie facilite le scoping</td></tr>
+      </tbody>
+    </table>
+
+    <p style="font-size:13px;color:var(--muted);">
+      Ces hypothèses sont à recalibrer en contexte. Un atelier de quantification
+      en début de cadrage permet de produire le business case précis pour
+      l'entreprise concernée.
+    </p>
+  </section>
+
+  <section id="a2">
+    <div class="eyebrow">A2</div>
+    <h2>Cas d'usage stratégiques par secteur</h2>
+
+    <h3>Secteur bancaire et financier</h3>
+    <ul>
+      <li>Conformité DORA et stress-tests bancaires</li>
+      <li>Bascule DR multi-sites mesurée et auditée</li>
+      <li>Continuité des paiements en temps réel</li>
+      <li>Reporting régulateur BCE/ACPR consolidé</li>
+    </ul>
+
+    <h3>Assurance</h3>
+    <ul>
+      <li>Conformité DORA + Solvabilité II — preuve de résilience opérationnelle</li>
+      <li>Continuité des sinistres et règlements en cas d'événement majeur</li>
+      <li>Intégration post-M&amp;A accélérée (assurances en consolidation)</li>
+    </ul>
+
+    <h3>Industrie</h3>
+    <ul>
+      <li>Continuité de production (MES, SCADA, ERP industriel)</li>
+      <li>NIS2 pour les OIV (énergie, transport, eau)</li>
+      <li>Migration cloud des fonctions support</li>
+      <li>Décarbonation IT chiffrée (FinOps + GreenOps)</li>
+    </ul>
+
+    <h3>Télécom &amp; Médias</h3>
+    <ul>
+      <li>Continuité des services aux abonnés</li>
+      <li>NIS2 — opérateur de service essentiel</li>
+      <li>Modernisation legacy massif (OSS/BSS)</li>
+      <li>Lancement rapide de nouveaux services digitaux</li>
+    </ul>
+
+    <h3>Santé</h3>
+    <ul>
+      <li>Continuité des SIH (Systèmes d'Information Hospitaliers)</li>
+      <li>Conformité HDS et certification HDS</li>
+      <li>Réduction des incidents critiques sur les plateaux techniques</li>
+      <li>Préparation aux cyber-attaques (secteur particulièrement ciblé)</li>
+    </ul>
+
+    <h3>Distribution &amp; e-commerce</h3>
+    <ul>
+      <li>Continuité des plateformes de vente (pics saisonniers)</li>
+      <li>Intégration omnicanale fluide</li>
+      <li>Réduction du time-to-market sur nouvelles features</li>
+    </ul>
+
+    <h3>Secteur public et opérateurs d'État</h3>
+    <ul>
+      <li>NIS2 et obligations de continuité</li>
+      <li>Souveraineté géographique des données</li>
+      <li>Modernisation des SI hérités</li>
+      <li>Optimisation budgétaire sous contrainte</li>
+    </ul>
+  </section>
+
+  <section id="a3">
+    <div class="eyebrow">A3</div>
+    <h2>Trajectoire type de transformation — feuille de route 36 mois</h2>
+
+    <h3>Trimestres 1-2 — Cadrage et pilote</h3>
+    <ul>
+      <li>Sponsorship COMEX confirmé</li>
+      <li>Sélection d'une application pilote (idéalement critique avec un événement DR récent)</li>
+      <li>Mise en place du socle plateforme AppControl</li>
+      <li>Premier exercice de captation multi-sources</li>
+      <li>Livrable : map v1 + premier audit report</li>
+    </ul>
+
+    <h3>Trimestres 3-4 — Validation et premier drill</h3>
+    <ul>
+      <li>Activation graduelle (advisory → diagnostic → opérations)</li>
+      <li>Premier drill rebuild sur non-prod, chronométré</li>
+      <li>Premier registre DORA constitué</li>
+      <li>Mesure des gains opérationnels sur le pilote</li>
+    </ul>
+
+    <h3>Trimestres 5-8 — Expansion aux applications critiques</h3>
+    <ul>
+      <li>Embarquement progressif des 20 à 30 applications tier-1</li>
+      <li>Constitution de la bibliothèque de patterns transverses</li>
+      <li>Premières restructurations ops (équipe plateforme dédiée)</li>
+      <li>Mesure du ROI consolidé</li>
+    </ul>
+
+    <h3>Trimestres 9-12 — Industrialisation</h3>
+    <ul>
+      <li>Couverture totale du tier-1 et début du tier-2</li>
+      <li>Décommissionnement des outils en doublon</li>
+      <li>Intégration avec les chaînes de change et d'incident</li>
+      <li>Premier ROI cumulé positif visible au COMEX</li>
+    </ul>
+
+    <h3>Année 2 et au-delà — Transformation continue</h3>
+    <ul>
+      <li>Modèle plateforme + produits opérationnel à grande échelle</li>
+      <li>Accélérateurs stratégiques activés (cloud, modernisation, IA)</li>
+      <li>Tableau de bord COMEX en vie</li>
+      <li>Amélioration continue par cycles d'apprentissage incidents</li>
+    </ul>
+  </section>
+
+  <section id="a4">
+    <div class="eyebrow">A4</div>
+    <h2>Conditions de succès</h2>
+    <p>
+      Aucune transformation de cette ampleur ne réussit sans réunir
+      quelques conditions critiques :
+    </p>
+
+    <div class="grid-2">
+      <div class="card ok">
+        <h4>Conditions favorables</h4>
+        <ul>
+          <li>Sponsorship COMEX explicite et durable</li>
+          <li>Application pilote bien choisie (critique mais maîtrisable)</li>
+          <li>Équipes ops impliquées dès le cadrage</li>
+          <li>Budget pluriannuel sécurisé (3 ans minimum)</li>
+          <li>Capacité à restructurer si les gains le justifient</li>
+        </ul>
+      </div>
+      <div class="card danger">
+        <h4>Pièges classiques</h4>
+        <ul>
+          <li>Réduire à un projet outillage de la DSI</li>
+          <li>Choisir un pilote trop petit (peu de valeur démontrable)</li>
+          <li>Vouloir aller trop vite sur les opérations directes</li>
+          <li>Sous-investir dans la conduite du changement</li>
+          <li>Ne pas mesurer les gains au fil de l'eau</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Facteurs clés</h3>
+    <ol class="steps">
+      <li>Un sponsor COMEX qui défend le programme dans la durée</li>
+      <li>Une méthodologie de captation rigoureuse (voir document méthodologie)</li>
+      <li>Une équipe plateforme dédiée à temps plein dès l'an 1</li>
+      <li>Un dispositif de mesure des gains transparent et partagé</li>
+      <li>Une volonté assumée de restructurer l'organisation au fil des paliers</li>
+    </ol>
+  </section>
+
+  <section id="a5">
+    <div class="eyebrow">A5</div>
+    <h2>Repères pour les top dirigeants — l'angle de chaque fonction</h2>
+    <p>
+      Cette annexe est conçue comme un <strong>aide-mémoire utilisable
+      en réunion</strong>. Pour chaque fonction dirigeante : ce qui
+      l'occupe, ce qu'AppControl lui apporte, la phrase à retenir et
+      le KPI à suivre.
+    </p>
+
+    <h3>A5.1 Une carte par fonction</h3>
+
+    <div class="grid-2">
+
+      <div class="card">
+        <h4>CEO — Direction générale</h4>
+        <p style="margin:0 0 8px;"><em>Ce qui vous occupe :</em> compétitivité, réputation, risque existentiel, confiance investisseurs.</p>
+        <p style="margin:0 0 4px;"><strong>Ce qu'AppControl vous apporte</strong></p>
+        <ul style="margin:0 0 8px;">
+          <li>Un avantage compétitif documenté face aux concurrents non outillés</li>
+          <li>L'évitement d'un incident cyber existentiel</li>
+          <li>La conformité réglementaire sans nouveau projet à lancer</li>
+        </ul>
+        <p style="margin:0 0 4px;"><strong>La phrase à retenir</strong></p>
+        <div class="pull" style="margin:6px 0; font-size:14px; padding: 10px 14px;">
+          « Notre maîtrise opérationnelle devient un actif pilotable, plus un risque caché. »
+        </div>
+        <p style="margin:0; font-size:13px;"><strong>Votre KPI :</strong> nombre d'incidents majeurs (P1) par an.</p>
+      </div>
+
+      <div class="card indigo">
+        <h4>CFO — Direction financière</h4>
+        <p style="margin:0 0 8px;"><em>Ce qui vous occupe :</em> OPEX, CAPEX, ROI, prévisibilité financière, valorisation.</p>
+        <p style="margin:0 0 4px;"><strong>Ce qu'AppControl vous apporte</strong></p>
+        <ul style="margin:0 0 8px;">
+          <li>ROI cumulé positif visible dès l'année 2, x2 à 3 ans</li>
+          <li>+30 % de capacité opérationnelle à effectif constant</li>
+          <li>5 à 15 % du budget outillage récupéré par rationalisation</li>
+        </ul>
+        <p style="margin:0 0 4px;"><strong>La phrase à retenir</strong></p>
+        <div class="pull indigo" style="margin:6px 0; font-size:14px; padding: 10px 14px;">
+          « Le seul investissement IT dont le ROI est mesurable dès l'année 2 et où l'inaction coûte plus cher que l'action. »
+        </div>
+        <p style="margin:0; font-size:13px;"><strong>Votre KPI :</strong> coût d'exploitation par application managée.</p>
+      </div>
+
+      <div class="card">
+        <h4>COO — Direction des opérations</h4>
+        <p style="margin:0 0 8px;"><em>Ce qui vous occupe :</em> continuité, MTTR, qualité d'exécution, robustesse.</p>
+        <p style="margin:0 0 4px;"><strong>Ce qu'AppControl vous apporte</strong></p>
+        <ul style="margin:0 0 8px;">
+          <li>MTTR divisé par deux sur les applications embarquées</li>
+          <li>Drills DR scriptés et RTR mesuré, comparable d'une année sur l'autre</li>
+          <li>Capacité d'absorber la croissance applicative sans linéariser les coûts</li>
+        </ul>
+        <p style="margin:0 0 4px;"><strong>La phrase à retenir</strong></p>
+        <div class="pull" style="margin:6px 0; font-size:14px; padding: 10px 14px;">
+          « Pour la première fois, nous savons combien de temps prendrait notre reprise — et nous pouvons l'améliorer. »
+        </div>
+        <p style="margin:0; font-size:13px;"><strong>Votre KPI :</strong> MTTR moyen mensuel et RTR par application critique.</p>
+      </div>
+
+      <div class="card indigo">
+        <h4>CIO / CTO — Direction des systèmes d'information</h4>
+        <p style="margin:0 0 8px;"><em>Ce qui vous occupe :</em> dette technique, transformation, sourcing, complexité du SI.</p>
+        <p style="margin:0 0 4px;"><strong>Ce qu'AppControl vous apporte</strong></p>
+        <ul style="margin:0 0 8px;">
+          <li>Une plateforme transverse rationalisant l'outillage en doublon</li>
+          <li>Une migration cloud accélérée (-25 % de durée) et de-riskée</li>
+          <li>Une modernisation legacy enfin outillée et chiffrable</li>
+        </ul>
+        <p style="margin:0 0 4px;"><strong>La phrase à retenir</strong></p>
+        <div class="pull indigo" style="margin:6px 0; font-size:14px; padding: 10px 14px;">
+          « AppControl est l'infrastructure qui rend toutes nos transformations IT exécutables. »
+        </div>
+        <p style="margin:0; font-size:13px;"><strong>Votre KPI :</strong> % du parc applicatif cartographié et opérable.</p>
+      </div>
+
+      <div class="card warn">
+        <h4>Chief Risk Officer / Chief Compliance Officer</h4>
+        <p style="margin:0 0 8px;"><em>Ce qui vous occupe :</em> conformité, sanctions, audits, exposition réglementaire.</p>
+        <p style="margin:0 0 4px;"><strong>Ce qu'AppControl vous apporte</strong></p>
+        <ul style="margin:0 0 8px;">
+          <li>Conformité DORA / NIS2 native — audit en self-service</li>
+          <li>Preuves d'exécution générées en continu (audit log append-only)</li>
+          <li>Préparation d'audit divisée par 5 à 10</li>
+        </ul>
+        <p style="margin:0 0 4px;"><strong>La phrase à retenir</strong></p>
+        <div class="pull warn" style="margin:6px 0; font-size:14px; padding: 10px 14px;">
+          « L'auditeur peut consulter nos preuves en direct, plutôt que nous demander de les reconstituer. »
+        </div>
+        <p style="margin:0; font-size:13px;"><strong>Votre KPI :</strong> temps de préparation par audit majeur.</p>
+      </div>
+
+      <div class="card warn">
+        <h4>CISO — Sécurité des systèmes d'information</h4>
+        <p style="margin:0 0 8px;"><em>Ce qui vous occupe :</em> cyber, rebuild post-attaque, traçabilité, posture sécuritaire.</p>
+        <p style="margin:0 0 4px;"><strong>Ce qu'AppControl vous apporte</strong></p>
+        <ul style="margin:0 0 8px;">
+          <li>Capacité de rebuild prouvable après ransomware ou destruction</li>
+          <li>Audit log append-only conforme aux exigences forensic</li>
+          <li>Drills cyber répétables, chronométrés, comparables</li>
+        </ul>
+        <p style="margin:0 0 4px;"><strong>La phrase à retenir</strong></p>
+        <div class="pull warn" style="margin:6px 0; font-size:14px; padding: 10px 14px;">
+          « Si nous tombons demain, nous savons exactement comment nous relever — et combien de temps cela prendra. »
+        </div>
+        <p style="margin:0; font-size:13px;"><strong>Votre KPI :</strong> RTR mesuré et délai de détection des écarts.</p>
+      </div>
+
+      <div class="card">
+        <h4>CDO / Chief Transformation Officer</h4>
+        <p style="margin:0 0 8px;"><em>Ce qui vous occupe :</em> cloud, IA, intégration M&amp;A, time-to-market.</p>
+        <p style="margin:0 0 4px;"><strong>Ce qu'AppControl vous apporte</strong></p>
+        <ul style="margin:0 0 8px;">
+          <li>Migration cloud accélérée par la cartographie vivante</li>
+          <li>IA opérationnelle native (RAG, analyse causale, suggestions)</li>
+          <li>Intégration post-M&amp;A en 6-9 mois au lieu de 18-24</li>
+        </ul>
+        <p style="margin:0 0 4px;"><strong>La phrase à retenir</strong></p>
+        <div class="pull" style="margin:6px 0; font-size:14px; padding: 10px 14px;">
+          « Toutes nos transformations IT s'appuient désormais sur une carte vivante de la réalité. »
+        </div>
+        <p style="margin:0; font-size:13px;"><strong>Votre KPI :</strong> durée moyenne des projets de transformation.</p>
+      </div>
+
+      <div class="card indigo">
+        <h4>CHRO — Direction des ressources humaines</h4>
+        <p style="margin:0 0 8px;"><em>Ce qui vous occupe :</em> talents, turnover, attractivité IT, structure des équipes.</p>
+        <p style="margin:0 0 4px;"><strong>Ce qu'AppControl vous apporte</strong></p>
+        <ul style="margin:0 0 8px;">
+          <li>Requalification des ops (SRE) — fidélisation accrue</li>
+          <li>Onboarding nouvel opérateur ramené à 4-8 semaines</li>
+          <li>Restructuration plateforme + produits enfin praticable</li>
+        </ul>
+        <p style="margin:0 0 4px;"><strong>La phrase à retenir</strong></p>
+        <div class="pull indigo" style="margin:6px 0; font-size:14px; padding: 10px 14px;">
+          « Nos meilleurs talents IT cessent de partir parce qu'on les utilise enfin sur leur vraie valeur. »
+        </div>
+        <p style="margin:0; font-size:13px;"><strong>Votre KPI :</strong> turnover des équipes d'exploitation.</p>
+      </div>
+
+    </div>
+
+    <h3>A5.2 L'elevator pitch — 30 secondes en COMEX</h3>
+    <div class="card">
+      <p style="margin:0;">
+        <em>« Aujourd'hui notre maîtrise opérationnelle est artisanale, dispersée
+        dans des têtes et des scripts. AppControl l'industrialise : il capte la
+        connaissance des référentiels et des agents en production, la consolide
+        en une carte vivante, et la rend opérable — démarrage, rebuild,
+        bascule DR, audit. En trois ans, nous passons d'une IT subie à un
+        actif piloté, avec un ROI mesuré dès l'année deux et une conformité
+        réglementaire native. La question n'est plus « faut-il » mais « jusqu'où ».</em>»
+      </p>
+    </div>
+
+    <h3>A5.3 Les cinq questions à poser à son CIO/CTO</h3>
+    <ol class="steps">
+      <li>« Combien de nos applications critiques ont aujourd'hui une cartographie à jour ? »</li>
+      <li>« Combien de temps nous faudrait-il pour reconstruire complètement notre application la plus critique après destruction ? Avez-vous mesuré ce temps, ou est-ce une estimation ? »</li>
+      <li>« Si notre principal sachant sur cette application partait demain, quel serait l'impact opérationnel sur six mois ? »</li>
+      <li>« Combien dépensons-nous chaque année en préparation d'audits (DORA, ISO, SOC) et combien de personnes mobilisées ? »</li>
+      <li>« Quels chantiers stratégiques (cloud, M&amp;A, modernisation legacy) sont aujourd'hui ralentis ou bloqués par l'absence de cartographie fiable ? »</li>
+    </ol>
+
+    <h3>A5.4 Les signaux qu'il est trop tard pour attendre</h3>
+    <div class="grid-2">
+      <div class="card danger">
+        <h4>Drapeaux rouges</h4>
+        <ul>
+          <li>Un incident récent dont la résolution a dépassé 4h faute de comprendre les dépendances</li>
+          <li>Un audit DORA ou NIS2 qui s'annonce dans moins de 12 mois sans preuves consolidées</li>
+          <li>Le départ programmé d'un sachant clé sans plan de transmission</li>
+          <li>Un projet de migration cloud bloqué depuis &gt; 6 mois sur la cartographie des dépendances</li>
+          <li>Une intégration post-M&amp;A en retard de &gt; 6 mois sur le planning</li>
+          <li>Un budget audit qui dépasse le coût annuel d'une plateforme transverse</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <h4>Pourquoi ne plus attendre</h4>
+        <ul>
+          <li>Les sanctions DORA sont applicables depuis janvier 2025</li>
+          <li>Les concurrents qui ont commencé prennent 18 à 24 mois d'avance</li>
+          <li>Le coût d'un incident cyber majeur dépasse plusieurs fois l'investissement</li>
+          <li>La fenêtre où la maîtrise opérationnelle est un différenciateur se referme progressivement</li>
+          <li>Plus on attend, plus la dette s'accumule — et plus la transformation devient coûteuse</li>
+          <li>Les talents IT préfèrent rejoindre les entreprises qui industrialisent</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>A5.5 Le triptyque à mémoriser</h3>
+    <div class="pull indigo">
+      <strong>Investir aujourd'hui</strong> dans une plateforme transverse de
+      maîtrise opérationnelle, c'est <strong>économiser demain</strong> sur
+      les incidents, les audits et l'exploitation — et <strong>débloquer
+      après-demain</strong> tous les chantiers stratégiques (cloud,
+      modernisation, M&amp;A, IA) qui sont aujourd'hui empêchés par
+      l'absence de connaissance applicative fiable.
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-brand">
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
+      <span class="copyright">© 2026 Invivoo — Tous droits réservés.</span>
+    </div>
+    <div class="foot-meta">
+      <span class="pill">v0.9</span>
+      <span class="pill draft">Draft · Ne pas diffuser</span>
+    </div>
+  </footer>
+
+</div>
+</td></tr>
+</tbody>
+<tfoot>
+  <tr><td>
+    <div class="prf">
+      <span class="prf-left">
+        <img src="invivoo-logo.svg" alt="Invivoo" class="prf-logo" />
+        <span class="prf-sep">·</span>
+        <span>© 2026 Invivoo — Tous droits réservés</span>
+      </span>
+      <span class="prf-right">
+        <span class="prf-draft">Draft · v0.9</span>
+        <span class="prf-sep">·</span>
+        <span>Ne pas diffuser</span>
+      </span>
+    </div>
+  </td></tr>
+</tfoot>
+</table>
+
+</body>
+</html>
