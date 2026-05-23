@@ -762,7 +762,8 @@
     <h2>En une page</h2>
     <p>
       Dans toute entreprise mature, la connaissance applicative est éclatée entre
-      CMDB, outils de déploiement (XL Release / XL Deploy), bases d'incidents,
+      CMDB (<em>Configuration Management Database</em>, inventaire des actifs IT),
+      outils de déploiement (XL Release / XL Deploy), bases d'incidents,
       référentiels de flux, schémas d'architecture, runbooks et sachants. Aucune
       source ne décrit comment l'application <strong>tourne réellement en
       production</strong>. AppControl résout ce problème en deux temps :
@@ -822,7 +823,7 @@
     <div class="grid-3">
       <div class="card">
         <h4>1. Capter</h4>
-        <p style="margin:0;">Récupérer la donnée là où elle existe déjà : CMDB, XLR, XLD, référentiel de flux, base d'incidents, schémas, supervision.</p>
+        <p style="margin:0;">Récupérer la donnée là où elle existe déjà : CMDB, XLR / XLD (XL Release / XL Deploy), référentiel de flux, base d'incidents, schémas, supervision.</p>
       </div>
       <div class="card">
         <h4>2. Réconcilier</h4>
@@ -1009,7 +1010,7 @@
           <div class="tl-cell cap">
             <span class="label">Capacités débloquées</span>
             <ul>
-              <li>Démarrage / arrêt séquencés respectant le DAG</li>
+              <li>Démarrage / arrêt séquencés respectant le DAG (<em>Directed Acyclic Graph</em>, graphe orienté de dépendances)</li>
               <li>Restart ciblé sur branche en erreur (pink branch)</li>
               <li>Intégration scheduler (Control-M, AutoSys, $U, TWS)</li>
             </ul>
@@ -1066,9 +1067,9 @@
           <div class="tl-cell data">
             <span class="label">Données captées</span>
             <ul>
-              <li>Cartographie ICT complète et à jour</li>
+              <li>Cartographie ICT (<em>Information &amp; Communication Technology</em>, TIC en français) complète et à jour</li>
               <li>Registre append-only de toutes les actions</li>
-              <li>RTO / RPO / RTR réels par application</li>
+              <li>RTO / RPO / RTR (Recovery Time Objective / Recovery Point Objective / Recovery Time for Rebuild — temps de reprise, fraîcheur des données et durée de reconstruction) réels par application</li>
             </ul>
           </div>
           <div class="tl-cell cap">
@@ -1154,7 +1155,7 @@
     <div class="pull">
       DORA n'exige pas seulement d'<strong>avoir</strong> un plan de reprise.
       Il exige de <strong>prouver</strong> qu'il fonctionne — testé, chronométré, tracé, auditable.
-      Un PRA documenté sur Confluence ne suffit pas.
+      Un PRA (Plan de Reprise d'Activité) documenté sur Confluence ne suffit pas.
     </div>
     <p style="font-size:14px;color:var(--muted);">Détail complet des 5 piliers et des articles clés : voir <a href="#annex" style="color:var(--accent);">annexe</a>.</p>
   </section>
@@ -1168,12 +1169,12 @@
     <table>
       <thead><tr><th style="width:46%">Risque perçu</th><th>Réponse intégrée</th></tr></thead>
       <tbody>
-        <tr><td>« Quelqu'un va arrêter de la prod par erreur »</td><td><strong>RBAC granulaire</strong> par application : <code>view &lt; operate &lt; edit &lt; manage &lt; owner</code></td></tr>
+        <tr><td>« Quelqu'un va arrêter de la prod par erreur »</td><td><strong>RBAC (Role-Based Access Control, droits par rôle) granulaire</strong> par application : <code>view &lt; operate &lt; edit &lt; manage &lt; owner</code></td></tr>
         <tr><td>« On n'aura pas confiance dans la map au début »</td><td><strong>Advisory mode</strong> : agents en observation seule</td></tr>
         <tr><td>« On ne saura pas qui a fait quoi »</td><td><strong>Audit log append-only</strong> conforme DORA</td></tr>
         <tr><td>« On veut simuler avant »</td><td><strong>Dry-run</strong> : plan calculé sans exécution</td></tr>
         <tr><td>« Trafic en clair entre composants »</td><td><strong>mTLS partout</strong></td></tr>
-        <tr><td>« Une action doit être validée »</td><td><strong>Mode PR-only</strong> : start/stop nécessitent une PR mergée</td></tr>
+        <tr><td>« Une action doit être validée »</td><td><strong>Mode PR-only</strong> (PR = <em>Pull Request</em>, modification revue et acceptée comme du code) : start/stop nécessitent une PR mergée</td></tr>
       </tbody>
     </table>
     <h3>Adoption graduelle — à la main des prods</h3>
@@ -1234,7 +1235,7 @@
     <h2>Ce que chaque audience y gagne</h2>
     <div class="grid-3">
       <div class="card">
-        <h4>Production / SRE</h4>
+        <h4>Production / SRE (Site Reliability Engineering)</h4>
         <ul>
           <li>Start / stop séquencés automatiquement</li>
           <li>Restart ciblé sur branche en erreur</li>
@@ -1256,7 +1257,7 @@
         <h4>Direction / Gouvernance</h4>
         <ul>
           <li>Conformité DORA — audit append-only</li>
-          <li>MTTR réduit (plus de cascade)</li>
+          <li>MTTR (<em>Mean Time To Recovery</em>, temps moyen de remise en service) réduit, plus de cascade d'incidents</li>
           <li>DR mesurable et prouvable</li>
           <li>Dette opérationnelle réduite</li>
           <li>Risque cyber et conformité maîtrisé</li>
@@ -1305,7 +1306,7 @@
       <tbody>
         <tr><td><strong>Gestion du risque ICT</strong></td><td>5–16</td><td>Gouvernance, identification, protection, détection, réponse, récupération</td></tr>
         <tr><td><strong>Reporting d'incidents</strong></td><td>17–23</td><td>Classification, déclaration des incidents majeurs aux autorités</td></tr>
-        <tr><td><strong>Tests de résilience</strong></td><td>24–27</td><td>Tests obligatoires des plans de continuité ; <strong>TLPT</strong> tous les 3 ans pour entités significatives</td></tr>
+        <tr><td><strong>Tests de résilience</strong></td><td>24–27</td><td>Tests obligatoires des plans de continuité ; <strong>TLPT</strong> (<em>Threat-Led Penetration Testing</em>, tests d'intrusion orientés menaces réelles) tous les 3 ans pour entités significatives</td></tr>
         <tr><td><strong>Risque tiers ICT</strong></td><td>28–44</td><td>Registre des contrats, supervision des prestataires critiques</td></tr>
         <tr><td><strong>Partage d'information</strong></td><td>45</td><td>Échange volontaire sur les menaces cyber</td></tr>
       </tbody>
@@ -1397,7 +1398,7 @@
         <tr><td>Scénarios cyber et corruption</td><td>25</td><td>DAG order + protection + bastion</td></tr>
         <tr><td>Registre des actions de récupération</td><td>16</td><td>Audit log append-only (4 tables)</td></tr>
         <tr><td>Mesure du RTO/RPO réel</td><td>11-12</td><td>RTR mesuré dans <code>action_log</code></td></tr>
-        <tr><td>Granularité suffisante</td><td>8</td><td>DAG + FSM par composant</td></tr>
+        <tr><td>Granularité suffisante</td><td>8</td><td>DAG + FSM (<em>Finite State Machine</em>, machine à états) par composant</td></tr>
         <tr><td>Protection composants critiques</td><td>12</td><td>Flag <code>rebuild_protected</code></td></tr>
         <tr><td>Suivi de complétion</td><td>12, 25</td><td>Polling + check + integrity_check</td></tr>
       </tbody>

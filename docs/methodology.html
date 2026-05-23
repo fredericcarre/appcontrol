@@ -792,7 +792,7 @@
       </div>
       <div class="card">
         <h4>2. Assistée par IA</h4>
-        <p style="margin:0;">L'IA accélère trois étapes critiques : validation des schémas dessinés (vision LLM), génération initiale de la map, et analyse causale des incidents.</p>
+        <p style="margin:0;">L'IA accélère trois étapes critiques : validation des schémas dessinés (vision LLM — <em>Large Language Model</em>, modèle d'IA générative), génération initiale de la map, et analyse causale des incidents.</p>
       </div>
       <div class="card">
         <h4>3. Apprenante</h4>
@@ -824,7 +824,7 @@
     <div class="fanout">
       <div class="sources">
         <div class="src"><strong>Connaissance active</strong><br/>Agents AppControl en mode discovery</div>
-        <div class="src"><strong>Référentiels</strong><br/>CMDB, XL Release / XL Deploy, flux, incidents</div>
+        <div class="src"><strong>Référentiels</strong><br/>CMDB (<em>Configuration Management Database</em>), XL Release / XL Deploy, flux, incidents</div>
         <div class="src"><strong>Schémas humains</strong><br/>Visio, PowerPoint, Confluence — validés par IA</div>
       </div>
       <div class="arrow">→</div>
@@ -841,7 +841,7 @@
     <ul>
       <li><strong>Périmètre applicatif</strong> — quelles applications, quels environnements (PROD / pré-PROD / DR), quelles zones réseau</li>
       <li><strong>Équipe</strong> — sponsor métier, application owner, architecte référent, opérateur de production, expert sécurité</li>
-      <li><strong>Sources de données identifiées</strong> — formulaire de cadrage listant chaque source (CMDB, XLR, XLD, etc.), son responsable, son mode d'accès (API, export CSV, lecture base, etc.)</li>
+      <li><strong>Sources de données identifiées</strong> — formulaire de cadrage listant chaque source (CMDB, XLR / XLD pour <em>XL Release / XL Deploy</em>, etc.), son responsable, son mode d'accès (API, export CSV, lecture base, etc.)</li>
       <li><strong>Livrables attendus</strong> — corpus brut, audit report, map JSON v1, runbook de mise en service</li>
       <li><strong>Calendrier</strong> — typiquement 4 à 8 semaines selon la taille et la qualité des sources</li>
     </ul>
@@ -914,7 +914,7 @@
         <tr><td><strong>XL Release</strong></td><td>Pipelines de déploiement, ordre des activités, environnements, dépendances applicatives entre projets</td><td>API XL Release</td></tr>
         <tr><td><strong>XL Deploy</strong></td><td>Manifestes applicatifs (deployable packages), mapping composant↔serveur, packages déployés par environnement</td><td>API XL Deploy</td></tr>
         <tr><td><strong>Référentiel de flux</strong></td><td>Liens réseau autorisés, ports, protocoles, sens du flux, sécurité associée</td><td>Export base + tickets</td></tr>
-        <tr><td><strong>Base d'incidents</strong></td><td>Incidents historiques, composants touchés, co-occurrences, cause racine documentée</td><td>API ITSM (ServiceNow, etc.)</td></tr>
+        <tr><td><strong>Base d'incidents</strong></td><td>Incidents historiques, composants touchés, co-occurrences, cause racine documentée</td><td>API ITSM (<em>IT Service Management</em> — ServiceNow, Jira SM, etc.)</td></tr>
         <tr><td><strong>Schedulers</strong></td><td>Jobs Control-M / AutoSys / $U / TWS, enchaînements, fenêtres d'exécution</td><td>Export scheduler</td></tr>
         <tr><td><strong>Supervision</strong></td><td>Composants surveillés, seuils, alertes émises</td><td>API Datadog / Dynatrace / Zabbix</td></tr>
       </tbody>
@@ -930,7 +930,7 @@
     </p>
 
     <ul>
-      <li><strong>Inventaire</strong> — recensement systématique : pages Confluence, dossiers SharePoint, slides de comités d'architecture, ADR (Architecture Decision Records)</li>
+      <li><strong>Inventaire</strong> — recensement systématique : pages Confluence, dossiers SharePoint, slides de comités d'architecture, ADR (<em>Architecture Decision Records</em>, fiches de décision d'architecture)</li>
       <li><strong>Tagging</strong> — chaque document est associé à l'application concernée, daté, et catégorisé (vue logique, vue physique, vue de déploiement, vue réseau)</li>
       <li><strong>Numérisation</strong> — conversion en formats analysables (PNG haute résolution pour les Visio, extraction du texte des slides)</li>
     </ul>
@@ -947,7 +947,7 @@
         <h4>Extraction</h4>
         <ul>
           <li>Identification des composants (boîtes, cylindres, icônes)</li>
-          <li>Lecture des libellés (OCR + interprétation)</li>
+          <li>Lecture des libellés (OCR — <em>Optical Character Recognition</em>, reconnaissance de texte ; + interprétation)</li>
           <li>Détection des liens (flèches, traits) et de leur direction</li>
           <li>Inférence des technologies (logos, codes couleur, conventions)</li>
         </ul>
@@ -1161,9 +1161,9 @@
     </p>
     <ul>
       <li>Le corpus brut + audit de la phase 2</li>
-      <li>Le <strong>schéma de données AppControl</strong> (composants, dépendances, FSM, commandes, agents, sites)</li>
+      <li>Le <strong>schéma de données AppControl</strong> (composants, dépendances, FSM — <em>Finite State Machine</em>, machine à états ; commandes, agents, sites)</li>
       <li>Une <strong>bibliothèque de patterns</strong> issus des maps déjà construites pour d'autres applications</li>
-      <li>Les <strong>runbooks et la documentation interne</strong> indexés (RAG) — pour suggérer les commandes <code>check_cmd</code>, <code>start_cmd</code>, <code>stop_cmd</code>, <code>rebuild_cmd</code></li>
+      <li>Les <strong>runbooks et la documentation interne</strong> indexés (RAG — <em>Retrieval-Augmented Generation</em>, IA qui s'appuie sur une base documentaire) — pour suggérer les commandes <code>check_cmd</code>, <code>start_cmd</code>, <code>stop_cmd</code>, <code>rebuild_cmd</code></li>
     </ul>
 
     <h4>Ce que produit l'IA</h4>
@@ -1172,7 +1172,7 @@
         <h4>Structure</h4>
         <ul>
           <li>Composants avec attributs (type, host, agent)</li>
-          <li>Dépendances typées et orientées (DAG)</li>
+          <li>Dépendances typées et orientées (DAG — <em>Directed Acyclic Graph</em>, graphe orienté acyclique)</li>
           <li>Niveaux de criticité par composant</li>
           <li>Regroupements logiques (sous-systèmes)</li>
         </ul>
@@ -1329,7 +1329,7 @@
       <div class="tl-step b">
         <div class="tl-badge">4</div>
         <h3>Niveau 4 — Opérations directes</h3>
-        <p style="margin:0;">Les rôles habilités peuvent déclencher des opérations directement depuis l'interface. RBAC, audit log et permissions granulaires garantissent la sécurité.</p>
+        <p style="margin:0;">Les rôles habilités peuvent déclencher des opérations directement depuis l'interface. RBAC (<em>Role-Based Access Control</em>, droits par rôle), audit log et permissions granulaires garantissent la sécurité.</p>
       </div>
       <div class="tl-step b">
         <div class="tl-badge">5</div>
@@ -1567,7 +1567,10 @@
 
     <h3>7.1 RACI par rôle</h3>
     <p>
-      Légende : <span class="raci"><span class="R">R</span></span> Réalise · <span class="raci"><span class="A">A</span></span> Approuve · <span class="raci"><span class="C">C</span></span> Consulté · <span class="raci"><span class="I">I</span></span> Informé
+      <strong>Légende RACI :</strong> <span class="raci"><span class="R">R</span></span> Réalise · <span class="raci"><span class="A">A</span></span> Approuve · <span class="raci"><span class="C">C</span></span> Consulté · <span class="raci"><span class="I">I</span></span> Informé.
+    </p>
+    <p style="font-size:14px;color:var(--muted);">
+      <strong>Rôles :</strong> <em>App Owner</em> = responsable applicatif · <em>Archi</em> = architecte référent · <em>Ops / SRE</em> = équipe de production / <em>Site Reliability Engineering</em> · <em>Sécurité</em> = RSSI et équipe sécurité · <em>Compliance</em> = conformité réglementaire.
     </p>
     <table class="raci">
       <thead>
@@ -1575,7 +1578,7 @@
           <th>Activité</th>
           <th>App Owner</th>
           <th>Archi</th>
-          <th>Ops/SRE</th>
+          <th>Ops / SRE</th>
           <th>Sécurité</th>
           <th>Compliance</th>
         </tr>
@@ -1912,7 +1915,7 @@
 
     <h3>A3.1 Vision LLM pour la validation des schémas</h3>
     <ul>
-      <li>Modèles candidats : GPT-4o, Claude Opus / Sonnet, Gemini Pro Vision (modèle on-premise possible selon contraintes RSSI)</li>
+      <li>Modèles candidats : GPT-4o, Claude Opus / Sonnet, Gemini Pro Vision (modèle on-premise possible selon contraintes RSSI — Responsable de la Sécurité des Systèmes d'Information)</li>
       <li>Prompt structurant : « Extrais les composants visibles, leurs libellés, les liens entre composants avec leur direction, et les technologies inférables. Réponds en JSON. »</li>
       <li>Validation : confidence par élément, post-traitement déterministe pour fusion</li>
     </ul>
