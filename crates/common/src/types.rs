@@ -272,6 +272,47 @@ pub enum NativeCommand {
         #[serde(default = "default_tcp_timeout_seconds")]
         timeout_seconds: u32,
     },
+    /// SNMPv2c GET probe. Polls a single OID from a remote device (switch,
+    /// router, UPS, storage array, mainframe, ...) and applies an
+    /// expectation to the returned value to drive the FSM. The raw value is
+    /// emitted as JSON on stdout so the metrics-extraction pipeline picks
+    /// it up.
+    ///
+    /// The community string is a low-grade credential transmitted in
+    /// cleartext over UDP; use it only on trusted management networks. v3
+    /// (authPriv) support is planned and will land as a parallel variant.
+    Snmp {
+        host: String,
+        #[serde(default = "default_snmp_port")]
+        port: u16,
+        /// SNMPv2c community string. Redacted in Debug and audit output.
+        community: String,
+        /// Dotted-decimal OID (e.g. `1.3.6.1.2.1.2.2.1.8.3` for ifOperStatus
+        /// on interface 3). Symbolic MIB names are not resolved.
+        oid: String,
+        #[serde(default)]
+        expect: SnmpExpect,
+        #[serde(default = "default_snmp_timeout_seconds")]
+        timeout_seconds: u32,
+    },
+}
+
+/// Expectation applied to the value returned by an SNMP GET. Drives the
+/// agent's exit_code: success = 0, mismatch = 1.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum SnmpExpect {
+    /// OID must resolve to any value (default). Failure means timeout,
+    /// `noSuchObject`, or `noSuchInstance`.
+    #[default]
+    Present,
+    /// Value, stringified, must equal `value`.
+    Equals { value: String },
+    /// Numeric value must fall in `[min, max]` inclusive. Non-numeric
+    /// returns count as a mismatch.
+    InRange { min: f64, max: f64 },
+    /// String value (UTF-8 coerced) must match this regex.
+    Regex { pattern: String },
 }
 
 impl NativeCommand {
@@ -327,6 +368,21 @@ impl NativeCommand {
                 port: *port,
                 timeout_seconds: *timeout_seconds,
             },
+            NativeCommand::Snmp {
+                host,
+                port,
+                community,
+                oid,
+                expect,
+                timeout_seconds,
+            } => NativeCommand::Snmp {
+                host: render(host),
+                port: *port,
+                community: community.clone(),
+                oid: oid.clone(),
+                expect: expect.clone(),
+                timeout_seconds: *timeout_seconds,
+            },
         }
     }
 
@@ -373,6 +429,21 @@ impl NativeCommand {
                     insecure: *insecure,
                 }
             }
+            NativeCommand::Snmp {
+                host,
+                port,
+                community: _,
+                oid,
+                expect,
+                timeout_seconds,
+            } => NativeCommand::Snmp {
+                host: host.clone(),
+                port: *port,
+                community: "***".to_string(),
+                oid: oid.clone(),
+                expect: expect.clone(),
+                timeout_seconds: *timeout_seconds,
+            },
             other => other.clone(),
         }
     }
@@ -417,6 +488,22 @@ impl std::fmt::Debug for NativeCommand {
                 .field("port", &port)
                 .field("timeout_seconds", &timeout_seconds)
                 .finish(),
+            NativeCommand::Snmp {
+                host,
+                port,
+                community,
+                oid,
+                expect,
+                timeout_seconds,
+            } => f
+                .debug_struct("Snmp")
+                .field("host", &host)
+                .field("port", &port)
+                .field("community", &community)
+                .field("oid", &oid)
+                .field("expect", &expect)
+                .field("timeout_seconds", &timeout_seconds)
+                .finish(),
         }
     }
 }
@@ -429,6 +516,12 @@ fn default_http_timeout_seconds() -> u32 {
 }
 fn default_tcp_timeout_seconds() -> u32 {
     3
+}
+fn default_snmp_port() -> u16 {
+    161
+}
+fn default_snmp_timeout_seconds() -> u32 {
+    5
 }
 
 /// How cluster members contribute to the parent component's state.
@@ -811,6 +904,111 @@ mod native_command_tests {
                 assert_eq!(port, 5432);
             }
             _ => panic!("expected TcpConnect"),
+        }
+    }
+
+    #[test]
+    fn snmp_roundtrips_through_serde() {
+        let cmd = NativeCommand::Snmp {
+            host: "switch01".to_string(),
+            port: 161,
+            community: "public-ro".to_string(),
+            oid: "1.3.6.1.2.1.2.2.1.8.3".to_string(),
+            expect: SnmpExpect::Equals {
+                value: "1".to_string(),
+            },
+            timeout_seconds: 5,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: NativeCommand = serde_json::from_str(&json).unwrap();
+        match back {
+            NativeCommand::Snmp {
+                host,
+                port,
+                community,
+                oid,
+                expect,
+                timeout_seconds,
+            } => {
+                assert_eq!(host, "switch01");
+                assert_eq!(port, 161);
+                assert_eq!(community, "public-ro");
+                assert_eq!(oid, "1.3.6.1.2.1.2.2.1.8.3");
+                assert_eq!(timeout_seconds, 5);
+                match expect {
+                    SnmpExpect::Equals { value } => assert_eq!(value, "1"),
+                    _ => panic!("expected Equals"),
+                }
+            }
+            _ => panic!("expected Snmp"),
+        }
+    }
+
+    #[test]
+    fn snmp_uses_default_port_and_timeout_when_omitted() {
+        // Configs may legitimately leave port/timeout/expect off.
+        let json = r#"{
+            "kind": "snmp",
+            "host": "switch01",
+            "community": "public-ro",
+            "oid": "1.3.6.1.2.1.1.3.0"
+        }"#;
+        let cmd: NativeCommand = serde_json::from_str(json).unwrap();
+        match cmd {
+            NativeCommand::Snmp {
+                port,
+                timeout_seconds,
+                expect,
+                ..
+            } => {
+                assert_eq!(port, 161);
+                assert_eq!(timeout_seconds, 5);
+                assert!(matches!(expect, SnmpExpect::Present));
+            }
+            _ => panic!("expected Snmp"),
+        }
+    }
+
+    #[test]
+    fn snmp_redacted_masks_community() {
+        let cmd = NativeCommand::Snmp {
+            host: "switch01".to_string(),
+            port: 161,
+            community: "super-secret".to_string(),
+            oid: "1.3.6.1.2.1.1.5.0".to_string(),
+            expect: SnmpExpect::Present,
+            timeout_seconds: 5,
+        };
+        let r = cmd.redacted();
+        match r {
+            NativeCommand::Snmp { community, .. } => assert_eq!(community, "***"),
+            _ => panic!("expected Snmp"),
+        }
+        // Debug also goes through redaction.
+        let dbg = format!("{cmd:?}");
+        assert!(
+            !dbg.contains("super-secret"),
+            "Debug must not leak community: {dbg}"
+        );
+        assert!(dbg.contains("***"));
+    }
+
+    #[test]
+    fn snmp_templated_substitutes_host() {
+        let cmd = NativeCommand::Snmp {
+            host: "{hostname}.dc1.example.com".to_string(),
+            port: 161,
+            community: "public".to_string(),
+            oid: "1.3.6.1.2.1.1.3.0".to_string(),
+            expect: SnmpExpect::Present,
+            timeout_seconds: 5,
+        };
+        let out = cmd.templated_for_member("switch-007", None);
+        match out {
+            NativeCommand::Snmp { host, .. } => {
+                assert_eq!(host, "switch-007.dc1.example.com");
+            }
+            _ => panic!("expected Snmp"),
         }
     }
 

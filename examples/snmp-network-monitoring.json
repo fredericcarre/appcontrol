@@ -1,0 +1,87 @@
+{
+  "name": "Network Substrate (SNMP)",
+  "description": "Example application monitoring the physical/network gear underneath an application stack via SNMPv2c. Demonstrates the four expectation modes (Equals, InRange, Regex, Present) on real-world OIDs.",
+  "components": [
+    {
+      "name": "Core-Switch-DC1",
+      "component_type": "network",
+      "hostname": "switch01.dc1.example.com",
+      "check_native": {
+        "kind": "snmp",
+        "host": "switch01.dc1.example.com",
+        "community": "public-ro",
+        "oid": "1.3.6.1.2.1.2.2.1.8.3",
+        "expect": { "op": "equals", "value": "1" },
+        "timeout_seconds": 5
+      },
+      "check_interval_seconds": 30,
+      "description": "Uplink port 3 ifOperStatus — 1 = up, anything else = link down"
+    },
+    {
+      "name": "Firewall-Edge",
+      "component_type": "network",
+      "hostname": "fw01.dc1.example.com",
+      "check_native": {
+        "kind": "snmp",
+        "host": "fw01.dc1.example.com",
+        "community": "public-ro",
+        "oid": "1.3.6.1.2.1.1.3.0",
+        "expect": { "op": "in_range", "min": 6000, "max": 999999999999 },
+        "timeout_seconds": 5
+      },
+      "check_interval_seconds": 60,
+      "description": "sysUpTime in 1/100s — below 60s indicates a recent reboot (operations should investigate)"
+    },
+    {
+      "name": "UPS-Battery",
+      "component_type": "power",
+      "hostname": "ups01.dc1.example.com",
+      "check_native": {
+        "kind": "snmp",
+        "host": "ups01.dc1.example.com",
+        "community": "public-ro",
+        "oid": "1.3.6.1.4.1.318.1.1.1.2.2.1.0",
+        "expect": { "op": "in_range", "min": 75, "max": 100 },
+        "timeout_seconds": 5
+      },
+      "check_interval_seconds": 30,
+      "description": "APC UPS battery capacity percent — below 75% degrades the component"
+    },
+    {
+      "name": "Storage-Array",
+      "component_type": "storage",
+      "hostname": "san01.dc1.example.com",
+      "check_native": {
+        "kind": "snmp",
+        "host": "san01.dc1.example.com",
+        "community": "public-ro",
+        "oid": "1.3.6.1.2.1.1.5.0",
+        "expect": { "op": "regex", "pattern": ".*-prod-.*" },
+        "timeout_seconds": 5
+      },
+      "check_interval_seconds": 300,
+      "description": "sysName.0 must contain '-prod-' tag — catches accidental swaps with the staging array"
+    },
+    {
+      "name": "Mainframe-Heartbeat",
+      "component_type": "mainframe",
+      "hostname": "zos01.dc1.example.com",
+      "check_native": {
+        "kind": "snmp",
+        "host": "zos01.dc1.example.com",
+        "community": "public-ro",
+        "oid": "1.3.6.1.2.1.1.3.0",
+        "expect": { "op": "present" },
+        "timeout_seconds": 10
+      },
+      "check_interval_seconds": 60,
+      "description": "Default 'present' check — the mainframe is alive and answering SNMP"
+    }
+  ],
+  "dependencies": [
+    { "from": "Firewall-Edge", "to": "Core-Switch-DC1" },
+    { "from": "Storage-Array", "to": "Core-Switch-DC1" },
+    { "from": "Mainframe-Heartbeat", "to": "Storage-Array" },
+    { "from": "Mainframe-Heartbeat", "to": "UPS-Battery" }
+  ]
+}
