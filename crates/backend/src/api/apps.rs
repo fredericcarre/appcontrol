@@ -1,6 +1,6 @@
 use axum::{
     extract::{Extension, Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Json,
 };
 use serde::{Deserialize, Serialize};
@@ -609,6 +609,7 @@ pub async fn start_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<Option<StartAppRequest>>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify app belongs to user's org
@@ -624,6 +625,16 @@ pub async fn start_app(
     }
 
     let dry_run = body.and_then(|b| b.dry_run).unwrap_or(false);
+
+    // Activation-level enforcement — runtime ops require level >= 3 (PR-only
+    // requires an approval header). Dry-run is always allowed if the user
+    // has the RBAC permission, since it does not mutate state.
+    if !dry_run {
+        let pr_sha = headers
+            .get(crate::core::activation::PR_APPROVAL_HEADER)
+            .and_then(|v| v.to_str().ok());
+        crate::core::activation::check_runtime_ops_allowed(&state.db, id, pr_sha).await?;
+    }
 
     let action_id = log_action(
         &state.db,
@@ -675,6 +686,7 @@ pub async fn stop_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<Option<StopAppRequest>>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
@@ -683,6 +695,13 @@ pub async fn stop_app(
     }
 
     let dry_run = body.and_then(|b| b.dry_run).unwrap_or(false);
+
+    if !dry_run {
+        let pr_sha = headers
+            .get(crate::core::activation::PR_APPROVAL_HEADER)
+            .and_then(|v| v.to_str().ok());
+        crate::core::activation::check_runtime_ops_allowed(&state.db, id, pr_sha).await?;
+    }
 
     let action_id = log_action(
         &state.db,

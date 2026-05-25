@@ -1,3 +1,4 @@
+pub mod activation;
 pub mod agent_update;
 pub mod agents;
 pub mod api_keys;
@@ -73,6 +74,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/apps/:app_id/site-overrides",
             get(apps::get_site_overrides),
+        )
+        .route(
+            "/apps/:id/activation",
+            get(activation::get_activation).put(activation::set_activation),
         )
         // Components
         .route(
