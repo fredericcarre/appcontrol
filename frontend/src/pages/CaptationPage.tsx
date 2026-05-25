@@ -7,6 +7,7 @@ import { usePatterns, usePatternCandidates, usePropagatePattern } from '@/api/pa
 import client from '@/api/client';
 import { useMutation } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
+import { IngestionWizard } from '@/components/captation/IngestionWizard';
 
 /**
  * Captation hub — the methodology's Phase 1 (multi-source ingestion)
@@ -42,6 +43,7 @@ export function CaptationPage() {
       </header>
 
       <SourcesSection />
+      <IngestionWizard />
       <PatternsSection />
       <RagSection />
     </div>
