@@ -658,6 +658,51 @@ Fixes based on production engineer review. All items address identified weakness
 - [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
 - [x] `cargo test --workspace` — 134 unit tests pass (33 agent + 12 backend + 75 common + 14 gateway)
 
+## Phase 13: Activation Levels, Multi-Source Ingestion, AI Scaffolding
+
+This phase closes the gap between what the strategic documents
+(`docs/strategy.html`, `docs/methodology.html`, `docs/vision.html`,
+`docs/pricing.html`) promise and what the codebase actually delivers.
+Each chunk is a self-contained PR with build + clippy green on both
+postgres and sqlite feature sets.
+
+### P13-1: Application Activation Level
+- [x] `migrations/V056__application_activation_level.sql` — `applications.activation_level SMALLINT` with CHECK 0-4 + index
+- [x] `crates/backend/src/core/activation.rs` — `ActivationLevel` enum, helpers, 5 unit tests
+- [x] `crates/backend/src/api/activation.rs` — `GET / PUT /api/v1/apps/:id/activation`
+- [x] Enforcement wired in `start_app`, `stop_app`, `start_branch`, `start_to`, `diagnose`, `rebuild`, `switchover`
+- [x] `frontend/src/api/activation.ts` + `pages/ActivationPage.tsx` + `components/ActivationBadge.tsx`
+- [x] Route `/apps/:id/activation` in `App.tsx`
+
+### P13-2: Multi-Source Ingestion Connectors
+- [x] `migrations/V057__incidents.sql` — incidents table (`source` + `external_id` unique, impacted_components JSON)
+- [x] `crates/backend/src/integrations/cmdb.rs` — generic CMDB upsert
+- [x] `crates/backend/src/integrations/xl.rs` — XL Release / XL Deploy deployables + pipeline deps
+- [x] `crates/backend/src/integrations/flow.rs` — flow ref → dependency edges (resolves by name OR host[:port])
+- [x] `crates/backend/src/integrations/itsm.rs` — ITSM incident upsert with impacted component resolution
+- [x] `crates/backend/src/api/ingestion.rs` — `POST /api/v1/ingestion/{cmdb,xl,flows,incidents}`
+
+### P13-3: AI Scaffolding (Stub Provider, Stable Contracts)
+- [x] `crates/backend/src/ai/provider.rs` — `Provider` trait, `StubProvider`, fingerprint helper, 3 unit tests
+- [x] `crates/backend/src/ai/schema.rs` — architecture diagram validation contract
+- [x] `crates/backend/src/ai/map_gen.rs` — initial map JSON suggestion contract
+- [x] `crates/backend/src/ai/incident.rs` — root-cause analysis contract
+- [x] `crates/backend/src/api/ai.rs` — `POST /api/v1/ai/{schema/validate, map/suggest, incident/analyze}`
+- [x] `AI_PROVIDER` env var selects the provider; defaults to `stub`
+
+### P13-4: Documentation Landing & Publication
+- [x] `docs/index.html` — landing page linking the four strategic docs
+- [x] `docs/implementation-status.html` — live inventory of what is built (livré / stub / à venir)
+- [x] `.github/workflows/pages.yaml` — publishes `docs/` to GitHub Pages on push to main
+
+### Build Validation (Phase 13)
+- [x] `cargo build -p appcontrol-backend --features postgres` — clean
+- [x] `cargo build -p appcontrol-backend --no-default-features --features sqlite` — clean
+- [x] `cargo clippy --features postgres --no-deps -- -D warnings` — clean
+- [x] `cargo clippy --no-default-features --features sqlite --no-deps -- -D warnings` — clean
+- [x] Frontend `tsc --noEmit` — clean
+- [x] 5 + 3 = 8 new unit tests, all passing
+
 ## Technical Debt — Database Layer Refactoring
 
 ### Level 1: CI Lint (DONE)

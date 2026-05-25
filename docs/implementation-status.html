@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>État d'implémentation — AppControl</title>
+<style>
+  :root {
+    --ink: #0f172a;
+    --ink-soft: #334155;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --panel: #f8fafc;
+    --panel-2: #f1f5f9;
+    --accent: #0f766e;
+    --accent-deep: #134e4a;
+    --indigo: #4338ca;
+    --warn: #b45309;
+    --warn-soft: #fef3c7;
+    --danger: #b91c1c;
+    --danger-soft: #fee2e2;
+    --ok: #166534;
+    --ok-soft: #dcfce7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: #fff;
+    color: var(--ink);
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 56px 32px 80px; }
+
+  header {
+    background: linear-gradient(135deg, #0f172a 0%, #134e4a 100%);
+    color: #fff;
+    border-radius: 14px;
+    padding: 44px 40px;
+    margin-bottom: 40px;
+  }
+  header .breadcrumb {
+    font-size: 12px; opacity: .75; margin-bottom: 14px;
+    text-transform: uppercase; letter-spacing: .12em; font-weight: 600;
+  }
+  header .breadcrumb a { color: #5eead4; text-decoration: none; }
+  header h1 { font-size: 34px; margin: 0 0 10px; letter-spacing: -.01em; }
+  header p { margin: 0; opacity: .92; font-size: 16px; max-width: 720px; }
+
+  h2 {
+    font-size: 22px; margin: 36px 0 12px;
+    color: var(--ink); letter-spacing: -.01em;
+  }
+  h2 .ec {
+    display: inline-block;
+    font-size: 11px; font-weight: 700;
+    letter-spacing: .12em; text-transform: uppercase;
+    padding: 3px 10px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--line);
+    color: var(--muted);
+    margin-left: 10px; vertical-align: middle;
+  }
+  p { color: var(--ink-soft); }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 12px 0 24px; font-size: 14px;
+    background: #fff; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  th, td {
+    text-align: left; padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    background: var(--panel-2); font-size: 12px;
+    text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); font-weight: 600;
+  }
+  tr:last-child td { border-bottom: 0; }
+  td code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; }
+
+  .status {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 800; letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .status.ok    { background: var(--ok-soft);    color: var(--ok); }
+  .status.stub  { background: var(--warn-soft);  color: var(--warn); }
+  .status.todo  { background: var(--danger-soft);color: var(--danger); }
+
+  .pull {
+    border-left: 4px solid var(--accent);
+    background: #ccfbf1;
+    padding: 16px 22px; border-radius: 0 12px 12px 0;
+    margin: 24px 0; color: var(--accent-deep);
+    font-size: 16px;
+  }
+
+  footer {
+    margin-top: 56px; padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="breadcrumb">
+      <a href="index.html">← Documentation stratégique</a>
+    </div>
+    <h1>État d'implémentation</h1>
+    <p>
+      Tableau de bord factuel de ce qui est <strong>concrètement livré</strong>
+      dans le code AppControl, mis en regard de ce que les documents
+      stratégiques promettent. Mis à jour en continu.
+    </p>
+  </header>
+
+  <p>
+    Les documents stratégiques décrivent la plateforme dans son état
+    cible. Cette page suit, palier par palier, ce qui est effectivement
+    disponible côté backend, frontend et migrations.
+  </p>
+
+  <div class="pull">
+    <strong>Légende :</strong>
+    <span class="status ok">livré</span> code complet et testé ·
+    <span class="status stub">stub</span> contrat API stable, implémentation placeholder ·
+    <span class="status todo">à venir</span> non démarré
+  </div>
+
+  <h2>Adoption graduelle — 5 niveaux d'activation <span class="ec">Méthodologie phase 4</span></h2>
+  <table>
+    <thead><tr><th>Capacité</th><th>Statut</th><th>Référence code</th></tr></thead>
+    <tbody>
+      <tr><td>Flag <code>activation_level</code> par application (0..4)</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>migrations/V056__application_activation_level.sql</code></td></tr>
+      <tr><td>Helpers d'enforcement (<code>check_runtime_ops_allowed</code>, <code>require_diagnostic</code>)</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>crates/backend/src/core/activation.rs</code></td></tr>
+      <tr><td>API <code>GET / PUT /api/v1/apps/:id/activation</code></td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>crates/backend/src/api/activation.rs</code></td></tr>
+      <tr><td>Mode PR-only (header <code>X-PR-Approved-Sha</code>)</td>
+          <td><span class="status ok">livré</span></td>
+          <td>enforcement dans start_app, stop_app, branch, start_to, rebuild, switchover</td></tr>
+      <tr><td>Page frontend de pilotage + badge</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>frontend/src/pages/ActivationPage.tsx</code> · <code>components/ActivationBadge.tsx</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Captation multi-sources <span class="ec">Méthodologie phase 1</span></h2>
+  <table>
+    <thead><tr><th>Connecteur</th><th>Statut</th><th>Endpoint</th></tr></thead>
+    <tbody>
+      <tr><td>Agents discovery (active observation)</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>crates/agent/src/discovery/</code></td></tr>
+      <tr><td>CMDB ingestion (générique JSON)</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>POST /api/v1/ingestion/cmdb</code></td></tr>
+      <tr><td>XL Release / XL Deploy ingestion</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>POST /api/v1/ingestion/xl</code></td></tr>
+      <tr><td>Référentiel de flux ingestion</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>POST /api/v1/ingestion/flows</code></td></tr>
+      <tr><td>ITSM / incidents ingestion</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>POST /api/v1/ingestion/incidents</code></td></tr>
+      <tr><td>Connecteurs CSV (en plus du JSON)</td>
+          <td><span class="status todo">à venir</span></td>
+          <td>—</td></tr>
+      <tr><td>Connecteurs natifs ServiceNow / Jira SM (pull)</td>
+          <td><span class="status todo">à venir</span></td>
+          <td>—</td></tr>
+    </tbody>
+  </table>
+
+  <h2>IA — validation, suggestion, analyse <span class="ec">Méthodologie phase 1.5, 3, 5</span></h2>
+  <table>
+    <thead><tr><th>Capacité</th><th>Statut</th><th>Endpoint</th></tr></thead>
+    <tbody>
+      <tr><td>Provider abstraction (Stub / Anthropic / OpenAI / on-prem)</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>crates/backend/src/ai/provider.rs</code></td></tr>
+      <tr><td>Validation IA des schémas (vision LLM)</td>
+          <td><span class="status stub">stub</span></td>
+          <td><code>POST /api/v1/ai/schema/validate</code></td></tr>
+      <tr><td>Génération initiale de map par IA</td>
+          <td><span class="status stub">stub</span></td>
+          <td><code>POST /api/v1/ai/map/suggest</code></td></tr>
+      <tr><td>Analyse causale d'incidents par IA</td>
+          <td><span class="status stub">stub</span></td>
+          <td><code>POST /api/v1/ai/incident/analyze</code></td></tr>
+      <tr><td>RAG sur runbooks / historique opérationnel</td>
+          <td><span class="status todo">à venir</span></td>
+          <td>—</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13px;color:var(--muted);">
+    <em>Stub</em> = le contrat API est stable et utilisable par les frontends et intégrateurs. La réponse retournée par le provider par défaut est déterministe et marquée <code>"provider": "stub"</code>. Pour passer en production, implémenter <code>Provider</code> dans <code>crates/backend/src/ai/provider.rs</code> et basculer la variable d'environnement <code>AI_PROVIDER</code>.
+  </p>
+
+  <h2>DR, rebuild, conformité <span class="ec">Stratégie + méthodologie phase 4</span></h2>
+  <table>
+    <thead><tr><th>Capacité</th><th>Statut</th><th>Référence code</th></tr></thead>
+    <tbody>
+      <tr><td>DR switchover 6 phases avec rollback</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>crates/backend/src/core/switchover/</code></td></tr>
+      <tr><td>Rebuild engine (DAG order, bastion infra, protection)</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>crates/backend/src/core/rebuild.rs</code></td></tr>
+      <tr><td>Dry-run sur start / stop / rebuild</td>
+          <td><span class="status ok">livré</span></td>
+          <td>flag <code>dry_run: true</code> sur les endpoints</td></tr>
+      <tr><td>Audit log append-only (action_log, state_transitions, switchover_log)</td>
+          <td><span class="status ok">livré</span></td>
+          <td>tables protégées par règle critique #2 du projet</td></tr>
+      <tr><td>Reports DORA (RTO, MTTR, compliance)</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>crates/backend/src/api/reports/dora.rs</code></td></tr>
+      <tr><td>Mesure RTR (Recovery Time for Rebuild)</td>
+          <td><span class="status ok">livré</span></td>
+          <td>chronométré dans <code>action_log</code> par exécution</td></tr>
+      <tr><td>Webhooks (HMAC, circuit breaker, retry)</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>crates/backend/src/core/notifications.rs</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Pattern catalog &amp; capitalisation transversale <span class="ec">Méthodologie phase 5</span></h2>
+  <table>
+    <thead><tr><th>Capacité</th><th>Statut</th><th>Référence code</th></tr></thead>
+    <tbody>
+      <tr><td>Component catalog (structure + endpoints)</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>crates/backend/src/api/catalog.rs</code></td></tr>
+      <tr><td>Profiles (ensembles de checks réutilisables)</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>crates/backend/src/api/profiles.rs</code></td></tr>
+      <tr><td>Population auto du catalogue par IA</td>
+          <td><span class="status todo">à venir</span></td>
+          <td>nécessite un vrai provider AI</td></tr>
+      <tr><td>Propagation auto de PR de remediation à apps similaires</td>
+          <td><span class="status todo">à venir</span></td>
+          <td>—</td></tr>
+    </tbody>
+  </table>
+
+  <h2>GitOps &amp; versionnement de map</h2>
+  <table>
+    <thead><tr><th>Capacité</th><th>Statut</th><th>Référence code</th></tr></thead>
+    <tbody>
+      <tr><td>Versionnement interne (config_versions)</td>
+          <td><span class="status ok">livré</span></td>
+          <td>tables append-only, snapshots avant/après</td></tr>
+      <tr><td>Diff entre versions de map</td>
+          <td><span class="status ok">livré</span></td>
+          <td><code>GET /api/v1/apps/:id/dependency-history</code></td></tr>
+      <tr><td>Mode PR-only au niveau application</td>
+          <td><span class="status ok">livré</span></td>
+          <td>via <code>activation_level = 3</code></td></tr>
+      <tr><td>Intégration Git native (synchro vers repo externe)</td>
+          <td><span class="status todo">à venir</span></td>
+          <td>—</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Pricing &amp; simulateur</h2>
+  <table>
+    <thead><tr><th>Capacité</th><th>Statut</th><th>Référence</th></tr></thead>
+    <tbody>
+      <tr><td>Document pricing avec 3 composantes</td>
+          <td><span class="status ok">livré</span></td>
+          <td><a href="pricing.html">pricing.html</a></td></tr>
+      <tr><td>Simulateur ROI interactif (recalcul temps réel)</td>
+          <td><span class="status ok">livré</span></td>
+          <td>JavaScript intégré, section 6 du document</td></tr>
+      <tr><td>Hypothèses par taille &amp; secteur</td>
+          <td><span class="status ok">livré</span></td>
+          <td>section 8</td></tr>
+      <tr><td>Modèle de calcul exposé en clair</td>
+          <td><span class="status ok">livré</span></td>
+          <td>annexe A1</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Documents stratégiques</h2>
+  <table>
+    <thead><tr><th>Document</th><th>Statut</th><th>Question</th></tr></thead>
+    <tbody>
+      <tr><td><a href="strategy.html">strategy.html</a></td>
+          <td><span class="status ok">v0.9 draft</span></td>
+          <td>Pourquoi AppControl</td></tr>
+      <tr><td><a href="methodology.html">methodology.html</a></td>
+          <td><span class="status ok">v0.9 draft</span></td>
+          <td>Comment AppControl</td></tr>
+      <tr><td><a href="vision.html">vision.html</a></td>
+          <td><span class="status ok">v0.9 draft</span></td>
+          <td>Jusqu'où AppControl</td></tr>
+      <tr><td><a href="pricing.html">pricing.html</a></td>
+          <td><span class="status ok">v0.9 draft</span></td>
+          <td>Combien AppControl</td></tr>
+    </tbody>
+  </table>
+
+  <footer>
+    <p>© 2026 Invivoo — Tous droits réservés. Page mise à jour automatiquement à chaque release.</p>
+  </footer>
+
+</div>
+</body>
+</html>

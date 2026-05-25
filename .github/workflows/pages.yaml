@@ -1,0 +1,63 @@
+name: Publish docs to GitHub Pages
+
+# Publishes docs/ (strategy HTML + methodology + vision + pricing
+# simulator + implementation-status landing page) to GitHub Pages on
+# push to main. Manual trigger also exposed for republishing on
+# demand.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/pages.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage docs/ for publication
+        run: |
+          mkdir -p public
+          # Copy the four strategic docs + landing + implementation status
+          # plus any supporting assets (logo, screenshots).
+          cp docs/index.html public/
+          cp docs/implementation-status.html public/
+          cp docs/strategy.html public/
+          cp docs/methodology.html public/
+          cp docs/vision.html public/
+          cp docs/pricing.html public/
+          # Logo + any screenshots referenced by the docs
+          [ -f docs/invivoo-logo.svg ] && cp docs/invivoo-logo.svg public/
+          [ -d docs/screenshots ] && cp -r docs/screenshots public/
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

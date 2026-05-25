@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AppControl — Documentation stratégique</title>
+<style>
+  :root {
+    --ink: #0f172a;
+    --ink-soft: #334155;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --panel: #f8fafc;
+    --accent: #0f766e;
+    --accent-deep: #134e4a;
+    --indigo: #4338ca;
+    --warn: #b45309;
+    --danger: #b91c1c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: #fff;
+    color: var(--ink);
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 56px 32px 80px; }
+
+  header.hero {
+    background: linear-gradient(135deg, #0f172a 0%, #134e4a 100%);
+    color: #fff;
+    border-radius: 14px;
+    padding: 56px 48px;
+    margin-bottom: 48px;
+    box-shadow: 0 8px 24px rgba(15,23,42,.08);
+  }
+  header.hero .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; opacity: .8;
+  }
+  header.hero h1 {
+    font-size: 44px; font-weight: 700; letter-spacing: -.02em;
+    margin: 14px 0 12px; line-height: 1.05;
+  }
+  header.hero p { font-size: 18px; opacity: .92; max-width: 720px; }
+  header.hero .brand-line {
+    display: flex; align-items: center; gap: 14px;
+    margin-bottom: 18px; padding-bottom: 16px;
+    border-bottom: 1px solid rgba(255,255,255,.18);
+  }
+  header.hero .brand-line img { height: 32px; filter: brightness(0) invert(1); }
+  header.hero .brand-line .tag {
+    font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    opacity: .85; font-weight: 600;
+  }
+
+  h2 {
+    font-size: 22px; margin: 0 0 16px;
+    text-transform: uppercase; letter-spacing: .1em;
+    color: var(--accent); font-weight: 700;
+  }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+
+  .doc-card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 24px 28px;
+    transition: border-color .15s, box-shadow .15s, transform .15s;
+  }
+  .doc-card:hover {
+    border-color: var(--accent);
+    box-shadow: 0 8px 24px rgba(15,118,110,.12);
+    transform: translateY(-2px);
+  }
+  .doc-card .eyebrow {
+    text-transform: uppercase; letter-spacing: .12em;
+    font-size: 11px; font-weight: 700; color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .doc-card h3 {
+    margin: 0 0 8px; font-size: 22px; color: var(--ink); letter-spacing: -.01em;
+  }
+  .doc-card p {
+    margin: 0 0 12px; color: var(--ink-soft); font-size: 15px;
+  }
+  .doc-card .audience {
+    display: inline-block;
+    font-size: 11px; font-weight: 600;
+    color: var(--muted); background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 3px 10px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: .08em;
+  }
+  .doc-card.indigo:hover { border-color: var(--indigo); box-shadow: 0 8px 24px rgba(67,56,202,.12); }
+  .doc-card.indigo .eyebrow { color: var(--indigo); }
+  .doc-card.warn:hover   { border-color: var(--warn);   box-shadow: 0 8px 24px rgba(180,83,9,.12);  }
+  .doc-card.warn .eyebrow   { color: var(--warn); }
+  .doc-card.danger:hover { border-color: var(--danger); box-shadow: 0 8px 24px rgba(185,28,28,.12); }
+  .doc-card.danger .eyebrow { color: var(--danger); }
+
+  section { margin-bottom: 48px; }
+
+  .impl-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 22px 24px;
+    margin-top: 16px;
+  }
+  .impl-card h3 { margin: 0 0 8px; font-size: 17px; color: var(--ink); }
+  .impl-card p  { margin: 0; color: var(--ink-soft); font-size: 14px; }
+  .impl-card a  { color: var(--accent); font-weight: 600; }
+
+  footer {
+    margin-top: 64px; padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="brand-line">
+      <img src="invivoo-logo.svg" alt="Invivoo" />
+      <span class="tag">Expertise &amp; conseil IT</span>
+    </div>
+    <p class="eyebrow">Plateforme d'efficience opérationnelle</p>
+    <h1>AppControl<br/>Documentation stratégique</h1>
+    <p>
+      Quatre documents complémentaires couvrent la solution AppControl
+      sous tous ses angles : pourquoi elle existe, comment elle se
+      déploie, jusqu'où elle peut transformer l'entreprise, et combien
+      cela coûte rapporté aux <em>savings</em> qu'elle libère.
+    </p>
+  </header>
+
+  <section>
+    <h2>Les quatre documents</h2>
+    <div class="grid">
+
+      <a class="doc-card" href="strategy.html">
+        <div class="eyebrow">Pourquoi</div>
+        <h3>Répondre avec sérénité aux exigences de DORA</h3>
+        <p>
+          Note de synthèse stratégique. Pose le problème (connaissance
+          applicative éclatée), explique la valeur d'un outil transverse,
+          présente la conformité réglementaire native.
+        </p>
+        <span class="audience">Pour direction régulée</span>
+      </a>
+
+      <a class="doc-card indigo" href="methodology.html">
+        <div class="eyebrow">Comment</div>
+        <h3>Cartographier l'écosystème applicatif</h3>
+        <p>
+          Méthodologie de bout en bout : collecte multi-sources (agents,
+          référentiels, schémas validés par IA), audit, construction de
+          la map, exploitation et boucle d'efficience opérationnelle par
+          les incidents.
+        </p>
+        <span class="audience">Pour architecture / ops / gouvernance</span>
+      </a>
+
+      <a class="doc-card warn" href="vision.html">
+        <div class="eyebrow">Jusqu'où</div>
+        <h3>Industrialiser l'opérationnel</h3>
+        <p>
+          Vision stratégique : cinq mutations rendues possibles, gains
+          financiers, restructuration organisationnelle, accélérateurs
+          stratégiques, vision à 5 ans, repères dirigeants prêts à
+          l'emploi.
+        </p>
+        <span class="audience">Pour COMEX / conseil d'administration</span>
+      </a>
+
+      <a class="doc-card danger" href="pricing.html">
+        <div class="eyebrow">Combien</div>
+        <h3>Pricing fondé sur la valeur</h3>
+        <p>
+          Modèle de tarification (setup, abonnement, services), trois
+          familles de savings, ROI par phase de la méthodologie, et un
+          <strong>simulateur interactif</strong> pour projeter le retour
+          sur investissement à 3 ans.
+        </p>
+        <span class="audience">Pour direction / acheteurs / sponsors</span>
+      </a>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>État d'implémentation</h2>
+    <div class="impl-card">
+      <h3>Suivre ce qui est livré</h3>
+      <p>
+        Les documents décrivent l'ambition complète de la plateforme.
+        Pour savoir ce qui est <strong>concrètement disponible
+        aujourd'hui</strong> dans le code (flag d'activation, connecteurs
+        d'ingestion, scaffolding IA, etc.), consulte la page
+        <a href="implementation-status.html">État d'implémentation</a>.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <span>© 2026 Invivoo — Tous droits réservés. Document confidentiel.</span>
+    <span>v0.9 · Draft</span>
+  </footer>
+
+</div>
+</body>
+</html>
