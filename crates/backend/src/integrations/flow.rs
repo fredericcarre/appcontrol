@@ -27,6 +27,12 @@ pub struct FlowPayload {
     #[serde(default = "default_source")]
     pub source: String,
     pub flows: Vec<FlowEntry>,
+    /// Optional caller-declared maturity. Applied to all dependencies
+    /// (flow ingest never creates components). Absent = no change.
+    #[serde(default)]
+    pub default_knowledge_status: Option<String>,
+    #[serde(default)]
+    pub default_confidence_score: Option<f32>,
 }
 
 fn default_source() -> String {
@@ -100,6 +106,15 @@ pub async fn ingest(pool: &DbPool, payload: FlowPayload) -> Result<IngestionRepo
             report.skipped += 1;
         }
     }
+
+    super::apply_default_maturity(
+        pool,
+        payload.application_id,
+        super::MaturityTarget::Dependencies,
+        payload.default_knowledge_status.as_deref(),
+        payload.default_confidence_score,
+    )
+    .await?;
 
     Ok(report)
 }

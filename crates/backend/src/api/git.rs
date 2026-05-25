@@ -568,9 +568,20 @@ async fn build_app_map_json(
     // do NOT dump the full struct (state, position, agent metadata) since
     // the goal is a stable, reviewable map definition — not a runtime
     // snapshot. Runtime data is queryable via the regular API.
+    // Knowledge progress carried alongside structure so a Git
+    // roundtrip preserves maturity. The fields are queried directly
+    // from the components / dependencies tables (the repo struct does
+    // not expose them yet, so we run a small sweep here).
+    let knowledge_map = fetch_component_knowledge(&state.db, app_id).await?;
+    let dep_knowledge_map = fetch_dependency_knowledge(&state.db, app_id).await?;
+
     let components_json: Vec<Value> = components
         .iter()
         .map(|c| {
+            let (ks, cs) = knowledge_map
+                .get(&c.id)
+                .map(|v| (Some(v.0.as_str()), Some(v.1)))
+                .unwrap_or((None, None));
             json!({
                 "id": c.id,
                 "name": c.name,
@@ -589,16 +600,24 @@ async fn build_app_map_json(
                 "cluster_size": c.cluster_size,
                 "cluster_mode": c.cluster_mode,
                 "referenced_app_id": c.referenced_app_id,
+                "knowledge_status": ks,
+                "confidence_score": cs,
             })
         })
         .collect();
     let dependencies_json: Vec<Value> = dependencies
         .iter()
         .map(|d| {
+            let (ks, cs) = dep_knowledge_map
+                .get(&d.id)
+                .map(|v| (Some(v.0.as_str()), Some(v.1)))
+                .unwrap_or((None, None));
             json!({
                 "id": d.id,
                 "from_component_id": d.from_component_id,
                 "to_component_id": d.to_component_id,
+                "knowledge_status": ks,
+                "confidence_score": cs,
             })
         })
         .collect();
@@ -683,6 +702,66 @@ async fn record_push_failure(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+async fn fetch_component_knowledge(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<std::collections::HashMap<Uuid, (String, f32)>, ApiError> {
+    #[cfg(feature = "postgres")]
+    let rows: Vec<(Uuid, String, f32)> = sqlx::query_as(
+        "SELECT id, knowledge_status, confidence_score FROM components WHERE application_id = $1",
+    )
+    .bind(app_id)
+    .fetch_all(pool)
+    .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let rows: Vec<(DbUuid, String, f32)> = sqlx::query_as(
+        "SELECT id, knowledge_status, confidence_score FROM components WHERE application_id = ?",
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, s, c)| {
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let id = id.into_inner();
+            (id, (s, c))
+        })
+        .collect())
+}
+
+async fn fetch_dependency_knowledge(
+    pool: &DbPool,
+    app_id: Uuid,
+) -> Result<std::collections::HashMap<Uuid, (String, f32)>, ApiError> {
+    #[cfg(feature = "postgres")]
+    let rows: Vec<(Uuid, String, f32)> = sqlx::query_as(
+        "SELECT d.id, d.knowledge_status, d.confidence_score FROM dependencies d
+         INNER JOIN components c ON c.id = d.from_component_id
+         WHERE c.application_id = $1",
+    )
+    .bind(app_id)
+    .fetch_all(pool)
+    .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let rows: Vec<(DbUuid, String, f32)> = sqlx::query_as(
+        "SELECT d.id, d.knowledge_status, d.confidence_score FROM dependencies d
+         INNER JOIN components c ON c.id = d.from_component_id
+         WHERE c.application_id = ?",
+    )
+    .bind(DbUuid::from(app_id))
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, s, c)| {
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let id = id.into_inner();
+            (id, (s, c))
+        })
+        .collect())
 }
 
 async fn fetch_remote(

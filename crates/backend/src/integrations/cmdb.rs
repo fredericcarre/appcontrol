@@ -27,6 +27,14 @@ pub struct CmdbPayload {
     #[serde(default = "default_source")]
     pub source: String,
     pub components: Vec<CmdbComponent>,
+    /// Optional caller-declared maturity. If set, applied to all
+    /// components (including those just updated) after ingestion. The
+    /// system does NOT pick a default — leaving this absent keeps the
+    /// existing column values intact.
+    #[serde(default)]
+    pub default_knowledge_status: Option<String>,
+    #[serde(default)]
+    pub default_confidence_score: Option<f32>,
 }
 
 fn default_source() -> String {
@@ -91,6 +99,15 @@ pub async fn ingest(pool: &DbPool, payload: CmdbPayload) -> Result<IngestionRepo
             Err(e) => report.record_error(Some(raw.name.clone()), e.to_string()),
         }
     }
+
+    super::apply_default_maturity(
+        pool,
+        payload.application_id,
+        super::MaturityTarget::Components,
+        payload.default_knowledge_status.as_deref(),
+        payload.default_confidence_score,
+    )
+    .await?;
 
     Ok(report)
 }

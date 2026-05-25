@@ -119,6 +119,7 @@ function useIngest() {
       applicationId,
       organizationId,
       sourceLabel,
+      knowledgeStatus,
     }: {
       source: Source;
       format: Format;
@@ -126,9 +127,16 @@ function useIngest() {
       applicationId?: string;
       organizationId?: string;
       sourceLabel?: string;
+      knowledgeStatus?: string;
     }) => {
       if (format === 'json') {
         const parsed = JSON.parse(payload);
+        // Inject the caller's maturity declaration without overwriting
+        // anything the JSON already carries — the API resolution is
+        // payload > request default > DB default.
+        if (knowledgeStatus && parsed.default_knowledge_status === undefined) {
+          parsed.default_knowledge_status = knowledgeStatus;
+        }
         const res = await client.post<IngestionResp>(`/ingestion/${source}`, parsed);
         return res.data.report;
       }
@@ -137,6 +145,7 @@ function useIngest() {
       if (applicationId) params.application_id = applicationId;
       if (organizationId) params.organization_id = organizationId;
       if (sourceLabel) params.source = sourceLabel;
+      if (knowledgeStatus) params.knowledge_status = knowledgeStatus;
       const res = await client.post<IngestionResp>(
         `/ingestion/${source}/csv`,
         payload,
@@ -150,12 +159,36 @@ function useIngest() {
   });
 }
 
+type Maturity = 'inherit' | 'candidate' | 'draft' | 'reviewed' | 'validated';
+
+const maturityLabels: Record<Maturity, string> = {
+  inherit: 'Garder le défaut DB (draft)',
+  candidate: 'Candidate — non vérifié',
+  draft: 'Draft — en revue',
+  reviewed: 'Reviewed — revu par pair',
+  validated: 'Validated — signé',
+};
+
+const maturityHelp: Record<Maturity, string> = {
+  inherit:
+    'Aucune maturité déclarée. Les nouveaux composants gardent le défaut DB.',
+  candidate:
+    'Données brutes (ex. scrape CMDB initial, JSON externe non vérifié).',
+  draft:
+    'Le contenu a déjà été touché par quelqu\'un mais reste à valider.',
+  reviewed:
+    'Le contenu sort d\'un repo Git ou d\'une revue qui l\'a validé partiellement.',
+  validated:
+    'Le contenu est signé par les sachants et reflète la réalité production.',
+};
+
 export function IngestionWizard({ className }: Props) {
   const [source, setSource] = useState<Source>('cmdb');
   const [format, setFormat] = useState<Format>('json');
   const [appId, setAppId] = useState<string>('');
   const [orgId, setOrgId] = useState<string>('');
   const [sourceLabel, setSourceLabel] = useState<string>('');
+  const [maturity, setMaturity] = useState<Maturity>('inherit');
   const [payload, setPayload] = useState<string>(sourceTemplates.cmdb.json);
 
   const { data: apps } = useApps();
@@ -181,6 +214,7 @@ export function IngestionWizard({ className }: Props) {
       applicationId: appId || undefined,
       organizationId: source === 'incidents' ? orgId || undefined : undefined,
       sourceLabel: sourceLabel || undefined,
+      knowledgeStatus: maturity === 'inherit' ? undefined : maturity,
     });
   };
 
@@ -299,6 +333,32 @@ export function IngestionWizard({ className }: Props) {
                   />
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Maturity declaration — the wizard never forces a status.
+              "Inherit" keeps the DB default ('draft', 0.5). Any other
+              choice is propagated to every row touched by this run.
+              ITSM never carries knowledge_status so we hide it there. */}
+          {source !== 'incidents' && (
+            <div>
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                Maturité déclarée par la source
+              </label>
+              <select
+                value={maturity}
+                onChange={(e) => setMaturity(e.target.value as Maturity)}
+                className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
+              >
+                {(Object.keys(maturityLabels) as Maturity[]).map((m) => (
+                  <option key={m} value={m}>
+                    {maturityLabels[m]}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[10px] text-slate-500">
+                {maturityHelp[maturity]}
+              </p>
             </div>
           )}
 

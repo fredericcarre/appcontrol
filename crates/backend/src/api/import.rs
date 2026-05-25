@@ -535,6 +535,13 @@ pub struct JsonImportRequest {
     pub site_id: Option<Uuid>,
     /// Optional: If set, import into an existing application (merge mode)
     pub merge_into_app_id: Option<Uuid>,
+    /// Optional maturity declared by the caller. Applied to every
+    /// component / dependency that doesn't carry its own knowledge_status.
+    /// Use case: a CI job pushing a Git-managed map sets this to
+    /// `"reviewed"` or `"validated"`; a raw scrape sets `"candidate"`.
+    /// Absent → DB default applies (`draft`, confidence 0.5).
+    pub default_knowledge_status: Option<String>,
+    pub default_confidence_score: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -609,6 +616,13 @@ struct V4Component {
     cluster_size: Option<i32>,
     /// List of cluster node hostnames/IPs
     cluster_nodes: Option<Vec<String>>,
+    /// Optional knowledge progress carried by the source. Lets a Git
+    /// roundtrip preserve maturity, and lets external tools declare
+    /// per-component maturity when relevant. Falls back to the
+    /// import-wide default (see JsonImportRequest), then to the DB
+    /// column default (`draft`).
+    knowledge_status: Option<String>,
+    confidence_score: Option<f32>,
 }
 
 fn default_check_interval() -> i32 {
@@ -688,6 +702,9 @@ struct V4Dependency {
     from: String,
     to: String,
     dep_type: Option<String>,
+    /// Same per-row maturity override available on components.
+    knowledge_status: Option<String>,
+    confidence_score: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1173,6 +1190,21 @@ pub async fn import_json_map(
         _profiles_created += 1;
     }
 
+    // Apply caller-declared knowledge progress, if any. Two passes:
+    //   1. App-wide defaults (cheap UPDATE on all newly imported rows).
+    //   2. Per-component / per-dependency overrides (rows that carried
+    //      their own knowledge_status / confidence_score — typical of
+    //      a Git roundtrip import).
+    apply_import_maturity(
+        &state.db,
+        app_id,
+        body.default_knowledge_status.as_deref(),
+        body.default_confidence_score,
+        &app_data.components,
+        &app_data.dependencies,
+    )
+    .await?;
+
     let result = ImportResult {
         application_id: app_id,
         application_name: app_data.name.clone(),
@@ -1189,4 +1221,174 @@ pub async fn import_json_map(
     crate::websocket::push_config_to_affected_agents(&state, Some(app_id), None, None).await;
 
     Ok((StatusCode::CREATED, Json(json!(result))))
+}
+
+/// Apply caller-declared knowledge progress after a JSON import.
+///
+/// Resolution order:
+///   1. If the row carries an explicit `knowledge_status` /
+///      `confidence_score`, those win.
+///   2. Otherwise, fall back to the request-level `default_*`.
+///   3. Otherwise, leave the DB default in place (`draft`, 0.5).
+///
+/// Validation is permissive: an unknown status string is silently
+/// dropped — the CHECK constraint on the column would reject it
+/// anyway, and we don't want a stray value to abort an otherwise
+/// successful import.
+async fn apply_import_maturity(
+    pool: &crate::db::DbPool,
+    app_id: Uuid,
+    default_status: Option<&str>,
+    default_confidence: Option<f32>,
+    components: &[V4Component],
+    dependencies: &[V4Dependency],
+) -> Result<(), ApiError> {
+    const ALLOWED: &[&str] = &["candidate", "draft", "reviewed", "validated", "deprecated"];
+    let status_default = default_status.filter(|s| ALLOWED.contains(s));
+
+    // Pass 1: app-wide defaults.
+    if status_default.is_some() || default_confidence.is_some() {
+        #[cfg(feature = "postgres")]
+        sqlx::query(
+            "UPDATE components SET
+                knowledge_status = COALESCE($1, knowledge_status),
+                confidence_score = COALESCE($2, confidence_score),
+                updated_at = NOW()
+              WHERE application_id = $3",
+        )
+        .bind(status_default)
+        .bind(default_confidence)
+        .bind(app_id)
+        .execute(pool)
+        .await?;
+
+        #[cfg(feature = "postgres")]
+        sqlx::query(
+            "UPDATE dependencies SET
+                knowledge_status = COALESCE($1, knowledge_status),
+                confidence_score = COALESCE($2, confidence_score)
+              WHERE from_component_id IN (
+                SELECT id FROM components WHERE application_id = $3
+              )",
+        )
+        .bind(status_default)
+        .bind(default_confidence)
+        .bind(app_id)
+        .execute(pool)
+        .await?;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        sqlx::query(
+            "UPDATE components SET
+                knowledge_status = COALESCE(?, knowledge_status),
+                confidence_score = COALESCE(?, confidence_score),
+                updated_at = CURRENT_TIMESTAMP
+              WHERE application_id = ?",
+        )
+        .bind(status_default)
+        .bind(default_confidence)
+        .bind(crate::db::DbUuid::from(app_id))
+        .execute(pool)
+        .await?;
+
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        sqlx::query(
+            "UPDATE dependencies SET
+                knowledge_status = COALESCE(?, knowledge_status),
+                confidence_score = COALESCE(?, confidence_score)
+              WHERE from_component_id IN (
+                SELECT id FROM components WHERE application_id = ?
+              )",
+        )
+        .bind(status_default)
+        .bind(default_confidence)
+        .bind(crate::db::DbUuid::from(app_id))
+        .execute(pool)
+        .await?;
+    }
+
+    // Pass 2: per-component overrides.
+    for c in components {
+        let st = c.knowledge_status.as_deref().filter(|s| ALLOWED.contains(s));
+        if st.is_some() || c.confidence_score.is_some() {
+            #[cfg(feature = "postgres")]
+            sqlx::query(
+                "UPDATE components SET
+                    knowledge_status = COALESCE($1, knowledge_status),
+                    confidence_score = COALESCE($2, confidence_score),
+                    updated_at = NOW()
+                  WHERE application_id = $3 AND name = $4",
+            )
+            .bind(st)
+            .bind(c.confidence_score)
+            .bind(app_id)
+            .bind(&c.name)
+            .execute(pool)
+            .await?;
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "UPDATE components SET
+                    knowledge_status = COALESCE(?, knowledge_status),
+                    confidence_score = COALESCE(?, confidence_score),
+                    updated_at = CURRENT_TIMESTAMP
+                  WHERE application_id = ? AND name = ?",
+            )
+            .bind(st)
+            .bind(c.confidence_score)
+            .bind(crate::db::DbUuid::from(app_id))
+            .bind(&c.name)
+            .execute(pool)
+            .await?;
+        }
+    }
+
+    // Pass 3: per-dependency overrides, matched by component names.
+    for d in dependencies {
+        let st = d.knowledge_status.as_deref().filter(|s| ALLOWED.contains(s));
+        if st.is_some() || d.confidence_score.is_some() {
+            #[cfg(feature = "postgres")]
+            sqlx::query(
+                "UPDATE dependencies SET
+                    knowledge_status = COALESCE($1, knowledge_status),
+                    confidence_score = COALESCE($2, confidence_score)
+                  WHERE from_component_id = (
+                    SELECT id FROM components WHERE application_id = $3 AND name = $4
+                  )
+                  AND to_component_id = (
+                    SELECT id FROM components WHERE application_id = $3 AND name = $5
+                  )",
+            )
+            .bind(st)
+            .bind(d.confidence_score)
+            .bind(app_id)
+            .bind(&d.from)
+            .bind(&d.to)
+            .execute(pool)
+            .await?;
+
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            sqlx::query(
+                "UPDATE dependencies SET
+                    knowledge_status = COALESCE(?, knowledge_status),
+                    confidence_score = COALESCE(?, confidence_score)
+                  WHERE from_component_id = (
+                    SELECT id FROM components WHERE application_id = ? AND name = ?
+                  )
+                  AND to_component_id = (
+                    SELECT id FROM components WHERE application_id = ? AND name = ?
+                  )",
+            )
+            .bind(st)
+            .bind(d.confidence_score)
+            .bind(crate::db::DbUuid::from(app_id))
+            .bind(&d.from)
+            .bind(crate::db::DbUuid::from(app_id))
+            .bind(&d.to)
+            .execute(pool)
+            .await?;
+        }
+    }
+
+    Ok(())
 }

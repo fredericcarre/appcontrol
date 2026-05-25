@@ -130,6 +130,11 @@ pub async fn ingest_flows(
 pub struct CsvIngestQuery {
     pub application_id: Uuid,
     pub source: Option<String>,
+    /// Optional maturity hint (knowledge_status) the caller can attach
+    /// to a CSV upload — same semantics as the JSON payload field.
+    /// Absent = no change to existing rows.
+    pub knowledge_status: Option<String>,
+    pub confidence_score: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +160,8 @@ pub async fn ingest_cmdb_csv(
         application_id: q.application_id,
         source: q.source.unwrap_or_else(|| "cmdb-csv".to_string()),
         components,
+        default_knowledge_status: q.knowledge_status.clone(),
+        default_confidence_score: q.confidence_score,
     };
 
     let app_id = payload.application_id;
@@ -184,6 +191,8 @@ pub async fn ingest_xl_csv(
         source: q.source.unwrap_or_else(|| "xl-csv".to_string()),
         deployables,
         pipeline_dependencies,
+        default_knowledge_status: q.knowledge_status.clone(),
+        default_confidence_score: q.confidence_score,
     };
 
     let app_id = payload.application_id;
@@ -209,6 +218,8 @@ pub async fn ingest_flows_csv(
         application_id: q.application_id,
         source: q.source.unwrap_or_else(|| "flow-csv".to_string()),
         flows,
+        default_knowledge_status: q.knowledge_status.clone(),
+        default_confidence_score: q.confidence_score,
     };
     let app_id = payload.application_id;
     let source = payload.source.clone();

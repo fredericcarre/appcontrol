@@ -36,6 +36,12 @@ pub struct XlPayload {
     pub deployables: Vec<XlDeployable>,
     #[serde(default)]
     pub pipeline_dependencies: Vec<XlPipelineDep>,
+    /// Optional caller-declared maturity. Applied to both components
+    /// and dependencies (XL produces both). Absent = no change.
+    #[serde(default)]
+    pub default_knowledge_status: Option<String>,
+    #[serde(default)]
+    pub default_confidence_score: Option<f32>,
 }
 
 fn default_source() -> String {
@@ -66,9 +72,15 @@ pub async fn ingest(pool: &DbPool, payload: XlPayload) -> Result<IngestionReport
     let mut report = IngestionReport::new(&payload.source);
 
     // Reuse the CMDB upsert path for deployables — the data model is identical.
+    // We deliberately DO NOT propagate the maturity defaults through the
+    // nested CmdbPayload because we will apply them once at the end of
+    // the XL ingest, covering both components AND dependencies in a
+    // single sweep.
     let cmdb_payload = super::cmdb::CmdbPayload {
         application_id: payload.application_id,
         source: payload.source.clone(),
+        default_knowledge_status: None,
+        default_confidence_score: None,
         components: payload
             .deployables
             .iter()
@@ -98,6 +110,12 @@ pub async fn ingest(pool: &DbPool, payload: XlPayload) -> Result<IngestionReport
     report.skipped += component_report.skipped;
     report.errors.extend(component_report.errors);
 
+    // Pre-collect references for the post-ingest sweep so the borrow
+    // checker stays happy after we move parts of `payload` below.
+    let default_status = payload.default_knowledge_status.clone();
+    let default_confidence = payload.default_confidence_score;
+    let target_app = payload.application_id;
+
     // Add dependencies from XL Release pipeline ordering.
     for dep in &payload.pipeline_dependencies {
         match upsert_dependency(pool, payload.application_id, &dep.from, &dep.to).await {
@@ -109,6 +127,15 @@ pub async fn ingest(pool: &DbPool, payload: XlPayload) -> Result<IngestionReport
             ),
         }
     }
+
+    super::apply_default_maturity(
+        pool,
+        target_app,
+        super::MaturityTarget::Both,
+        default_status.as_deref(),
+        default_confidence,
+    )
+    .await?;
 
     Ok(report)
 }
