@@ -708,6 +708,18 @@ postgres and sqlite feature sets.
 ### P13-7: Operation events dispatched on completion
 - [x] `start_app` and `stop_app` now emit `NotificationEvent::Operation` with status `completed` or `failed` when the spawned execute returns, so subscribed webhook endpoints get an end-of-operation signal (not just FSM state changes)
 
+### P13-8: Native Git integration (map sync to external repo)
+- [x] `migrations/V061__git_remotes.sql` (PG + SQLite) — git_remotes + application_git_settings tables; token referenced by env-var name, never stored in DB
+- [x] `crates/backend/src/integrations/git.rs` — provider abstraction, GitHub Contents API impl (works on github.com + GHE via base_url), path template renderer with `{app_id}`/`{app_name}`, 2 unit tests
+- [x] `crates/backend/src/api/git.rs` — CRUD on remotes (admin), per-app binding (`PUT /apps/:id/git`), manual push (`POST /apps/:id/git/push`)
+- [x] Git-friendly map JSON projection (components + dependencies, no runtime state)
+- [x] Push success and failure recorded in `application_git_settings` and `git_remotes` for observability
+
+### P13-9: Map annotations + knowledge progress (review funnel)
+- [x] `migrations/V062__map_annotations_and_knowledge.sql` (PG + SQLite) — map_annotations table + `confidence_score` + `knowledge_status` columns on components and dependencies
+- [x] `crates/backend/src/api/annotations.rs` — CRUD + resolve, with target_type ∈ {application, component, dependency} and kind ∈ {note, review, todo, warning}
+- [x] `crates/backend/src/api/knowledge.rs` — `PUT /components/:id/knowledge`, `PUT /dependencies/:id/knowledge`, `GET /apps/:id/knowledge/summary` (returns counts by status + validated coverage ratio)
+
 ### Build Validation (Phase 13)
 - [x] `cargo build -p appcontrol-backend --features postgres` — clean
 - [x] `cargo build -p appcontrol-backend --no-default-features --features sqlite` — clean

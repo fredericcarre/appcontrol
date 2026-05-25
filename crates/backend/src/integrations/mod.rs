@@ -22,6 +22,7 @@
 
 pub mod cmdb;
 pub mod flow;
+pub mod git;
 pub mod itsm;
 pub mod xl;
 

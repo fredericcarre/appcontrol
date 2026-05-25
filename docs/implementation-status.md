@@ -100,7 +100,21 @@ Legend:
 | Versionnement interne (config_versions) | :material-check-circle: livré | tables append-only, snapshots avant/après |
 | Diff entre versions de map | :material-check-circle: livré | `GET /api/v1/apps/:id/dependency-history` |
 | Mode PR-only au niveau application | :material-check-circle: livré | via `activation_level = 3` |
-| Intégration Git native (synchro vers repo externe) | :material-progress-clock: à venir | — |
+| **Intégration Git native** (synchro map vers repo externe) | :material-check-circle: livré | `migrations/V061__git_remotes.sql` · `api/git.rs` · `integrations/git.rs` (GitHub Contents API) |
+| Providers GitLab / Gitea | :material-progress-clock: à venir | — |
+
+## Annotations &amp; avancement de la connaissance
+
+*Méthodologie phase 3 (revue) + phase 4 (exploitation).*
+
+| Capacité | Statut | Référence code |
+|---|---|---|
+| **Annotations** (notes, reviews, todos, warnings) sur composants/dépendances/applications | :material-check-circle: livré | `migrations/V062` · `api/annotations.rs` |
+| **Confidence score** par composant et dépendance (0..1) | :material-check-circle: livré | colonne ajoutée par V062 |
+| **Knowledge status** (candidate → draft → reviewed → validated → deprecated) | :material-check-circle: livré | colonne ajoutée par V062 |
+| Endpoint de mise à jour `PUT /components/:id/knowledge` et `PUT /dependencies/:id/knowledge` | :material-check-circle: livré | `api/knowledge.rs` |
+| `GET /apps/:id/knowledge/summary` — couverture validée par status | :material-check-circle: livré | `api/knowledge.rs::app_knowledge_summary` |
+| Frontend : badges de status + pile d'annotations par composant | :material-progress-clock: à venir | API prête côté backend |
 
 ## Pricing &amp; simulateur
 

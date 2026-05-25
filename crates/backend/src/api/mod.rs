@@ -1,6 +1,7 @@
 pub mod activation;
 pub mod ai;
 pub mod agent_update;
+pub mod annotations;
 pub mod agents;
 pub mod api_keys;
 pub mod approvals;
@@ -16,6 +17,7 @@ pub mod enrollment;
 pub mod estimates;
 pub mod export;
 pub mod gateways;
+pub mod git;
 pub mod groups;
 pub mod health;
 pub mod history;
@@ -23,6 +25,7 @@ pub mod hostings;
 pub mod import;
 pub mod ingestion;
 pub mod import_wizard;
+pub mod knowledge;
 pub mod links;
 pub mod logs;
 pub mod manual_tasks;
@@ -659,6 +662,46 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
                 .delete(patterns::delete_pattern),
         )
         .route("/patterns/:id/applied", post(patterns::pattern_applied))
+        // Map annotations (human commentary on components/dependencies/applications)
+        .route(
+            "/annotations",
+            get(annotations::list_annotations).post(annotations::create_annotation),
+        )
+        .route(
+            "/annotations/:id",
+            put(annotations::update_annotation).delete(annotations::delete_annotation),
+        )
+        .route(
+            "/annotations/:id/resolve",
+            post(annotations::resolve_annotation),
+        )
+        // Knowledge progress (confidence + status per component/dependency)
+        .route(
+            "/components/:id/knowledge",
+            put(knowledge::update_component_knowledge),
+        )
+        .route(
+            "/dependencies/:id/knowledge",
+            put(knowledge::update_dependency_knowledge),
+        )
+        .route(
+            "/apps/:id/knowledge/summary",
+            get(knowledge::app_knowledge_summary),
+        )
+        // Git remote sync (GitOps for application maps)
+        .route(
+            "/git/remotes",
+            get(git::list_remotes).post(git::create_remote),
+        )
+        .route(
+            "/git/remotes/:id",
+            put(git::update_remote).delete(git::delete_remote),
+        )
+        .route(
+            "/apps/:id/git",
+            get(git::get_app_git).put(git::set_app_git),
+        )
+        .route("/apps/:id/git/push", post(git::push_app))
         // Component Catalog
         .route(
             "/catalog/component-types",
