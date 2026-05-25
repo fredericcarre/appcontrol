@@ -695,6 +695,19 @@ postgres and sqlite feature sets.
 - [x] `docs/implementation-status.html` — live inventory of what is built (livré / stub / à venir)
 - [x] `.github/workflows/pages.yaml` — publishes `docs/` to GitHub Pages on push to main
 
+### P13-5: Transversal capitalisation — pattern library
+- [x] `migrations/V060__pattern_templates.sql` (PG + SQLite) — pattern_templates table with technology, command templates, usage_count, back-reference to incidents
+- [x] `crates/backend/src/api/patterns.rs` — CRUD endpoints + `POST /patterns/:id/applied` to bump usage_count
+- [x] Routes wired: `GET/POST /api/v1/patterns`, `GET/PUT/DELETE /api/v1/patterns/:id`, `POST /api/v1/patterns/:id/applied`
+
+### P13-6: CSV ingestion (in addition to JSON)
+- [x] `csv = "1.3"` added to backend Cargo.toml
+- [x] `POST /api/v1/ingestion/cmdb/csv` — accepts text/csv body with name,component_type,host,description,display_name,tags columns (`;` separator for tags)
+- [x] Reuses existing `cmdb::ingest` path for the actual upsert
+
+### P13-7: Operation events dispatched on completion
+- [x] `start_app` and `stop_app` now emit `NotificationEvent::Operation` with status `completed` or `failed` when the spawned execute returns, so subscribed webhook endpoints get an end-of-operation signal (not just FSM state changes)
+
 ### Build Validation (Phase 13)
 - [x] `cargo build -p appcontrol-backend --features postgres` — clean
 - [x] `cargo build -p appcontrol-backend --no-default-features --features sqlite` — clean

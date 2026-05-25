@@ -8,9 +8,11 @@
 //! returns the resulting `IngestionReport` as JSON.
 
 use axum::{
-    extract::{Extension, State},
+    body::Bytes,
+    extract::{Extension, Query, State},
     response::Json,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -118,6 +120,91 @@ pub async fn ingest_flows(
         flow::ingest(&pool, payload).await
     })
     .await
+}
+
+// ----------------------------------------------------------------------------
+// CSV ingestion — accepts text/csv for the same connectors.
+// ----------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct CsvIngestQuery {
+    pub application_id: Uuid,
+    pub source: Option<String>,
+}
+
+/// POST /api/v1/ingestion/cmdb/csv?application_id=<uuid>&source=<label>
+///
+/// CSV columns expected (header row required):
+///   name,component_type,host,description,display_name,tags
+/// `tags` is a semicolon-separated list (e.g. `java;owner:billing;tier1`).
+pub async fn ingest_cmdb_csv(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Query(q): Query<CsvIngestQuery>,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let components = parse_cmdb_csv(&body)?;
+    let payload = cmdb::CmdbPayload {
+        application_id: q.application_id,
+        source: q.source.unwrap_or_else(|| "cmdb-csv".to_string()),
+        components,
+    };
+
+    let app_id = payload.application_id;
+    let source = payload.source.clone();
+    let pool = state.db.clone();
+    run_with_audit(state, user, app_id, "ingest.cmdb.csv", source, || async move {
+        cmdb::ingest(&pool, payload).await
+    })
+    .await
+}
+
+fn parse_cmdb_csv(body: &[u8]) -> Result<Vec<cmdb::CmdbComponent>, ApiError> {
+    let mut reader = csv::ReaderBuilder::new().has_headers(true).from_reader(body);
+    let headers = reader
+        .headers()
+        .map_err(|e| ApiError::Validation(format!("invalid CSV header: {}", e)))?
+        .clone();
+
+    let mut out = Vec::new();
+    for record in reader.records() {
+        let rec = record.map_err(|e| ApiError::Validation(format!("invalid CSV row: {}", e)))?;
+        let get = |name: &str| -> Option<String> {
+            headers
+                .iter()
+                .position(|h| h.eq_ignore_ascii_case(name))
+                .and_then(|idx| rec.get(idx))
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        };
+
+        let name = get("name").ok_or_else(|| {
+            ApiError::Validation("CSV row missing required column 'name'".to_string())
+        })?;
+
+        out.push(cmdb::CmdbComponent {
+            name,
+            component_type: get("component_type").unwrap_or_else(|| "service".to_string()),
+            host: get("host"),
+            description: get("description"),
+            display_name: get("display_name"),
+            tags: get("tags")
+                .map(|s| {
+                    s.split(';')
+                        .map(|t| t.trim().to_string())
+                        .filter(|t| !t.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        });
+    }
+
+    if out.is_empty() {
+        return Err(ApiError::Validation(
+            "CSV payload contained no data rows".to_string(),
+        ));
+    }
+    Ok(out)
 }
 
 /// POST /api/v1/ingestion/incidents

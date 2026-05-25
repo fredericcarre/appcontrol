@@ -29,6 +29,7 @@ pub mod manual_tasks;
 pub mod map_settings;
 pub mod orchestration;
 pub mod organizations;
+pub mod patterns;
 pub mod permissions;
 pub mod pki_export;
 pub mod profiles;
@@ -638,6 +639,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/schedules/presets", get(schedules::list_presets))
         // Ingestion connectors (multi-source captation, Phase 1 of the methodology)
         .route("/ingestion/cmdb", post(ingestion::ingest_cmdb))
+        .route("/ingestion/cmdb/csv", post(ingestion::ingest_cmdb_csv))
         .route("/ingestion/xl", post(ingestion::ingest_xl))
         .route("/ingestion/flows", post(ingestion::ingest_flows))
         .route("/ingestion/incidents", post(ingestion::ingest_incidents))
@@ -645,6 +647,18 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/ai/schema/validate", post(ai::schema_validate))
         .route("/ai/map/suggest", post(ai::map_suggest))
         .route("/ai/incident/analyze", post(ai::incident_analyze))
+        // Pattern templates library (transversal capitalisation, Phase 5)
+        .route(
+            "/patterns",
+            get(patterns::list_patterns).post(patterns::create_pattern),
+        )
+        .route(
+            "/patterns/:id",
+            get(patterns::get_pattern)
+                .put(patterns::update_pattern)
+                .delete(patterns::delete_pattern),
+        )
+        .route("/patterns/:id/applied", post(patterns::pattern_applied))
         // Component Catalog
         .route(
             "/catalog/component-types",

@@ -741,19 +741,31 @@ pub async fn start_app(
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     let state_clone = state.clone();
+    let user_for_event: Uuid = *user.user_id;
     tokio::spawn(async move {
         let _guard = guard; // Hold the lock until the operation completes
-        match crate::core::sequencer::execute_start(&state_clone, id).await {
+        let result = crate::core::sequencer::execute_start(&state_clone, id).await;
+        let (status_label, ok) = match result {
             Ok(()) => {
                 let _ = complete_action_success(&state_clone.db, action_id).await;
                 tracing::info!("Successfully started app {}", id);
+                ("completed", true)
             }
             Err(e) => {
                 let error_msg = format!("{}", e);
                 let _ = complete_action_failed(&state_clone.db, action_id, &error_msg).await;
                 tracing::error!("Failed to start app {}: {}", id, e);
+                ("failed", false)
             }
-        }
+        };
+        let event = crate::core::notifications::NotificationEvent::Operation {
+            app_id: id,
+            operation: "start".to_string(),
+            status: status_label.to_string(),
+            user_id: user_for_event,
+        };
+        let _ = crate::core::notifications::dispatch_event(&state_clone.db, id, event).await;
+        let _ = ok; // explicit binding for clarity / future use
     });
 
     Ok(Json(json!({ "status": "starting", "plan": plan })))
@@ -821,19 +833,30 @@ pub async fn stop_app(
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     let state_clone = state.clone();
+    let user_for_event: Uuid = *user.user_id;
     tokio::spawn(async move {
         let _guard = guard; // Hold the lock until the operation completes
-        match crate::core::sequencer::execute_stop(&state_clone, id).await {
+        let result = crate::core::sequencer::execute_stop(&state_clone, id).await;
+        let status_label = match result {
             Ok(()) => {
                 let _ = complete_action_success(&state_clone.db, action_id).await;
                 tracing::info!("Successfully stopped app {}", id);
+                "completed"
             }
             Err(e) => {
                 let error_msg = format!("{}", e);
                 let _ = complete_action_failed(&state_clone.db, action_id, &error_msg).await;
                 tracing::error!("Failed to stop app {}: {}", id, e);
+                "failed"
             }
-        }
+        };
+        let event = crate::core::notifications::NotificationEvent::Operation {
+            app_id: id,
+            operation: "stop".to_string(),
+            status: status_label.to_string(),
+            user_id: user_for_event,
+        };
+        let _ = crate::core::notifications::dispatch_event(&state_clone.db, id, event).await;
     });
 
     Ok(Json(json!({ "status": "stopping" })))

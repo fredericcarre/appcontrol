@@ -39,10 +39,10 @@ Legend:
 |---|---|---|
 | Agents discovery (active observation) | :material-check-circle: livré | `crates/agent/src/discovery/` |
 | CMDB ingestion (générique JSON) | :material-check-circle: livré | `POST /api/v1/ingestion/cmdb` |
+| CMDB ingestion (CSV) | :material-check-circle: livré | `POST /api/v1/ingestion/cmdb/csv` |
 | XL Release / XL Deploy ingestion | :material-check-circle: livré | `POST /api/v1/ingestion/xl` |
 | Référentiel de flux ingestion | :material-check-circle: livré | `POST /api/v1/ingestion/flows` |
 | ITSM / incidents ingestion | :material-check-circle: livré | `POST /api/v1/ingestion/incidents` |
-| Connecteurs CSV (en plus du JSON) | :material-progress-clock: à venir | — |
 | Connecteurs natifs ServiceNow / Jira SM (pull) | :material-progress-clock: à venir | — |
 
 ## IA — validation, suggestion, analyse
@@ -78,6 +78,7 @@ Legend:
 | Reports DORA (RTO, MTTR, compliance) | :material-check-circle: livré | `crates/backend/src/api/reports/` |
 | Mesure RTR (Recovery Time for Rebuild) | :material-check-circle: livré | chronométré dans `action_log` par exécution |
 | Webhooks (HMAC, circuit breaker, retry) | :material-check-circle: livré | `crates/backend/src/core/notifications.rs` |
+| Webhook `operation` event dispatché en fin de start/stop | :material-check-circle: livré | dans `apps::start_app` / `apps::stop_app` |
 
 ## Pattern catalog &amp; capitalisation transversale
 
@@ -88,6 +89,7 @@ Legend:
 | Component catalog (structure + endpoints) | :material-check-circle: livré | `crates/backend/src/api/catalog.rs` |
 | Profiles (ensembles de checks réutilisables) | :material-check-circle: livré | `crates/backend/src/api/profiles.rs` |
 | Incidents table (capitalisation post-incident) | :material-check-circle: livré | `migrations/V059__incidents.sql` |
+| **Pattern library** (templates par techno, usage_count, lien incident) | :material-check-circle: livré | `migrations/V060__pattern_templates.sql` · `api/patterns.rs` |
 | Population auto du catalogue par IA | :material-progress-clock: à venir | nécessite un vrai provider AI |
 | Propagation auto de PR de remediation à apps similaires | :material-progress-clock: à venir | — |
 
