@@ -162,6 +162,7 @@ nav:
   - Home: index.md
   - Getting Started:
       - Quickstart: QUICKSTART.md
+      - Hands-on guide: HANDS_ON_GUIDE.md
       - Demo scenarios: DEMO_SCENARIOS.md
       - Where it fits (positioning): POSITIONING.md
       - Glossary: GLOSSARY.md

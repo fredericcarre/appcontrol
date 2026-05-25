@@ -1,0 +1,13 @@
+{
+  "_comment": "A reusable pattern derived from the JDBC pool saturation incident described in methodology § 6.2. POST this body to /api/v1/patterns. After creation, GET /api/v1/patterns/:id/candidates returns Spring Boot components that don't yet have a check_cmd; POST /api/v1/patterns/:id/propagate applies the templates to selected components in one shot.",
+  "name": "Spring Boot — JDBC pool health",
+  "technology": "spring-boot",
+  "description": "Detects JDBC pool saturation (the most frequent silent failure mode in Spring Boot apps backed by Postgres / MySQL). Generated from incident INC-2026-04-118 on billing-api after the team agreed the bare /actuator/health check was masking pool exhaustion.",
+  "check_cmd_template": "curl -fsS http://{hostname}:8080/actuator/health | jq -e '.status == \"UP\"'",
+  "integrity_check_cmd_template": "curl -fsS http://{hostname}:8080/actuator/health/db | jq -e '.details.activeConnections | tonumber < (.details.maxConnections | tonumber * 0.8)'",
+  "infra_check_cmd_template": "df -h /var/log/{app_name} | awk 'NR==2{exit ($5+0<90) ? 0 : 1}'",
+  "start_cmd_template": "systemctl start {app_name}",
+  "stop_cmd_template":  "systemctl stop {app_name}",
+  "rebuild_cmd_template": "systemctl stop {app_name} && {install_path}/bin/restore-config.sh && systemctl start {app_name}",
+  "tags": ["spring-boot", "jdbc", "postgres", "incident-derived"]
+}

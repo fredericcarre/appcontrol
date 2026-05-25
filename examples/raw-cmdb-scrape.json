@@ -1,0 +1,23 @@
+{
+  "_comment": "Example of an honest CMDB scrape — every component declared 'candidate' so the operator knows it needs review. POST this body to /api/v1/ingestion/cmdb. Replace application_id with a real UUID from your instance (e.g. one created by methodology-demo.json).",
+  "application_id": "REPLACE-WITH-APPLICATION-UUID",
+  "source": "servicenow-nightly",
+  "default_knowledge_status": "candidate",
+  "default_confidence_score": 0.4,
+  "components": [
+    {
+      "name": "newly-discovered-mq",
+      "component_type": "middleware",
+      "host": "mq-03.demo",
+      "description": "ActiveMQ broker — found by overnight CMDB scrape, not yet reviewed",
+      "tags": ["activemq", "owner:billing"]
+    },
+    {
+      "name": "audit-log-shipper",
+      "component_type": "service",
+      "host": "audit-shipper-01.demo",
+      "description": "Filebeat-style log shipper — first appearance",
+      "tags": ["filebeat", "owner:platform"]
+    }
+  ]
+}
