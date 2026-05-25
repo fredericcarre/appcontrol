@@ -720,6 +720,38 @@ postgres and sqlite feature sets.
 - [x] `crates/backend/src/api/annotations.rs` — CRUD + resolve, with target_type ∈ {application, component, dependency} and kind ∈ {note, review, todo, warning}
 - [x] `crates/backend/src/api/knowledge.rs` — `PUT /components/:id/knowledge`, `PUT /dependencies/:id/knowledge`, `GET /apps/:id/knowledge/summary` (returns counts by status + validated coverage ratio)
 
+### P13-10: CSV for the three remaining connectors (XL / flows / incidents)
+- [x] `POST /api/v1/ingestion/xl/csv` — deployables block + optional pipeline_deps block separated by a blank line
+- [x] `POST /api/v1/ingestion/flows/csv` — from,to,port,protocol
+- [x] `POST /api/v1/ingestion/incidents/csv` — external_id,title,opened_at,severity,status,resolved_at,root_cause,impacted_components (semicolon-separated)
+
+### P13-11: GitLab and Gitea Git providers
+- [x] `integrations/git.rs::push_via_gitlab` — Repository Files API, PUT-then-POST fallback, PRIVATE-TOKEN header
+- [x] `integrations/git.rs::push_via_gitea` — Contents API, near-identical to GitHub shape, `token <PAT>` auth
+- [x] Provider dispatch unchanged — existing endpoints already key off the provider name
+
+### P13-12: Real LLM providers (Anthropic + OpenAI) + RAG over runbooks
+- [x] `ai::provider::AnthropicProvider` — Messages API v2023-06-01, env `ANTHROPIC_API_KEY` + optional model / base_url
+- [x] `ai::provider::OpenAiProvider` — Chat Completions, env `OPENAI_API_KEY` + optional model / base_url (works on api.openai.com, Azure OpenAI, and any OpenAI-compatible gateway)
+- [x] `ai::rag` — local markdown RAG with token frequency × IDF ranking, env `RAG_CORPUS_DIR`, 4 unit tests
+- [x] `POST /api/v1/ai/rag/query` and `POST /api/v1/ai/rag/reload` (admin only)
+
+### P13-13: ServiceNow + Jira SM native pull connectors
+- [x] `integrations/servicenow.rs` — Table API (`/api/now/table/incident`), basic or bearer auth via env var, maps sys_id / short_description / priority / state / opened_at / closed_at / close_notes / cmdb_ci
+- [x] `integrations/jira_sm.rs` — JQL search (`/rest/api/3/search`), Atlassian doc-format → plain text, maps summary / description / priority / status / created / resolutiondate / components
+- [x] `POST /api/v1/ingestion/pull/servicenow` and `POST /api/v1/ingestion/pull/jira` — both reuse `itsm::ingest` so all pull and push connectors converge on the same incidents table
+
+### P13-14: Pattern propagation across applications
+- [x] `GET  /api/v1/patterns/:id/candidates` — lists components in the org matching the pattern's technology that don't yet have a check_cmd
+- [x] `POST /api/v1/patterns/:id/propagate { component_ids: [...] }` — fills only NULL command fields, bumps usage_count by the number of updates, audited
+
+### P13-15: Frontend — annotations + knowledge UI
+- [x] `frontend/src/api/annotations.ts` — React Query hooks (useAnnotations, useCreateAnnotation, useResolveAnnotation, useDeleteAnnotation)
+- [x] `frontend/src/api/knowledge.ts` — useUpdateComponentKnowledge, useUpdateDependencyKnowledge, useKnowledgeSummary
+- [x] `frontend/src/components/AnnotationsPanel.tsx` — embeddable panel with kind selector (note / review / todo / warning), resolve and delete, toggle to show resolved
+- [x] `frontend/src/components/KnowledgeBadge.tsx` — compact status pill with confidence percent
+- [x] `frontend/src/components/KnowledgeSummaryCard.tsx` — headline validated-coverage card with stacked status bars
+
 ### Build Validation (Phase 13)
 - [x] `cargo build -p appcontrol-backend --features postgres` — clean
 - [x] `cargo build -p appcontrol-backend --no-default-features --features sqlite` — clean

@@ -38,12 +38,16 @@ Legend:
 | Connecteur | Statut | Endpoint |
 |---|---|---|
 | Agents discovery (active observation) | :material-check-circle: livré | `crates/agent/src/discovery/` |
-| CMDB ingestion (générique JSON) | :material-check-circle: livré | `POST /api/v1/ingestion/cmdb` |
+| CMDB ingestion (JSON) | :material-check-circle: livré | `POST /api/v1/ingestion/cmdb` |
 | CMDB ingestion (CSV) | :material-check-circle: livré | `POST /api/v1/ingestion/cmdb/csv` |
-| XL Release / XL Deploy ingestion | :material-check-circle: livré | `POST /api/v1/ingestion/xl` |
-| Référentiel de flux ingestion | :material-check-circle: livré | `POST /api/v1/ingestion/flows` |
-| ITSM / incidents ingestion | :material-check-circle: livré | `POST /api/v1/ingestion/incidents` |
-| Connecteurs natifs ServiceNow / Jira SM (pull) | :material-progress-clock: à venir | — |
+| XL Release / XL Deploy ingestion (JSON) | :material-check-circle: livré | `POST /api/v1/ingestion/xl` |
+| XL Release / XL Deploy ingestion (CSV) | :material-check-circle: livré | `POST /api/v1/ingestion/xl/csv` |
+| Référentiel de flux ingestion (JSON) | :material-check-circle: livré | `POST /api/v1/ingestion/flows` |
+| Référentiel de flux ingestion (CSV) | :material-check-circle: livré | `POST /api/v1/ingestion/flows/csv` |
+| ITSM / incidents ingestion (JSON) | :material-check-circle: livré | `POST /api/v1/ingestion/incidents` |
+| ITSM / incidents ingestion (CSV) | :material-check-circle: livré | `POST /api/v1/ingestion/incidents/csv` |
+| **ServiceNow pull** (Table API natif) | :material-check-circle: livré | `POST /api/v1/ingestion/pull/servicenow` |
+| **Jira Service Management pull** (JQL natif) | :material-check-circle: livré | `POST /api/v1/ingestion/pull/jira` |
 
 ## IA — validation, suggestion, analyse
 
@@ -52,10 +56,12 @@ Legend:
 | Capacité | Statut | Endpoint |
 |---|---|---|
 | Provider abstraction (Stub / Anthropic / OpenAI / on-prem) | :material-check-circle: livré | `crates/backend/src/ai/provider.rs` |
-| Validation IA des schémas (vision LLM) | :material-flask: stub | `POST /api/v1/ai/schema/validate` |
-| Génération initiale de map par IA | :material-flask: stub | `POST /api/v1/ai/map/suggest` |
-| Analyse causale d'incidents par IA | :material-flask: stub | `POST /api/v1/ai/incident/analyze` |
-| RAG sur runbooks / historique opérationnel | :material-progress-clock: à venir | — |
+| **Provider Anthropic** (Messages API v2023-06-01) | :material-check-circle: livré | env `ANTHROPIC_API_KEY` + `ANTHROPIC_MODEL` |
+| **Provider OpenAI / Azure OpenAI** (Chat Completions) | :material-check-circle: livré | env `OPENAI_API_KEY` + `OPENAI_MODEL` + `OPENAI_BASE_URL` |
+| Validation IA des schémas (vision LLM) | :material-check-circle: livré | `POST /api/v1/ai/schema/validate` |
+| Génération initiale de map par IA | :material-check-circle: livré | `POST /api/v1/ai/map/suggest` |
+| Analyse causale d'incidents par IA | :material-check-circle: livré | `POST /api/v1/ai/incident/analyze` |
+| **RAG sur runbooks** (BM25-lite local) | :material-check-circle: livré | `POST /api/v1/ai/rag/query` · env `RAG_CORPUS_DIR` |
 
 !!! note "Stub vs. real provider"
     *Stub* = the API contract is stable and immediately usable by
@@ -89,9 +95,9 @@ Legend:
 | Component catalog (structure + endpoints) | :material-check-circle: livré | `crates/backend/src/api/catalog.rs` |
 | Profiles (ensembles de checks réutilisables) | :material-check-circle: livré | `crates/backend/src/api/profiles.rs` |
 | Incidents table (capitalisation post-incident) | :material-check-circle: livré | `migrations/V059__incidents.sql` |
-| **Pattern library** (templates par techno, usage_count, lien incident) | :material-check-circle: livré | `migrations/V060__pattern_templates.sql` · `api/patterns.rs` |
-| Population auto du catalogue par IA | :material-progress-clock: à venir | nécessite un vrai provider AI |
-| Propagation auto de PR de remediation à apps similaires | :material-progress-clock: à venir | — |
+| Pattern library (templates par techno, usage_count, lien incident) | :material-check-circle: livré | `migrations/V060__pattern_templates.sql` · `api/patterns.rs` |
+| **Propagation auto patterns** vers apps similaires | :material-check-circle: livré | `GET /patterns/:id/candidates` · `POST /patterns/:id/propagate` |
+| Population auto du catalogue par IA (RAG + suggestions) | :material-check-circle: livré | provider Anthropic / OpenAI requis |
 
 ## GitOps &amp; versionnement de map
 
@@ -100,8 +106,8 @@ Legend:
 | Versionnement interne (config_versions) | :material-check-circle: livré | tables append-only, snapshots avant/après |
 | Diff entre versions de map | :material-check-circle: livré | `GET /api/v1/apps/:id/dependency-history` |
 | Mode PR-only au niveau application | :material-check-circle: livré | via `activation_level = 3` |
-| **Intégration Git native** (synchro map vers repo externe) | :material-check-circle: livré | `migrations/V061__git_remotes.sql` · `api/git.rs` · `integrations/git.rs` (GitHub Contents API) |
-| Providers GitLab / Gitea | :material-progress-clock: à venir | — |
+| **Intégration Git native** (synchro map vers repo externe) | :material-check-circle: livré | `migrations/V061__git_remotes.sql` · `api/git.rs` · `integrations/git.rs` |
+| Providers : GitHub, **GitLab**, **Gitea** | :material-check-circle: livré | three impls in `integrations/git.rs` |
 
 ## Annotations &amp; avancement de la connaissance
 
@@ -114,7 +120,7 @@ Legend:
 | **Knowledge status** (candidate → draft → reviewed → validated → deprecated) | :material-check-circle: livré | colonne ajoutée par V062 |
 | Endpoint de mise à jour `PUT /components/:id/knowledge` et `PUT /dependencies/:id/knowledge` | :material-check-circle: livré | `api/knowledge.rs` |
 | `GET /apps/:id/knowledge/summary` — couverture validée par status | :material-check-circle: livré | `api/knowledge.rs::app_knowledge_summary` |
-| Frontend : badges de status + pile d'annotations par composant | :material-progress-clock: à venir | API prête côté backend |
+| **Frontend : badges + panel + summary card** | :material-check-circle: livré | `KnowledgeBadge`, `KnowledgeSummaryCard`, `AnnotationsPanel` |
 
 ## Pricing &amp; simulateur
 
