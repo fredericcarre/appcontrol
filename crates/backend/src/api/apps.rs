@@ -894,11 +894,20 @@ pub async fn start_branch(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<StartBranchRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
+    }
+
+    let dry_run = body.dry_run.unwrap_or(false);
+    if !dry_run {
+        let pr_sha = headers
+            .get(crate::core::activation::PR_APPROVAL_HEADER)
+            .and_then(|v| v.to_str().ok());
+        crate::core::activation::check_runtime_ops_allowed(&state.db, id, pr_sha).await?;
     }
 
     // If no component_id provided, find all FAILED components in this application.
@@ -976,11 +985,20 @@ pub async fn start_to(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<StartToRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
+    }
+
+    let dry_run = body.dry_run.unwrap_or(false);
+    if !dry_run {
+        let pr_sha = headers
+            .get(crate::core::activation::PR_APPROVAL_HEADER)
+            .and_then(|v| v.to_str().ok());
+        crate::core::activation::check_runtime_ops_allowed(&state.db, id, pr_sha).await?;
     }
 
     // Verify the target component belongs to this application

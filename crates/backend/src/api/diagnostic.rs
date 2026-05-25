@@ -1,5 +1,6 @@
 use axum::{
     extract::{Extension, Path, State},
+    http::HeaderMap,
     response::Json,
 };
 use serde::Deserialize;
@@ -30,6 +31,9 @@ pub async fn diagnose(
         return Err(ApiError::Forbidden);
     }
 
+    // Diagnostic execution requires level >= 2 (active diagnostic).
+    crate::core::activation::require_diagnostic(&state.db, app_id).await?;
+
     log_action(
         &state.db,
         user.user_id,
@@ -51,6 +55,7 @@ pub async fn rebuild(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<RebuildRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
@@ -59,6 +64,14 @@ pub async fn rebuild(
     }
 
     let dry_run = body.dry_run.unwrap_or(false);
+
+    // Rebuild is a runtime operation — gated by activation level.
+    if !dry_run {
+        let pr_sha = headers
+            .get(crate::core::activation::PR_APPROVAL_HEADER)
+            .and_then(|v| v.to_str().ok());
+        crate::core::activation::check_runtime_ops_allowed(&state.db, app_id, pr_sha).await?;
+    }
 
     log_action(
         &state.db,
