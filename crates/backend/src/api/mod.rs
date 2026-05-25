@@ -20,6 +20,7 @@ pub mod health;
 pub mod history;
 pub mod hostings;
 pub mod import;
+pub mod ingestion;
 pub mod import_wizard;
 pub mod links;
 pub mod logs;
@@ -626,6 +627,11 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(schedules::list_schedule_executions),
         )
         .route("/schedules/presets", get(schedules::list_presets))
+        // Ingestion connectors (multi-source captation, Phase 1 of the methodology)
+        .route("/ingestion/cmdb", post(ingestion::ingest_cmdb))
+        .route("/ingestion/xl", post(ingestion::ingest_xl))
+        .route("/ingestion/flows", post(ingestion::ingest_flows))
+        .route("/ingestion/incidents", post(ingestion::ingest_incidents))
         // Component Catalog
         .route(
             "/catalog/component-types",

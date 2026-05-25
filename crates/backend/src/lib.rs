@@ -5,6 +5,7 @@ pub mod config;
 pub mod core;
 pub mod db;
 pub mod error;
+pub mod integrations;
 pub mod middleware;
 pub mod repository;
 pub mod terminal;
