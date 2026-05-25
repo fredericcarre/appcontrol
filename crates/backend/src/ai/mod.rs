@@ -29,9 +29,10 @@
 //! provider name and prompt fingerprint, satisfying the
 //! "auditable AI" governance principle described in methodology § 9.1.
 
-pub mod provider;
-pub mod schema;
-pub mod map_gen;
 pub mod incident;
+pub mod map_gen;
+pub mod provider;
+pub mod rag;
+pub mod schema;
 
 pub use provider::{select_default_provider, Provider};

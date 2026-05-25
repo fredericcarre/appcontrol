@@ -653,6 +653,8 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/ai/schema/validate", post(ai::schema_validate))
         .route("/ai/map/suggest", post(ai::map_suggest))
         .route("/ai/incident/analyze", post(ai::incident_analyze))
+        .route("/ai/rag/query", post(ai::rag_query))
+        .route("/ai/rag/reload", post(ai::rag_reload))
         // Pattern templates library (transversal capitalisation, Phase 5)
         .route(
             "/patterns",

@@ -103,6 +103,59 @@ pub async fn map_suggest(
     }
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct RagQueryRequest {
+    pub query: String,
+    #[serde(default = "default_top_k")]
+    pub top_k: usize,
+}
+
+fn default_top_k() -> usize {
+    5
+}
+
+/// POST /api/v1/ai/rag/query
+///
+/// Looks up the local runbook corpus configured via `RAG_CORPUS_DIR`.
+/// Returns matching chunks ranked by token-frequency × IDF. Returns
+/// 404 if `RAG_CORPUS_DIR` is unset.
+pub async fn rag_query(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<RagQueryRequest>,
+) -> Result<Json<Value>, ApiError> {
+    // Org admin or any authenticated user with at least one app permission
+    // is allowed to query the shared knowledge base. We keep the check
+    // light: just require an authenticated user.
+    let _ = user;
+    let _ = &state;
+
+    let answer = ai::rag::query(&body.query, body.top_k.clamp(1, 50)).ok_or_else(|| {
+        ApiError::Validation(
+            "RAG_CORPUS_DIR is not configured; set the env var to a directory of \
+             markdown runbooks to enable rag/query"
+                .to_string(),
+        )
+    })?;
+
+    Ok(Json(json!({"status": "ok", "response": answer})))
+}
+
+/// POST /api/v1/ai/rag/reload
+///
+/// Forces a re-index of the corpus, typically called after pushing
+/// new runbooks. Admin-only.
+pub async fn rag_reload(
+    State(_state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+    ai::rag::reload();
+    Ok(Json(json!({"status": "ok", "message": "RAG index cleared; next query will rebuild"})))
+}
+
 /// POST /api/v1/ai/incident/analyze
 pub async fn incident_analyze(
     State(state): State<Arc<AppState>>,
