@@ -167,6 +167,8 @@ nav:
       - Glossary: GLOSSARY.md
   - User Guide:
       - Overview: USER_GUIDE.md
+      - Methodology in 9 screens: METHODOLOGY_WALKTHROUGH.md
+      - Example maps & ingestion patterns: EXAMPLE_MAPS.md
       - Permissions: PERMISSIONS.md
       - Runbooks: RUNBOOKS.md
       - Troubleshooting: TROUBLESHOOTING.md

@@ -189,6 +189,45 @@ test.describe('Documentation Screenshots', () => {
     await capture(page, 'discovery');
   });
 
+  // ── Methodology-aligned pages (captation, activation,
+  //    knowledge tab) — referenced from EXAMPLE_MAPS.md and
+  //    METHODOLOGY_WALKTHROUGH.md.
+
+  test('captation-page', async ({ page }) => {
+    await page.goto('/captation');
+    await page.waitForTimeout(1500);
+    await capture(page, 'captation-page');
+  });
+
+  test('captation-wizard', async ({ page }) => {
+    await page.goto('/captation');
+    await page.waitForTimeout(1500);
+    // Scroll the ingestion wizard into view before capture.
+    const wizard = page.getByText("Wizard d'ingestion", { exact: false });
+    if (await wizard.count()) {
+      await wizard.first().scrollIntoViewIfNeeded();
+      await page.waitForTimeout(400);
+    }
+    await capture(page, 'captation-wizard');
+  });
+
+  test('activation-page', async ({ page }) => {
+    // Activation is per-application; seed creates at least one demo app.
+    // Navigate via the dashboard so a representative app is loaded.
+    await page.goto('/');
+    await page.waitForTimeout(1200);
+    const firstApp = page.locator('a[href^="/apps/"]').first();
+    if (await firstApp.count()) {
+      const href = await firstApp.getAttribute('href');
+      const appId = href?.split('/').pop();
+      if (appId) {
+        await page.goto(`/apps/${appId}/activation`);
+        await page.waitForTimeout(1500);
+      }
+    }
+    await capture(page, 'activation-page');
+  });
+
   // ── Infrastructure ───────────────────────────────────────────
 
   test('agents', async ({ page }) => {
