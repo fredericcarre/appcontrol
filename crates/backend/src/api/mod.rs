@@ -649,6 +649,8 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/ingestion/flows/csv", post(ingestion::ingest_flows_csv))
         .route("/ingestion/incidents", post(ingestion::ingest_incidents))
         .route("/ingestion/incidents/csv", post(ingestion::ingest_incidents_csv))
+        .route("/ingestion/pull/servicenow", post(ingestion::pull_servicenow))
+        .route("/ingestion/pull/jira", post(ingestion::pull_jira))
         // AI-assisted operations (stub by default; pluggable provider)
         .route("/ai/schema/validate", post(ai::schema_validate))
         .route("/ai/map/suggest", post(ai::map_suggest))
@@ -667,6 +669,8 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
                 .delete(patterns::delete_pattern),
         )
         .route("/patterns/:id/applied", post(patterns::pattern_applied))
+        .route("/patterns/:id/candidates", get(patterns::pattern_candidates))
+        .route("/patterns/:id/propagate", post(patterns::pattern_propagate))
         // Map annotations (human commentary on components/dependencies/applications)
         .route(
             "/annotations",

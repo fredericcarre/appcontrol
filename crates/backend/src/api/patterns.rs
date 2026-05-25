@@ -366,6 +366,234 @@ pub async fn delete_pattern(
     Ok(Json(json!({ "status": "deleted", "id": id })))
 }
 
+/// GET /api/v1/patterns/:id/candidates
+///
+/// Returns the list of components in the caller's organisation that
+/// could benefit from this pattern but do NOT yet have its checks
+/// configured. Matching heuristic: same `technology` tag (case-
+/// insensitive substring on `components.component_type`).
+///
+/// Use this to power the "propagate to similar apps" workflow
+/// described in methodology §5.5.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct PatternCandidate {
+    pub component_id: DbUuid,
+    pub component_name: String,
+    pub application_id: DbUuid,
+    pub application_name: String,
+    pub component_type: String,
+    pub has_check_cmd: bool,
+}
+
+pub async fn pattern_candidates(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let pattern = fetch_pattern(&state.db, *user.organization_id, id).await?;
+    let tech = format!("%{}%", pattern.technology.to_lowercase());
+
+    #[cfg(feature = "postgres")]
+    let rows: Vec<PatternCandidate> = sqlx::query_as(
+        "SELECT c.id AS component_id, c.name AS component_name,
+                a.id AS application_id, a.name AS application_name,
+                c.component_type,
+                (c.check_cmd IS NOT NULL) AS has_check_cmd
+         FROM components c
+         INNER JOIN applications a ON a.id = c.application_id
+         WHERE a.organization_id = $1
+           AND LOWER(c.component_type) LIKE $2
+           AND c.check_cmd IS NULL
+         ORDER BY a.name, c.name
+         LIMIT 200",
+    )
+    .bind(*user.organization_id)
+    .bind(tech)
+    .fetch_all(&state.db)
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let rows: Vec<PatternCandidate> = sqlx::query_as(
+        "SELECT c.id AS component_id, c.name AS component_name,
+                a.id AS application_id, a.name AS application_name,
+                c.component_type,
+                (c.check_cmd IS NOT NULL) AS has_check_cmd
+         FROM components c
+         INNER JOIN applications a ON a.id = c.application_id
+         WHERE a.organization_id = ?
+           AND LOWER(c.component_type) LIKE ?
+           AND c.check_cmd IS NULL
+         ORDER BY a.name, c.name
+         LIMIT 200",
+    )
+    .bind(DbUuid::from(*user.organization_id))
+    .bind(tech)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(json!({
+        "pattern_id": id,
+        "technology": pattern.technology,
+        "candidates": rows,
+        "total": rows.len(),
+    })))
+}
+
+/// POST /api/v1/patterns/:id/propagate
+/// Body: { "component_ids": ["...", "..."] }
+///
+/// Applies the pattern's templates to each listed component (only
+/// fills empty fields — won't overwrite existing commands). Returns
+/// per-component results. Bumps the pattern's usage_count by N.
+#[derive(Debug, Deserialize)]
+pub struct PropagateRequest {
+    pub component_ids: Vec<Uuid>,
+}
+
+pub async fn pattern_propagate(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PropagateRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let pattern = fetch_pattern(&state.db, *user.organization_id, id).await?;
+
+    let action_id = log_action(
+        &state.db,
+        user.user_id,
+        "patterns.propagate",
+        "pattern_template",
+        id,
+        json!({"component_count": body.component_ids.len()}),
+    )
+    .await?;
+
+    let mut updated = 0_usize;
+    let mut skipped = 0_usize;
+    for component_id in &body.component_ids {
+        let n = propagate_one(&state.db, *user.organization_id, *component_id, &pattern).await?;
+        if n > 0 {
+            updated += 1;
+        } else {
+            skipped += 1;
+        }
+    }
+    if updated > 0 {
+        bump_usage(&state.db, id, updated as i32).await?;
+    }
+
+    let _ = complete_action_success(&state.db, action_id).await;
+    Ok(Json(json!({
+        "status": "ok",
+        "pattern_id": id,
+        "updated": updated,
+        "skipped": skipped,
+    })))
+}
+
+async fn propagate_one(
+    pool: &crate::db::DbPool,
+    org_id: Uuid,
+    component_id: Uuid,
+    pattern: &PatternRow,
+) -> Result<u64, ApiError> {
+    // Verify the component belongs to the caller's org via its app.
+    #[cfg(feature = "postgres")]
+    let owner: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT a.organization_id FROM components c
+         INNER JOIN applications a ON a.id = c.application_id
+         WHERE c.id = $1",
+    )
+    .bind(component_id)
+    .fetch_optional(pool)
+    .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let owner: Option<(DbUuid,)> = sqlx::query_as(
+        "SELECT a.organization_id FROM components c
+         INNER JOIN applications a ON a.id = c.application_id
+         WHERE c.id = ?",
+    )
+    .bind(DbUuid::from(component_id))
+    .fetch_optional(pool)
+    .await?;
+    let owner_org = owner.map(|(id,)| {
+        #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+        let id = id.into_inner();
+        id
+    });
+    if owner_org != Some(org_id) {
+        return Ok(0);
+    }
+
+    #[cfg(feature = "postgres")]
+    let affected = sqlx::query(
+        "UPDATE components SET
+            check_cmd = COALESCE(check_cmd, $1),
+            integrity_check_cmd = COALESCE(integrity_check_cmd, $2),
+            infra_check_cmd = COALESCE(infra_check_cmd, $3),
+            start_cmd = COALESCE(start_cmd, $4),
+            stop_cmd = COALESCE(stop_cmd, $5),
+            rebuild_cmd = COALESCE(rebuild_cmd, $6),
+            updated_at = NOW()
+          WHERE id = $7
+            AND (check_cmd IS NULL OR integrity_check_cmd IS NULL OR infra_check_cmd IS NULL
+                 OR start_cmd IS NULL OR stop_cmd IS NULL OR rebuild_cmd IS NULL)",
+    )
+    .bind(&pattern.check_cmd_template)
+    .bind(&pattern.integrity_check_cmd_template)
+    .bind(&pattern.infra_check_cmd_template)
+    .bind(&pattern.start_cmd_template)
+    .bind(&pattern.stop_cmd_template)
+    .bind(&pattern.rebuild_cmd_template)
+    .bind(component_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let affected = sqlx::query(
+        "UPDATE components SET
+            check_cmd = COALESCE(check_cmd, ?),
+            integrity_check_cmd = COALESCE(integrity_check_cmd, ?),
+            infra_check_cmd = COALESCE(infra_check_cmd, ?),
+            start_cmd = COALESCE(start_cmd, ?),
+            stop_cmd = COALESCE(stop_cmd, ?),
+            rebuild_cmd = COALESCE(rebuild_cmd, ?),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+            AND (check_cmd IS NULL OR integrity_check_cmd IS NULL OR infra_check_cmd IS NULL
+                 OR start_cmd IS NULL OR stop_cmd IS NULL OR rebuild_cmd IS NULL)",
+    )
+    .bind(&pattern.check_cmd_template)
+    .bind(&pattern.integrity_check_cmd_template)
+    .bind(&pattern.infra_check_cmd_template)
+    .bind(&pattern.start_cmd_template)
+    .bind(&pattern.stop_cmd_template)
+    .bind(&pattern.rebuild_cmd_template)
+    .bind(DbUuid::from(component_id))
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    Ok(affected)
+}
+
+async fn bump_usage(pool: &crate::db::DbPool, id: Uuid, n: i32) -> Result<(), ApiError> {
+    #[cfg(feature = "postgres")]
+    sqlx::query("UPDATE pattern_templates SET usage_count = usage_count + $1 WHERE id = $2")
+        .bind(n)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    sqlx::query("UPDATE pattern_templates SET usage_count = usage_count + ? WHERE id = ?")
+        .bind(n)
+        .bind(DbUuid::from(id))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// POST /api/v1/patterns/:id/applied — increment usage_count when a
 /// component adopts the pattern. Stateless on purpose: the callers
 /// (component update handlers, IA suggestions, scripts) are

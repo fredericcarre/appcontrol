@@ -22,7 +22,7 @@ use appcontrol_common::PermissionLevel;
 use crate::auth::AuthUser;
 use crate::core::permissions::effective_permission;
 use crate::error::ApiError;
-use crate::integrations::{cmdb, flow, itsm, xl};
+use crate::integrations::{cmdb, flow, itsm, jira_sm, servicenow, xl};
 use crate::middleware::audit::{complete_action_failed, complete_action_success, log_action};
 use crate::AppState;
 
@@ -258,6 +258,78 @@ pub async fn ingest_incidents_csv(
         errors = report.errors.len(),
         "CSV incident ingestion completed"
     );
+    Ok(Json(json!({"status": "ok", "report": report})))
+}
+
+// ----------------------------------------------------------------------------
+// Pull connectors — backend fetches from external ITSM systems.
+// ----------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ServiceNowPullBody {
+    pub organization_id: Uuid,
+    pub application_id: Option<Uuid>,
+    #[serde(flatten)]
+    pub pull: servicenow::ServiceNowPullRequest,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JiraPullBody {
+    pub organization_id: Uuid,
+    pub application_id: Option<Uuid>,
+    #[serde(flatten)]
+    pub pull: jira_sm::JiraPullRequest,
+}
+
+/// POST /api/v1/ingestion/pull/servicenow
+pub async fn pull_servicenow(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<ServiceNowPullBody>,
+) -> Result<Json<Value>, ApiError> {
+    if body.organization_id != *user.organization_id {
+        return Err(ApiError::Forbidden);
+    }
+    if let Some(app_id) = body.application_id {
+        check_manage(&state, &user, app_id).await?;
+    } else if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    let incidents = servicenow::pull(&body.pull).await?;
+    let payload = itsm::ItsmPayload {
+        organization_id: body.organization_id,
+        application_id: body.application_id,
+        source: "servicenow".to_string(),
+        incidents,
+    };
+    let report = itsm::ingest(&state.db, payload).await?;
+    Ok(Json(json!({"status": "ok", "report": report})))
+}
+
+/// POST /api/v1/ingestion/pull/jira
+pub async fn pull_jira(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<JiraPullBody>,
+) -> Result<Json<Value>, ApiError> {
+    if body.organization_id != *user.organization_id {
+        return Err(ApiError::Forbidden);
+    }
+    if let Some(app_id) = body.application_id {
+        check_manage(&state, &user, app_id).await?;
+    } else if !user.is_admin() {
+        return Err(ApiError::Forbidden);
+    }
+
+    let incidents = jira_sm::pull(&body.pull).await?;
+    let payload = itsm::ItsmPayload {
+        organization_id: body.organization_id,
+        application_id: body.application_id,
+        source: "jira-sm".to_string(),
+        incidents,
+    };
+    let report = itsm::ingest(&state.db, payload).await?;
     Ok(Json(json!({"status": "ok", "report": report})))
 }
 

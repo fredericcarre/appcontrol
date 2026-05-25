@@ -24,6 +24,8 @@ pub mod cmdb;
 pub mod flow;
 pub mod git;
 pub mod itsm;
+pub mod jira_sm;
+pub mod servicenow;
 pub mod xl;
 
 use serde::{Deserialize, Serialize};
