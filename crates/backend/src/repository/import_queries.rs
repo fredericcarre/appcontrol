@@ -406,26 +406,21 @@ pub async fn create_component_link_ordered(
     Ok(())
 }
 
-/// Create a dependency.
+/// Create a strong dependency.
 pub async fn create_dependency(
     pool: &DbPool,
     app_id: Uuid,
     from_component_id: Uuid,
     to_component_id: Uuid,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id) VALUES ($1, $2, $3, $4)",
-    )
-    .bind(crate::db::bind_id(Uuid::new_v4()))
-    .bind(crate::db::bind_id(app_id))
-    .bind(crate::db::bind_id(from_component_id))
-    .bind(crate::db::bind_id(to_component_id))
-    .execute(pool)
-    .await?;
-    Ok(())
+    create_dependency_typed(pool, app_id, from_component_id, to_component_id, "strong").await
 }
 
-/// Create a dependency with type.
+/// Create a dependency with an explicit type ("strong" | "weak").
+///
+/// V056 added the `dependency_type` column to the `dependencies` table.
+/// Values outside the CHECK set ("strong" | "weak") are rejected at the
+/// database layer.
 pub async fn create_dependency_typed(
     pool: &DbPool,
     app_id: Uuid,
@@ -433,8 +428,14 @@ pub async fn create_dependency_typed(
     to_component_id: Uuid,
     dep_type: &str,
 ) -> Result<(), sqlx::Error> {
+    let dep_type = match dep_type {
+        "weak" => "weak",
+        // Any other value (legacy callers passing "strong", or older
+        // import payloads that pre-date weak dependencies) maps to strong.
+        _ => "strong",
+    };
     sqlx::query(
-        "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id, dep_type) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO dependencies (id, application_id, from_component_id, to_component_id, dependency_type) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(crate::db::bind_id(Uuid::new_v4()))
     .bind(crate::db::bind_id(app_id))

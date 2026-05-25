@@ -1,0 +1,127 @@
+name: Benchmarks
+
+# Criterion micro-benchmarks for the AppControl hot paths:
+#   - FSM (`is_valid_transition`, `next_state_from_check`)
+#   - DAG topological sort
+#   - Effective-permission resolution (SQLite, in-memory)
+#
+# The benchmarks live in `crates/benchmarks/` and are intentionally kept out
+# of the regular CI matrix so they don't slow every pull request. They run:
+#   - on demand   (workflow_dispatch)
+#   - weekly      (Monday 06:00 UTC) — to catch slow regressions over time
+#   - on push to main when `crates/**` changes — so a measured baseline is
+#     attached to each green main commit.
+#
+# The HTML report and the bencher-format text are uploaded as artefacts with
+# 90-day retention so the docs site can link to them.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays at 06:00 UTC, when the runners are usually empty.
+    - cron: "0 6 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - ".github/workflows/benchmarks.yaml"
+
+permissions:
+  contents: read
+
+# Don't pile up bench runs on the same commit if a push happens during a
+# scheduled run — keep the latest.
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  bench:
+    name: cargo bench (FSM + DAG + permissions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          # Keyed on Cargo.lock so dep upgrades invalidate the cache.
+          key: ${{ runner.os }}-bench-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bench-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Build benchmarks (release)
+        run: cargo build -p appcontrol-benchmarks --release --benches
+
+      - name: Print CPU info
+        # Recorded so the artefact carries the runner model — different
+        # GitHub-hosted SKUs vary by ~20%.
+        run: |
+          echo "## CPU info" > /tmp/cpuinfo.md
+          echo '```' >> /tmp/cpuinfo.md
+          lscpu | head -25 >> /tmp/cpuinfo.md
+          echo '```' >> /tmp/cpuinfo.md
+          cat /tmp/cpuinfo.md
+
+      - name: Run benchmarks (bencher output)
+        # `--output-format bencher` produces a single-line-per-bench format
+        # that's machine-friendly and small enough to commit if we ever
+        # want to. `tee` keeps the human-readable summary in the log.
+        run: |
+          mkdir -p /tmp/bench-out
+          cargo bench -p appcontrol-benchmarks \
+            --bench fsm \
+            --bench dag_topo \
+            --bench permission_resolution \
+            -- --output-format bencher | tee /tmp/bench-out/results.txt
+
+      - name: Summarise into job step summary
+        if: always()
+        run: |
+          {
+            echo "# Benchmark results"
+            echo ""
+            cat /tmp/cpuinfo.md
+            echo ""
+            echo "## Bencher output"
+            echo '```'
+            cat /tmp/bench-out/results.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Criterion HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-report
+          # Criterion writes its full HTML report (per-bench plots, history)
+          # under target/criterion/. We grab the whole tree.
+          path: target/criterion/
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Upload bencher-format results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bencher-results
+          path: |
+            /tmp/bench-out/results.txt
+            /tmp/cpuinfo.md
+          retention-days: 90
+          if-no-files-found: warn

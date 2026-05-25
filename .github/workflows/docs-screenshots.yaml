@@ -11,8 +11,19 @@ on:
     branches: [main]
     paths:
       - 'frontend/src/**'
+      - 'frontend/e2e-screenshots/**'
+      - 'frontend/playwright-screenshots.config.ts'
+      - 'frontend/package.json'
       - 'docs/**'
+      - 'README.md'
+      - '.github/workflows/docs-screenshots.yaml'
   workflow_dispatch:
+  # Called from release.yaml so every published release ships with
+  # screenshots captured from the exact UI being released, instead of
+  # the lagging snapshot that happened to be on main at tag time. The
+  # `ui-screenshots` artifact uploaded at the end of the job is the
+  # contract — `mirror-release` downloads it before packaging.
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
@@ -59,6 +70,111 @@ jobs:
           # 200 = direct success, 301 = redirect to HTTPS (also fine)
           [ "$STATUS" = "200" ] || [ "$STATUS" = "301" ]
 
+      - name: Wait for demo seed pipeline to complete
+        run: |
+          # The demo pipeline has three short-lived services chained:
+          #   demo-seeder  → imports the demo app + creates an agent
+          #                  enrollment token
+          #   demo-agent   → long-running, enrols itself with that token
+          #                  and registers as hostname=demo-host (it is
+          #                  auto-bound to all demo components)
+          #   demo-starter → waits for the agent to register, then starts
+          #                  the application so components transition
+          #                  through STARTING → RUNNING
+          # We block here until demo-starter has exited successfully —
+          # by that point the dashboard, the map and the reports page
+          # all hold realistic data ready to be screenshotted.
+          for service in demo-seeder demo-starter demo-incident-injector; do
+            SVC_ID=$(docker compose -f docker/docker-compose.yaml ps -aq "$service")
+            if [ -z "$SVC_ID" ]; then
+              echo "$service service not found"
+              docker compose -f docker/docker-compose.yaml ps -a
+              exit 1
+            fi
+            echo "Waiting for $service to exit ..."
+            for i in $(seq 1 180); do
+              STATUS=$(docker inspect --format='{{.State.Status}}' "$SVC_ID" 2>/dev/null || echo "missing")
+              if [ "$STATUS" = "exited" ]; then
+                EXIT_CODE=$(docker inspect --format='{{.State.ExitCode}}' "$SVC_ID")
+                if [ "$EXIT_CODE" = "0" ]; then
+                  echo "$service completed successfully after $((i * 2))s"
+                  docker compose -f docker/docker-compose.yaml logs "$service" | tail -200
+                  break
+                fi
+                echo "$service failed (exit code $EXIT_CODE):"
+                docker compose -f docker/docker-compose.yaml logs "$service" | tail -80
+                docker compose -f docker/docker-compose.yaml logs demo-agent | tail -40 || true
+                exit 1
+              fi
+              if [ "$i" = "180" ]; then
+                echo "$service did not complete within 360s"
+                docker compose -f docker/docker-compose.yaml logs "$service" | tail -80
+                docker compose -f docker/docker-compose.yaml logs demo-agent | tail -40 || true
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Dump backend, gateway and agent logs (always, post-seed)
+        if: always()
+        run: |
+          echo "============================================================"
+          echo " Backend: sequencer / start / dispatch / failure lines"
+          echo "============================================================"
+          docker compose -f docker/docker-compose.yaml logs --no-color backend 2>&1 \
+            | grep -E "sequencer|start_app|dispatch|Successfully started|Failed to start|GatewayUnavail|ExecuteCommand|action_log" \
+            | tail -200 || true
+          echo
+          echo "============================================================"
+          echo " Backend: last 200 raw lines (in case the grep above misses)"
+          echo "============================================================"
+          docker compose -f docker/docker-compose.yaml logs --no-color backend 2>&1 \
+            | tail -200 || true
+          echo
+          echo "============================================================"
+          echo " Gateway: messages forwarded to agent (Send * to agent / agent <-)"
+          echo "============================================================"
+          docker compose -f docker/docker-compose.yaml logs --no-color gateway 2>&1 \
+            | grep -E "to agent|agent <-|Forwarding to agent|ExecuteCommand|Send.*agent" \
+            | tail -120 || true
+          echo
+          echo "============================================================"
+          echo " Demo agent: anything other than scheduler ticks"
+          echo "============================================================"
+          docker compose -f docker/docker-compose.yaml logs --no-color demo-agent 2>&1 \
+            | grep -vE "Scheduler tick|run_due_checks|No targets due|Scheduler waiting|Sending heartbeat" \
+            | tail -120 || true
+
+      - name: Wait for FSM to detect the injected failure
+        run: |
+          # demo-incident-injector deleted the batch flag files. The
+          # agent reschedules its check after the configured interval
+          # (~30s with the example). Poll the API until at least one
+          # component reports FAILED, capped at 90 seconds.
+          TOKEN=$(curl -sf -k -X POST https://localhost:443/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"email":"admin@localhost","password":"admin"}' \
+            | jq -r '.token // empty')
+          if [ -z "$TOKEN" ]; then
+            echo "Login failed; skipping FAILED-state wait"
+          else
+            for i in $(seq 1 45); do
+              FAILED_COUNT=$(curl -sf -k \
+                -H "Authorization: Bearer $TOKEN" \
+                https://localhost:443/api/v1/apps \
+                | jq -r '[.apps[] | .failed_count // 0] | add // 0')
+              if [ "${FAILED_COUNT:-0}" -gt 0 ]; then
+                echo "FSM detected failure after $((i * 2))s — $FAILED_COUNT components FAILED"
+                break
+              fi
+              if [ "$i" = "45" ]; then
+                echo "Timed out waiting for FAILED state; continuing anyway"
+              fi
+              sleep 2
+            done
+          fi
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -79,33 +195,75 @@ jobs:
         run: npm run screenshots
         continue-on-error: true  # Don't fail the build if some pages have no data
 
+      - name: Capture GIF videos
+        working-directory: frontend
+        run: npm run gifs
+        # The three GIF scenarios script real user interactions (click
+        # FAILED node → Start with deps, open Switchover modal, navigate
+        # to Reports). Like the screenshot step we tolerate partial
+        # failures; the convert step downstream simply produces fewer
+        # GIFs and the README will fall back to whatever PNG is present.
+        continue-on-error: true
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+
+      - name: Convert WebM → GIF
+        run: bash scripts/webm-to-gif.sh
+
       - name: List captured screenshots
         run: ls -la docs/screenshots/ || echo "No screenshots directory"
 
       - name: Embed screenshots in documentation
         run: |
-          # Replace <!-- SCREENSHOT:name --> markers with actual image references
+          # Replace <!-- SCREENSHOT:name --> markers with actual image references.
+          # Two targets, two relative paths:
+          #   - docs/USER_GUIDE.md  → screenshots/<name>.png   (sibling directory)
+          #   - README.md           → docs/screenshots/<name>.png (from repo root)
           if [ -d docs/screenshots ]; then
             for img in docs/screenshots/*.png; do
               name=$(basename "$img" .png)
-              # Replace the marker in USER_GUIDE.md
               if [ -f docs/USER_GUIDE.md ]; then
                 sed -i "s|<!-- SCREENSHOT:${name} -->|![${name}](screenshots/${name}.png)|g" docs/USER_GUIDE.md
+              fi
+              if [ -f README.md ]; then
+                sed -i "s|<!-- SCREENSHOT:${name} -->|![${name}](docs/screenshots/${name}.png)|g" README.md
               fi
             done
           fi
 
       - name: Commit updated screenshots
+        # A push from a developer to the same branch while screenshots are
+        # being captured (the job takes a few minutes) used to make this
+        # step explode the whole workflow with a non-fast-forward reject.
+        # Pull + rebase + retry on each attempt; never block the workflow
+        # on a missed auto-commit — the screenshots themselves are
+        # already uploaded as the `ui-screenshots` artifact below.
+        continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/screenshots/ docs/USER_GUIDE.md
+          git add docs/screenshots/ docs/USER_GUIDE.md README.md
           if git diff --cached --quiet; then
             echo "No screenshot changes to commit"
-          else
-            git commit -m "docs: auto-update UI screenshots [skip ci]"
-            git push
+            exit 0
           fi
+          git commit -m "docs: auto-update UI screenshots [skip ci]"
+          for attempt in 1 2 3 4; do
+            if git push; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push attempt $attempt rejected — rebasing on remote tip"
+            git pull --rebase origin "${GITHUB_REF_NAME}" || {
+              echo "Rebase failed; aborting auto-commit"
+              exit 0
+            }
+          done
+          echo "Could not push auto-commit after 4 attempts; giving up"
+          exit 0
 
       - name: Upload screenshots as artifact
         if: always()
@@ -114,6 +272,28 @@ jobs:
           name: ui-screenshots
           path: docs/screenshots/
           retention-days: 30
+          # Fail loudly if no screenshots were produced — silent "warn"
+          # used to hide all-tests-failing runs behind a green badge.
+          if-no-files-found: error
+
+      - name: Upload Playwright debug bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-debug
+          path: |
+            frontend/playwright-report/
+            frontend/e2e-screenshots/results/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Dump all container logs on failure
+        if: failure()
+        run: |
+          echo "=========================================="
+          echo " Dumping all container logs (failure path)"
+          echo "=========================================="
+          docker compose -f docker/docker-compose.yaml logs --no-color --tail=200 || true
 
       - name: Tear down
         if: always()

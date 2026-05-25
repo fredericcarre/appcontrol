@@ -9,6 +9,7 @@ members = [
     "crates/mcp",
     "crates/e2e-tests",
     "crates/e2e-real-tests",
+    "crates/benchmarks",
 ]
 
 [workspace.package]

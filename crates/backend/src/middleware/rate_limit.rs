@@ -28,7 +28,16 @@ impl RateLimiter {
     }
 
     /// Check if the key is within its rate limit. Returns true if allowed.
+    ///
+    /// Sentinel: `max_requests == 0` disables the limiter for this key
+    /// (operator opt-out, documented in docs/LIMITS.md). The in-memory
+    /// entry is intentionally left untouched so flipping the limit back
+    /// to a non-zero value resumes counting fresh.
     pub fn check(&self, key: &str, max_requests: u32) -> bool {
+        if max_requests == 0 {
+            return true;
+        }
+
         let now = Instant::now();
         let mut entry = self.entries.entry(key.to_string()).or_insert((now, 0));
 
@@ -95,6 +104,12 @@ async fn check_rate_limit(
     window_secs: u64,
     ha_mode: bool,
 ) -> bool {
+    // Sentinel: max_requests == 0 disables the limiter regardless of HA mode.
+    // Documented in docs/LIMITS.md.
+    if max_requests == 0 {
+        return true;
+    }
+
     if !ha_mode {
         return fallback.check(key, max_requests);
     }
@@ -232,6 +247,17 @@ mod tests {
         assert!(!limiter.check("key-a", 5));
         // key-b should still be allowed
         assert!(limiter.check("key-b", 5));
+    }
+
+    #[test]
+    fn test_rate_limiter_zero_max_requests_disables() {
+        let limiter = RateLimiter::new(60);
+        // 10_000 calls in a row should all be allowed because the limit is 0.
+        for _ in 0..10_000 {
+            assert!(limiter.check("anything", 0));
+        }
+        // The disabled path must not populate the in-memory map.
+        assert_eq!(limiter.entries.len(), 0);
     }
 
     #[test]

@@ -15,7 +15,12 @@ export default defineConfig({
   outputDir: './e2e-screenshots/results',
   timeout: 30_000,
   retries: 1,
+  reporter: process.env.CI
+    ? [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
+    : 'list',
   use: {
+    trace: 'retain-on-failure',
+    video: 'retain-on-failure',
     // Access app through nginx (HTTPS with self-signed cert)
     baseURL: 'https://localhost:443',
     ignoreHTTPSErrors: true, // Allow self-signed certificates
@@ -26,8 +31,22 @@ export default defineConfig({
   projects: [
     {
       name: 'screenshots',
+      testIgnore: /capture-gifs\.spec\.ts/,
       use: {
         browserName: 'chromium',
+      },
+    },
+    {
+      // The README has three "Trois moments, trois clics" sections that
+      // each open with a short animation rather than a static frame.
+      // This project records a WebM per test; CI converts each file to
+      // a GIF via ffmpeg and commits it next to the PNGs.
+      name: 'gifs',
+      timeout: 90_000,
+      testMatch: /capture-gifs\.spec\.ts/,
+      use: {
+        browserName: 'chromium',
+        video: { mode: 'on', size: { width: 1280, height: 800 } },
       },
     },
   ],

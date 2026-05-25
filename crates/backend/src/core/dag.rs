@@ -218,6 +218,14 @@ pub async fn build_dag(pool: &crate::db::DbPool, app_id: impl Into<Uuid>) -> Res
     }
 
     for d in deps {
+        // Weak dependencies are diagrammatic only: the sequencer must
+        // start both endpoints independently. We skip them when building
+        // the DAG so the topological sort treats them as if they didn't
+        // exist. They are still returned by `list_dependencies` for the
+        // UI and reports.
+        if d.dependency_type == crate::repository::components::DependencyType::Weak {
+            continue;
+        }
         dag.add_edge(d.from_component_id, d.to_component_id);
     }
 
@@ -294,6 +302,33 @@ mod tests {
         assert_eq!(levels[0], vec![a]);
         assert!(levels[1].contains(&b) && levels[1].contains(&c));
         assert_eq!(levels[2], vec![d]);
+    }
+
+    #[test]
+    fn weak_edge_is_skipped_from_topological_ordering() {
+        // Manually exercise the same filtering build_dag does: a weak edge
+        // from b → a should NOT prevent b from starting at level 0.
+        //
+        // Strong edge: c → b (c starts after b reaches RUNNING)
+        // Weak edge:   b → a (the DAG builder skips this edge)
+        // Expected levels: [{a, b}, {c}]
+        let mut dag = Dag::new();
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let c = Uuid::from_u128(3);
+
+        dag.add_node(a);
+        dag.add_node(b);
+        dag.add_node(c);
+
+        // Simulate build_dag dropping the weak edge — only the strong one is added.
+        dag.add_edge(c, b);
+
+        let levels = dag.topological_levels().unwrap();
+        assert_eq!(levels.len(), 2, "weak edge must not add a level");
+        // Level 0 is the {a, b} set (order within a level isn't guaranteed)
+        assert!(levels[0].contains(&a) && levels[0].contains(&b));
+        assert_eq!(levels[1], vec![c]);
     }
 
     #[test]

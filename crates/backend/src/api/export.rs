@@ -349,6 +349,7 @@ pub struct LinkRow {
 struct DepRow {
     from_component_id: DbUuid,
     to_component_id: DbUuid,
+    dep_type: String,
 }
 
 // ── Export Endpoint ─────────────────────────────────────────────────
@@ -604,9 +605,10 @@ pub async fn export_app_json(
     let dep_raw = crate::repository::misc_queries::get_deps_for_export(&state.db, app_id).await?;
     let dep_rows: Vec<DepRow> = dep_raw
         .into_iter()
-        .map(|(f, t)| DepRow {
+        .map(|(f, t, dt)| DepRow {
             from_component_id: f,
             to_component_id: t,
+            dep_type: dt,
         })
         .collect();
 
@@ -615,11 +617,15 @@ pub async fn export_app_json(
         .filter_map(|d| {
             let from = comp_id_to_name.get(&d.from_component_id)?.clone();
             let to = comp_id_to_name.get(&d.to_component_id)?.clone();
-            Some(DependencyExport {
-                from,
-                to,
-                dep_type: None, // dep_type column not in DB yet
-            })
+            // Omit dep_type from the export when it is the default ("strong")
+            // so older importers that don't understand the field still
+            // round-trip cleanly. "weak" is always written explicitly.
+            let dep_type = if d.dep_type == "weak" {
+                Some("weak".to_string())
+            } else {
+                None
+            };
+            Some(DependencyExport { from, to, dep_type })
         })
         .collect();
 

@@ -286,8 +286,11 @@ pub fn validate_ca_keypair(ca_cert_pem: &str, ca_key_pem: &str) -> Result<(), Pk
 /// Format: `ac_enroll_<32 random hex chars>` (easy to identify, easy to paste).
 pub fn generate_enrollment_token() -> String {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let bytes: [u8; 16] = rng.gen();
+    // rand 0.9: `thread_rng()` was renamed to `rng()` and `Rng::gen()`
+    // to `Rng::random()`. Same CSPRNG, same 16 random bytes, just the
+    // new method names — this avoids RUSTSEC-2026-0097 by moving off
+    // the unsound 0.8 series.
+    let bytes: [u8; 16] = rand::rng().random();
     format!("ac_enroll_{}", hex::encode(bytes))
 }
 

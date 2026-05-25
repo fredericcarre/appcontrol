@@ -323,6 +323,7 @@ fn test_config(db_url: String) -> appcontrol_backend::config::AppConfig {
         retention_check_events_days: 0,
         public_gateway_url: None,
         public_backend_url: None,
+        read_only: false,
     }
 }
 
@@ -589,6 +590,88 @@ async fn test_cluster_member_list_by_component() {
         .expect("list_by_component must not 500");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].member.hostname, "srv-001");
+
+    drop(pool);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+/// Regression: GET /components/:id/members returned 500 in v1.18.10 with
+/// `Database error: no column found for name: check_native`. Root cause:
+/// the hand-written SELECT in `get_component` omitted the V053 native
+/// columns even though `SqliteComponentRow` requires them. The handler
+/// runs `get_component` *before* `list_by_component`, so the failure
+/// surfaces on the members endpoint even when the cluster_members table
+/// itself is fine.
+#[tokio::test]
+async fn test_get_component_returns_native_columns() {
+    use appcontrol_backend::db::DbUuid;
+    use appcontrol_backend::repository::components::create_component_repository;
+
+    let tmp_dir = std::env::temp_dir().join(format!("appcontrol_e2e_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let db_url = format!("sqlite:{}", tmp_dir.join("test.db").display());
+    let pool = create_test_pool(&db_url).await;
+    run_sqlite_migrations(&pool).await;
+
+    let org_id = uuid::Uuid::new_v4();
+    let site_id = uuid::Uuid::new_v4();
+    let app_id = uuid::Uuid::new_v4();
+    let comp_id = uuid::Uuid::new_v4();
+
+    sqlx::query("INSERT INTO organizations (id, name, slug) VALUES ($1, 'O', 'o')")
+        .bind(DbUuid::from(org_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO sites (id, organization_id, name, code) VALUES ($1, $2, 'Default', 'DEF')",
+    )
+    .bind(DbUuid::from(site_id))
+    .bind(DbUuid::from(org_id))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO applications (id, organization_id, site_id, name) VALUES ($1, $2, $3, 'A')",
+    )
+    .bind(DbUuid::from(app_id))
+    .bind(DbUuid::from(org_id))
+    .bind(DbUuid::from(site_id))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO components (id, application_id, name, component_type, \
+         check_interval_seconds, start_timeout_seconds, stop_timeout_seconds, \
+         check_native, start_native, stop_native) \
+         VALUES ($1, $2, 'JBoss', 'appserver', 30, 60, 30, $3, $4, $5)",
+    )
+    .bind(DbUuid::from(comp_id))
+    .bind(DbUuid::from(app_id))
+    .bind(r#"{"kind":"shell","cmd":"echo check"}"#)
+    .bind(r#"{"kind":"shell","cmd":"echo start"}"#)
+    .bind(r#"{"kind":"shell","cmd":"echo stop"}"#)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let repo = create_component_repository(pool.clone());
+    let fetched = repo.get_component(comp_id, org_id).await.expect(
+        "get_component must not 500 — SELECT must include check_native/start_native/stop_native",
+    );
+    let fetched = fetched.expect("component should be found");
+    assert!(
+        fetched.check_native.is_some(),
+        "check_native should be hydrated"
+    );
+    assert!(
+        fetched.start_native.is_some(),
+        "start_native should be hydrated"
+    );
+    assert!(
+        fetched.stop_native.is_some(),
+        "stop_native should be hydrated"
+    );
 
     drop(pool);
     let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -1160,7 +1243,7 @@ async fn test_sqlite_startup_full() {
     });
     let send_result = ws_stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            register_msg.to_string(),
+            register_msg.to_string().into(),
         ))
         .await;
     assert!(
@@ -1182,7 +1265,7 @@ async fn test_sqlite_startup_full() {
     });
     let send_result = ws_stream
         .send(tokio_tungstenite::tungstenite::Message::Text(
-            heartbeat_msg.to_string(),
+            heartbeat_msg.to_string().into(),
         ))
         .await;
     assert!(

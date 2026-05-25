@@ -282,6 +282,39 @@ fn is_system_process(name: &str) -> bool {
         .any(|prefix| name.starts_with(prefix))
 }
 
+/// Read an operator-defined deny-list of process names from
+/// `APPCONTROL_DISCOVERY_EXCLUDE` (comma-separated). Empty values are
+/// ignored. Each entry is matched case-insensitively against the process
+/// name with both exact-equality and prefix semantics so that an operator
+/// can write `crond` to suppress every `crond*` process.
+///
+/// Examples:
+/// ```text
+/// APPCONTROL_DISCOVERY_EXCLUDE=crond,rsyslogd,sshd
+/// ```
+fn extra_excluded_names() -> Vec<String> {
+    std::env::var("APPCONTROL_DISCOVERY_EXCLUDE")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// True if `name` matches one of the operator-supplied deny-list entries.
+fn is_user_excluded(name: &str, deny_list: &[String]) -> bool {
+    if deny_list.is_empty() {
+        return false;
+    }
+    let lower = name.to_lowercase();
+    deny_list
+        .iter()
+        .any(|d| lower == *d || lower.starts_with(d.as_str()))
+}
+
 /// Check if an environment variable key is interesting for topology inference.
 #[allow(dead_code)]
 pub(crate) fn is_interesting_env(key: &str) -> bool {
@@ -303,11 +336,17 @@ fn scan_processes(
     #[cfg(target_os = "windows")]
     let wmic_cmdlines = windows::get_process_cmdlines();
 
+    // Operator-defined deny-list (APPCONTROL_DISCOVERY_EXCLUDE)
+    let extra_excluded = extra_excluded_names();
+
     sys.processes()
         .iter()
         .filter_map(|(pid, p)| {
             let name = p.name().to_string_lossy().to_string();
-            if name.is_empty() || is_system_process(&name) {
+            if name.is_empty()
+                || is_system_process(&name)
+                || is_user_excluded(&name, &extra_excluded)
+            {
                 return None;
             }
 
@@ -541,6 +580,45 @@ mod tests {
         assert!(!is_system_process("nginx"));
         assert!(!is_system_process("java"));
         assert!(!is_system_process("postgres"));
+    }
+
+    #[test]
+    fn test_user_excluded_empty_deny_list_matches_nothing() {
+        let deny: Vec<String> = vec![];
+        assert!(!is_user_excluded("nginx", &deny));
+        assert!(!is_user_excluded("anything", &deny));
+    }
+
+    #[test]
+    fn test_user_excluded_exact_and_prefix() {
+        let deny: Vec<String> = vec!["crond".into(), "rsyslogd".into()];
+        assert!(is_user_excluded("crond", &deny));
+        assert!(is_user_excluded("rsyslogd", &deny));
+        // Prefix semantics: "crond-worker" or "crond.1" should match
+        assert!(is_user_excluded("crond-worker", &deny));
+        assert!(!is_user_excluded("nginx", &deny));
+        assert!(!is_user_excluded("postgres", &deny));
+    }
+
+    #[test]
+    fn test_user_excluded_case_insensitive() {
+        let deny: Vec<String> = vec!["sshd".into()];
+        assert!(is_user_excluded("SSHD", &deny));
+        assert!(is_user_excluded("SshD", &deny));
+        assert!(is_user_excluded("sshd", &deny));
+    }
+
+    #[test]
+    fn test_extra_excluded_names_parses_csv() {
+        // Save & restore to avoid contaminating other tests
+        let prev = std::env::var("APPCONTROL_DISCOVERY_EXCLUDE").ok();
+        std::env::set_var("APPCONTROL_DISCOVERY_EXCLUDE", "crond, rsyslogd , sshd, ,");
+        let parsed = extra_excluded_names();
+        assert_eq!(parsed, vec!["crond", "rsyslogd", "sshd"]);
+        match prev {
+            Some(v) => std::env::set_var("APPCONTROL_DISCOVERY_EXCLUDE", v),
+            None => std::env::remove_var("APPCONTROL_DISCOVERY_EXCLUDE"),
+        }
     }
 
     #[test]

@@ -12,7 +12,8 @@ use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use appcontrol_backend::{
-    config, create_router, db, middleware, repository, terminal, websocket, AppState,
+    config, create_router, db, middleware, openapi as openapi_doc, repository, terminal, websocket,
+    AppState,
 };
 
 #[derive(Parser)]
@@ -24,6 +25,27 @@ use appcontrol_backend::{
 struct Args {
     #[command(subcommand)]
     command: Option<ServiceCommand>,
+
+    /// Apply database migrations and exit (do not start the HTTP server).
+    /// Useful in CI pipelines and pre-upgrade validation jobs.
+    #[arg(long)]
+    migrate_only: bool,
+
+    /// Log the migration plan without executing anything.
+    /// Implies `--migrate-only`. Lists every migration the binary would
+    /// apply against the connected database, in version order, and exits
+    /// with code 0 even if the plan is empty.
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Render the code-derived OpenAPI 3 specification and exit.
+    ///
+    /// When set, the backend skips all DB / migration / network setup
+    /// and writes the JSON document to the given path. Use `-` to write
+    /// to stdout. Intended for CI doc pipelines (`scripts/docs/gen_api.py`
+    /// reads the path from `APPCONTROL_OPENAPI_JSON`).
+    #[arg(long, value_name = "PATH")]
+    export_openapi: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -48,6 +70,13 @@ enum ServiceAction {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    // --export-openapi PATH: render the code-derived OpenAPI document
+    // and exit. Runs before any DB / config / network setup so this
+    // works on a clean checkout in CI without a Postgres/SQLite handy.
+    if let Some(path) = args.export_openapi.as_deref() {
+        return export_openapi(path);
+    }
 
     // Handle service subcommands (Windows only)
     if let Some(command) = args.command {
@@ -74,10 +103,36 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = db::create_pool(&config).await?;
 
+    // --dry-run implies --migrate-only — list pending migrations and exit.
+    if args.dry_run {
+        tracing::info!("Running migration dry-run (no statements will be executed)");
+        let plan = collect_migration_plan(&pool).await?;
+        if plan.is_empty() {
+            tracing::info!("Migration dry-run: database is up to date — nothing to apply");
+        } else {
+            tracing::info!(
+                "Migration dry-run: {} migration(s) would be applied:",
+                plan.len()
+            );
+            for (version, name) in &plan {
+                tracing::info!("  V{:03} {}", version, name);
+            }
+        }
+        return Ok(());
+    }
+
     // Auto-run migrations on startup (Flyway-style V001__ naming)
     tracing::info!("Running database migrations...");
     run_migrations(&pool).await?;
     tracing::info!("Database migrations completed successfully");
+
+    // --migrate-only — applied migrations above, now exit without starting the server.
+    if args.migrate_only {
+        tracing::info!(
+            "--migrate-only set: migrations applied, exiting without starting HTTP server"
+        );
+        return Ok(());
+    }
 
     // Schema self-heal — SQLite only. Older Windows installs upgraded the
     // backend binary without refreshing the on-disk `migrations/` folder,
@@ -407,6 +462,21 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Wait for SIGTERM (container stop) or Ctrl-C (interactive), with a hard timeout.
+/// Render the code-derived OpenAPI 3 document and write it to `path`.
+/// `path == "-"` writes to stdout. Used by the `--export-openapi` flag.
+fn export_openapi(path: &str) -> anyhow::Result<()> {
+    let body = openapi_doc::ApiDoc::to_pretty_json()
+        .map_err(|e| anyhow::anyhow!("Failed to render OpenAPI spec: {}", e))?;
+    if path == "-" {
+        println!("{}", body);
+    } else {
+        std::fs::write(path, &body)
+            .map_err(|e| anyhow::anyhow!("Failed to write {}: {}", path, e))?;
+        eprintln!("Wrote OpenAPI spec to {} ({} bytes)", path, body.len());
+    }
+    Ok(())
+}
+
 async fn shutdown_signal(timeout_secs: u64) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
@@ -703,25 +773,41 @@ async fn run_data_retention(
     }
 }
 
-/// Run migrations from the migrations/ directory.
-/// Handles Flyway-style naming (V001__name.sql) by executing them in order.
-/// Uses a `_migrations` tracking table to avoid re-running already-applied migrations.
+/// Compute the list of pending migrations (version, name) without executing
+/// anything. Used by `--dry-run` to preview what `--migrate-only` would apply.
+async fn collect_migration_plan(pool: &crate::db::DbPool) -> anyhow::Result<Vec<(i32, String)>> {
+    // Build the entries we'd consider applying (same logic as run_migrations).
+    ensure_migrations_table(pool).await?;
+    let entries = discover_migration_entries()?;
+    let applied =
+        appcontrol_backend::repository::startup_queries::get_applied_migrations(pool).await?;
+    Ok(entries
+        .into_iter()
+        .filter(|(v, _, _)| !applied.contains(v))
+        .map(|(v, n, _)| (v, n))
+        .collect())
+}
+
+async fn ensure_migrations_table(pool: &crate::db::DbPool) -> anyhow::Result<()> {
+    #[cfg(feature = "postgres")]
+    appcontrol_backend::repository::startup_queries::ensure_migrations_table_pg(pool).await?;
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    appcontrol_backend::repository::startup_queries::ensure_migrations_table_sqlite(pool).await?;
+    Ok(())
+}
+
+/// Discover the full ordered list of migration entries the running binary
+/// knows about (on-disk files merged with the embedded SQLite set), without
+/// touching the database. Returns Vec<(version, file_name, sql_content)>.
 ///
-/// For PostgreSQL: uses migrations/postgres/ directory
-/// For SQLite: uses migrations/sqlite/ directory
-async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
+/// Extracted from `run_migrations` so it can be reused by the `--dry-run`
+/// path.
+fn discover_migration_entries() -> anyhow::Result<Vec<(i32, String, String)>> {
     // Determine the database type subdirectory
     #[cfg(feature = "postgres")]
     let db_subdir = "postgres";
     #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let db_subdir = "sqlite";
-
-    // Ensure tracking table exists (cross-database compatible syntax)
-    #[cfg(feature = "postgres")]
-    appcontrol_backend::repository::startup_queries::ensure_migrations_table_pg(pool).await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    appcontrol_backend::repository::startup_queries::ensure_migrations_table_sqlite(pool).await?;
 
     // Find migration files.
     // Try multiple locations in priority order:
@@ -883,6 +969,18 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
     }
 
     migration_entries.sort_by_key(|(v, _, _)| *v);
+    Ok(migration_entries)
+}
+
+/// Run migrations from the migrations/ directory.
+/// Handles Flyway-style naming (V001__name.sql) by executing them in order.
+/// Uses a `_migrations` tracking table to avoid re-running already-applied migrations.
+///
+/// For PostgreSQL: uses migrations/postgres/ directory
+/// For SQLite: uses migrations/sqlite/ directory
+async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
+    ensure_migrations_table(pool).await?;
+    let migration_entries = discover_migration_entries()?;
 
     // Get already applied versions
     let applied =
@@ -962,8 +1060,7 @@ async fn run_migrations(pool: &crate::db::DbPool) -> anyhow::Result<()> {
         tracing::info!("Applied {} new migration(s)", applied_count);
     } else if migration_entries.is_empty() {
         tracing::warn!(
-            "No migration files found in {} - check MIGRATIONS_DIR or ensure migrations are present",
-            migrations_dir.display()
+            "No migration files found - check MIGRATIONS_DIR or ensure migrations are present"
         );
     } else {
         tracing::info!("Database is up to date (no new migrations)");
@@ -1013,5 +1110,39 @@ fn handle_service_command(command: ServiceCommand) -> anyhow::Result<()> {
                 }
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discover_migration_entries_returns_sorted_unique_versions() {
+        // The function relies on filesystem layout — when run from the
+        // workspace it should find the bundled migrations and produce a
+        // strictly increasing version sequence with unique numbers.
+        let entries = discover_migration_entries().expect("discovery must not fail");
+
+        // We always ship at least one migration on a healthy checkout.
+        assert!(
+            !entries.is_empty(),
+            "no migration entries discovered — was the migrations/ folder wiped?"
+        );
+
+        // Version numbers must be strictly increasing (sort + uniqueness).
+        let versions: Vec<i32> = entries.iter().map(|(v, _, _)| *v).collect();
+        let mut sorted = versions.clone();
+        sorted.sort();
+        assert_eq!(
+            versions, sorted,
+            "discover_migration_entries must return entries in version order"
+        );
+        let unique: std::collections::HashSet<i32> = versions.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            versions.len(),
+            "migration versions must be unique"
+        );
     }
 }

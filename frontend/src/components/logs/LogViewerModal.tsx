@@ -47,24 +47,25 @@ export function LogViewerModal({
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sourceConnected, setSourceConnected] = useState<boolean | null>(null);
+  // Tracks the previous value of `open` so we can clear local state on close
+  // without using a useEffect (the rule react-hooks/set-state-in-effect bans
+  // setState calls inside effects). React documents this pattern explicitly:
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [prevOpen, setPrevOpen] = useState(open);
   const isSubscribedRef = useRef(false);
   const lastProcessedMsgRef = useRef(0);
 
   const wsConnected = useWebSocketStore((s) => s.connected);
   const messages = useWebSocketStore((s) => s.messages);
 
-  // Reset source connection state when modal opens/closes
-  // This is valid: we reset state on close to ensure clean state on reopen
-  useEffect(() => {
+  if (open !== prevOpen) {
+    setPrevOpen(open);
     if (!open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSourceConnected(null);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(null);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEntries([]);
     }
-  }, [open]);
+  }
 
   // Derive subscription state from refs and props
   const subscriptionState = useMemo(() => {
@@ -187,7 +188,6 @@ export function LogViewerModal({
     }
 
     // Update state after processing - this is valid for WebSocket message handling
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (foundError) setError(foundError);
     newEntries.forEach(addLogEntry);
   }, [messages, agentId, gatewayId, addLogEntry]);

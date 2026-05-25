@@ -53,7 +53,7 @@ AppControl supports multiple authentication methods: **OIDC** (Keycloak, Okta, A
 
 After authenticating, you are redirected to the Dashboard. Your session uses RS256-signed JWT tokens with automatic refresh.
 
-<!-- SCREENSHOT:login -->
+![login](screenshots/login.png)
 *Login page — supports OIDC, SAML 2.0, and local authentication*
 
 ### Dashboard
@@ -70,7 +70,7 @@ The Dashboard is your command center. It provides a real-time overview of all ap
 
 The Dashboard updates in **real time** via WebSocket — status changes appear immediately without manual refresh.
 
-<!-- SCREENSHOT:dashboard -->
+![dashboard](screenshots/dashboard.png)
 *Dashboard — real-time overview of all applications with KPIs and live event feed*
 
 ---
@@ -91,12 +91,12 @@ The **Onboarding Wizard** guides you through creating a new application step by 
 6. **Review** — verify the complete configuration before creation
 7. **Done** — application is created and agents start monitoring immediately
 
-<!-- SCREENSHOT:onboarding -->
+![onboarding](screenshots/onboarding.png)
 *Onboarding Wizard — guided application creation*
 
 Each component requires at minimum a **name**, **type**, and **agent assignment**. The check command determines how AppControl monitors the component's health. Start and stop commands enable orchestrated operations.
 
-<!-- SCREENSHOT:onboarding-components -->
+![onboarding-components](screenshots/onboarding-components.png)
 *Component configuration — define check, start, and stop commands for each component*
 
 ### Importing Applications
@@ -112,7 +112,7 @@ For teams that prefer infrastructure-as-code, AppControl supports **YAML and JSO
 
 You can also import from **existing AppControl v3 configurations** — the importer automatically maps legacy component types and command formats.
 
-<!-- SCREENSHOT:import -->
+![import](screenshots/import.png)
 *Import page — upload YAML/JSON application definitions*
 
 ### Auto-Discovery
@@ -128,7 +128,7 @@ The **Discovery** feature automatically detects running processes on monitored s
 
 This is especially useful for onboarding existing applications that don't have formal documentation.
 
-<!-- SCREENSHOT:discovery -->
+![discovery](screenshots/discovery.png)
 *Auto-Discovery — detect and map running applications automatically*
 
 ---
@@ -152,7 +152,7 @@ The Map View is the heart of AppControl. It renders your application's component
 | **Mini-map** | Overview navigation for large application graphs |
 | **Keyboard shortcuts** | `Ctrl+F` search, `Space` toggle start/stop, `F5` refresh, `?` show all shortcuts |
 
-<!-- SCREENSHOT:map-view -->
+![map-view](screenshots/map-view.png)
 *Map View — interactive DAG visualization with color-coded component states*
 
 ### Component Detail Panel
@@ -170,7 +170,7 @@ Click any component node to open the **Detail Panel** on the right side. It prov
 | **Logs** | Agent log tail for this component with search and filtering |
 | **Config** | Component configuration: commands, intervals, timeouts, environment variables |
 
-<!-- SCREENSHOT:map-view-detail-panel -->
+![map-view-detail-panel](screenshots/map-view-detail-panel.png)
 *Detail Panel — component status, check results, metrics, and command execution*
 
 ### Multi-Site View
@@ -179,7 +179,7 @@ When an application is configured with **site overrides** (primary + DR), the Ma
 
 This gives operators instant visibility into both the primary and disaster recovery deployments without switching views.
 
-<!-- SCREENSHOT:map-view-multi-site -->
+![map-view-multi-site](screenshots/map-view-multi-site.png)
 *Multi-Site View — primary and DR status side by side on each component node*
 
 ---
@@ -276,7 +276,7 @@ Agents are lightweight Rust binaries deployed on monitored servers. They execute
 
 Communication uses **delta-only sync**: agents send only state changes, not full status on every check cycle.
 
-<!-- SCREENSHOT:agents -->
+![agents](screenshots/agents.png)
 *Agents — monitor connected agents, heartbeat status, and managed components*
 
 ### Gateways
@@ -290,7 +290,7 @@ Gateways are the communication hubs between agents and the backend. Each site or
 - Number of agents connected through each gateway
 - Gateway version and uptime
 
-<!-- SCREENSHOT:gateways -->
+![gateways](screenshots/gateways.png)
 *Gateways — manage communication hubs and monitor agent connections*
 
 ### Sites
@@ -301,7 +301,7 @@ Sites represent physical or logical locations: datacenters, DR sites, staging en
 
 Sites are configured at setup time and used during DR switchover operations to orchestrate transitions between locations.
 
-<!-- SCREENSHOT:sites -->
+![sites](screenshots/sites.png)
 *Sites — configure datacenters, DR sites, and environments*
 
 ### Hostings
@@ -339,7 +339,7 @@ New agents and gateways are onboarded using **enrollment tokens** for secure, au
 3. On first connection, the component presents the token and receives mTLS certificates
 4. The token is single-use and expires after a configurable duration
 
-<!-- SCREENSHOT:enrollment -->
+![enrollment](screenshots/enrollment.png)
 *Enrollment Tokens — generate and manage secure registration tokens*
 
 ---
@@ -359,7 +359,7 @@ Manage all users in your organization. Users can be created manually or auto-pro
 | **Editor** | Per-application | Modify configuration where granted `edit` permission |
 | **Viewer** | Per-application | Read-only access to maps, logs, and reports |
 
-<!-- SCREENSHOT:users -->
+![users](screenshots/users.png)
 *Users — manage accounts, roles, and organization membership*
 
 ### Team Management
@@ -368,7 +368,7 @@ Teams group users for collective permission assignment. When a team is granted a
 
 **Effective permission** = MAX(direct user permission, team permissions). Team membership never reduces access.
 
-<!-- SCREENSHOT:teams -->
+![teams](screenshots/teams.png)
 *Teams — organize users into groups for collective permission management*
 
 ### Sharing & Permissions
@@ -398,7 +398,7 @@ AppControl provides comprehensive reporting aligned with **DORA** (Digital Opera
 
 Reports support **configurable date ranges**, **drill-down** from summary to component-level detail, and **PDF export** for regulatory submission.
 
-<!-- SCREENSHOT:reports -->
+![reports](screenshots/reports.png)
 *Reports — DORA compliance metrics, availability charts, and incident timelines*
 
 ---
@@ -417,7 +417,7 @@ The Settings page provides access to system configuration, user profile manageme
 - Organization settings
 - Certificate management and PKI rotation
 
-<!-- SCREENSHOT:settings -->
+![settings](screenshots/settings.png)
 *Settings — system configuration and user preferences*
 
 ### API Keys
@@ -435,7 +435,7 @@ API keys enable programmatic access for **scheduler integration**, automation sc
 
 Keys are stored as **SHA-256 hashes** (plaintext never stored), revocable at any time, and all usage is fully audited.
 
-<!-- SCREENSHOT:api-keys -->
+![api-keys](screenshots/api-keys.png)
 *API Keys — create, manage, and revoke programmatic access keys*
 
 ### Supervision Mode
@@ -452,7 +452,7 @@ The Supervision Mode provides a **full-screen NOC display** designed for operati
 
 Access via the `/supervision` route or press `F11` from any page.
 
-<!-- SCREENSHOT:supervision -->
+![supervision](screenshots/supervision.png)
 *Supervision Mode — full-screen NOC display for operations centers*
 
 ### Component Catalog

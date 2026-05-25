@@ -51,6 +51,7 @@ import { ComponentPalette } from '@/components/maps/ComponentPalette';
 import { ComponentEditor, ComponentFormData } from '@/components/maps/ComponentEditor';
 import { ImpactPreviewDialog } from '@/components/maps/ImpactPreviewDialog';
 import { SwitchoverPanel } from '@/components/maps/SwitchoverPanel';
+import { DryRunDialog } from '@/components/maps/DryRunDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -66,7 +67,7 @@ import {
   Pencil, Download, Save, ArrowLeft, Play, Square, Loader2,
   Sun, CloudSun, Cloud, CloudRain, CloudLightning,
   MoreVertical, Trash2, Pause, PlayCircle, Maximize, Minimize,
-  Monitor, History, X, Calendar, SlidersHorizontal, FileText, Clock,
+  Monitor, History, X, Calendar, SlidersHorizontal, FileText, Clock, Eye,
 } from 'lucide-react';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 
@@ -179,6 +180,7 @@ export function MapViewPage() {
   const [historyMode, setHistoryMode] = useState(false);
   const [historyTime, setHistoryTime] = useState<Date | null>(null);
   const [historySnapshot, setHistorySnapshot] = useState<TimeSnapshot | null>(null);
+  const [dryRunOpen, setDryRunOpen] = useState(false);
 
   // Fan-out cluster members are shown via the ClusterMembersPanel (table
   // with search, batch start/stop, per-member edit) reachable from the
@@ -1083,6 +1085,10 @@ export function MapViewPage() {
                     <FileText className="h-4 w-4 mr-2" />
                     Print plan / Save as PDF
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setDryRunOpen(true)}>
+                    <Eye className="h-4 w-4 mr-2" />
+                    Dry run — preview Start/Stop
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={toggleFullscreen}>
                     {isFullscreen ? (
                       <Minimize className="h-4 w-4 mr-2" />
@@ -1319,6 +1325,22 @@ export function MapViewPage() {
         variant={confirmDialog.variant}
         onConfirm={confirmDialog.onConfirm}
       />
+      {appId && (
+        <DryRunDialog
+          open={dryRunOpen}
+          onOpenChange={setDryRunOpen}
+          appId={appId}
+          appName={app?.name}
+          // "Run this plan now" buttons in the dialog re-use the
+          // existing Start All / Stop All flows — which already log
+          // the action, check the operation lock and surface the
+          // sequencer progress in the toolbar. The dialog just hands
+          // off; it doesn't duplicate that logic.
+          onConfirmStart={canOperate && !historyMode ? handleStartAll : undefined}
+          onConfirmStop={canOperate && !historyMode ? handleStopAll : undefined}
+          canOperate={canOperate && !historyMode}
+        />
+      )}
     </div>
   );
 }
