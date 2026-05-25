@@ -17,6 +17,9 @@ on:
       - 'examples/raw-cmdb-scrape.json'
       - 'examples/pattern-spring-boot-jdbc.json'
       - '.github/workflows/docs-recordings.yaml'
+    tags: ['v*']
+  release:
+    types: [created, published]
   workflow_dispatch:
 
 permissions:
@@ -82,17 +85,53 @@ jobs:
           ls -la docs/screenshots/methodology-walkthrough.gif
 
       # ── Commit & push ────────────────────────────────────────────
-      - name: Commit refreshed GIF
+      # When the workflow fires from a tag or release event, HEAD is
+      # detached at the tag. Rebase the asset commit onto main so it
+      # ships with the next release rather than vanishing into a
+      # detached HEAD.
+      - name: Commit refreshed GIF back to main
         run: |
+          set -euo pipefail
           git config user.name  "appcontrol-bot"
           git config user.email "bot@appcontrol.io"
+
           if git diff --quiet docs/screenshots/methodology-walkthrough.gif; then
             echo "No change in the GIF — skipping commit."
             exit 0
           fi
+
+          # Save the new GIF outside the worktree, switch to main,
+          # restore the file, commit and push.
+          tmp=$(mktemp -d)
+          cp docs/screenshots/methodology-walkthrough.gif "$tmp/methodology-walkthrough.gif"
+
+          git fetch origin main
+          git checkout -B main origin/main
+          cp "$tmp/methodology-walkthrough.gif" docs/screenshots/methodology-walkthrough.gif
+
+          if git diff --quiet docs/screenshots/methodology-walkthrough.gif; then
+            echo "GIF on main already matches the freshly rendered one."
+            exit 0
+          fi
+
           git add docs/screenshots/methodology-walkthrough.gif
-          git commit -m "docs: refresh methodology-walkthrough.gif [skip ci]"
-          git push
+          REF_LABEL="${GITHUB_REF_NAME:-${GITHUB_REF##*/}}"
+          git commit -m "docs: refresh methodology-walkthrough.gif for ${REF_LABEL} [skip ci]"
+          git push origin main
+
+      # ── Attach to the GitHub release if this was a release event ─
+      - name: Attach the GIF to the release
+        if: ${{ github.event_name == 'release' || startsWith(github.ref, 'refs/tags/') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME:-${GITHUB_REF##*/}}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" docs/screenshots/methodology-walkthrough.gif --clobber
+            echo "GIF attached to release $TAG"
+          else
+            echo "Release $TAG not yet published — skipping attach (will retry on release event)."
+          fi
 
       - name: Tear down the stack
         if: always()
