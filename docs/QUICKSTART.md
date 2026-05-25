@@ -1500,11 +1500,42 @@ During rotation, agents operate normally. The rotation is transparent to operato
 
 ## Next Steps
 
-- **Scheduler Integration:** See [`docs/INTEGRATION_COOKBOOK.md`](./INTEGRATION_COOKBOOK.md) for Control-M, AutoSys, Dollar Universe, Jenkins, GitLab CI examples
-- **Monitoring:** Run `docker compose -f docker/docker-compose.yaml -f docker/docker-compose.monitoring.yaml up -d` for Prometheus + Grafana (http://localhost:3001, admin/admin)
-- **Full Configuration Reference:** See [`docs/CONFIGURATION.md`](./CONFIGURATION.md)
-- **Production Deployment:** See [`docs/PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md)
-- **Agent Installation:** See [`docs/AGENT_INSTALLATION.md`](./AGENT_INSTALLATION.md)
-- **Architecture Overview:** See [`docs/architecture.md`](./architecture.md)
-- **API Specification:** Browse the full OpenAPI spec at `http://localhost:3000/openapi.json`
-- **CLI Reference:** Run `cargo run --bin appctl -- --help`
+Pick the path that matches what you came here to do.
+
+### Take it for a spin
+
+- **[Hands-on guide](./HANDS_ON_GUIDE.md)** — 30-minute walkthrough that drives every methodology phase against a running stack, complete with an animated terminal recording
+- **[Methodology in 9 screens](./METHODOLOGY_WALKTHROUGH.md)** — annotated tour of every UI page, in the order you'd actually use them
+- **[Example maps & ingestion patterns](./EXAMPLE_MAPS.md)** — copy-pasteable curl recipes (CMDB, XL Release, Spring Boot patterns, …)
+- **[FAQ](./FAQ.md)** — short answers to the most common newcomer questions
+
+### Wire it into your stack
+
+- **[Integration cookbook](./INTEGRATION_COOKBOOK.md)** — Control-M, AutoSys, Dollar Universe, TWS, Airflow, Jenkins, GitLab CI recipes
+- **[Observability](./OBSERVABILITY.md)** — Prometheus scrape config, 8 day-1 alert rules, Grafana dashboard, JSON-log schema, WebSocket bus, webhooks
+- **[Agent installation](./AGENT_INSTALLATION.md)** & **[Windows deployment](./WINDOWS_DEPLOYMENT.md)** — push agents to your fleet
+- **[Hardening checklist](./HARDENING.md)** — what to lock down before production
+- **[Disaster recovery](./DISASTER_RECOVERY.md)** & **[Runbooks](./RUNBOOKS.md)** — what to do when alerts fire
+
+### Run it in production
+
+- **[Production deployment](./PRODUCTION_DEPLOYMENT.md)** — Helm chart, ingress, secrets
+- **[High availability](./HIGH_AVAILABILITY.md)** — multi-replica backend, gateway fan-out
+- **[Capacity planning](./CAPACITY_PLANNING.md)** & **[Limits & quotas](./LIMITS.md)** — sizing the boxes
+- **[Backup & restore](./BACKUP_RESTORE.md)** & **[Upgrade procedures](./UPGRADE.md)** — boring but important
+
+### Reference (auto-generated from source)
+
+The pages under [`reference/`](./reference/api.md) are **regenerated on every build** from the source of truth (Rust code, SQL migrations, OpenAPI export, clap derives). Treat them as authoritative — if a hand-written page disagrees with `reference/`, the generator wins. Files:
+
+- [`reference/api.md`](./reference/api.md) — full REST API surface (from `--export-openapi`)
+- [`reference/cli.md`](./reference/cli.md) — every `appctl` subcommand
+- [`reference/configuration.md`](./reference/configuration.md) — every env var
+- [`reference/errors.md`](./reference/errors.md) — error codes & exit codes
+- [`reference/fsm.md`](./reference/fsm.md) — FSM states & transitions
+- [`reference/metrics.md`](./reference/metrics.md) — every Prometheus metric
+- [`reference/database.md`](./reference/database.md) — schema from migrations
+- [`reference/enums.md`](./reference/enums.md) — every shared enum
+- [`reference/mcp.md`](./reference/mcp.md) — MCP tools for AI assistants
+
+Run `make docs-reference` locally to regenerate, then `make docs-serve` to preview at <http://127.0.0.1:8000>.
