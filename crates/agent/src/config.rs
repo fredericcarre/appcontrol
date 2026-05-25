@@ -22,6 +22,64 @@ pub struct AgentConfig {
     /// Can also be set via DATA_DIR environment variable.
     #[serde(default)]
     pub data_dir: Option<String>,
+    /// Optional SNMP trap receiver. When absent or `enabled=false`, the
+    /// agent does not bind a UDP listener and traps are silently ignored.
+    #[serde(default)]
+    pub snmp_traps: Option<SnmpTrapsSection>,
+}
+
+/// Push-based SNMP support: the agent binds a UDP listener and converts
+/// incoming traps into synthetic CheckResults targeting the components
+/// named in `routes`. Pairs with the SNMP poller in `native_runner` for
+/// devices that prefer to push (UPS battery alarms, switch link state,
+/// storage array faults).
+#[derive(Debug, Deserialize, Clone)]
+pub struct SnmpTrapsSection {
+    /// Master switch. When false, the rest of this section is ignored.
+    pub enabled: bool,
+    /// Listen address as `host:port`. Default `0.0.0.0:1162` — the
+    /// standard SNMP trap port (162) requires root; pick 1162 (or any
+    /// unprivileged port) unless the agent runs as root.
+    #[serde(default = "default_trap_listen_addr")]
+    pub listen_addr: String,
+    /// Routing table: incoming trap → component. Evaluated top-to-bottom;
+    /// first match wins.
+    #[serde(default)]
+    pub routes: Vec<SnmpTrapRoute>,
+}
+
+/// One routing rule mapping (source host, trap OID prefix) to a
+/// component the agent should report against.
+#[derive(Debug, Deserialize, Clone)]
+pub struct SnmpTrapRoute {
+    /// Human label for logging / debugging.
+    pub name: String,
+    /// Source IP filter. Exact IP (e.g. `192.168.1.10`), or `*` to match
+    /// any source. CIDR support is planned.
+    #[serde(default = "default_trap_source_host")]
+    pub source_host: String,
+    /// Trap OID prefix to match (dotted-decimal). Matches if the trap's
+    /// snmpTrapOID (v2c) or composed enterprise.specific (v1) starts with
+    /// this prefix. Empty string = match any OID from this source.
+    #[serde(default)]
+    pub oid_prefix: String,
+    /// Target component UUID (as string). The trap fires a synthetic
+    /// CheckResult for this component.
+    pub component_id: String,
+    /// Exit code injected into the synthetic CheckResult.
+    /// Use 0 = Running (informational trap), 1 = Degraded, 2 = Failed.
+    #[serde(default = "default_trap_exit_code")]
+    pub exit_code: i32,
+}
+
+fn default_trap_listen_addr() -> String {
+    "0.0.0.0:1162".to_string()
+}
+fn default_trap_source_host() -> String {
+    "*".to_string()
+}
+fn default_trap_exit_code() -> i32 {
+    2
 }
 
 fn default_mode() -> String {
@@ -105,6 +163,7 @@ impl AgentConfig {
                 log_level: default_log_level(),
                 mode: default_mode(),
                 data_dir: None,
+                snmp_traps: None,
             }
         };
 

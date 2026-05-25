@@ -100,6 +100,11 @@ pub enum CheckType {
     Integrity,
     PostStart,
     Infrastructure,
+    /// Synthetic check produced by the agent's SNMP trap receiver.
+    /// `exit_code` is set per route in agent config (typically 2 = Failed
+    /// for hard alarms, 1 = Degraded for warnings). `stdout` carries the
+    /// decoded varbinds as JSON so the metrics pipeline picks them up.
+    SnmpTrap,
 }
 
 /// Result of a check execution on a component.

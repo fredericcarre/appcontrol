@@ -151,10 +151,96 @@ snmpget -v 2c -c public-ro switch01.dc1.example.com 1.3.6.1.2.1.2.2.1.8.3
 
 If `snmpget` returns the expected value, AppControl will too.
 
+## Trap receiver (push)
+
+In addition to **polling** OIDs (pull), agents can **receive** SNMPv1/v2c
+traps (push) and turn them into AppControl events. Devices that emit
+traps for state changes — switches signalling link-down, UPS signalling
+battery alarms, storage arrays signalling LUN faults — get translated
+into FSM transitions on the configured component.
+
+### Enabling
+
+```yaml
+# agent.yaml
+snmp_traps:
+  enabled: true
+  listen_addr: "0.0.0.0:1162"   # port 162 is privileged; 1162 is the standard non-priv alternative
+  routes:
+    - name: "Cisco link-down on core switch"
+      source_host: "10.1.0.10"          # or "*" for any source
+      oid_prefix: "1.3.6.1.6.3.1.1.5.3" # linkDown trap (RFC 1907)
+      component_id: "<uuid-of-Core-Switch-DC1-in-AppControl>"
+      exit_code: 2                       # 0=Running, 1=Degraded, 2=Failed
+    - name: "APC UPS power loss"
+      source_host: "10.1.0.20"
+      oid_prefix: "1.3.6.1.4.1.318.0.5"
+      component_id: "<uuid-of-UPS-Battery>"
+      exit_code: 1                       # warning, not full failure
+```
+
+Routes are evaluated top-to-bottom; the first match wins. `source_host =
+"*"` matches any source, `oid_prefix = ""` matches any trap OID.
+
+### What the agent does on receipt
+
+1. Parses the UDP datagram with `snmp2::Pdu::from_bytes`.
+2. Skips anything that isn't a trap (GetRequest, Response, ...).
+3. Extracts the trap OID:
+   * v2c — value of `snmpTrapOID.0` (1.3.6.1.6.3.1.1.4.1.0) in varbinds
+   * v1 — composed from `enterprise` + `generic_trap` + `specific_trap`
+4. Matches against `routes`. If none matches, the trap is logged at
+   debug and discarded.
+5. Synthesises a `CheckResult` with `check_type=SnmpTrap`, the route's
+   `exit_code`, and stdout containing the JSON:
+
+   ```json
+   {
+     "source_ip": "10.1.0.10",
+     "trap_oid":  "1.3.6.1.6.3.1.1.5.3",
+     "route":     "Cisco link-down on core switch",
+     "varbinds":  [
+       { "oid": "1.3.6.1.2.1.1.3.0",     "value": "12345678" },
+       { "oid": "1.3.6.1.6.3.1.1.4.1.0", "value": "1.3.6.1.6.3.1.1.5.3" },
+       { "oid": "1.3.6.1.2.1.2.2.1.1.3", "value": "3" }
+     ]
+   }
+   ```
+
+6. Forwards it on the same gateway WebSocket as native checks. The
+   backend FSM treats it identically to a failing health check — same
+   `state_transitions` row, same alerting policies fire, same
+   `check_events.metrics` extraction.
+
+### Security notes
+
+* **Community strings are not validated server-side.** Anyone who can
+  reach the listener port and knows your OID layout can inject a fake
+  trap. **Always firewall the listener port to your real device VLAN.**
+  v3 (authPriv) is planned for the follow-up.
+* **Bind interface:** prefer `10.x.x.x:1162` or `127.0.0.1:1162` over
+  `0.0.0.0:1162` if the agent host has multiple NICs. The example
+  defaults to `0.0.0.0` to keep first-run friction low.
+* **Port 162 requires root on Unix.** If you must use the standard
+  port, run the agent as a user with `CAP_NET_BIND_SERVICE` (Linux),
+  or NAT 162 → 1162 at the firewall.
+
+### Testing the receiver
+
+```bash
+# Send a synthetic coldStart trap from another host:
+snmptrap -v 2c -c public <agent-host>:1162 '' \
+    1.3.6.1.6.3.1.1.5.1
+# Watch the agent log:
+journalctl -u appcontrol-agent -f
+```
+
 ## Limitations (current)
 
-* **v2c only** — v3 (authPriv) lands in a follow-up release.
-* **One OID per check** — bulk GET / walk is planned but not yet exposed.
+* **v2c only** — v3 (authPriv) lands in a follow-up release for both
+  poll and trap paths.
+* **One OID per poll check** — bulk GET / walk is planned but not yet
+  exposed.
 * **No symbolic MIB resolution** — supply numeric OIDs.
-* **No trap receiver** — push-based SNMP traps will be a separate
-  agent feature with its own routing table.
+* **Trap source filter** — exact IP or `*` only; CIDR matching is
+  planned.

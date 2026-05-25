@@ -464,6 +464,7 @@ pub async fn store_check_event(
         appcontrol_common::CheckType::Integrity => "integrity",
         appcontrol_common::CheckType::PostStart => "post_start",
         appcontrol_common::CheckType::Infrastructure => "infrastructure",
+        appcontrol_common::CheckType::SnmpTrap => "snmp_trap",
     };
 
     core_queries::store_check_event(

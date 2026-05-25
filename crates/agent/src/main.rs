@@ -14,6 +14,7 @@ mod self_update;
 mod service;
 mod terminal;
 mod tls;
+mod trap_listener;
 
 use clap::{Parser, Subcommand};
 use std::sync::Arc;
@@ -139,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
     let gateway_urls = config.gateway_urls();
     let advisory = config.is_advisory();
     let log_msg_tx = msg_tx.clone(); // Clone before moving msg_tx into ConnectionManager
+    let msg_tx_for_traps = msg_tx.clone(); // Clone for the optional SNMP trap receiver
     let connection = connection::ConnectionManager::new(
         gateway_urls.clone(),
         config.gateway.failover_strategy.clone(),
@@ -187,6 +189,26 @@ async fn main() -> anyhow::Result<()> {
     let conn_handle = tokio::spawn(connection.run(msg_rx));
     tracing::info!("Starting scheduler...");
     let sched_handle = tokio::spawn(check_scheduler.run());
+
+    // Optional: SNMP trap receiver. Bind failure is logged but non-fatal —
+    // trap reception is a value-add, never load-bearing.
+    if let Some(traps_cfg) = config.snmp_traps.clone() {
+        if traps_cfg.enabled {
+            let trap_tx = msg_tx_for_traps.clone();
+            match trap_listener::start(traps_cfg, trap_tx).await {
+                Ok(_handle) => {
+                    tracing::info!("SNMP trap receiver started");
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "SNMP trap receiver: bind failed (continuing without trap support)"
+                    );
+                }
+            }
+        }
+    }
+
     tracing::info!("All subsystems started, entering main loop");
 
     // Platform-specific signal handling for configuration reload
