@@ -31,6 +31,20 @@ Legend:
 | Mode PR-only (header `X-PR-Approved-Sha`) | :material-check-circle: livré | enforcement dans start_app, stop_app, branch, start_to, rebuild, switchover |
 | Page frontend de pilotage + badge | :material-check-circle: livré | `frontend/src/pages/ActivationPage.tsx` · `components/ActivationBadge.tsx` |
 
+## Maturité déclarée par la source (jamais imposée)
+
+*Méthodologie phase 1 + phase 3 §4.5.*
+
+| Capacité | Statut | Référence code |
+|---|---|---|
+| Import JSON v4 : `default_knowledge_status` + `default_confidence_score` au niveau request | :material-check-circle: livré | `crates/backend/src/api/import.rs::JsonImportRequest` |
+| Import JSON v4 : `knowledge_status` + `confidence_score` par composant / dépendance | :material-check-circle: livré | `V4Component` et `V4Dependency` |
+| Helper partagé `integrations::apply_default_maturity` (Components / Dependencies / Both) | :material-check-circle: livré | `crates/backend/src/integrations/mod.rs` |
+| CMDB / XL / flow payloads acceptent `default_knowledge_status` + `default_confidence_score` | :material-check-circle: livré | leurs structs `*Payload` |
+| Endpoints CSV exposent `?knowledge_status=…&confidence_score=…` | :material-check-circle: livré | `api/ingestion.rs::CsvIngestQuery` |
+| Git push transporte la maturité par composant et par dépendance | :material-check-circle: livré | `api/git.rs::fetch_component_knowledge` + `fetch_dependency_knowledge` |
+| Wizard frontend expose le sélecteur de maturité | :material-check-circle: livré | `frontend/src/components/captation/IngestionWizard.tsx` |
+
 ## Captation multi-sources
 
 *Méthodologie phase 1.*

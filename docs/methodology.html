@@ -1276,6 +1276,68 @@
       </div>
     </div>
 
+    <h4>Maturité déclarée par la source, jamais imposée</h4>
+    <p>
+      Chaque map ou fragment importé porte sa propre déclaration de
+      maturité. AppControl ne décide pas à la place du caller : une
+      map mature sortie d'un repo Git arrive avec son statut, un
+      scrape brut reste candidat, une création manuelle conserve son
+      défaut. Le système est <em>flexible et déclaratif</em>.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Origine</th>
+          <th>Comportement par défaut</th>
+          <th>Déclaration possible</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Import JSON v4 (push externe ou Git roundtrip)</td>
+          <td>Composants et dépendances en <code>draft</code> (défaut DB)</td>
+          <td><code>default_knowledge_status</code> dans la requête, ou <code>knowledge_status</code> par composant / dépendance dans la map elle-même</td>
+        </tr>
+        <tr>
+          <td>Ingestion CMDB / XL / flux</td>
+          <td>Inchangé pour les rows existantes ; nouvelles rows en <code>draft</code></td>
+          <td><code>default_knowledge_status</code> dans le payload JSON, ou <code>?knowledge_status=…</code> en query pour les CSV</td>
+        </tr>
+        <tr>
+          <td>Git push (export AppControl)</td>
+          <td>Embarque dans le JSON le statut courant <strong>par composant</strong> et <strong>par dépendance</strong></td>
+          <td>Roundtrip Git → re-import préserve la maturité telle quelle</td>
+        </tr>
+        <tr>
+          <td>Agents discovery</td>
+          <td>Composants candidats en <code>draft</code></td>
+          <td>Promotion via la revue humaine (Phase 3 §4.4)</td>
+        </tr>
+        <tr>
+          <td>Création manuelle UI</td>
+          <td><code>draft</code> + confiance 0.5</td>
+          <td>Édition directe via l'onglet Knowledge du composant</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>Résolution à l'import, dans l'ordre :</p>
+    <ol>
+      <li><strong>Valeur portée par la row</strong> (composant ou dépendance dans le JSON) — gagne toujours</li>
+      <li><strong>Défaut au niveau requête</strong> (<code>default_knowledge_status</code>) — appliqué à toutes les rows touchées</li>
+      <li><strong>Défaut DB</strong> (<code>draft</code>, confiance 0.5) — appliqué aux rows que personne ne touche</li>
+    </ol>
+
+    <div class="pull">
+      <strong>Principe :</strong> AppControl ne prétend pas connaître la
+      maturité d'un contenu qu'il n'a pas produit. Une CI qui pousse
+      depuis un repo Git relu et signé peut déclarer <code>"reviewed"</code>
+      ou <code>"validated"</code> — la plateforme respecte cette
+      affirmation. Une commande <code>curl</code> rapide depuis un
+      poste de développeur laisse le statut à <code>draft</code> par
+      défaut, ce qui empêche d'usurper un état de revue.
+    </div>
+
     <h3>4.6 Validation finale et passage en advisory mode</h3>
     <p>
       Une fois la revue close, la map est <strong>activée en advisory
@@ -1744,7 +1806,42 @@
       </tbody>
     </table>
 
-    <h3>9.1 Principes de gouvernance IA</h3>
+    <h3>9.1 Où le modèle tourne — public vs. on-prem</h3>
+    <p>
+      Le provider d'IA est sélectionné par la variable d'environnement
+      <code>AI_PROVIDER</code> à trois valeurs majeures :
+    </p>
+    <table>
+      <thead>
+        <tr><th>Mode</th><th>Configuration</th><th>Quand l'utiliser</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Cloud (Anthropic)</strong></td>
+          <td><code>AI_PROVIDER=anthropic</code> + <code>ANTHROPIC_API_KEY</code></td>
+          <td>Démarrage rapide, qualité de modèle maximale, donnée envoyée à Anthropic.</td>
+        </tr>
+        <tr>
+          <td><strong>Cloud (OpenAI ou Azure OpenAI)</strong></td>
+          <td><code>AI_PROVIDER=openai</code> + <code>OPENAI_API_KEY</code> + <code>OPENAI_BASE_URL</code> (Azure)</td>
+          <td>Stack Microsoft / Azure tenant, ou contrat OpenAI existant.</td>
+        </tr>
+        <tr>
+          <td><strong>On-prem / souverain</strong></td>
+          <td><code>AI_PROVIDER=openai</code> + <code>OPENAI_BASE_URL</code> pointant sur une passerelle OpenAI-compatible (vLLM, Ollama, LiteLLM…)</td>
+          <td>Aucune donnée ne sort de l'infrastructure du client. Compatible Mistral, Llama, modèles sur GPU privé.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Le contrat HTTP entre AppControl et le modèle est <strong>identique</strong>
+      dans les trois modes — le provider OpenAI fonctionne sur n'importe quelle
+      passerelle qui parle l'API <code>/v1/chat/completions</code>. Cela permet
+      à un client régulé (banque, défense) de garder l'IA 100 % en interne sans
+      perdre une seule fonctionnalité.
+    </p>
+
+    <h3>9.2 Principes de gouvernance IA</h3>
     <ul>
       <li><strong>Explicabilité</strong> — chaque sortie IA est accompagnée des sources qui l'ont nourrie (citations vérifiables)</li>
       <li><strong>Confiance graduée</strong> — chaque proposition est marquée d'un niveau de confiance (0.0 à 1.0)</li>
