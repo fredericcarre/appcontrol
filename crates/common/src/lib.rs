@@ -1,3 +1,4 @@
+pub mod alerting;
 pub mod fsm;
 pub mod logging;
 pub mod pki;

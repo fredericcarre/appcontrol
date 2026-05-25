@@ -191,6 +191,18 @@ pub async fn transition_component(
         }
     });
 
+    // Policy-driven alert engine (firing/ack/resolved lifecycle, runs
+    // independently of the raw webhook dispatch above).
+    crate::alerting::engine::notify_state_transition(
+        state.db.clone(),
+        app_id,
+        app_name.clone(),
+        component_id,
+        component_name.clone(),
+        current,
+        new_state,
+    );
+
     Ok(())
 }
 
@@ -302,6 +314,16 @@ pub async fn force_transition_component(
             tracing::warn!("Notification dispatch failed: {}", e);
         }
     });
+
+    crate::alerting::engine::notify_state_transition(
+        state.db.clone(),
+        app_id,
+        app_name.clone(),
+        component_id,
+        component_name.clone(),
+        current,
+        new_state,
+    );
 
     Ok(())
 }

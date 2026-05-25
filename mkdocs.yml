@@ -157,6 +157,7 @@ nav:
       - Integration cookbook: INTEGRATION_COOKBOOK.md
       - Check metrics: METRICS.md
       - SNMP monitoring: SNMP_MONITORING.md
+      - Alerting: ALERTING.md
       - Migration from scripts: MIGRATION_FROM_SCRIPTS.md
       - Backup & restore: BACKUP_RESTORE.md
       - Upgrade procedures: UPGRADE.md

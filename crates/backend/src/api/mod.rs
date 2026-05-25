@@ -1,5 +1,6 @@
 pub mod agent_update;
 pub mod agents;
+pub mod alerts;
 pub mod api_keys;
 pub mod approvals;
 pub mod apps;
@@ -302,6 +303,26 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/apps/:app_id/health-summary", get(reports::health_summary))
         // History (Time Machine)
         .route("/apps/:app_id/history", get(history::app_history))
+        // Alerting (channels + policies + instances)
+        .route(
+            "/alert-channels",
+            get(alerts::list_channels).post(alerts::create_channel),
+        )
+        .route(
+            "/alert-channels/:id",
+            axum::routing::delete(alerts::delete_channel),
+        )
+        .route(
+            "/alert-policies",
+            get(alerts::list_policies).post(alerts::create_policy),
+        )
+        .route(
+            "/alert-policies/:id",
+            axum::routing::delete(alerts::delete_policy),
+        )
+        .route("/alerts", get(alerts::list_alerts))
+        .route("/alerts/:id/acknowledge", post(alerts::acknowledge_alert))
+        .route("/alerts/:id/resolve", post(alerts::resolve_alert))
         // Orchestration (scheduler)
         .route(
             "/orchestration/apps/:app_id/start",

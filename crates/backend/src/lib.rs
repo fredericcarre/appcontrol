@@ -1,4 +1,5 @@
 #![allow(clippy::too_many_arguments)]
+pub mod alerting;
 pub mod api;
 pub mod auth;
 pub mod config;
