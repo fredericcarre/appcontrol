@@ -63,8 +63,173 @@ pub async fn push_file(
 
     match config.provider.as_str() {
         "github" => push_via_github(config, &token, path, content, commit_message).await,
+        "gitlab" => push_via_gitlab(config, &token, path, content, commit_message).await,
+        "gitea" => push_via_gitea(config, &token, path, content, commit_message).await,
         other => Err(GitError::UnsupportedProvider(other.to_string())),
     }
+}
+
+// --------------------------------------------------------------------------
+// GitLab — uses the Repository Files API. PUT updates, POST creates.
+// Endpoint: /api/v4/projects/:url-encoded-repo/repository/files/:url-encoded-path
+// Auth header: PRIVATE-TOKEN
+// --------------------------------------------------------------------------
+async fn push_via_gitlab(
+    config: &GitRemoteConfig,
+    token: &str,
+    path: &str,
+    content: &[u8],
+    commit_message: &str,
+) -> Result<PushResult, GitError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| GitError::Http(e.to_string()))?;
+
+    let project_encoded = urlencoding::encode(&config.repo).into_owned();
+    let path_encoded = urlencoding::encode(path).into_owned();
+    let api_url = format!(
+        "{}/api/v4/projects/{}/repository/files/{}",
+        config.base_url.trim_end_matches('/'),
+        project_encoded,
+        path_encoded,
+    );
+
+    let body = serde_json::json!({
+        "branch": config.branch,
+        "content": String::from_utf8_lossy(content),
+        "commit_message": commit_message,
+    });
+
+    // Try PUT first (update). If the file does not exist, the API returns
+    // 400 with "A file with this name doesn't exist" — fall back to POST.
+    let resp_put = client
+        .put(&api_url)
+        .header("PRIVATE-TOKEN", token)
+        .header("User-Agent", "appcontrol-backend")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| GitError::Http(e.to_string()))?;
+
+    let parsed = if resp_put.status().is_success() {
+        resp_put.json::<serde_json::Value>().await
+    } else {
+        let status = resp_put.status();
+        let body_text = resp_put.text().await.unwrap_or_default();
+        if status == reqwest::StatusCode::BAD_REQUEST
+            && body_text.contains("doesn't exist")
+        {
+            // Create instead.
+            let resp_post = client
+                .post(&api_url)
+                .header("PRIVATE-TOKEN", token)
+                .header("User-Agent", "appcontrol-backend")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| GitError::Http(e.to_string()))?;
+            if !resp_post.status().is_success() {
+                let s = resp_post.status().as_u16();
+                let b = resp_post.text().await.unwrap_or_default();
+                return Err(GitError::Provider { status: s, body: b });
+            }
+            resp_post.json::<serde_json::Value>().await
+        } else {
+            return Err(GitError::Provider {
+                status: status.as_u16(),
+                body: body_text,
+            });
+        }
+    };
+
+    let parsed = parsed.map_err(|e| GitError::Http(e.to_string()))?;
+    Ok(PushResult {
+        commit_sha: parsed["last_commit_id"].as_str().unwrap_or_default().to_string(),
+        content_sha: parsed["content_sha256"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        path: path.to_string(),
+        branch: config.branch.clone(),
+    })
+}
+
+// --------------------------------------------------------------------------
+// Gitea — Contents API, near-identical to GitHub's. Endpoint shape:
+// /api/v1/repos/:owner/:repo/contents/:path
+// Auth: Authorization: token <PAT>  OR  Bearer
+// --------------------------------------------------------------------------
+async fn push_via_gitea(
+    config: &GitRemoteConfig,
+    token: &str,
+    path: &str,
+    content: &[u8],
+    commit_message: &str,
+) -> Result<PushResult, GitError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| GitError::Http(e.to_string()))?;
+
+    let api_url = format!(
+        "{}/api/v1/repos/{}/contents/{}",
+        config.base_url.trim_end_matches('/'),
+        config.repo,
+        path,
+    );
+
+    // Probe existing file for its sha (required for PUT).
+    let existing_sha = {
+        let resp = client
+            .get(&api_url)
+            .query(&[("ref", config.branch.as_str())])
+            .header("Authorization", format!("token {}", token))
+            .header("User-Agent", "appcontrol-backend")
+            .send()
+            .await
+            .map_err(|e| GitError::Http(e.to_string()))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            None
+        } else if resp.status().is_success() {
+            let v: serde_json::Value = resp.json().await.map_err(|e| GitError::Http(e.to_string()))?;
+            v["sha"].as_str().map(String::from)
+        } else {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(GitError::Provider { status, body });
+        }
+    };
+
+    let body = serde_json::json!({
+        "branch": config.branch,
+        "content": base64::engine::general_purpose::STANDARD.encode(content),
+        "message": commit_message,
+        "sha": existing_sha,
+    });
+
+    let method = if existing_sha.is_some() { reqwest::Method::PUT } else { reqwest::Method::POST };
+    let resp = client
+        .request(method, &api_url)
+        .header("Authorization", format!("token {}", token))
+        .header("User-Agent", "appcontrol-backend")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| GitError::Http(e.to_string()))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(GitError::Provider { status, body });
+    }
+    let parsed: serde_json::Value = resp.json().await.map_err(|e| GitError::Http(e.to_string()))?;
+    Ok(PushResult {
+        commit_sha: parsed["commit"]["sha"].as_str().unwrap_or_default().to_string(),
+        content_sha: parsed["content"]["sha"].as_str().unwrap_or_default().to_string(),
+        path: path.to_string(),
+        branch: config.branch.clone(),
+    })
 }
 
 async fn push_via_github(
