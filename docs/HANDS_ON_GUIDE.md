@@ -59,6 +59,10 @@ BACKEND_URL=http://localhost:3000 \
   ./scripts/methodology-walkthrough.sh
 ```
 
+Here's what it looks like in motion:
+
+![methodology walkthrough](screenshots/methodology-walkthrough.gif)
+
 The script:
 
 1. Imports `examples/methodology-demo.json` declaring `reviewed`

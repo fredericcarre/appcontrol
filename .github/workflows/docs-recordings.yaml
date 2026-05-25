@@ -1,0 +1,99 @@
+name: Documentation Terminal Recordings
+
+# Renders the vhs tapes under docs/recordings/ into animated GIFs and
+# commits them to docs/screenshots/. Runs on changes to the tape, the
+# walkthrough script, or the example payloads it depends on.
+#
+# vhs scripts a terminal (via ttyd) and screen-records it with ffmpeg.
+# Deterministic — the same tape always produces the same GIF.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/recordings/**'
+      - 'scripts/methodology-walkthrough.sh'
+      - 'examples/methodology-demo.json'
+      - 'examples/raw-cmdb-scrape.json'
+      - 'examples/pattern-spring-boot-jdbc.json'
+      - '.github/workflows/docs-recordings.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docs-recordings-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Stack — vhs needs a real backend to record curl output ────
+      - name: Build and start the AppControl stack
+        run: |
+          docker compose -f docker/docker-compose.yaml build
+          docker compose -f docker/docker-compose.yaml up -d
+          echo "Waiting for backend health..."
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
+              echo "Backend healthy after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      # ── Tooling — vhs + ttyd + ffmpeg + jq ───────────────────────
+      - name: Install ttyd, ffmpeg, jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg jq
+          sudo curl -fsSL \
+            -o /usr/local/bin/ttyd \
+            https://github.com/tsl0922/ttyd/releases/download/1.7.4/ttyd.x86_64
+          sudo chmod +x /usr/local/bin/ttyd
+          ttyd --version
+
+      - name: Install vhs
+        run: |
+          set -euo pipefail
+          VHS_VERSION="v0.7.2"
+          curl -fsSL \
+            -o /tmp/vhs.tar.gz \
+            "https://github.com/charmbracelet/vhs/releases/download/${VHS_VERSION}/vhs_${VHS_VERSION#v}_Linux_x86_64.tar.gz"
+          tar -xzf /tmp/vhs.tar.gz -C /tmp/
+          sudo mv /tmp/vhs_${VHS_VERSION#v}_Linux_x86_64/vhs /usr/local/bin/vhs
+          vhs --version
+
+      # ── Recording ────────────────────────────────────────────────
+      - name: Render methodology-walkthrough.tape
+        env:
+          BACKEND_URL: http://localhost:3000
+          ADMIN_EMAIL: admin@localhost
+          ADMIN_PASSWORD: admin
+        run: |
+          mkdir -p docs/screenshots
+          vhs docs/recordings/methodology-walkthrough.tape
+          ls -la docs/screenshots/methodology-walkthrough.gif
+
+      # ── Commit & push ────────────────────────────────────────────
+      - name: Commit refreshed GIF
+        run: |
+          git config user.name  "appcontrol-bot"
+          git config user.email "bot@appcontrol.io"
+          if git diff --quiet docs/screenshots/methodology-walkthrough.gif; then
+            echo "No change in the GIF — skipping commit."
+            exit 0
+          fi
+          git add docs/screenshots/methodology-walkthrough.gif
+          git commit -m "docs: refresh methodology-walkthrough.gif [skip ci]"
+          git push
+
+      - name: Tear down the stack
+        if: always()
+        run: docker compose -f docker/docker-compose.yaml down -v
