@@ -1,4 +1,5 @@
 pub mod activation;
+pub mod ai;
 pub mod agent_update;
 pub mod agents;
 pub mod api_keys;
@@ -632,6 +633,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/ingestion/xl", post(ingestion::ingest_xl))
         .route("/ingestion/flows", post(ingestion::ingest_flows))
         .route("/ingestion/incidents", post(ingestion::ingest_incidents))
+        // AI-assisted operations (stub by default; pluggable provider)
+        .route("/ai/schema/validate", post(ai::schema_validate))
+        .route("/ai/map/suggest", post(ai::map_suggest))
+        .route("/ai/incident/analyze", post(ai::incident_analyze))
         // Component Catalog
         .route(
             "/catalog/component-types",
