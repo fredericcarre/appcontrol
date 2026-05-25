@@ -21,6 +21,23 @@ copyright: >-
 docs_dir: docs
 site_dir: site
 
+# Draft strategic deliverables (sales / direction-targeted decks) — kept in
+# the repo for collaboration but not published on docs.appcontrol.io until
+# they exit draft status. Re-add to `nav` (above) when promoted to v1.0.
+exclude_docs: |
+  strategy.html
+  methodology.html
+  vision.html
+  pricing.html
+  implementation-status.md
+  README-strategy.md
+  STRATEGY_SLIDES.md
+  strategy.md
+  invivoo-reference.docx
+  build-docx.sh
+  build-reference-docx.py
+  invivoo-logo.svg
+
 # Treat broken internal links / missing pages as warnings, not errors, so a
 # stale cross-reference does not block a Pages deploy. CI uses --strict only
 # on release builds where we want zero broken links shipped to users.
@@ -186,12 +203,6 @@ nav:
   - Architecture:
       - Architecture overview: architecture.md
       - Security architecture: SECURITY_ARCHITECTURE.md
-  - Strategy:
-      - Why (strategy note): strategy.html
-      - How (methodology): methodology.html
-      - How far (vision): vision.html
-      - Pricing & ROI simulator: pricing.html
-      - Implementation status: implementation-status.md
   - Compliance:
       - DORA & NIS2 mapping: COMPLIANCE_DORA_NIS2.md
   - Release:
