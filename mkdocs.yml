@@ -186,6 +186,12 @@ nav:
   - Architecture:
       - Architecture overview: architecture.md
       - Security architecture: SECURITY_ARCHITECTURE.md
+  - Strategy:
+      - Why (strategy note): strategy.html
+      - How (methodology): methodology.html
+      - How far (vision): vision.html
+      - Pricing & ROI simulator: pricing.html
+      - Implementation status: implementation-status.md
   - Compliance:
       - DORA & NIS2 mapping: COMPLIANCE_DORA_NIS2.md
   - Release:

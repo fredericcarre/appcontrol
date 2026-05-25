@@ -667,7 +667,7 @@ Each chunk is a self-contained PR with build + clippy green on both
 postgres and sqlite feature sets.
 
 ### P13-1: Application Activation Level
-- [x] `migrations/V056__application_activation_level.sql` — `applications.activation_level SMALLINT` with CHECK 0-4 + index
+- [x] `migrations/V058__application_activation_level.sql` — `applications.activation_level SMALLINT` with CHECK 0-4 + index
 - [x] `crates/backend/src/core/activation.rs` — `ActivationLevel` enum, helpers, 5 unit tests
 - [x] `crates/backend/src/api/activation.rs` — `GET / PUT /api/v1/apps/:id/activation`
 - [x] Enforcement wired in `start_app`, `stop_app`, `start_branch`, `start_to`, `diagnose`, `rebuild`, `switchover`
@@ -675,7 +675,7 @@ postgres and sqlite feature sets.
 - [x] Route `/apps/:id/activation` in `App.tsx`
 
 ### P13-2: Multi-Source Ingestion Connectors
-- [x] `migrations/V057__incidents.sql` — incidents table (`source` + `external_id` unique, impacted_components JSON)
+- [x] `migrations/V059__incidents.sql` — incidents table (`source` + `external_id` unique, impacted_components JSON)
 - [x] `crates/backend/src/integrations/cmdb.rs` — generic CMDB upsert
 - [x] `crates/backend/src/integrations/xl.rs` — XL Release / XL Deploy deployables + pipeline deps
 - [x] `crates/backend/src/integrations/flow.rs` — flow ref → dependency edges (resolves by name OR host[:port])

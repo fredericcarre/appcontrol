@@ -1,6 +1,6 @@
 //! Activation level — graduated adoption ladder per application.
 //!
-//! See `migrations/V056__application_activation_level.sql` for the model
+//! See `migrations/V058__application_activation_level.sql` for the model
 //! and `docs/methodology.html` § Phase 4 for the conceptual ladder.
 //!
 //! The level controls which operations the platform is allowed to perform
