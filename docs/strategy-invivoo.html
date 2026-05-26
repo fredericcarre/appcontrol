@@ -1,0 +1,1240 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>AppControl — Répondre avec sérénité aux exigences de DORA</title>
+<style>
+  /* ─────────────────────────────────────────────────────────────────
+     Charte Invivoo — fond crème, bleu marine profond, fines bordures,
+     une idée par bloc, illustrations sobres.
+     ───────────────────────────────────────────────────────────────── */
+  :root {
+    --cream:        #FAF7F1;    /* page background */
+    --cream-2:      #F3EFE6;    /* panel alt background */
+    --paper:        #FFFFFF;    /* card background */
+    --navy:         #0F2C5F;    /* primary (titles, accents) */
+    --navy-2:       #4E57AA;    /* secondary accent (Invivoo "O") */
+    --navy-soft:    #6B7AAA;    /* faded accent */
+    --ink:          #1F2A44;    /* body text */
+    --ink-soft:     #4B5C77;    /* secondary text */
+    --line:         #B8C2D4;    /* fine borders */
+    --line-soft:    #DCE2EC;    /* very pale borders */
+    --teal:         #0C6E6E;    /* ok / accent */
+    --teal-soft:    #DDEDED;
+    --amber:        #C2841C;
+    --amber-soft:   #FAF1D8;
+    --crimson:      #A52A2A;
+    --crimson-soft: #F4DCDC;
+    --shadow:       0 1px 1px rgba(15,44,95,.04), 0 4px 14px rgba(15,44,95,.07);
+    --radius:       6px;
+    --radius-l:     10px;
+  }
+
+  /* ── Reset / base ───────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--cream); }
+  body {
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3, h4 {
+    color: var(--navy);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0;
+    line-height: 1.18;
+  }
+  p { margin: 0 0 0.9em; }
+  a { color: var(--navy-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  strong { color: var(--navy); font-weight: 600; }
+  code, pre, .mono {
+    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    font-size: 0.9em;
+  }
+
+  /* ── Layout: 1 slide = 1 section ─────────────────────────────────── */
+  .deck {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0;
+  }
+  .slide {
+    position: relative;
+    padding: 64px 56px 56px;
+    background: var(--cream);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .slide:last-child { border-bottom: none; }
+
+  /* topbar */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 28px;
+  }
+  .topbar .rule {
+    width: 36px; height: 2px;
+    background: var(--navy);
+  }
+  .topbar .kicker {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.10em;
+    color: var(--navy-2);
+    text-transform: uppercase;
+  }
+  .topbar .invivoo {
+    margin-left: auto;
+    height: 22px;
+    opacity: 0.85;
+  }
+
+  /* footer of each slide */
+  .slide-footer {
+    margin-top: 36px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line-soft);
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--ink-soft);
+  }
+
+  /* Headings inside a slide */
+  .slide h1 {
+    font-size: 44px;
+    line-height: 1.10;
+    margin-bottom: 8px;
+  }
+  .slide h2 {
+    font-size: 30px;
+    line-height: 1.15;
+    margin-bottom: 16px;
+  }
+  .slide h3 {
+    font-size: 20px;
+    line-height: 1.25;
+    margin-bottom: 10px;
+  }
+  .slide .subtitle {
+    font-size: 17px;
+    color: var(--ink-soft);
+    margin-bottom: 32px;
+  }
+
+  /* ── Cover slide ─────────────────────────────────────────────────── */
+  .slide.cover {
+    padding: 80px 56px 64px;
+    position: relative;
+  }
+  .slide.cover::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0; width: 12px;
+    background: var(--navy);
+  }
+  .slide.cover .eyebrow {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--navy-2);
+    text-transform: uppercase;
+    margin-bottom: 22px;
+  }
+  .slide.cover h1 {
+    font-size: 64px;
+    line-height: 1.05;
+    margin-bottom: 28px;
+  }
+  .slide.cover .lead {
+    font-size: 21px;
+    line-height: 1.45;
+    color: var(--ink);
+    max-width: 820px;
+    margin-bottom: 56px;
+  }
+  .cover-indicators {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+  }
+  .cover-indicators .ind {
+    border-top: 2px solid var(--navy);
+    padding-top: 10px;
+  }
+  .cover-indicators .ind .num {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--navy-2);
+    letter-spacing: 0.10em;
+    margin-bottom: 4px;
+  }
+  .cover-indicators .ind .label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--ink);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .cover-indicators .ind .value {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--navy);
+  }
+
+  /* ── Card grids ───────────────────────────────────────────────────── */
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; }
+
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px;
+    position: relative;
+  }
+  .card .num {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--navy-2);
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+  .card h3 { color: var(--navy); }
+  .card .desc { color: var(--ink); font-size: 14.5px; }
+  .card .micro {
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    margin-top: 8px;
+  }
+  .card .rule {
+    width: 36px; height: 2px;
+    background: var(--navy);
+    margin: 14px 0;
+  }
+
+  /* Tag/Badge */
+  .tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 3px;
+    color: white;
+    background: var(--navy);
+  }
+  .tag.crimson { background: var(--crimson); }
+  .tag.amber   { background: var(--amber); }
+  .tag.teal    { background: var(--teal); }
+  .tag.grey    { background: var(--ink-soft); }
+  .tag.outline {
+    background: transparent;
+    color: var(--navy);
+    border: 1px solid var(--navy);
+  }
+
+  /* Alert / focus bar */
+  .alert {
+    margin-top: 24px;
+    background: var(--paper);
+    border: 1.5px solid var(--crimson);
+    border-left-width: 4px;
+    border-radius: var(--radius);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    color: var(--ink);
+    font-size: 14.5px;
+  }
+  .alert.navy { border-color: var(--navy); }
+  .alert.teal { border-color: var(--teal); }
+  .alert .glyph {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--crimson);
+    line-height: 1;
+  }
+  .alert.navy .glyph { color: var(--navy); }
+
+  .keyline {
+    background: var(--navy);
+    color: var(--cream);
+    padding: 16px 24px;
+    border-radius: var(--radius);
+    font-size: 17px;
+    font-weight: 600;
+    text-align: center;
+    margin-top: 24px;
+  }
+
+  /* Big numbers (DORA sanctions etc.) */
+  .big-number {
+    background: var(--paper);
+    border: 1px solid var(--navy);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+  }
+  .big-number .label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--navy-2);
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .big-number .value {
+    font-size: 78px;
+    font-weight: 800;
+    color: var(--navy);
+    line-height: 1;
+    margin-bottom: 12px;
+    letter-spacing: -0.02em;
+  }
+  .big-number .sub { color: var(--ink); font-size: 15px; }
+
+  /* Comparative table */
+  .compare {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin-top: 20px;
+  }
+  .compare thead th {
+    padding: 14px 16px;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 700;
+    color: white;
+    background: var(--ink-soft);
+  }
+  .compare thead th:first-child { background: var(--cream-2); color: var(--navy-2); }
+  .compare thead th.crimson { background: var(--crimson); }
+  .compare thead th.teal    { background: var(--teal); }
+  .compare tbody td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 14px;
+    color: var(--ink);
+    vertical-align: middle;
+  }
+  .compare tbody tr:nth-child(even) td { background: var(--cream-2); }
+  .compare tbody td:first-child { font-weight: 600; color: var(--navy); }
+  .compare .mark { font-weight: 700; margin-right: 8px; }
+  .compare .mark.crimson { color: var(--crimson); }
+  .compare .mark.teal    { color: var(--teal); }
+
+  /* Staircase (escalier) */
+  .staircase {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    align-items: end;
+  }
+  .staircase .step { padding-top: 0; }
+  .staircase .step:nth-child(1) { padding-top: 60px; }
+  .staircase .step:nth-child(2) { padding-top: 30px; }
+  .staircase .step:nth-child(3) { padding-top: 0; }
+
+  /* Centred quote */
+  .quote-block {
+    padding: 40px 0 30px;
+  }
+  .quote-block h1 {
+    font-size: 52px;
+    line-height: 1.08;
+    text-align: left;
+  }
+
+  /* X-Ray funnel block */
+  .funnel-flow {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 20px;
+  }
+  .funnel-arrow {
+    text-align: center;
+    color: var(--navy-2);
+    font-size: 26px;
+    line-height: 1;
+  }
+  .scanner-bar {
+    background: var(--navy);
+    color: var(--cream);
+    padding: 18px 24px;
+    border-radius: var(--radius);
+    font-size: 15px;
+    font-weight: 700;
+    text-align: center;
+    letter-spacing: 0.04em;
+  }
+
+  /* Stamps row */
+  .stamp-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 18px;
+  }
+  .stamp {
+    border: 1px solid var(--teal);
+    background: var(--teal-soft);
+    color: var(--teal);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  /* TOC */
+  .toc {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-l);
+    padding: 28px 32px;
+    margin-bottom: 32px;
+  }
+  .toc ol { margin: 0; padding-left: 22px; columns: 2; column-gap: 40px; }
+  .toc li { padding: 4px 0; color: var(--ink); }
+  .toc li a { color: var(--ink); }
+  .toc li a:hover { color: var(--navy); }
+
+  /* Page header (sticky on screen, hidden on print) */
+  .page-header {
+    position: sticky;
+    top: 0;
+    background: var(--cream);
+    border-bottom: 1px solid var(--line-soft);
+    padding: 14px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 10;
+  }
+  .page-header .brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .page-header .brand .invivoo { height: 24px; }
+  .page-header .brand .sep {
+    width: 1px;
+    height: 18px;
+    background: var(--line);
+  }
+  .page-header .brand .title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--navy);
+  }
+  .page-header .draft {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.10em;
+    color: var(--crimson);
+    padding: 4px 12px;
+    border: 1px solid var(--crimson);
+    border-radius: 999px;
+  }
+
+  /* ── Print ────────────────────────────────────────────────────────── */
+  @media print {
+    @page {
+      size: A4 landscape;
+      margin: 12mm 14mm 14mm 14mm;
+    }
+    body { background: var(--cream); }
+    .page-header { display: none; }
+    .slide {
+      page-break-after: always;
+      break-after: page;
+      border-bottom: none;
+      padding: 24px 24px 30px;
+      min-height: calc(100vh - 50mm);
+    }
+    .slide:last-child { page-break-after: auto; }
+    .slide.cover h1 { font-size: 48px; }
+    .slide h1 { font-size: 32px; }
+    .slide h2 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Persistent header (screen only) ──────────────────────────── -->
+<div class="page-header">
+  <div class="brand">
+    <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    <div class="sep"></div>
+    <div class="title">AppControl  ·  Répondre avec sérénité aux exigences de DORA</div>
+  </div>
+  <div class="draft">DRAFT  ·  NE PAS DIFFUSER</div>
+</div>
+
+<div class="deck">
+
+  <!-- ════════════════ 1. COVER ════════════════ -->
+  <section class="slide cover" id="s01">
+    <div class="eyebrow">Résilience opérationnelle  ·  DORA</div>
+    <h1>Répondre avec sérénité<br>aux exigences de DORA</h1>
+    <p class="lead">
+      Industrialiser la résilience opérationnelle et prouver
+      la conformité réglementaire — sans tout redocumenter,
+      sans tout reconstruire.
+    </p>
+    <div class="cover-indicators">
+      <div class="ind">
+        <div class="num">01</div>
+        <div class="label">Nœud de données</div>
+        <div class="value">Sécurisé</div>
+      </div>
+      <div class="ind">
+        <div class="num">02</div>
+        <div class="label">Conformité</div>
+        <div class="value">Activée</div>
+      </div>
+      <div class="ind">
+        <div class="num">03</div>
+        <div class="label">Architecture</div>
+        <div class="value">Résiliente</div>
+      </div>
+      <div class="ind">
+        <div class="num">04</div>
+        <div class="label">Flux opérationnel</div>
+        <div class="value">Unifié</div>
+      </div>
+    </div>
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Pitch DORA  ·  Mai 2026</span>
+      <span>01 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 2. SOMMAIRE ════════════════ -->
+  <section class="slide" id="s02">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Sommaire</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>Le fil du pitch</h1>
+    <p class="subtitle">14 slides  ·  un message par slide  ·  ~25 minutes</p>
+
+    <div class="toc">
+      <ol>
+        <li><a href="#s03">Le problème — l'illusion de la connaissance</a></li>
+        <li><a href="#s04">Le choc DORA — sanctions</a></li>
+        <li><a href="#s05">Le choc DORA — articles 11 · 12 · 16 · 25</a></li>
+        <li><a href="#s06">Piège stratégique — CMDB ≠ Rebuild</a></li>
+        <li><a href="#s07">Proposition de valeur — fil conducteur</a></li>
+        <li><a href="#s08">Phase 1 — révéler l'as-run</a></li>
+        <li><a href="#s09">Phase 2 — la carte devient télécommande</a></li>
+        <li><a href="#s10">Phase 3 — preuve du rebuild</a></li>
+        <li><a href="#s11">L'escalier de la confiance</a></li>
+        <li><a href="#s12">Gouvernance &amp; sécurité par conception</a></li>
+        <li><a href="#s13">L'effet réseau</a></li>
+        <li><a href="#s14">Adoption — 3 lignes de front</a></li>
+        <li><a href="#s15">Conclusion — next step</a></li>
+      </ol>
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>02 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 3. PROBLÈME ════════════════ -->
+  <section class="slide" id="s03">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Le problème  ·  Inventaire de la vérité</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>L'illusion de la connaissance :</h1>
+    <h1 style="color:var(--ink-soft); font-weight:600;">une architecture éclatée et purement déclarative</h1>
+
+    <div class="grid-3" style="margin-top:32px;">
+      <div class="card">
+        <h3>CMDB</h3>
+        <p class="desc">Souvent obsolète, limitée aux briques techniques.</p>
+        <span class="tag crimson">Obsolète</span>
+      </div>
+      <div class="card">
+        <h3>Runbooks</h3>
+        <p class="desc">Procédures rédigées hors-sol, rarement à jour.</p>
+        <span class="tag crimson">Obsolète</span>
+      </div>
+      <div class="card">
+        <h3>Sachants</h3>
+        <p class="desc">Connaissance tribale dispersée.</p>
+        <span class="tag amber">Fragile</span>
+      </div>
+      <div class="card">
+        <h3>XL Release / XL Deploy</h3>
+        <p class="desc">Vue déploiement, mais pas opérationnelle.</p>
+        <span class="tag amber">Partiel</span>
+      </div>
+      <div class="card">
+        <h3>Schémas Visio</h3>
+        <p class="desc">Intentions figées, déconnectées de la réalité.</p>
+        <span class="tag amber">Figé</span>
+      </div>
+      <div class="card">
+        <h3>Référentiels de flux &amp; Incidents</h3>
+        <p class="desc">Vérité terrain brute, jamais capitalisée.</p>
+        <span class="tag grey">Brut</span>
+      </div>
+    </div>
+
+    <div class="alert">
+      <span class="glyph">!</span>
+      <span>
+        Aucune source ne décrit comment l'application tourne réellement
+        en production. Sans cette vérité consolidée,
+        <strong>la reconstruction est impossible.</strong>
+      </span>
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>03 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 4. CHOC DORA — sanctions ════════════════ -->
+  <section class="slide" id="s04">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Réglementation  ·  DORA</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>Le choc DORA :</h1>
+    <h1 style="color:var(--ink-soft); font-weight:600;">l'obligation légale de prouver la reconstruction</h1>
+
+    <div class="grid-2" style="margin-top:36px;">
+      <div class="big-number">
+        <div class="label">Sanction entreprise</div>
+        <div class="value">2 %</div>
+        <div class="sub">du chiffre d'affaires annuel mondial</div>
+      </div>
+      <div class="big-number">
+        <div class="label">Sanction dirigeant</div>
+        <div class="value">1 M€</div>
+        <div class="sub">d'amende personnelle</div>
+      </div>
+    </div>
+
+    <div class="keyline">
+      DORA exige de prouver la capacité de reprise,
+      pas seulement de la documenter.
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>04 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 5. CHOC DORA — articles ════════════════ -->
+  <section class="slide" id="s05">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Réglementation  ·  DORA</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>Le « Rebuild » n'est plus optionnel —</h1>
+    <h1 style="color:var(--ink-soft); font-weight:600;">c'est une obligation auditable</h1>
+
+    <div class="grid-3" style="margin-top:36px;">
+      <div class="card">
+        <span class="tag">Art. 11 &amp; 12</span>
+        <h3 style="margin-top:18px;">Procédures de reconstruction</h3>
+        <p class="desc">
+          Après corruption majeure, testées <strong>annuellement</strong>.
+        </p>
+      </div>
+      <div class="card">
+        <span class="tag">Art. 25</span>
+        <h3 style="margin-top:18px;">Tests de scénarios cyber</h3>
+        <p class="desc">
+          Chronométrés, RTR/RTO mesurés et tracés.
+        </p>
+      </div>
+      <div class="card">
+        <span class="tag">Art. 16</span>
+        <h3 style="margin-top:18px;">Registre inaltérable</h3>
+        <p class="desc">
+          De toutes les actions de récupération.
+        </p>
+      </div>
+    </div>
+
+    <p style="text-align:center; margin-top:32px; font-size:15px; color:var(--ink-soft);">
+      Un PRA rédigé sur Confluence ne suffit plus.
+    </p>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>05 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 6. PIÈGE STRATÉGIQUE ════════════════ -->
+  <section class="slide" id="s06">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Analyse comparative  ·  Pourquoi AppControl</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>Le piège stratégique :</h1>
+    <h1 style="color:var(--ink-soft); font-weight:600;">pourquoi une CMDB parfaite ne suffit pas</h1>
+
+    <table class="compare">
+      <thead>
+        <tr>
+          <th style="width:24%;">Critère</th>
+          <th class="crimson" style="width:38%;">Refonte classique des référentiels</th>
+          <th class="teal" style="width:38%;">AppControl  ·  Outil transverse</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Time-to-value</td>
+          <td><span class="mark crimson">✕</span>3 à 5 ans <em>(fort risque d'échec)</em></td>
+          <td><span class="mark teal">✓</span>Semaines par application</td>
+        </tr>
+        <tr>
+          <td>Nature de la donnée</td>
+          <td><span class="mark crimson">✕</span>Déclarative <em>(saisie humaine)</em></td>
+          <td><span class="mark teal">✓</span>Observée <em>(réconciliation temps réel)</em></td>
+        </tr>
+        <tr>
+          <td>Problème résolu</td>
+          <td><span class="mark crimson">✕</span>Qualité par silo</td>
+          <td><span class="mark teal">✓</span>Exploitation inter-silos</td>
+        </tr>
+        <tr>
+          <td>Capacité de Rebuild</td>
+          <td><span class="mark crimson">✕</span>NON — un référentiel ne reconstruit pas</td>
+          <td><span class="mark teal">✓</span>OUI — c'est sa fonction native</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="keyline">
+      Une CMDB parfaite ne peut pas redémarrer une application.
+      DORA exige l'exécution, pas l'inventaire.
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>06 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 7. PROPOSITION DE VALEUR ════════════════ -->
+  <section class="slide" id="s07">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Proposition de valeur  ·  AppControl</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>De la donnée morte au plan opérable</h1>
+    <p class="subtitle">Trois temps  ·  un seul fil conducteur</p>
+
+    <div class="grid-3">
+      <div class="card">
+        <div class="num">01</div>
+        <h3>Capter</h3>
+        <div class="rule"></div>
+        <p class="desc">
+          Récupérer la donnée existante (CMDB, XLR, XLD, flux, logs)
+          sans imposer de nouvelle saisie.
+        </p>
+        <p class="micro">Entonnoir de collecte  ·  CMDB · XLR · XLD · Flux · Logs</p>
+      </div>
+      <div class="card">
+        <div class="num">02</div>
+        <h3>Réconcilier</h3>
+        <div class="rule"></div>
+        <p class="desc">
+          Croiser les sources, lever les contradictions,
+          produire une carte vivante fidèle à la production.
+        </p>
+        <p class="micro">Moteur de réconciliation  ·  AppControl</p>
+      </div>
+      <div class="card">
+        <div class="num">03</div>
+        <h3>Exploiter</h3>
+        <div class="rule"></div>
+        <p class="desc">
+          Utiliser cette carte comme moteur d'exécution :
+          démarrage séquencé, rebuild, bascule DR, audit.
+        </p>
+        <p class="micro">Plan d'exécution  ·  Séquence · Rebuild · DR · Audit</p>
+      </div>
+    </div>
+
+    <div class="alert navy">
+      <span class="glyph">→</span>
+      <span>
+        Pas de redocumentation. Pas de big bang. La carte est observée,
+        validée et exécutée — <strong>au rythme de chaque application.</strong>
+      </span>
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>07 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 8. PHASE 1 — AS-RUN ════════════════ -->
+  <section class="slide" id="s08">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Phase 1  ·  Révéler l'architecture as-run</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>Révéler l'architecture « As-Run »</h1>
+    <h1 style="color:var(--ink-soft); font-weight:600;">sans redocumenter</h1>
+
+    <div class="funnel-flow" style="margin-top:32px;">
+      <div class="grid-3">
+        <div class="card">
+          <span class="tag outline">Données froides</span>
+          <h3 style="margin-top:14px;">CMDB</h3>
+          <p class="desc">Serveurs, middlewares.</p>
+        </div>
+        <div class="card">
+          <span class="tag outline">Données chaudes</span>
+          <h3 style="margin-top:14px;">XL Deploy / XL Release</h3>
+          <p class="desc">Manifestes, mapping composant, ordre de déploiement.</p>
+        </div>
+        <div class="card">
+          <span class="tag outline">Vérité terrain</span>
+          <h3 style="margin-top:14px;">Référentiels de flux</h3>
+          <p class="desc">Flux applicatifs, supervision.</p>
+        </div>
+      </div>
+      <div class="funnel-arrow">▼</div>
+      <div class="scanner-bar">
+        APPCONTROL X-RAY SCANNER   ·   Capter · Réconcilier · Générer
+      </div>
+    </div>
+
+    <div class="alert navy" style="margin-top:24px;">
+      <span class="glyph">▲</span>
+      <span>
+        La donnée XL Deploy / Release est <strong>fraîche</strong>
+        (regénérée à chaque release) et <strong>opérationnelle</strong> —
+        AppControl produit un premier JSON de l'application
+        tel qu'elle tourne aujourd'hui.
+      </span>
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>08 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 9. PHASE 2 — CARTE TÉLÉCOMMANDE ════════════════ -->
+  <section class="slide" id="s09">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Phase 2  ·  Exploitation</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>La carte devient la télécommande</h1>
+    <h1 style="color:var(--ink-soft); font-weight:600;">de l'application</h1>
+
+    <div class="grid-4" style="margin-top:32px;">
+      <div class="card">
+        <div class="num">01</div>
+        <h3>Démarrage et arrêt séquencés</h3>
+        <p class="desc">Respectant le graphe de dépendances (DAG).</p>
+      </div>
+      <div class="card">
+        <div class="num">02</div>
+        <h3>Restart ciblé</h3>
+        <p class="desc">Sur branche en erreur — <em>« pink branch »</em>.</p>
+      </div>
+      <div class="card">
+        <div class="num">03</div>
+        <h3>Intégration native</h3>
+        <p class="desc">
+          Avec les schedulers existants :
+          Control-M, AutoSys, $U, TWS.
+        </p>
+      </div>
+      <div class="card">
+        <div class="num">04</div>
+        <h3>Bascule DR orchestrée</h3>
+        <p class="desc">En 6 phases, avec rollback.</p>
+      </div>
+    </div>
+
+    <div class="alert navy">
+      <span class="glyph">●</span>
+      <span>
+        La carte n'est plus un schéma — c'est l'objet exécutable
+        qui orchestre les opérations.
+      </span>
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>09 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 10. PHASE 3 — PREUVE DU REBUILD ════════════════ -->
+  <section class="slide" id="s10">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Phase 3  ·  Preuve du rebuild</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>Prouver le Rebuild — la conformité DORA</h1>
+    <h1 style="color:var(--ink-soft); font-weight:600;">transformée en code</h1>
+
+    <div class="grid-2" style="margin-top:32px;">
+      <div class="card">
+        <span class="tag">Voie A</span>
+        <h3 style="margin-top:16px;">Le Dry-Run (Simulation)</h3>
+        <p class="desc">
+          Appel API simulant l'ordre du DAG et la résolution
+          des commandes — sans exécution réelle.
+        </p>
+        <div class="rule"></div>
+        <p class="micro" style="color:var(--teal); font-weight:700;">
+          Risque zéro · validation continue de la logique.
+        </p>
+      </div>
+      <div class="card">
+        <span class="tag">Voie B</span>
+        <h3 style="margin-top:16px;">Le Drill Réel (sur Non-Prod)</h3>
+        <p class="desc">
+          Le moteur exécute la reconstruction réelle
+          sur un site Staging ou DR.
+        </p>
+        <div class="rule"></div>
+        <p class="micro" style="color:var(--teal); font-weight:700;">
+          Preuve d'exécution chronométrée · livrable d'audit DORA.
+        </p>
+      </div>
+    </div>
+
+    <div class="stamp-row">
+      <div class="stamp">✓ Conformité DORA</div>
+      <div class="stamp">✓ Audit Log inaltérable</div>
+      <div class="stamp">✓ RTR mesuré</div>
+      <div class="stamp">✓ Art. 11 · 12 · 25</div>
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>10 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 11. ESCALIER DE LA CONFIANCE ════════════════ -->
+  <section class="slide" id="s11">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Déploiement  ·  Montée en puissance progressive</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>L'escalier de la confiance :</h1>
+    <h1 style="color:var(--ink-soft); font-weight:600;">une montée en puissance sans risque</h1>
+
+    <div class="staircase" style="margin-top:36px;">
+      <div class="step">
+        <div class="card">
+          <span class="tag">Phase A</span>
+          <h3 style="margin-top:14px; font-size:18px;">Étapes 1 → 3</h3>
+          <p class="desc"><strong>Connexion · Réconciliation · Validation</strong></p>
+          <p class="micro">Inventaire transverse, aucune exécution.</p>
+          <div class="rule"></div>
+          <p class="micro" style="color:var(--teal); font-weight:700;">
+            Lecture seule · Risque nul.
+          </p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="card">
+          <span class="tag">Phase B</span>
+          <h3 style="margin-top:14px; font-size:18px;">Étapes 4 → 5</h3>
+          <p class="desc"><strong>Advisory &amp; Diagnostic</strong></p>
+          <p class="micro">Détection des dérives, observation passive.</p>
+          <div class="rule"></div>
+          <p class="micro" style="color:var(--teal); font-weight:700;">
+            Observation · Risque maîtrisé.
+          </p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="card">
+          <span class="tag">Phase C</span>
+          <h3 style="margin-top:14px; font-size:18px;">Étapes 6 → 9</h3>
+          <p class="desc"><strong>Opérations · Rebuild · DORA Ready</strong></p>
+          <p class="micro">Audit prouvé · conformité activée.</p>
+          <div class="rule"></div>
+          <p class="micro" style="color:var(--teal); font-weight:700;">
+            Exécution contrôlée · Auditable.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <p style="text-align:center; margin-top:32px; font-size:14px; color:var(--ink-soft);">
+      Le profil de risque reste maîtrisé à chaque étape :
+      l'exécution n'arrive qu'après validation complète de la carte.
+    </p>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>11 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 12. GOUVERNANCE ════════════════ -->
+  <section class="slide" id="s12">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Gouvernance  ·  Sécurité par conception</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>Sécurité par conception :</h1>
+    <h1 style="color:var(--ink-soft); font-weight:600;">les prods gardent un contrôle absolu</h1>
+
+    <div class="grid-4" style="margin-top:32px;">
+      <div class="card">
+        <div class="num">1</div>
+        <h3>RBAC granulaire</h3>
+        <p class="desc">
+          Droits stricts par application — chaque rôle a un périmètre exact.
+        </p>
+        <p class="mono micro" style="color:var(--navy-2);">
+          view &lt; operate &lt; edit &lt; manage &lt; owner
+        </p>
+      </div>
+      <div class="card">
+        <div class="num">2</div>
+        <h3>Validation par Pull Request</h3>
+        <p class="desc">
+          Les actions critiques exigent une PR mergée et revue
+          par les sachants Production.
+        </p>
+        <p class="micro">Aucun script ad hoc.</p>
+      </div>
+      <div class="card">
+        <div class="num">3</div>
+        <h3>Advisory Mode &amp; Dry-Run</h3>
+        <p class="desc">
+          Simulation systématique avant toute exécution réelle.
+          Le moteur calcule, propose, mais n'agit pas sans validation.
+        </p>
+      </div>
+      <div class="card">
+        <div class="num">4</div>
+        <h3>Audit Log DORA</h3>
+        <p class="desc">
+          Registre inaltérable des actions critiques.
+        </p>
+        <p class="mono micro" style="color:var(--navy-2);">
+          action_log · state_transitions · switchover_log
+        </p>
+      </div>
+    </div>
+
+    <div class="keyline">
+      AppControl ne se substitue jamais aux équipes Production.
+      Chaque action sensible est <strong>tracée, simulée, validée
+      et autorisée.</strong> Le contrôle reste dans les mains des sachants.
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>12 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 13. EFFET RÉSEAU ════════════════ -->
+  <section class="slide" id="s13">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Effet réseau  ·  Cercle vertueux</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>L'effet réseau :</h1>
+    <h1 style="color:var(--ink-soft); font-weight:600;">guérir l'écosystème et enrichir les référentiels</h1>
+
+    <div class="grid-2" style="margin-top:36px;">
+      <div class="card">
+        <div class="num">1</div>
+        <span class="tag outline">Mutualisation</span>
+        <h3 style="margin-top:14px;">Un point d'intégration unique</h3>
+        <p class="desc">
+          Un seul point d'intégration pour les schedulers et la supervision.
+          <strong>La 10ᵉ application coûte beaucoup moins cher
+          à embarquer que la 1ʳᵉ.</strong>
+        </p>
+      </div>
+      <div class="card">
+        <div class="num">2</div>
+        <span class="tag outline">Cercle vertueux</span>
+        <h3 style="margin-top:14px;">Les référentiels se ré-alimentent</h3>
+        <p class="desc">
+          La topologie observée par AppControl alimente la CMDB en retour.
+          <strong>On casse définitivement le cycle des référentiels
+          obsolètes.</strong>
+        </p>
+      </div>
+    </div>
+
+    <div class="keyline">
+      Chaque nouvelle application déployée renforce le réseau,
+      alimente la CMDB et réduit le coût d'embarquement des suivantes.
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>13 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 14. ADOPTION — 3 LIGNES DE FRONT ════════════════ -->
+  <section class="slide" id="s14">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Adoption  ·  Valeur par ligne de front</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <h1>Une valeur immédiate et spécifique</h1>
+    <h1 style="color:var(--ink-soft); font-weight:600;">pour chaque ligne de front</h1>
+
+    <div class="grid-3" style="margin-top:36px;">
+      <div class="card">
+        <span class="tag">Stratégique</span>
+        <h3 style="margin-top:14px;">Direction &amp; Gouvernance</h3>
+        <p class="micro" style="color:var(--navy-2); font-weight:700;">
+          GRC · Pilotage · Conformité
+        </p>
+        <ul style="margin-top:14px; padding-left:18px; font-size:14px;">
+          <li>Conformité DORA auditable et prouvable.</li>
+          <li>Risque personnel et financier maîtrisé (amendes évitées).</li>
+          <li>DR mesurable (RTR/RTO réels tracés).</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag">Tactique</span>
+        <h3 style="margin-top:14px;">Production &amp; SRE</h3>
+        <p class="micro" style="color:var(--navy-2); font-weight:700;">
+          Exploitation · Run · Continuité
+        </p>
+        <ul style="margin-top:14px; padding-left:18px; font-size:14px;">
+          <li>Diagnostic 3 niveaux pour une détection précoce.</li>
+          <li>Start/Stop automatisé (fin des scripts shell éparpillés).</li>
+          <li>Bascule DR testable sans drame.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag">Opérationnel</span>
+        <h3 style="margin-top:14px;">Équipes Applicatives</h3>
+        <p class="micro" style="color:var(--navy-2); font-weight:700;">
+          Développement · Architecture · Delivery
+        </p>
+        <ul style="margin-top:14px; padding-left:18px; font-size:14px;">
+          <li>La carte remplace la documentation morte.</li>
+          <li>Évolution via Pull Request (IaC-friendly).</li>
+          <li>Onboarding accéléré des nouveaux développeurs.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>14 / 14</span>
+    </div>
+  </section>
+
+  <!-- ════════════════ 15. CONCLUSION ════════════════ -->
+  <section class="slide" id="s15">
+    <div class="topbar">
+      <div class="rule"></div>
+      <div class="kicker">Conclusion  ·  Next step</div>
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo" />
+    </div>
+    <div class="quote-block">
+      <h1>L'exécution est la seule preuve<br>de la résilience.</h1>
+    </div>
+    <div class="keyline">
+      Le rebuild n'est pas une option, c'est une obligation DORA.
+    </div>
+
+    <p style="margin-top:28px; font-size:15px;">
+      L'absence de capacité de reconstruction prouvable est un risque direct.
+      <strong>AppControl</strong> transforme cette contrainte réglementaire
+      en un atout opérationnel :
+    </p>
+
+    <div class="grid-3" style="margin-top:18px;">
+      <div class="card">
+        <div class="num">01</div>
+        <h3>Immédiateté</h3>
+        <p class="desc">
+          Valeur générée dès la première captation,
+          sans attendre des années.
+        </p>
+      </div>
+      <div class="card">
+        <div class="num">02</div>
+        <h3>Sécurité</h3>
+        <p class="desc">
+          Risque maîtrisé par l'adoption graduelle
+          et l'audit inaltérable.
+        </p>
+      </div>
+      <div class="card">
+        <div class="num">03</div>
+        <h3>Sérénité</h3>
+        <p class="desc">
+          Les dirigeants disposent d'une preuve chiffrée,
+          auditable et exécutable de leur conformité.
+        </p>
+      </div>
+    </div>
+
+    <div class="alert navy" style="margin-top:24px;">
+      <span class="glyph">→</span>
+      <span>
+        <strong>Prochaine étape :</strong> lancer un POC AppControl
+        sur une première application — sous 6 semaines.
+      </span>
+    </div>
+
+    <div class="slide-footer">
+      <span>Invivoo  ·  AppControl  ·  Confidentiel</span>
+      <span>Fin</span>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

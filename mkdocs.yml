@@ -26,6 +26,7 @@ site_dir: site
 # they exit draft status. Re-add to `nav` (above) when promoted to v1.0.
 exclude_docs: |
   strategy.html
+  strategy-invivoo.html
   methodology.html
   vision.html
   pricing.html
