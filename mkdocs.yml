@@ -37,6 +37,7 @@ exclude_docs: |
   invivoo-reference.docx
   build-docx.sh
   build-reference-docx.py
+  build-pitch-dark.py
   invivoo-logo.svg
 
 # Treat broken internal links / missing pages as warnings, not errors, so a
