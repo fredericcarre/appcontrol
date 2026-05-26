@@ -32,9 +32,10 @@ with severity, sustain, anti-flap, and acknowledge / resolve tracking.
                                       resolved)
 ```
 
-* **Notification channel** — a destination. Today: generic webhook and
-  Slack incoming webhook. Email, PagerDuty, Microsoft Teams, Opsgenie
-  land in later sprints.
+* **Notification channel** — a destination. Five adapters ship out of
+  the box: generic webhook, Slack incoming webhook, SMTP email,
+  PagerDuty Events API v2, and Microsoft Teams incoming webhook.
+  Opsgenie / SMS land in later sprints.
 * **Alert policy** — declarative rule: *when components matching this
   selector enter one of these states for at least this long, dispatch to
   these channels with this severity*.
@@ -116,6 +117,79 @@ AppControl renders the payload as Slack message blocks with a colour
 strip (green = info, yellow = warning, red = critical) and a status
 emoji (🚨 firing, 👀 acknowledged, ✅ resolved). The Slack webhook URL
 embeds a credential; AppControl masks it in API responses and audit
+logs.
+
+### SMTP email
+
+```bash
+curl -X POST $APPCONTROL/api/v1/alert-channels \
+     -d '{
+       "name": "ops-mailing-list",
+       "config": {
+         "kind": "email",
+         "smtp_host":     "smtp.example.com",
+         "smtp_port":     587,
+         "smtp_user":     "appcontrol@example.com",
+         "smtp_password": "...",
+         "tls":           "start_tls",
+         "from":          "appcontrol@example.com",
+         "to":            ["oncall@example.com", "ops@example.com"]
+       }
+     }'
+```
+
+`tls` is one of `tls` (default, port 465 wrapped TLS), `start_tls` (port
+587, upgrade plaintext), or `none` (port 25, trusted localhost relays
+only). Subject is `[AppControl][<STATUS>][<severity>] <policy> —
+<component>`; body is plain-text key/value with every field of the
+canonical payload. Recipients in `to` all receive the same message; a
+follow-up sprint will add per-policy distribution lists.
+
+### PagerDuty (Events API v2)
+
+```bash
+curl -X POST $APPCONTROL/api/v1/alert-channels \
+     -d '{
+       "name": "pd-payments-oncall",
+       "config": {
+         "kind": "pagerduty",
+         "routing_key": "<service integration key>"
+       }
+     }'
+```
+
+The integration key is created in PagerDuty under your service →
+Integrations → Events API v2 → "Integration Key". AppControl maps the
+alert lifecycle onto PagerDuty's `event_action`:
+
+| AppControl status | PagerDuty `event_action` | Effect on the incident |
+|---|---|---|
+| `firing` | `trigger` | opens or re-uses an incident |
+| `acknowledged` | `acknowledge` | the AppControl ack flips the PD incident state |
+| `resolved` | `resolve` | auto-closes the PD incident |
+
+The AppControl alert UUID is sent as PagerDuty's `dedup_key`, so the
+same incident is reused across firing → ack → resolve without
+duplicates.
+
+### Microsoft Teams
+
+```bash
+curl -X POST $APPCONTROL/api/v1/alert-channels \
+     -d '{
+       "name": "teams-prod-incidents",
+       "config": {
+         "kind": "teams",
+         "webhook_url": "<channel Incoming Webhook URL>"
+       }
+     }'
+```
+
+Get the URL from the Teams channel → Connectors → Incoming Webhook →
+Configure. AppControl posts a `MessageCard` (legacy connector format,
+broadest compatibility) with a coloured `themeColor` driven by severity
+and a fact list with the full payload metadata. The webhook URL embeds
+a credential; AppControl masks the trailing token in API responses and
 logs.
 
 ## Alert policies
@@ -241,16 +315,17 @@ All write operations are logged to `action_log` with the caller's
 
 ## Roadmap (deferred)
 
-The MVP focuses on the engine and the two most common destinations.
 Planned follow-ups:
 
-1. **Vendor adapters:** Email (SMTP), PagerDuty Events API, Microsoft
-   Teams adaptive cards, Opsgenie alerts API.
-2. **Frontend:** `/alerts` page (firing inbox + history),
+1. **Frontend:** `/alerts` page (firing inbox + history),
    `/settings/alert-policies` editor with selector preview & dry-run
    simulator, badges on the map for components with active alerts.
-3. **On-call schedules:** simple rotations (day/night, week-on-week-off)
+2. **On-call schedules:** simple rotations (day/night, week-on-week-off)
    and escalation chains — currently delegate to PagerDuty / Opsgenie.
-4. **SQLite parity:** port the engine queries.
-5. **Templates:** per-policy notification message templates so teams can
+3. **SQLite parity:** port the engine queries.
+4. **Templates:** per-policy notification message templates so teams can
    inject runbook URLs / dashboard links into the payload.
+5. **Additional vendor adapters:** Opsgenie alerts API, SMS providers
+   (Twilio), VictorOps / Splunk On-Call.
+6. **Per-policy distribution lists:** route alerts to different inboxes
+   depending on app/component, instead of sharing one channel.

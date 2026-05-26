@@ -46,6 +46,16 @@ hex = "0.4"
 clap = { version = "4", features = ["derive"] }
 bcrypt = "0.15"
 async-trait = "0.1"
+# Email channel for the alerting layer. rustls-only to avoid OpenSSL,
+# `smtp-transport` for the tokio async SMTP client.
+lettre = { version = "0.11", default-features = false, features = [
+    "smtp-transport",
+    "tokio1-rustls-tls",
+    "builder",
+    "hostname",
+    "ring",
+    "webpki-roots",
+] }
 cron = "0.12"
 chrono-tz = "0.10"
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }

@@ -88,6 +88,49 @@ pub enum NotificationChannelConfig {
     /// payload is shaped as Slack message blocks so it renders nicely in
     /// channel.
     Slack { webhook_url: String },
+    /// SMTP email. Connects to any RFC 5321 server. Use Tls or StartTls
+    /// in production; `None` is provided only for trusted localhost
+    /// relays.
+    Email {
+        smtp_host: String,
+        #[serde(default = "default_smtp_port")]
+        smtp_port: u16,
+        smtp_user: String,
+        smtp_password: String,
+        /// `From:` header — must usually be an address the SMTP server is
+        /// authorised to relay for.
+        from: String,
+        /// One or more recipients. Each entry is a single RFC 5322 address.
+        to: Vec<String>,
+        #[serde(default)]
+        tls: EmailTls,
+    },
+    /// PagerDuty Events API v2. The `routing_key` is the per-service
+    /// integration key (Event Routing → "Integration Key"); it
+    /// authenticates AppControl as the event source. Alerts dedupe on the
+    /// AppControl alert fingerprint so a repeated firing reuses the same
+    /// PagerDuty incident.
+    PagerDuty { routing_key: String },
+    /// Microsoft Teams incoming webhook (Connector). Sends an adaptive
+    /// card so the message renders with the AppControl branding /
+    /// severity colour in the Teams channel.
+    Teams { webhook_url: String },
+}
+
+/// TLS profile for SMTP. `Tls` connects on a TLS-wrapped socket
+/// (port 465), `StartTls` upgrades a plaintext connection (port 587),
+/// `None` is plaintext (port 25 / localhost relays).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailTls {
+    None,
+    StartTls,
+    #[default]
+    Tls,
+}
+
+fn default_smtp_port() -> u16 {
+    587
 }
 
 impl NotificationChannelConfig {
@@ -108,17 +151,43 @@ impl NotificationChannelConfig {
             NotificationChannelConfig::Slack { webhook_url } => {
                 NotificationChannelConfig::Slack {
                     // The Slack webhook URL embeds the credential — mask it.
-                    webhook_url: redact_slack_url(webhook_url),
+                    webhook_url: redact_url_last_segment(webhook_url),
                 }
             }
+            NotificationChannelConfig::Email {
+                smtp_host,
+                smtp_port,
+                smtp_user,
+                smtp_password: _,
+                from,
+                to,
+                tls,
+            } => NotificationChannelConfig::Email {
+                smtp_host: smtp_host.clone(),
+                smtp_port: *smtp_port,
+                smtp_user: smtp_user.clone(),
+                smtp_password: "***".to_string(),
+                from: from.clone(),
+                to: to.clone(),
+                tls: *tls,
+            },
+            NotificationChannelConfig::PagerDuty { routing_key: _ } => {
+                NotificationChannelConfig::PagerDuty {
+                    routing_key: "***".to_string(),
+                }
+            }
+            NotificationChannelConfig::Teams { webhook_url } => NotificationChannelConfig::Teams {
+                webhook_url: redact_url_last_segment(webhook_url),
+            },
         }
     }
 }
 
-fn redact_slack_url(url: &str) -> String {
-    // Slack incoming-webhook URLs end with a path segment that is the
-    // bot's per-channel credential. We mask everything after the last
-    // slash, leaving the host + service path visible for debugging.
+/// Mask the last path segment of a URL. Used for Slack and Teams
+/// incoming webhooks, whose URLs embed a per-destination credential as
+/// the final path component. The host + leading path stay visible for
+/// debugging.
+fn redact_url_last_segment(url: &str) -> String {
     match url.rsplit_once('/') {
         Some((prefix, _secret)) => format!("{prefix}/***"),
         None => "***".to_string(),
@@ -189,6 +258,78 @@ mod tests {
             NotificationChannelConfig::Slack { webhook_url } => {
                 assert!(!webhook_url.contains("per-channel-credential"));
                 assert!(webhook_url.ends_with("/***"));
+            }
+            _ => panic!("kind changed"),
+        }
+    }
+
+    #[test]
+    fn email_redacts_password_only() {
+        let c = NotificationChannelConfig::Email {
+            smtp_host: "smtp.example.com".into(),
+            smtp_port: 587,
+            smtp_user: "ops@example.com".into(),
+            smtp_password: "super-secret".into(),
+            from: "appcontrol@example.com".into(),
+            to: vec!["oncall@example.com".into()],
+            tls: EmailTls::StartTls,
+        };
+        match c.redacted() {
+            NotificationChannelConfig::Email {
+                smtp_user,
+                smtp_password,
+                from,
+                to,
+                ..
+            } => {
+                assert_eq!(smtp_password, "***");
+                // Non-secret fields preserved.
+                assert_eq!(smtp_user, "ops@example.com");
+                assert_eq!(from, "appcontrol@example.com");
+                assert_eq!(to, vec!["oncall@example.com".to_string()]);
+            }
+            _ => panic!("kind changed"),
+        }
+    }
+
+    #[test]
+    fn pagerduty_redacts_routing_key() {
+        let c = NotificationChannelConfig::PagerDuty {
+            routing_key: "R0UTINGK3Y-not-real".into(),
+        };
+        match c.redacted() {
+            NotificationChannelConfig::PagerDuty { routing_key } => {
+                assert_eq!(routing_key, "***");
+            }
+            _ => panic!("kind changed"),
+        }
+    }
+
+    #[test]
+    fn teams_redacts_webhook_token() {
+        let c = NotificationChannelConfig::Teams {
+            webhook_url: "https://outlook.office.com/webhook/abc/def/token-tail".into(),
+        };
+        match c.redacted() {
+            NotificationChannelConfig::Teams { webhook_url } => {
+                assert!(!webhook_url.contains("token-tail"));
+                assert!(webhook_url.ends_with("/***"));
+            }
+            _ => panic!("kind changed"),
+        }
+    }
+
+    #[test]
+    fn email_default_tls_is_tls() {
+        let json = r#"{
+            "kind":"email","smtp_host":"x","smtp_user":"u","smtp_password":"p",
+            "from":"a","to":["b"]
+        }"#;
+        let c: NotificationChannelConfig = serde_json::from_str(json).unwrap();
+        match c {
+            NotificationChannelConfig::Email { tls, smtp_port, .. } => {
+                assert_eq!(tls, EmailTls::Tls);
+                assert_eq!(smtp_port, 587);
             }
             _ => panic!("kind changed"),
         }

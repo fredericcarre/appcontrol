@@ -172,6 +172,9 @@ pub async fn create_channel(
     let kind = match &req.config {
         NotificationChannelConfig::Webhook { .. } => "webhook",
         NotificationChannelConfig::Slack { .. } => "slack",
+        NotificationChannelConfig::Email { .. } => "email",
+        NotificationChannelConfig::PagerDuty { .. } => "pagerduty",
+        NotificationChannelConfig::Teams { .. } => "teams",
     };
     let config_json = serde_json::to_value(&req.config)
         .map_err(|e| ApiError::Validation(format!("bad config: {e}")))?;
