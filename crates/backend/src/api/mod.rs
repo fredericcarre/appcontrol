@@ -1,4 +1,7 @@
+pub mod activation;
+pub mod ai;
 pub mod agent_update;
+pub mod annotations;
 pub mod agents;
 pub mod api_keys;
 pub mod approvals;
@@ -14,18 +17,22 @@ pub mod enrollment;
 pub mod estimates;
 pub mod export;
 pub mod gateways;
+pub mod git;
 pub mod groups;
 pub mod health;
 pub mod history;
 pub mod hostings;
 pub mod import;
+pub mod ingestion;
 pub mod import_wizard;
+pub mod knowledge;
 pub mod links;
 pub mod logs;
 pub mod manual_tasks;
 pub mod map_settings;
 pub mod orchestration;
 pub mod organizations;
+pub mod patterns;
 pub mod permissions;
 pub mod pki_export;
 pub mod profiles;
@@ -81,6 +88,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/apps/:app_id/site-overrides",
             get(apps::get_site_overrides),
+        )
+        .route(
+            "/apps/:id/activation",
+            get(activation::get_activation).put(activation::set_activation),
         )
         // Components
         .route(
@@ -629,6 +640,77 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(schedules::list_schedule_executions),
         )
         .route("/schedules/presets", get(schedules::list_presets))
+        // Ingestion connectors (multi-source captation, Phase 1 of the methodology)
+        .route("/ingestion/cmdb", post(ingestion::ingest_cmdb))
+        .route("/ingestion/cmdb/csv", post(ingestion::ingest_cmdb_csv))
+        .route("/ingestion/xl", post(ingestion::ingest_xl))
+        .route("/ingestion/xl/csv", post(ingestion::ingest_xl_csv))
+        .route("/ingestion/flows", post(ingestion::ingest_flows))
+        .route("/ingestion/flows/csv", post(ingestion::ingest_flows_csv))
+        .route("/ingestion/incidents", post(ingestion::ingest_incidents))
+        .route("/ingestion/incidents/csv", post(ingestion::ingest_incidents_csv))
+        .route("/ingestion/pull/servicenow", post(ingestion::pull_servicenow))
+        .route("/ingestion/pull/jira", post(ingestion::pull_jira))
+        // AI-assisted operations (stub by default; pluggable provider)
+        .route("/ai/schema/validate", post(ai::schema_validate))
+        .route("/ai/map/suggest", post(ai::map_suggest))
+        .route("/ai/incident/analyze", post(ai::incident_analyze))
+        .route("/ai/rag/query", post(ai::rag_query))
+        .route("/ai/rag/reload", post(ai::rag_reload))
+        // Pattern templates library (transversal capitalisation, Phase 5)
+        .route(
+            "/patterns",
+            get(patterns::list_patterns).post(patterns::create_pattern),
+        )
+        .route(
+            "/patterns/:id",
+            get(patterns::get_pattern)
+                .put(patterns::update_pattern)
+                .delete(patterns::delete_pattern),
+        )
+        .route("/patterns/:id/applied", post(patterns::pattern_applied))
+        .route("/patterns/:id/candidates", get(patterns::pattern_candidates))
+        .route("/patterns/:id/propagate", post(patterns::pattern_propagate))
+        // Map annotations (human commentary on components/dependencies/applications)
+        .route(
+            "/annotations",
+            get(annotations::list_annotations).post(annotations::create_annotation),
+        )
+        .route(
+            "/annotations/:id",
+            put(annotations::update_annotation).delete(annotations::delete_annotation),
+        )
+        .route(
+            "/annotations/:id/resolve",
+            post(annotations::resolve_annotation),
+        )
+        // Knowledge progress (confidence + status per component/dependency)
+        .route(
+            "/components/:id/knowledge",
+            put(knowledge::update_component_knowledge),
+        )
+        .route(
+            "/dependencies/:id/knowledge",
+            put(knowledge::update_dependency_knowledge),
+        )
+        .route(
+            "/apps/:id/knowledge/summary",
+            get(knowledge::app_knowledge_summary),
+        )
+        // Git remote sync (GitOps for application maps)
+        .route(
+            "/git/remotes",
+            get(git::list_remotes).post(git::create_remote),
+        )
+        .route(
+            "/git/remotes/:id",
+            put(git::update_remote).delete(git::delete_remote),
+        )
+        .route(
+            "/apps/:id/git",
+            get(git::get_app_git).put(git::set_app_git),
+        )
+        .route("/apps/:id/git/push", post(git::push_app))
         // Component Catalog
         .route(
             "/catalog/component-types",

@@ -1,5 +1,6 @@
 use axum::{
     extract::{Extension, Path, State},
+    http::HeaderMap,
     response::Json,
 };
 use serde::Deserialize;
@@ -25,12 +26,19 @@ pub async fn start_switchover(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(app_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<StartSwitchoverRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, app_id, user.is_admin()).await;
     if perm < PermissionLevel::Manage {
         return Err(ApiError::Forbidden);
     }
+
+    // Switchover is a runtime mutation — gated by activation level.
+    let pr_sha = headers
+        .get(crate::core::activation::PR_APPROVAL_HEADER)
+        .and_then(|v| v.to_str().ok());
+    crate::core::activation::check_runtime_ops_allowed(&state.db, app_id, pr_sha).await?;
 
     log_action(
         &state.db,

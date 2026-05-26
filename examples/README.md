@@ -2,7 +2,43 @@
 
 These example configurations demonstrate how to model real-world IT systems as AppControl dependency graphs (DAGs).
 
-## Available Examples
+> **First time with AppControl?** Start with the
+> [Hands-on guide](../docs/HANDS_ON_GUIDE.md). It drives the three
+> *methodology* examples below end-to-end via
+> `scripts/methodology-walkthrough.sh`.
+
+## Methodology examples (read these first)
+
+These three files were designed together to exercise every methodology
+phase in a single 30-minute demo.
+
+### `methodology-demo.json` — three-tier with declared maturity
+
+Six components and seven dependencies, with `knowledge_status` declared
+per row (mix of `validated` / `reviewed` / `candidate`). Imports via
+`POST /api/v1/import/json` and lights up the map with knowledge pips
+in three different colours.
+
+```bash
+curl -sS -X POST http://localhost:3000/api/v1/import/json \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "$(jq -n --arg json "$(cat examples/methodology-demo.json)" \
+        '{json: $json, default_knowledge_status: "reviewed"}')"
+```
+
+### `raw-cmdb-scrape.json` — honest candidate flagging
+
+Two newly-discovered components declared `candidate` so the operator
+knows they need review. Replace `application_id` with the UUID
+returned by the import above, then push to `/api/v1/ingestion/cmdb`.
+
+### `pattern-spring-boot-jdbc.json` — pattern derived from an incident
+
+The Spring Boot JDBC pool pattern from methodology § 6.2. POST to
+`/api/v1/patterns`, then propagate to candidate components in other
+applications via `/patterns/:id/propagate`.
+
+## Other available examples
 
 ### 1. Cluster Demo — Aggregate Mode (`cluster-demo.json`)
 

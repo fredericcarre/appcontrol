@@ -13,6 +13,7 @@ import { ClusterMembersPanel } from './ClusterMembersPanel';
 import { ManualTaskPanel } from './ManualTaskPanel';
 import { ScheduleList } from '@/components/schedules';
 import { LogSourcesPanel } from '@/components/logs/LogSourcesPanel';
+import { KnowledgeTab } from './KnowledgeTab';
 
 interface DetailPanelProps {
   component: Component;
@@ -160,6 +161,7 @@ export function DetailPanel({
           )}
           <TabsTrigger value="metrics">Metrics</TabsTrigger>
           <TabsTrigger value="info">Info</TabsTrigger>
+          <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
           {component.cluster_mode === 'fan_out' && (
             <TabsTrigger value="members">Members</TabsTrigger>
           )}
@@ -213,6 +215,10 @@ export function DetailPanel({
           {component.check_cmd && <InfoRow icon={Terminal} label="Check CMD" value={component.check_cmd} />}
           {component.start_cmd && <InfoRow icon={Play} label="Start CMD" value={component.start_cmd} />}
           {component.stop_cmd && <InfoRow icon={Square} label="Stop CMD" value={component.stop_cmd} />}
+        </TabsContent>
+
+        <TabsContent value="knowledge" className="flex-1 min-h-0">
+          <KnowledgeTab component={component} canEdit={canOperate} />
         </TabsContent>
 
         <TabsContent value="logs" className="flex-1 min-h-0">

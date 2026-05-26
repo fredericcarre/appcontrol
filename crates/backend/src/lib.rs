@@ -1,10 +1,12 @@
 #![allow(clippy::too_many_arguments)]
+pub mod ai;
 pub mod api;
 pub mod auth;
 pub mod config;
 pub mod core;
 pub mod db;
 pub mod error;
+pub mod integrations;
 pub mod middleware;
 pub mod openapi;
 pub mod repository;

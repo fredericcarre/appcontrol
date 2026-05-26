@@ -1,0 +1,1511 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pricing fondé sur la valeur — Simulateur AppControl</title>
+<style>
+  :root {
+    --ink: #0f172a;
+    --ink-soft: #334155;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --bg: #ffffff;
+    --panel: #f8fafc;
+    --panel-2: #f1f5f9;
+    --accent: #0f766e;
+    --accent-deep: #134e4a;
+    --accent-soft: #ccfbf1;
+    --warn: #b45309;
+    --warn-soft: #fef3c7;
+    --danger: #b91c1c;
+    --danger-soft: #fee2e2;
+    --ok: #166534;
+    --ok-soft: #dcfce7;
+    --indigo: #4338ca;
+    --indigo-soft: #e0e7ff;
+    --amber: #d97706;
+    --shadow: 0 1px 2px rgba(15,23,42,.04), 0 8px 24px rgba(15,23,42,.06);
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter",
+                 system-ui, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.6;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 56px 32px 80px; }
+
+  .cover {
+    border-radius: var(--radius);
+    background: linear-gradient(135deg, #0f172a 0%, #134e4a 50%, #0f766e 100%);
+    color: #fff; padding: 56px 48px; margin-bottom: 40px;
+    box-shadow: var(--shadow);
+  }
+  .cover .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; opacity: .8;
+  }
+  .cover h1 {
+    margin: 14px 0 12px;
+    font-size: 46px; line-height: 1.05; font-weight: 700; letter-spacing: -.02em;
+  }
+  .cover .sub { font-size: 19px; opacity: .92; max-width: 760px; font-weight: 400; }
+  .cover .meta {
+    margin-top: 30px; padding-top: 22px; border-top: 1px solid rgba(255,255,255,.15);
+    display: flex; gap: 28px; flex-wrap: wrap;
+    font-size: 13px; opacity: .8;
+  }
+  .cover strong, .cover em { color: #fff; }
+
+  .exec {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 28px 32px; margin-bottom: 48px;
+  }
+  .exec .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .exec h2 { margin: 0 0 12px; font-size: 22px; color: var(--ink); }
+  .exec p { font-size: 17px; margin: 0 0 12px; color: var(--ink-soft); }
+  .exec p:last-child { margin-bottom: 0; }
+
+  .toc {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 22px 28px; margin-bottom: 56px;
+  }
+  .toc h2 {
+    margin: 0 0 14px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: .14em; color: var(--muted); font-weight: 600;
+  }
+  .toc ol { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 32px; }
+  .toc li {
+    padding: 6px 0; break-inside: avoid;
+    border-bottom: 1px dashed var(--line);
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  }
+  .toc li:last-child { border-bottom: 0; }
+  .toc a { color: var(--ink); text-decoration: none; }
+  .toc a:hover { color: var(--accent); }
+  .toc .num { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; flex-shrink: 0; }
+
+  section { margin-bottom: 56px; scroll-margin-top: 16px; }
+  section .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; font-weight: 600; color: var(--accent);
+    margin-bottom: 8px;
+  }
+  section h2 {
+    font-size: 30px; line-height: 1.2; letter-spacing: -.01em;
+    margin: 0 0 20px; color: var(--ink);
+  }
+  section h3 { font-size: 18px; margin: 28px 0 12px; color: var(--ink); }
+  section h4 { font-size: 15px; margin: 18px 0 8px; color: var(--accent-deep); }
+  p { margin: 0 0 14px; color: var(--ink-soft); }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; color: var(--ink-soft); }
+  li { margin-bottom: 6px; }
+  strong { color: var(--ink); font-weight: 600; }
+  em { color: var(--ink); font-style: italic; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 22px 24px; margin: 16px 0;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .card h4 {
+    margin: 0 0 8px; font-size: 13px;
+    text-transform: uppercase; letter-spacing: .1em;
+    color: var(--accent); font-weight: 700;
+  }
+  .card.warn h4 { color: var(--warn); } .card.warn { background: var(--warn-soft); border-color: #fcd34d; }
+  .card.danger h4 { color: var(--danger); } .card.danger { background: var(--danger-soft); border-color: #fca5a5; }
+  .card.ok h4 { color: var(--ok); } .card.ok { background: var(--ok-soft); border-color: #86efac; }
+  .card.indigo h4 { color: var(--indigo); } .card.indigo { background: var(--indigo-soft); border-color: #a5b4fc; }
+
+  .pull {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 18px 22px; border-radius: 0 var(--radius) var(--radius) 0;
+    margin: 24px 0; font-size: 17px; color: #134e4a;
+  }
+  .pull strong { color: #064e3b; }
+  .pull.warn { border-left-color: var(--warn); background: var(--warn-soft); color: #78350f; }
+  .pull.warn strong { color: #451a03; }
+  .pull.indigo { border-left-color: var(--indigo); background: var(--indigo-soft); color: #1e1b4b; }
+  .pull.indigo strong { color: #1e1b4b; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 16px 0; font-size: 15px;
+    background: #fff; border-radius: var(--radius); overflow: hidden;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel-2); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td code, p code, li code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: 13px; font-family: "SF Mono", "JetBrains Mono", Menlo, monospace; color: #0f172a; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* Pricing components */
+  .price-comp {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-left: 6px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 16px 20px; margin: 12px 0;
+  }
+  .price-comp.indigo { border-left-color: var(--indigo); }
+  .price-comp.warn { border-left-color: var(--warn); }
+  .price-comp h4 { margin: 0 0 6px; color: var(--accent-deep); font-size: 15px; }
+  .price-comp.indigo h4 { color: #1e1b4b; }
+  .price-comp.warn h4 { color: #78350f; }
+  .price-comp p { margin: 0 0 6px; font-size: 14px; }
+  .price-comp .formula {
+    display: inline-block;
+    margin-top: 6px;
+    background: var(--panel-2);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    color: var(--ink);
+  }
+
+  /* Phase ROI visual */
+  .roi-phases {
+    margin: 20px 0;
+  }
+  .roi-phase-row {
+    display: grid;
+    grid-template-columns: 90px 1fr 80px;
+    gap: 10px;
+    align-items: center;
+    margin: 6px 0;
+  }
+  .roi-phase-row .label {
+    font-size: 13px;
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .roi-phase-row .bar {
+    height: 22px;
+    background: var(--panel-2);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+  .roi-phase-row .bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-deep), var(--accent));
+    border-radius: 4px;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .roi-phase-row .pct {
+    font-size: 13px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-deep);
+    font-weight: 700;
+  }
+
+  /* ===== SIMULATOR ===== */
+  .simulator {
+    background: linear-gradient(180deg, var(--panel) 0%, #fff 100%);
+    border: 2px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 28px;
+    margin: 28px 0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .simulator h3 {
+    margin: 0 0 4px;
+    color: var(--accent-deep);
+    font-size: 22px;
+  }
+  .simulator .sim-sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 20px;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    font-weight: 600;
+  }
+  .sim-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .sim-section {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .sim-section h4 {
+    margin: 0 0 14px;
+    font-size: 13px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    font-weight: 700;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 8px;
+  }
+  .sim-input {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: center;
+    margin: 10px 0;
+  }
+  .sim-input label {
+    font-size: 13px;
+    color: var(--ink-soft);
+    font-weight: 500;
+  }
+  .sim-input label .hint {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .sim-input input[type="number"],
+  .sim-input input[type="text"],
+  .sim-input select {
+    width: 110px;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    color: var(--ink);
+    background: #fff;
+  }
+  .sim-input select {
+    width: 130px;
+    text-align: left;
+  }
+  .sim-input input:focus, .sim-input select:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .sim-radio {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0 4px;
+  }
+  .sim-radio label {
+    flex: 1;
+    text-align: center;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    background: #fff;
+    user-select: none;
+  }
+  .sim-radio label.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .sim-radio input { display: none; }
+
+  /* Outputs */
+  .sim-outputs {
+    margin-top: 24px;
+    background: linear-gradient(135deg, #0f172a 0%, #134e4a 100%);
+    color: #fff;
+    border-radius: 12px;
+    padding: 22px 24px;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .sim-outputs h4 {
+    margin: 0 0 14px;
+    color: #5eead4;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    font-weight: 700;
+  }
+  .sim-kpis {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .sim-kpi {
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.15);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+  }
+  .sim-kpi .v {
+    font-size: 22px;
+    font-weight: 800;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+  }
+  .sim-kpi .l {
+    font-size: 11px;
+    color: rgba(255,255,255,.7);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    margin-top: 4px;
+    font-weight: 600;
+  }
+  .sim-kpi.payback .v { color: #fbbf24; }
+  .sim-kpi.roi .v { color: #5eead4; }
+
+  .sim-bars { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .sim-year { background: rgba(255,255,255,.05); border-radius: 8px; padding: 12px; }
+  .sim-year .yhead {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: #5eead4;
+  }
+  .sim-bar-row {
+    display: grid;
+    grid-template-columns: 90px 1fr 70px;
+    gap: 6px;
+    align-items: center;
+    margin: 4px 0;
+    font-size: 11px;
+  }
+  .sim-bar-row .lab {
+    color: rgba(255,255,255,.75);
+    font-weight: 500;
+  }
+  .sim-bar-row .b {
+    background: rgba(255,255,255,.1);
+    height: 12px;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .sim-bar-row .bf {
+    height: 100%;
+    background: #5eead4;
+    border-radius: 3px;
+  }
+  .sim-bar-row .bf.invest { background: #fbbf24; }
+  .sim-bar-row .v {
+    color: #fff;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+  }
+  .sim-net {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(255,255,255,.2);
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+  }
+  .sim-net strong { color: #fff; }
+  .sim-note {
+    margin-top: 12px;
+    font-size: 11px;
+    color: rgba(255,255,255,.65);
+    font-style: italic;
+  }
+
+  .steps { list-style: none; padding: 0; counter-reset: s; }
+  .steps li {
+    counter-increment: s;
+    padding: 14px 16px 14px 56px; position: relative;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); margin-bottom: 10px;
+    color: var(--ink-soft);
+  }
+  .steps li::before {
+    content: counter(s);
+    position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+  }
+
+  .annex-divider {
+    margin: 80px 0 40px; padding: 32px;
+    background: var(--panel-2); border-radius: var(--radius); text-align: center;
+  }
+  .annex-divider .eyebrow {
+    color: var(--muted); text-transform: uppercase; letter-spacing: .2em;
+    font-size: 13px; font-weight: 600;
+  }
+  .annex-divider h2 { font-size: 32px; margin: 12px 0 0; color: var(--ink); }
+
+  footer {
+    margin-top: 64px; padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; align-items: center;
+  }
+  footer .foot-brand { display: flex; align-items: center; gap: 12px; }
+  footer .copyright { color: var(--muted); }
+  footer .foot-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  footer .pill {
+    background: var(--panel-2); color: var(--ink-soft);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  }
+  footer .pill.draft { background: var(--danger-soft); color: var(--danger); border: 1px solid #fca5a5; }
+
+  .invivoo-logo { height: 26px; width: auto; display: block; }
+  .topbar .invivoo-logo { height: 28px; }
+  .cover-brand .invivoo-logo { height: 34px; filter: brightness(0) invert(1); }
+  footer .invivoo-logo { height: 22px; }
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 20px; background: #fff;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    margin-bottom: 18px; box-shadow: 0 1px 2px rgba(15,23,42,.03);
+    gap: 16px; flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .brand-tagline {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
+    color: var(--muted); padding-left: 14px; border-left: 1px solid var(--line);
+  }
+  .classification { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .badge-draft {
+    background: var(--danger); color: #fff;
+    padding: 5px 11px; border-radius: 6px;
+    font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .badge-confid {
+    color: var(--warn); background: var(--warn-soft); border: 1px solid #fcd34d;
+    padding: 4px 10px; border-radius: 6px;
+    font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .cover-brand {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 28px; padding-bottom: 20px;
+    border-bottom: 1px solid rgba(255,255,255,.18);
+  }
+  .cover-brand .cb-right {
+    font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    opacity: .85; font-weight: 600;
+  }
+  .version-pill {
+    display: inline-flex; align-items: center; gap: 10px;
+    margin-top: 26px; padding: 7px 14px;
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+  }
+  .version-pill .pulse {
+    width: 7px; height: 7px; background: #fbbf24; border-radius: 50%;
+    box-shadow: 0 0 0 3px rgba(251,191,36,.25);
+  }
+  @media screen {
+    body::before {
+      content: "DRAFT · Ne pas diffuser";
+      position: fixed; bottom: 20px; right: 20px;
+      background: var(--danger); color: #fff;
+      padding: 8px 16px; border-radius: 999px;
+      font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+      box-shadow: 0 6px 20px rgba(185,28,28,.4);
+      z-index: 1000; pointer-events: none;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .wrap { padding: 28px 18px; }
+    .cover { padding: 36px 24px; }
+    .cover h1 { font-size: 32px; }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .toc ol { columns: 1; }
+    .sim-grid { grid-template-columns: 1fr; }
+    .sim-kpis { grid-template-columns: 1fr 1fr; }
+    .sim-bars { grid-template-columns: 1fr; }
+    table { font-size: 14px; }
+    th, td { padding: 10px 12px; }
+  }
+
+  .print-shell { width: 100%; border-collapse: collapse; border-spacing: 0; }
+  .print-shell > thead > tr > td, .print-shell > tbody > tr > td, .print-shell > tfoot > tr > td {
+    padding: 0; border: 0; background: transparent;
+  }
+  @media screen {
+    .print-shell > thead, .print-shell > tfoot { display: none; }
+  }
+  .prh, .prf { display: none; }
+
+  @page { size: A4; margin: 22mm 14mm 20mm 14mm; }
+  @media print {
+    html, body { background: #fff; font-size: 10.5pt; line-height: 1.5; }
+    .wrap { max-width: none; margin: 0; padding: 0; }
+    .cover, .pull, .pull.warn, .pull.indigo,
+    .card, .card.warn, .card.ok, .card.danger, .card.indigo,
+    .annex-divider, .exec, .toc, .price-comp, .simulator,
+    .sim-outputs, .roi-phase-row .bar-fill, .steps li {
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .cover {
+      background: #0f172a !important; color: #fff !important;
+      padding: 36mm 18mm; margin: 0; border-radius: 0;
+      page-break-after: always; break-after: page;
+    }
+    .cover h1 { font-size: 32pt; }
+    .cover .sub { font-size: 13pt; }
+    .exec, .toc { page-break-inside: avoid; break-inside: avoid; }
+    .toc { page-break-after: always; break-after: page; }
+    .annex-divider { page-break-before: always; break-before: page; }
+    .card, .pull, table, .steps li, .price-comp, .simulator {
+      page-break-inside: avoid; break-inside: avoid;
+    }
+    h2, h3, h4 { page-break-after: avoid; break-after: avoid; }
+    section { page-break-inside: auto; margin-bottom: 28px; page-break-before: always; break-before: page; }
+    .exec { page-break-before: avoid; break-before: avoid; }
+    section h2 { font-size: 20pt; margin-bottom: 14px; }
+    section h3 { font-size: 13pt; margin: 18px 0 8px; }
+    .sim-grid { grid-template-columns: 1fr 1fr; gap: 14px; }
+    .sim-kpis { grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; }
+    table { font-size: 10pt; }
+    th, td { padding: 8px 10px; word-wrap: break-word; overflow-wrap: anywhere; }
+    a { color: inherit; text-decoration: none; }
+    footer { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 12px; }
+    body::before { display: none !important; }
+    body::after {
+      content: "DRAFT"; position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%) rotate(-30deg);
+      font-size: 160pt; font-weight: 900;
+      color: rgba(185, 28, 28, 0.07);
+      letter-spacing: .05em; pointer-events: none; z-index: 9999;
+      white-space: nowrap;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .topbar { display: none; }
+    .cover-wrap { page-break-after: always; break-after: page; }
+    .print-shell > thead { display: table-header-group; }
+    .print-shell > tfoot { display: table-footer-group; }
+    .prh, .prf {
+      display: flex !important;
+      justify-content: space-between; align-items: center;
+      font-size: 8.5pt; color: #475569;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .prh { padding: 0 0 4mm; margin-bottom: 6mm; border-bottom: 1px solid var(--line); }
+    .prf { padding: 4mm 0 0; margin-top: 6mm; border-top: 1px solid var(--line); }
+    .prh-left, .prf-left, .prf-right { display: inline-flex; align-items: center; gap: 6px; }
+    .prh-logo, .prf-logo { height: 11pt; width: auto; }
+    .prh-sep, .prf-sep { color: var(--line); }
+    .prh-tag { font-weight: 600; color: var(--warn); }
+    .prh-right { color: #64748b; font-size: 8pt; letter-spacing: .03em; }
+    .prf-draft {
+      background: var(--danger); color: #fff;
+      padding: 2px 8px; border-radius: 4px;
+      font-size: 7.5pt; font-weight: 800;
+      letter-spacing: .12em; text-transform: uppercase;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap cover-wrap">
+  <div class="topbar">
+    <div class="brand">
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
+      <span class="brand-tagline">Expertise &amp; conseil IT</span>
+    </div>
+    <div class="classification">
+      <span class="badge-draft">Draft</span>
+      <span class="badge-confid">Confidentiel · Ne pas diffuser</span>
+    </div>
+  </div>
+
+  <header class="cover">
+    <div class="cover-brand">
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
+      <span class="cb-right">Document confidentiel · Pricing &amp; ROI</span>
+    </div>
+    <div class="eyebrow">Modèle de tarification &amp; simulateur</div>
+    <h1>Pricing fondé<br/>sur la valeur</h1>
+    <div class="sub">
+      Modèle de tarification d'<strong>AppControl</strong> basé sur
+      l'<em>efficience opérationnelle</em> qu'il génère — coûts d'intégration,
+      de gestion et de fonctionnement, mis en regard des <em>savings</em>
+      mesurés à chaque phase. Avec simulateur ROI interactif intégré.
+    </div>
+    <div class="version-pill">
+      <span class="pulse"></span>
+      Version 0.9 · Draft · Mai 2026
+    </div>
+    <div class="meta">
+      <span>Document pricing &amp; business case</span>
+      <span>Pour direction, sponsors et acheteurs</span>
+    </div>
+  </header>
+</div>
+
+<table class="print-shell">
+<thead>
+  <tr><td>
+    <div class="prh">
+      <span class="prh-left">
+        <img src="invivoo-logo.svg" alt="Invivoo" class="prh-logo" />
+        <span class="prh-sep">·</span>
+        <span class="prh-tag">Confidentiel</span>
+      </span>
+      <span class="prh-right">Pricing fondé sur la valeur — Simulateur AppControl</span>
+    </div>
+  </td></tr>
+</thead>
+<tbody>
+<tr><td>
+<div class="wrap content-wrap">
+
+  <div class="exec">
+    <div class="eyebrow">Synthèse exécutive</div>
+    <h2>Un pricing aligné sur l'efficience opérationnelle</h2>
+    <p>
+      AppControl n'est pas un outil dont on facture l'usage technique —
+      c'est une plateforme dont on <strong>facture la valeur générée</strong>.
+      Le modèle proposé articule trois composantes (intégration initiale,
+      abonnement annuel par application, services additionnels) et les
+      met explicitement en regard des <strong>savings que la plateforme
+      libère</strong> phase après phase.
+    </p>
+    <p>
+      Le ROI apparaît dès la première année — pas uniquement en gains
+      financiers directs (incidents évités, productivité ops,
+      rationalisation outillage), mais aussi en gains qualitatifs qui
+      sont durs à pricer mais déterminants : <strong>visibilité pour la
+      prise de décision, réduction du risque de sanction, agilité face
+      aux régulations</strong>. Le simulateur intégré à ce document permet
+      de projeter et d'affiner ces savings selon les paramètres propres
+      à chaque client.
+    </p>
+    <p>
+      La boucle d'<strong>efficience opérationnelle</strong> qu'AppControl
+      enclenche — chaque incident raffine la cartographie, chaque drill
+      mesure la résilience, chaque automatisation libère des heures —
+      est le moteur de l'accélération du ROI dans le temps.
+    </p>
+  </div>
+
+  <nav class="toc">
+    <h2>Sommaire</h2>
+    <ol>
+      <li><a href="#s1">Principes — pricing fondé sur la valeur</a><span class="num">1</span></li>
+      <li><a href="#s2">Le modèle de pricing — 3 composantes</a><span class="num">2</span></li>
+      <li><a href="#s3">Les trois familles de savings</a><span class="num">3</span></li>
+      <li><a href="#s4">ROI par phase de la méthodologie</a><span class="num">4</span></li>
+      <li><a href="#s5">La boucle d'efficience opérationnelle</a><span class="num">5</span></li>
+      <li><a href="#s6">Simulateur ROI interactif</a><span class="num">6</span></li>
+      <li><a href="#s7">Le ROI qui n'est pas (que) financier</a><span class="num">7</span></li>
+      <li><a href="#s8">Hypothèses par taille &amp; secteur</a><span class="num">8</span></li>
+      <li><a href="#s9">Conditions, limites, garanties</a><span class="num">9</span></li>
+      <li><a href="#annex">Annexes</a><span class="num">A</span></li>
+    </ol>
+  </nav>
+
+  <section id="s1">
+    <div class="eyebrow">1 — Principes</div>
+    <h2>Un pricing fondé sur la valeur</h2>
+    <p>
+      Trois principes guident la construction du pricing AppControl :
+    </p>
+    <div class="grid-3">
+      <div class="card">
+        <h4>1. Aligné sur la valeur</h4>
+        <p style="margin:0;">Le pricing évolue avec le périmètre embarqué et l'effet d'industrialisation. Plus d'applications dans la plateforme = plus de valeur générée = pricing ajusté en conséquence.</p>
+      </div>
+      <div class="card">
+        <h4>2. Prévisible</h4>
+        <p style="margin:0;">Setup une fois, abonnement annuel par application connu à l'avance. Pas de surprise sur le run.</p>
+      </div>
+      <div class="card">
+        <h4>3. Modulaire</h4>
+        <p style="margin:0;">L'entreprise paye ce qu'elle consomme — niveau d'adoption choisi par application (advisory, diagnostic, opérations, rebuild). On peut s'arrêter à un palier.</p>
+      </div>
+    </div>
+
+    <div class="pull">
+      <strong>Le pricing reflète la trajectoire d'efficience opérationnelle</strong>
+      — il accompagne le client là où il en est, et croît avec la valeur
+      mesurée. Aucun coût caché, aucun ticket d'entrée artificiellement
+      surdimensionné.
+    </div>
+  </section>
+
+  <section id="s2">
+    <div class="eyebrow">2 — Modèle</div>
+    <h2>Les trois composantes du pricing</h2>
+    <p>
+      Le pricing s'articule autour de trois composantes qui couvrent
+      <strong>l'intégration, le run et l'enrichissement</strong>.
+    </p>
+
+    <div class="price-comp">
+      <h4>1. Setup initial — intégration et premier pilote</h4>
+      <p>Couvre la mise en place de la plateforme (déploiement, mTLS, OIDC/SAML), la captation initiale et la cartographie de la première application pilote, la formation des équipes clés (3 à 5 jours), le transfert méthodologique.</p>
+      <p><span class="formula">Setup = base 150-300 k€ + 8-15 k€ par application pilote embarquée</span></p>
+    </div>
+
+    <div class="price-comp indigo">
+      <h4>2. Abonnement annuel — par application embarquée</h4>
+      <p>Tarif par application proportionné à la complexité (tier-1 / tier-2 / tier-3). Inclut la plateforme, l'agent, le support, les mises à jour, l'accès à la bibliothèque de patterns transverses, et le moteur d'IA contextuelle (RAG).</p>
+      <p>
+        <span class="formula">Tier-1 (critique) : 8-15 k€ / app / an</span>&nbsp;
+        <span class="formula">Tier-2 (importante) : 3-6 k€ / app / an</span>&nbsp;
+        <span class="formula">Tier-3 (standard) : 1-2 k€ / app / an</span>
+      </p>
+    </div>
+
+    <div class="price-comp warn">
+      <h4>3. Services additionnels — au catalogue</h4>
+      <p>Activités à la demande : embarquement accéléré (sprint de 6 semaines par application), drills de rebuild assistés, modélisation IA personnalisée, intégrations spécifiques (CMDB propriétaire, scheduler custom), formation continue, audit méthodologique annuel.</p>
+      <p><span class="formula">Sur devis — typiquement 25-75 k€ par chantier</span></p>
+    </div>
+
+    <h3>Vue d'ensemble — coûts annuels typiques</h3>
+    <table>
+      <thead><tr><th>Profil entreprise</th><th>An 1 (setup inclus)</th><th>An 2 (cruise)</th><th>An 3 (cruise)</th></tr></thead>
+      <tbody>
+        <tr><td>Petite (10-30 apps, 5 critiques)</td><td class="num">250 - 400 k€</td><td class="num">80 - 150 k€</td><td class="num">80 - 150 k€</td></tr>
+        <tr><td>Moyenne (50-100 apps, 15 critiques)</td><td class="num">500 - 800 k€</td><td class="num">200 - 350 k€</td><td class="num">200 - 350 k€</td></tr>
+        <tr><td>Grande (200-500 apps, 50 critiques)</td><td class="num">1.2 - 2.0 M€</td><td class="num">600 - 1 M€</td><td class="num">600 - 1 M€</td></tr>
+        <tr><td>Très grande (1000+ apps, 100+ critiques)</td><td class="num">2.5 - 4.0 M€</td><td class="num">1.5 - 2.5 M€</td><td class="num">1.5 - 2.5 M€</td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:13px;color:var(--muted);">Ordres de grandeur indicatifs. À comparer aux savings projetés par le simulateur (section 6).</p>
+  </section>
+
+  <section id="s3">
+    <div class="eyebrow">3 — Savings</div>
+    <h2>Les trois familles de savings</h2>
+    <p>
+      Tous les bénéfices ne sont pas chiffrables avec la même rigueur.
+      Il faut les distinguer pour construire un business case crédible.
+    </p>
+
+    <h3>3.1 Savings financiers directs — mesurables, comptables</h3>
+    <div class="card ok">
+      <h4>Ce qui rentre dans cette catégorie</h4>
+      <ul>
+        <li><strong>Incidents évités</strong> — chaque P1 évité = (heures de prod perdues × coût horaire) + (indemnités SLA) + (heures équipes mobilisées). Réduction typique : 30 à 50 %.</li>
+        <li><strong>Productivité opérationnelle</strong> — temps d'ops libéré par l'automatisation, valorisé au TJM ou réinvesti sur d'autres applications. Gain typique : +30 à +50 % de capacité.</li>
+        <li><strong>Coût d'audit</strong> — jours-homme d'audit divisés par 5 à 10 grâce à l'audit log natif. Économie typique : 60 à 80 % du budget audit annuel.</li>
+        <li><strong>Rationalisation outillage</strong> — décommissionnement progressif d'outils en doublon (CMDB locales, monitoring partiels, schedulers propriétaires). Économie typique : 5 à 15 % du budget outillage IT.</li>
+      </ul>
+    </div>
+
+    <h3>3.2 Savings de risque évité — probabilistes, déterminants</h3>
+    <div class="card warn">
+      <h4>Ce qui rentre dans cette catégorie</h4>
+      <ul>
+        <li><strong>Sanction DORA</strong> — jusqu'à 2 % du CA mondial annuel. Probabilité non nulle dans un cycle d'audit ACPR.</li>
+        <li><strong>Sanction NIS2</strong> — pour les OIV élargis.</li>
+        <li><strong>Incident cyber non récupérable</strong> — ransomware, destruction de données. Coût potentiel : plusieurs % du CA annuel.</li>
+        <li><strong>Indisponibilité service exceptionnelle</strong> — atteinte au business modélisable mais probabiliste (image, perte client).</li>
+      </ul>
+      <p style="margin: 8px 0 0; font-size: 13px; color: var(--warn);"><strong>Méthode :</strong> on chiffre l'impact maximum × la probabilité estimée × le facteur de réduction qu'apporte AppControl.</p>
+    </div>
+
+    <h3>3.3 Savings stratégiques et qualitatifs — durs à chiffrer mais critiques</h3>
+    <div class="card indigo">
+      <h4>Ce qui rentre dans cette catégorie</h4>
+      <ul>
+        <li><strong>Visibilité pour la décision</strong> — un dirigeant qui dispose d'une carte vivante de son SI prend de meilleures décisions, plus vite. Difficile à pricer, mais le manque de visibilité a un coût réel mesurable a posteriori.</li>
+        <li><strong>Accélération des projets de transformation</strong> — migration cloud, modernisation legacy, intégration post-M&amp;A : durée projet réduite de 20 à 40 %. Valeur = (temps gagné × coût projet par mois).</li>
+        <li><strong>Fidélisation des talents IT</strong> — métier ops requalifié = turnover réduit. Coût de remplacement évité (recrutement + onboarding + perte de productivité pendant transition) : 150 à 300 % du salaire annuel par ETP.</li>
+        <li><strong>Posture commerciale</strong> — appels d'offres exigeant des garanties de continuité (banque, santé, services publics) : non-élimination = nouveaux contrats gagnés.</li>
+      </ul>
+    </div>
+
+    <div class="pull indigo">
+      Le ROI <strong>n'est pas uniquement financier</strong>. Une partie des
+      gains la plus importante — visibilité, prise de décision, posture
+      réglementaire — se manifeste rapidement (dès les premières semaines
+      de captation), mais ne se laisse pas réduire à un seul chiffre.
+    </div>
+  </section>
+
+  <section id="s4">
+    <div class="eyebrow">4 — Trajectoire ROI</div>
+    <h2>Le ROI s'accélère phase après phase</h2>
+    <p>
+      Les gains ne s'expriment pas linéairement. Chaque palier débloque
+      une fraction du potentiel total, et la courbe s'accélère car les
+      effets se cumulent.
+    </p>
+
+    <h3>Pourcentage du potentiel de gains débloqué par phase</h3>
+    <div class="roi-phases">
+      <div class="roi-phase-row"><span class="label">Phase 1</span><div class="bar"><div class="bar-fill" style="width:5%"></div></div><span class="pct">5 %</span></div>
+      <div class="roi-phase-row"><span class="label">Phase 2</span><div class="bar"><div class="bar-fill" style="width:10%"></div></div><span class="pct">10 %</span></div>
+      <div class="roi-phase-row"><span class="label">Phase 3</span><div class="bar"><div class="bar-fill" style="width:15%"></div></div><span class="pct">15 %</span></div>
+      <div class="roi-phase-row"><span class="label">Phase 4</span><div class="bar"><div class="bar-fill" style="width:25%"></div></div><span class="pct">25 %</span></div>
+      <div class="roi-phase-row"><span class="label">Phase 5</span><div class="bar"><div class="bar-fill" style="width:35%"></div></div><span class="pct">35 %</span></div>
+      <div class="roi-phase-row"><span class="label">Phase 6</span><div class="bar"><div class="bar-fill" style="width:50%"></div></div><span class="pct">50 %</span></div>
+      <div class="roi-phase-row"><span class="label">Phase 7</span><div class="bar"><div class="bar-fill" style="width:65%"></div></div><span class="pct">65 %</span></div>
+      <div class="roi-phase-row"><span class="label">Phase 8</span><div class="bar"><div class="bar-fill" style="width:80%"></div></div><span class="pct">80 %</span></div>
+      <div class="roi-phase-row"><span class="label">Phase 9</span><div class="bar"><div class="bar-fill" style="width:100%"></div></div><span class="pct">100 %</span></div>
+    </div>
+
+    <p style="font-size:13px;color:var(--muted);">
+      Référence des phases : <em>Phase 1 = Connexion référentiels</em> ·
+      <em>Phase 5 = Diagnostic actif</em> · <em>Phase 7 = Rebuild drill</em> ·
+      <em>Phase 9 = Plein potentiel</em> (voir document méthodologie).
+    </p>
+
+    <h3>Pourquoi ça s'accélère</h3>
+    <ul>
+      <li>Les <strong>premières phases</strong> apportent surtout de la visibilité (gain qualitatif fort, financier faible)</li>
+      <li>Les <strong>phases moyennes</strong> (4-6) débloquent la productivité ops et la détection précoce d'incidents — gain financier visible</li>
+      <li>Les <strong>phases avancées</strong> (7-9) débloquent le rebuild, le DR, la conformité native, la rationalisation transverse — gain financier maximal et risque dramatiquement réduit</li>
+    </ul>
+  </section>
+
+  <section id="s5">
+    <div class="eyebrow">5 — Moteur d'accélération</div>
+    <h2>La boucle d'efficience opérationnelle</h2>
+    <p>
+      La singularité d'AppControl, c'est que <strong>chaque cycle d'usage
+      améliore le suivant</strong>. Cette dynamique — que l'on appelle
+      désormais <em>efficience opérationnelle</em> ou <em>operational
+      excellence</em> dans le langage des directions, et <em>toil
+      reduction</em> dans le langage des équipes techniques — fait
+      croître le ROI dans le temps, même à périmètre constant.
+    </p>
+
+    <div class="grid-3">
+      <div class="card">
+        <h4>Chaque incident</h4>
+        <p style="margin:0;">est localisé dans la map, analysé, et donne lieu à une PR de remediation. La cartographie devient plus précise et les checks plus fins.</p>
+      </div>
+      <div class="card indigo">
+        <h4>Chaque drill</h4>
+        <p style="margin:0;">mesure la résilience et identifie les zones à raffiner. Le RTR baisse cycle après cycle.</p>
+      </div>
+      <div class="card warn">
+        <h4>Chaque automatisation</h4>
+        <p style="margin:0;">libère des heures d'ops qui sont réinvesties dans l'amélioration structurelle plutôt que dans l'exécution répétitive.</p>
+      </div>
+    </div>
+
+    <h3>Le <em>toil</em> diminue, le ROI augmente</h3>
+    <p>
+      Le terme <em>toil</em>, popularisé par Google SRE, désigne « le
+      travail manuel, répétitif, automatisable, sans valeur ajoutée
+      durable ». Le réduire est l'enjeu central de l'<em>operational
+      excellence</em>. AppControl est conçu pour <strong>industrialiser
+      cette réduction</strong> : chaque cycle d'incident, chaque drill,
+      chaque modification de map alimente une bibliothèque de patterns
+      qui bénéficient à toutes les applications embarquées.
+    </p>
+
+    <div class="pull">
+      Le ROI calculé en année 1 sous-estime le ROI réel à cinq ans —
+      parce que l'<strong>efficience opérationnelle s'autoalimente</strong>.
+      Plus on utilise la plateforme, plus elle apprend, plus elle rend.
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 6 — SIMULATEUR INTERACTIF
+       ============================================================ -->
+  <section id="s6">
+    <div class="eyebrow">6 — Outil</div>
+    <h2>Simulateur ROI interactif</h2>
+    <p>
+      Le simulateur ci-dessous projette les savings et l'investissement
+      sur trois ans selon les paramètres de l'entreprise. Modifie les
+      valeurs — les résultats se recalculent en temps réel.
+    </p>
+
+    <div class="simulator" id="simulator">
+      <h3>Paramètres &amp; projection ROI à 3 ans</h3>
+      <div class="sim-sub">Modifie n'importe quelle valeur — recalcul automatique</div>
+
+      <div class="sim-grid">
+
+        <div class="sim-section">
+          <h4>Profil entreprise</h4>
+          <div class="sim-input">
+            <label>Nombre total d'applications dans le périmètre<span class="hint">cible de couverture sur 3 ans</span></label>
+            <input type="number" id="appsTotal" value="100" min="1">
+          </div>
+          <div class="sim-input">
+            <label>% applications critiques (tier-1)<span class="hint">DORA, continuité, métier critique</span></label>
+            <input type="number" id="critPct" value="30" min="0" max="100">
+          </div>
+          <div class="sim-input">
+            <label>Taille équipe exploitation (FTE)</label>
+            <input type="number" id="opsFte" value="40" min="0">
+          </div>
+          <div class="sim-input">
+            <label>Coût loaded d'un FTE ops (€/an)</label>
+            <input type="number" id="opsCost" value="90000" min="0" step="5000">
+          </div>
+        </div>
+
+        <div class="sim-section">
+          <h4>Coûts actuels — situation initiale</h4>
+          <div class="sim-input">
+            <label>Incidents majeurs (P1) par an</label>
+            <input type="number" id="p1Count" value="8" min="0">
+          </div>
+          <div class="sim-input">
+            <label>Coût moyen d'un P1 (€)<span class="hint">heures perdues + SLA + mobilisation</span></label>
+            <input type="number" id="p1Cost" value="50000" min="0" step="5000">
+          </div>
+          <div class="sim-input">
+            <label>Coût d'audit annuel total (€)<span class="hint">DORA + ISO + SOC + internes</span></label>
+            <input type="number" id="auditCost" value="300000" min="0" step="10000">
+          </div>
+          <div class="sim-input">
+            <label>Coût outillage actuel (€/an)<span class="hint">CMDB + monitoring + scheduler</span></label>
+            <input type="number" id="toolCost" value="800000" min="0" step="50000">
+          </div>
+        </div>
+
+        <div class="sim-section">
+          <h4>Trajectoire d'adoption</h4>
+          <div class="sim-input">
+            <label>Phase atteinte fin année 1<span class="hint">1 à 9, voir méthodologie</span></label>
+            <select id="phaseY1">
+              <option value="3">Phase 3 (validation map)</option>
+              <option value="4">Phase 4 (advisory)</option>
+              <option value="5" selected>Phase 5 (diagnostic actif)</option>
+              <option value="6">Phase 6 (opérations)</option>
+            </select>
+          </div>
+          <div class="sim-input">
+            <label>Phase atteinte fin année 2</label>
+            <select id="phaseY2">
+              <option value="5">Phase 5</option>
+              <option value="6">Phase 6 (opérations)</option>
+              <option value="7" selected>Phase 7 (rebuild drill)</option>
+              <option value="8">Phase 8 (DR opérationnel)</option>
+            </select>
+          </div>
+          <div class="sim-input">
+            <label>Phase atteinte fin année 3</label>
+            <select id="phaseY3">
+              <option value="7">Phase 7</option>
+              <option value="8">Phase 8</option>
+              <option value="9" selected>Phase 9 (plein potentiel)</option>
+            </select>
+          </div>
+          <div class="sim-input">
+            <label>% applications couvertes fin an 3<span class="hint">progression typique sur 36 mois</span></label>
+            <input type="number" id="coverY3" value="70" min="0" max="100">
+          </div>
+        </div>
+
+        <div class="sim-section">
+          <h4>Hypothèses</h4>
+          <p style="margin: 0 0 8px; font-size: 13px; color: var(--muted);">Choisis ton scénario :</p>
+          <div class="sim-radio">
+            <label data-val="0.6">Prudent
+              <input type="radio" name="scenario" value="0.6">
+            </label>
+            <label class="active" data-val="1.0">Médian
+              <input type="radio" name="scenario" value="1.0" checked>
+            </label>
+            <label data-val="1.4">Optimiste
+              <input type="radio" name="scenario" value="1.4">
+            </label>
+          </div>
+          <p style="margin: 12px 0 0; font-size: 12px; color: var(--muted);">
+            Le mode <em>prudent</em> applique 60 % des gains modèle (clients qui sous-utilisent la plateforme).
+            Le mode <em>médian</em> applique 100 % (trajectoire normale).
+            Le mode <em>optimiste</em> applique 140 % (clients qui industrialisent en profondeur).
+          </p>
+        </div>
+
+      </div>
+
+      <!-- OUTPUTS -->
+      <div class="sim-outputs">
+        <h4>Projection ROI — sortie temps réel</h4>
+
+        <div class="sim-kpis">
+          <div class="sim-kpi">
+            <div class="v" id="kpiPotential">—</div>
+            <div class="l">Savings annuels au plein potentiel</div>
+          </div>
+          <div class="sim-kpi roi">
+            <div class="v" id="kpiRoi3">—</div>
+            <div class="l">ROI cumulé à 3 ans</div>
+          </div>
+          <div class="sim-kpi payback">
+            <div class="v" id="kpiPayback">—</div>
+            <div class="l">Délai de payback</div>
+          </div>
+          <div class="sim-kpi">
+            <div class="v" id="kpiNet3">—</div>
+            <div class="l">Bénéfice net cumulé à 3 ans</div>
+          </div>
+        </div>
+
+        <div class="sim-bars" id="simBars">
+          <!-- generated by JS -->
+        </div>
+
+        <div class="sim-note" id="simNote">
+          Hypothèses appliquées : scénario médian × facteur de phase atteinte × % de couverture du parc.
+          Les savings stratégiques et qualitatifs (visibilité, agilité, rétention talents) ne sont
+          <strong>pas</strong> chiffrés ici — ils s'ajoutent à ce calcul.
+        </div>
+      </div>
+
+    </div>
+
+    <h3>Comment lire les résultats</h3>
+    <ul>
+      <li><strong>Savings annuels au plein potentiel</strong> — ce que l'entreprise économisera chaque année une fois la trajectoire complète terminée (phase 9, couverture pleine)</li>
+      <li><strong>ROI cumulé à 3 ans</strong> — total des gains nets divisé par le total des investissements sur 3 ans</li>
+      <li><strong>Délai de payback</strong> — moment où les gains cumulés rattrapent l'investissement cumulé</li>
+      <li><strong>Bénéfice net cumulé à 3 ans</strong> — savings cumulés moins investissements cumulés sur 36 mois</li>
+    </ul>
+
+    <div class="pull warn">
+      Ces chiffres sont des <strong>projections modélisées</strong>, pas
+      des engagements contractuels. Le simulateur sert à <em>cadrer
+      l'ordre de grandeur</em> et alimenter la discussion en COMEX — un
+      business case précis est ensuite produit en atelier de qualification.
+    </div>
+  </section>
+
+  <section id="s7">
+    <div class="eyebrow">7 — ROI au-delà du chiffrage</div>
+    <h2>Le ROI qui n'est pas (que) financier</h2>
+    <p>
+      Une partie déterminante de la valeur générée par AppControl est
+      <strong>difficile à réduire à un nombre</strong>. La nier serait
+      sous-estimer le retour ; la pricer faussement serait perdre en
+      crédibilité. La bonne approche est de la <strong>nommer
+      explicitement</strong>.
+    </p>
+
+    <div class="grid-2">
+      <div class="card indigo">
+        <h4>Visibilité pour la décision</h4>
+        <p style="margin:0;">Pour la première fois, le COMEX dispose d'un état du SI consultable à tout moment. Les arbitrages (lancer un projet, fermer une activité, intégrer une cible) gagnent en justesse et en rapidité. Ce gain est <strong>immédiat</strong> (dès les premières semaines de captation).</p>
+      </div>
+      <div class="card indigo">
+        <h4>Réduction du temps de réponse aux régulateurs</h4>
+        <p style="margin:0;">Une demande ACPR ou EBA s'instruit en heures au lieu de semaines. Pas de mobilisation de crise, pas de stress organisationnel. La conformité devient une posture, plus une course.</p>
+      </div>
+      <div class="card indigo">
+        <h4>Posture commerciale et image</h4>
+        <p style="margin:0;">Les appels d'offres B2B qui exigent une preuve documentée de continuité ne sont plus éliminatoires. Effet direct sur la pipeline commerciale, parfois sur le pricing accepté.</p>
+      </div>
+      <div class="card indigo">
+        <h4>Rétention des talents IT</h4>
+        <p style="margin:0;">Les meilleurs ingénieurs ne partent plus parce qu'ils sont utilisés sur leur potentiel (SRE plutôt qu'exécutant). Économies de turnover de plusieurs dizaines de k€ par ETP retenu chaque année.</p>
+      </div>
+    </div>
+
+    <h3>Comment intégrer ces gains au business case</h3>
+    <ol class="steps">
+      <li>Lister explicitement chaque gain qualitatif identifié pour ton contexte</li>
+      <li>Donner pour chacun un <em>indicateur de matérialisation</em> (ex : taux de réponse aux RFP gagnés grâce à preuve de continuité)</li>
+      <li>Estimer une <em>fourchette de valeur</em> annuelle, même large (« entre 100 k€ et 500 k€ »)</li>
+      <li>Présenter ces gains <strong>en plus</strong> du calcul du simulateur — pas à la place</li>
+      <li>Réévaluer chaque année avec les valeurs réellement observées</li>
+    </ol>
+  </section>
+
+  <section id="s8">
+    <div class="eyebrow">8 — Variabilité</div>
+    <h2>Hypothèses par taille &amp; secteur</h2>
+    <p>
+      Les facteurs ci-dessous expliquent les écarts entre les ordres de
+      grandeur médians et les cas réels.
+    </p>
+
+    <h3>8.1 Effet taille</h3>
+    <table>
+      <thead><tr><th>Profil</th><th>Effet sur les savings</th><th>Effet sur l'investissement</th></tr></thead>
+      <tbody>
+        <tr><td>Petite entreprise / ETI</td><td>Savings absolus plus faibles, mais ROI relatif fort</td><td>Investissement absolu réduit, payback rapide</td></tr>
+        <tr><td>Grand groupe</td><td>Effet réseau maximal — la 50ᵉ app coûte 10× moins que la 1ʳᵉ</td><td>Setup proportionnellement plus lourd, mais amorti vite</td></tr>
+        <tr><td>Très grande entreprise</td><td>Savings de rationalisation outillage dominants (5-15% sur budget énorme)</td><td>Plateforme étendue (multi-DC, multi-régions) — services additionnels</td></tr>
+      </tbody>
+    </table>
+
+    <h3>8.2 Effet sectoriel</h3>
+    <table>
+      <thead><tr><th>Secteur</th><th>Drivers ROI dominants</th></tr></thead>
+      <tbody>
+        <tr><td>Banque / Finance</td><td>Conformité DORA, sanction évitée, rebuild post-cyber, stress-tests bancaires</td></tr>
+        <tr><td>Assurance</td><td>DORA + Solvabilité II, continuité des règlements, M&amp;A accéléré</td></tr>
+        <tr><td>Industrie</td><td>Continuité production (MES, SCADA), NIS2 pour OIV, décarbonation IT</td></tr>
+        <tr><td>Télécom &amp; médias</td><td>NIS2, modernisation OSS/BSS, lancement rapide de nouveaux services</td></tr>
+        <tr><td>Santé</td><td>Continuité SIH, conformité HDS, posture face aux cyber-attaques (secteur ciblé)</td></tr>
+        <tr><td>Secteur public / OIV</td><td>NIS2, souveraineté géographique, modernisation SI hérités</td></tr>
+      </tbody>
+    </table>
+
+    <h3>8.3 Effet maturité initiale</h3>
+    <p>
+      Plus la dette opérationnelle préalable est forte, plus les gains
+      relatifs sont importants. Une organisation déjà très outillée (CMDB
+      à jour, monitoring exhaustif, drills annuels en place) verra des
+      gains plus modestes mais réels. Une organisation en retard sur
+      l'industrialisation verra des gains spectaculaires — et un risque
+      réglementaire immédiat plus pressant.
+    </p>
+  </section>
+
+  <section id="s9">
+    <div class="eyebrow">9 — Cadre</div>
+    <h2>Conditions, limites, garanties</h2>
+
+    <h3>9.1 Conditions de réussite du modèle</h3>
+    <ul>
+      <li>Sponsor COMEX durable</li>
+      <li>Application pilote choisie pour démontrer la valeur (idéalement critique mais maîtrisable)</li>
+      <li>Engagement des équipes ops dès le cadrage</li>
+      <li>Mesure des gains au fil de l'eau (sinon le ROI reste théorique)</li>
+      <li>Vision pluriannuelle assumée — les vrais gains arrivent à partir de l'année 2</li>
+    </ul>
+
+    <h3>9.2 Limites assumées du modèle</h3>
+    <ul>
+      <li>Les savings probabilistes (sanction DORA évitée, cyber-incident évité) sont par nature incertains — ils s'expriment en espérance mathématique, pas en flux comptable garanti</li>
+      <li>Les gains qualitatifs (visibilité, agilité, talents) sont mentionnés mais non chiffrés dans le simulateur</li>
+      <li>L'effet réseau ne joue pleinement qu'à partir de 10-15 applications embarquées</li>
+      <li>Un programme abandonné au palier 3-4 ne capte qu'une fraction du potentiel — l'engagement pluriannuel est clé</li>
+    </ul>
+
+    <h3>9.3 Garanties pratiques</h3>
+    <ul>
+      <li><strong>Pilote contractualisé</strong> sur 6 mois : critères de succès définis dès le lancement, point de réorientation à mi-parcours</li>
+      <li><strong>Phase advisory réversible</strong> : si la valeur n'est pas démontrée, sortie sans pénalité d'engagement</li>
+      <li><strong>Pricing au périmètre réellement embarqué</strong> : pas de minimum garanti sur les années suivantes, l'entreprise pilote sa trajectoire</li>
+      <li><strong>Tableau de bord de pilotage</strong> partagé avec le client — savings mesurés mois par mois, transparence intégrale</li>
+    </ul>
+  </section>
+
+  <div class="annex-divider" id="annex">
+    <div class="eyebrow">Annexes</div>
+    <h2>Détails de calcul &amp; templates</h2>
+  </div>
+
+  <section id="a1">
+    <div class="eyebrow">A1</div>
+    <h2>Modèle de calcul détaillé du simulateur</h2>
+
+    <h3>A1.1 Calcul du potentiel annuel de savings (au plein potentiel, phase 9)</h3>
+    <pre style="background: var(--panel-2); color: var(--ink); padding: 14px; border-radius: 6px; font-size: 12px; overflow-x: auto;"><code>Savings_incidents = P1_count × P1_cost × 0.45   // 45 % d'incidents évités
+Savings_productivity = Ops_FTE × Ops_cost × 0.30  // 30 % de capacité libérée
+Savings_audit = Audit_cost × 0.70                 // 70 % de réduction
+Savings_tooling = Tool_cost × 0.10                // 10 % de rationalisation
+
+Savings_total_potential = (Savings_incidents + Savings_productivity
+                          + Savings_audit + Savings_tooling)
+                          × scenario_factor      // 0.6 / 1.0 / 1.4</code></pre>
+
+    <h3>A1.2 Modulation par phase atteinte (% du potentiel débloqué)</h3>
+    <pre style="background: var(--panel-2); color: var(--ink); padding: 14px; border-radius: 6px; font-size: 12px; overflow-x: auto;"><code>Phase 1 →   5 %    Phase 6 →  50 %
+Phase 2 →  10 %    Phase 7 →  65 %
+Phase 3 →  15 %    Phase 8 →  80 %
+Phase 4 →  25 %    Phase 9 → 100 %
+Phase 5 →  35 %
+
+Savings_year = Savings_total_potential
+              × phase_factor(year)
+              × coverage_factor(year)</code></pre>
+
+    <h3>A1.3 Calcul de l'investissement</h3>
+    <pre style="background: var(--panel-2); color: var(--ink); padding: 14px; border-radius: 6px; font-size: 12px; overflow-x: auto;"><code>// Année 1 : setup + abonnement partiel + services initiaux
+crit_apps = apps_total × crit_pct
+tier2_apps = apps_total × 0.4
+
+Invest_Y1 = setup_base                          // 200 k€ médian
+           + crit_apps × 10000                  // embarquement 10 k€/app crit
+           + crit_apps × 10000 × phaseY1_cov    // abonnement tier-1
+           + tier2_apps × 3000 × phaseY1_cov    // abonnement tier-2
+           + services_Y1                        // 100 k€
+
+Invest_Y2 = crit_apps × 10000 × phaseY2_cov
+           + tier2_apps × 3000 × phaseY2_cov
+           + services_Y2                        // 50 k€
+
+Invest_Y3 = crit_apps × 10000 × phaseY3_cov
+           + tier2_apps × 3000 × phaseY3_cov
+           + services_Y3                        // 50 k€</code></pre>
+
+    <h3>A1.4 Calcul du ROI</h3>
+    <pre style="background: var(--panel-2); color: var(--ink); padding: 14px; border-radius: 6px; font-size: 12px; overflow-x: auto;"><code>Net_Yn = Savings_Yn - Invest_Yn
+Cumul_Net_3Y = Σ(Net_Yn) pour n = 1, 2, 3
+Cumul_Invest_3Y = Σ(Invest_Yn)
+ROI_3Y = Cumul_Net_3Y / Cumul_Invest_3Y
+
+Payback = mois où Σ(Savings) > Σ(Invest)</code></pre>
+
+    <p style="font-size:13px;color:var(--muted);">
+      Ces formules sont implémentées dans le JavaScript du simulateur
+      (section 6) et peuvent être ajustées selon les retours d'expérience
+      observés au fil des déploiements.
+    </p>
+  </section>
+
+  <section id="a2">
+    <div class="eyebrow">A2</div>
+    <h2>Catalogue services additionnels — détail</h2>
+    <table>
+      <thead><tr><th>Service</th><th>Description</th><th>Effort type</th></tr></thead>
+      <tbody>
+        <tr><td>Sprint d'embarquement</td><td>Captation + audit + map + revue d'une application en 6 semaines</td><td>40-80 jours-homme</td></tr>
+        <tr><td>Drill rebuild assisté</td><td>Préparation, exécution et compte-rendu d'un drill DORA</td><td>10-25 jours-homme</td></tr>
+        <tr><td>Modélisation IA personnalisée</td><td>Adaptation des prompts vision / RAG au vocabulaire interne</td><td>20-40 jours-homme</td></tr>
+        <tr><td>Intégration CMDB spécifique</td><td>Connecteur sur mesure pour CMDB propriétaire</td><td>15-30 jours-homme</td></tr>
+        <tr><td>Formation équipes</td><td>3-5 jours par profil (architecte, ops, application owner)</td><td>variable selon volume</td></tr>
+        <tr><td>Audit méthodologique annuel</td><td>Revue indépendante de la maturité d'usage AppControl</td><td>10-15 jours-homme</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="a3">
+    <div class="eyebrow">A3</div>
+    <h2>Méthodologie d'évaluation du ROI qualitatif</h2>
+    <p>
+      Les gains qualitatifs ne sont pas absents du business case — ils
+      sont juste évalués différemment.
+    </p>
+
+    <h3>A3.1 Méthode des indicateurs de matérialisation</h3>
+    <p>
+      Pour chaque gain qualitatif identifié, définir un <em>indicateur
+      de matérialisation</em> mesurable. Exemple :
+    </p>
+    <table>
+      <thead><tr><th>Gain qualitatif</th><th>Indicateur de matérialisation</th><th>Mesure</th></tr></thead>
+      <tbody>
+        <tr><td>Visibilité COMEX</td><td>Nombre de décisions structurantes prises avec appui sur les données AppControl</td><td>Trimestrielle</td></tr>
+        <tr><td>Posture commerciale</td><td>Taux de réussite RFP exigeant preuve de continuité</td><td>Trimestrielle</td></tr>
+        <tr><td>Agilité réglementaire</td><td>Délai de réponse à une demande régulateur</td><td>Par demande</td></tr>
+        <tr><td>Rétention talents</td><td>Turnover équipes ops</td><td>Annuelle</td></tr>
+      </tbody>
+    </table>
+
+    <h3>A3.2 Méthode des fourchettes raisonnables</h3>
+    <p>
+      Plutôt qu'un chiffre unique trompeur, donner une <strong>fourchette
+      raisonnable</strong> de valeur annuelle pour chaque gain qualitatif.
+      Cumuler ces fourchettes en bas et en haut pour encadrer le ROI réel.
+    </p>
+
+    <h3>A3.3 Méthode des comparables</h3>
+    <p>
+      S'appuyer sur les retours d'expérience de clients comparables
+      (même secteur, taille similaire) pour donner des ordres de grandeur
+      crédibles plutôt que des estimations vides.
+    </p>
+  </section>
+
+  <footer>
+    <div class="foot-brand">
+      <img src="invivoo-logo.svg" alt="Invivoo" class="invivoo-logo" />
+      <span class="copyright">© 2026 Invivoo — Tous droits réservés.</span>
+    </div>
+    <div class="foot-meta">
+      <span class="pill">v0.9</span>
+      <span class="pill draft">Draft · Ne pas diffuser</span>
+    </div>
+  </footer>
+
+</div>
+</td></tr>
+</tbody>
+<tfoot>
+  <tr><td>
+    <div class="prf">
+      <span class="prf-left">
+        <img src="invivoo-logo.svg" alt="Invivoo" class="prf-logo" />
+        <span class="prf-sep">·</span>
+        <span>© 2026 Invivoo — Tous droits réservés</span>
+      </span>
+      <span class="prf-right">
+        <span class="prf-draft">Draft · v0.9</span>
+        <span class="prf-sep">·</span>
+        <span>Ne pas diffuser</span>
+      </span>
+    </div>
+  </td></tr>
+</tfoot>
+</table>
+
+<script>
+// ============================================================
+// AppControl ROI Simulator — vanilla JS, no dependency
+// ============================================================
+(function () {
+  const phaseFactor = {1:0.05,2:0.10,3:0.15,4:0.25,5:0.35,6:0.50,7:0.65,8:0.80,9:1.00};
+
+  function fmt(n) {
+    if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(2).replace('.',',') + ' M€';
+    if (Math.abs(n) >= 1e3) return Math.round(n/1e3) + ' k€';
+    return Math.round(n) + ' €';
+  }
+  function fmtPct(n) { return (n*100).toFixed(0) + ' %'; }
+  function fmtMonths(m) {
+    if (m === null) return 'au-delà de 3 ans';
+    if (m <= 0) return 'immédiat';
+    if (m < 12) return Math.round(m) + ' mois';
+    const y = Math.floor(m/12), mo = Math.round(m%12);
+    return y + ' an' + (y>1?'s':'') + (mo>0 ? ' ' + mo + ' mois' : '');
+  }
+  function val(id) { return parseFloat(document.getElementById(id).value) || 0; }
+  function getScenario() {
+    const el = document.querySelector('input[name="scenario"]:checked');
+    return el ? parseFloat(el.value) : 1.0;
+  }
+
+  function compute() {
+    const appsTotal = val('appsTotal');
+    const critPct = val('critPct') / 100;
+    const opsFte = val('opsFte');
+    const opsCost = val('opsCost');
+    const p1Count = val('p1Count');
+    const p1Cost = val('p1Cost');
+    const auditCost = val('auditCost');
+    const toolCost = val('toolCost');
+    const phaseY1 = parseInt(document.getElementById('phaseY1').value);
+    const phaseY2 = parseInt(document.getElementById('phaseY2').value);
+    const phaseY3 = parseInt(document.getElementById('phaseY3').value);
+    const coverY3 = val('coverY3') / 100;
+    const scenario = getScenario();
+
+    // Coverage progression (linear-ish)
+    const coverY1 = coverY3 * 0.4;
+    const coverY2 = coverY3 * 0.75;
+
+    // Savings potential at full (phase 9, 100% coverage)
+    const sIncidents = p1Count * p1Cost * 0.45;
+    const sProductivity = opsFte * opsCost * 0.30;
+    const sAudit = auditCost * 0.70;
+    const sTooling = toolCost * 0.10;
+    const sPotential = (sIncidents + sProductivity + sAudit + sTooling) * scenario;
+
+    // Per-year savings
+    function yearSavings(phase, coverage) {
+      return sPotential * phaseFactor[phase] * coverage;
+    }
+    const savY1 = yearSavings(phaseY1, coverY1);
+    const savY2 = yearSavings(phaseY2, coverY2);
+    const savY3 = yearSavings(phaseY3, coverY3);
+
+    // Investment per year
+    const critApps = appsTotal * critPct;
+    const tier2Apps = appsTotal * 0.4;
+
+    const setupBase = 200000;
+    const setupApps = critApps * 10000;
+    const subTier1 = (cov) => critApps * 10000 * cov;
+    const subTier2 = (cov) => tier2Apps * 3000 * cov;
+    const services = { Y1: 100000, Y2: 50000, Y3: 50000 };
+
+    const invY1 = setupBase + setupApps + subTier1(coverY1) + subTier2(coverY1) + services.Y1;
+    const invY2 = subTier1(coverY2) + subTier2(coverY2) + services.Y2;
+    const invY3 = subTier1(coverY3) + subTier2(coverY3) + services.Y3;
+
+    // Net & ROI
+    const net1 = savY1 - invY1;
+    const net2 = savY2 - invY2;
+    const net3 = savY3 - invY3;
+    const cumulNet = net1 + net2 + net3;
+    const cumulInv = invY1 + invY2 + invY3;
+    const cumulSav = savY1 + savY2 + savY3;
+    const roi = cumulInv > 0 ? cumulNet / cumulInv : 0;
+
+    // Payback month (linear within years for simplicity)
+    let payback = null;
+    let cumInv = 0, cumSav = 0;
+    const yearly = [{s:savY1,i:invY1},{s:savY2,i:invY2},{s:savY3,i:invY3}];
+    for (let y = 0; y < 3; y++) {
+      for (let m = 1; m <= 12; m++) {
+        cumInv += yearly[y].i / 12;
+        cumSav += yearly[y].s / 12;
+        if (payback === null && cumSav >= cumInv) {
+          payback = y * 12 + m;
+          break;
+        }
+      }
+      if (payback !== null) break;
+    }
+
+    // Outputs
+    document.getElementById('kpiPotential').textContent = fmt(sPotential);
+    document.getElementById('kpiRoi3').textContent = (roi >= 0 ? '+' : '') + fmtPct(roi);
+    document.getElementById('kpiPayback').textContent = fmtMonths(payback);
+    document.getElementById('kpiNet3').textContent = fmt(cumulNet);
+
+    // Bars per year
+    const maxVal = Math.max(invY1, invY2, invY3, savY1, savY2, savY3, 1);
+    function row(label, val, klass) {
+      const pct = (val / maxVal) * 100;
+      return `<div class="sim-bar-row">
+        <span class="lab">${label}</span>
+        <div class="b"><div class="bf ${klass||''}" style="width:${pct.toFixed(0)}%"></div></div>
+        <span class="v">${fmt(val)}</span>
+      </div>`;
+    }
+    function yearBlock(y, sav, inv, net) {
+      return `<div class="sim-year">
+        <div class="yhead">Année ${y}</div>
+        ${row('Savings', sav)}
+        ${row('Invest.', inv, 'invest')}
+        <div class="sim-net"><span>Net</span><strong style="color:${net>=0?'#5eead4':'#fca5a5'}">${fmt(net)}</strong></div>
+      </div>`;
+    }
+    document.getElementById('simBars').innerHTML =
+      yearBlock(1, savY1, invY1, net1) +
+      yearBlock(2, savY2, invY2, net2) +
+      yearBlock(3, savY3, invY3, net3);
+  }
+
+  // Wire up radio active state
+  document.querySelectorAll('.sim-radio label').forEach(lab => {
+    lab.addEventListener('click', () => {
+      document.querySelectorAll('.sim-radio label').forEach(l => l.classList.remove('active'));
+      lab.classList.add('active');
+      const radio = lab.querySelector('input');
+      if (radio) radio.checked = true;
+      compute();
+    });
+  });
+  document.querySelectorAll('#simulator input, #simulator select').forEach(el => {
+    el.addEventListener('input', compute);
+    el.addEventListener('change', compute);
+  });
+
+  compute();
+})();
+</script>
+
+</body>
+</html>

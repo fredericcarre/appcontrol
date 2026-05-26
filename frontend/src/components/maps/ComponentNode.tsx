@@ -55,6 +55,10 @@ interface ComponentNodeData {
   // Application reference (for application-type components)
   referencedAppId?: string | null;
   referencedAppName?: string | null;
+  // Knowledge progress (methodology phases 3 & 4) — small visual cue
+  // on the node so a reviewer sees which components are still draft.
+  knowledgeStatus?: 'candidate' | 'draft' | 'reviewed' | 'validated' | 'deprecated';
+  confidenceScore?: number;
   // Metrics from check command output
   metrics?: Record<string, unknown> | null;
   metricsWidgets?: MetricWidget[];
@@ -203,6 +207,24 @@ function ComponentNodeInner({ id, data, selected }: NodeProps & { data: Componen
           '--tw-ring-color': isHighlighted ? data.highlightColor : undefined,
         }}
       >
+      {/* Knowledge progress pip — small dot in the top-left corner
+          of the card, color-coded by knowledge_status. Hidden when
+          undefined or already 'validated' so the map only flags what
+          still needs review. */}
+      {data.knowledgeStatus && data.knowledgeStatus !== 'validated' && (
+        <span
+          className={cn(
+            'absolute -left-1 -top-1 h-2.5 w-2.5 rounded-full border border-white shadow-sm',
+            knowledgeDotPalette[data.knowledgeStatus],
+          )}
+          title={`Knowledge: ${data.knowledgeStatus}${
+            data.confidenceScore !== undefined
+              ? ` · ${Math.round(data.confidenceScore * 100)}%`
+              : ''
+          }`}
+        />
+      )}
+
       {/* Source at top: sends edges to bases above */}
       <Handle
         type="source"
@@ -667,6 +689,17 @@ function arePropsEqual(prevProps: NodeProps, nextProps: NodeProps): boolean {
   // Default: don't re-render for other changes (position, etc. handled by React Flow)
   return true;
 }
+
+const knowledgeDotPalette: Record<
+  NonNullable<ComponentNodeData['knowledgeStatus']>,
+  string
+> = {
+  candidate: 'bg-slate-400',
+  draft: 'bg-amber-500',
+  reviewed: 'bg-indigo-500',
+  validated: 'bg-emerald-500',
+  deprecated: 'bg-red-500',
+};
 
 export const ComponentNode = memo(ComponentNodeInner, arePropsEqual);
 

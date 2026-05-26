@@ -1,6 +1,6 @@
 use axum::{
     extract::{Extension, Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Json,
 };
 use serde::{Deserialize, Serialize};
@@ -686,6 +686,7 @@ pub async fn start_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<Option<StartAppRequest>>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify app belongs to user's org
@@ -701,6 +702,16 @@ pub async fn start_app(
     }
 
     let dry_run = body.and_then(|b| b.dry_run).unwrap_or(false);
+
+    // Activation-level enforcement — runtime ops require level >= 3 (PR-only
+    // requires an approval header). Dry-run is always allowed if the user
+    // has the RBAC permission, since it does not mutate state.
+    if !dry_run {
+        let pr_sha = headers
+            .get(crate::core::activation::PR_APPROVAL_HEADER)
+            .and_then(|v| v.to_str().ok());
+        crate::core::activation::check_runtime_ops_allowed(&state.db, id, pr_sha).await?;
+    }
 
     let action_id = log_action(
         &state.db,
@@ -730,19 +741,31 @@ pub async fn start_app(
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     let state_clone = state.clone();
+    let user_for_event: Uuid = *user.user_id;
     tokio::spawn(async move {
         let _guard = guard; // Hold the lock until the operation completes
-        match crate::core::sequencer::execute_start(&state_clone, id).await {
+        let result = crate::core::sequencer::execute_start(&state_clone, id).await;
+        let (status_label, ok) = match result {
             Ok(()) => {
                 let _ = complete_action_success(&state_clone.db, action_id).await;
                 tracing::info!("Successfully started app {}", id);
+                ("completed", true)
             }
             Err(e) => {
                 let error_msg = format!("{}", e);
                 let _ = complete_action_failed(&state_clone.db, action_id, &error_msg).await;
                 tracing::error!("Failed to start app {}: {}", id, e);
+                ("failed", false)
             }
-        }
+        };
+        let event = crate::core::notifications::NotificationEvent::Operation {
+            app_id: id,
+            operation: "start".to_string(),
+            status: status_label.to_string(),
+            user_id: user_for_event,
+        };
+        let _ = crate::core::notifications::dispatch_event(&state_clone.db, id, event).await;
+        let _ = ok; // explicit binding for clarity / future use
     });
 
     Ok(Json(json!({ "status": "starting", "plan": plan })))
@@ -766,6 +789,7 @@ pub async fn stop_app(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<Option<StopAppRequest>>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
@@ -774,6 +798,13 @@ pub async fn stop_app(
     }
 
     let dry_run = body.and_then(|b| b.dry_run).unwrap_or(false);
+
+    if !dry_run {
+        let pr_sha = headers
+            .get(crate::core::activation::PR_APPROVAL_HEADER)
+            .and_then(|v| v.to_str().ok());
+        crate::core::activation::check_runtime_ops_allowed(&state.db, id, pr_sha).await?;
+    }
 
     let action_id = log_action(
         &state.db,
@@ -802,19 +833,30 @@ pub async fn stop_app(
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
 
     let state_clone = state.clone();
+    let user_for_event: Uuid = *user.user_id;
     tokio::spawn(async move {
         let _guard = guard; // Hold the lock until the operation completes
-        match crate::core::sequencer::execute_stop(&state_clone, id).await {
+        let result = crate::core::sequencer::execute_stop(&state_clone, id).await;
+        let status_label = match result {
             Ok(()) => {
                 let _ = complete_action_success(&state_clone.db, action_id).await;
                 tracing::info!("Successfully stopped app {}", id);
+                "completed"
             }
             Err(e) => {
                 let error_msg = format!("{}", e);
                 let _ = complete_action_failed(&state_clone.db, action_id, &error_msg).await;
                 tracing::error!("Failed to stop app {}: {}", id, e);
+                "failed"
             }
-        }
+        };
+        let event = crate::core::notifications::NotificationEvent::Operation {
+            app_id: id,
+            operation: "stop".to_string(),
+            status: status_label.to_string(),
+            user_id: user_for_event,
+        };
+        let _ = crate::core::notifications::dispatch_event(&state_clone.db, id, event).await;
     });
 
     Ok(Json(json!({ "status": "stopping" })))
@@ -1002,11 +1044,20 @@ pub async fn start_branch(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<StartBranchRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
+    }
+
+    let dry_run = body.dry_run.unwrap_or(false);
+    if !dry_run {
+        let pr_sha = headers
+            .get(crate::core::activation::PR_APPROVAL_HEADER)
+            .and_then(|v| v.to_str().ok());
+        crate::core::activation::check_runtime_ops_allowed(&state.db, id, pr_sha).await?;
     }
 
     // If no component_id provided, find all FAILED components in this application.
@@ -1098,11 +1149,20 @@ pub async fn start_to(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<StartToRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let perm = effective_permission(&state.db, user.user_id, id, user.is_admin()).await;
     if perm < PermissionLevel::Operate {
         return Err(ApiError::Forbidden);
+    }
+
+    let dry_run = body.dry_run.unwrap_or(false);
+    if !dry_run {
+        let pr_sha = headers
+            .get(crate::core::activation::PR_APPROVAL_HEADER)
+            .and_then(|v| v.to_str().ok());
+        crate::core::activation::check_runtime_ops_allowed(&state.db, id, pr_sha).await?;
     }
 
     // Verify the target component belongs to this application

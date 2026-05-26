@@ -345,6 +345,11 @@ function buildNodes(
         referencedAppName: c.referenced_app_name || undefined,
         // Cross-site probe status
         passiveSiteStatus: c.passive_site_status || undefined,
+        // Knowledge progress (methodology phases 3 & 4) — surfaced as a
+        // small ring on the node so reviewers see at a glance which
+        // components are still candidate / draft vs. validated.
+        knowledgeStatus: c.knowledge_status,
+        confidenceScore: c.confidence_score,
         // Per-map display flags — ComponentNode reads these to hide/show
         // optional sections. Absent key = "show" (back-compat).
         showHost: isFlagOn(mapDisplayOptions, 'show_host'),

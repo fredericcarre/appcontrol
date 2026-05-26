@@ -41,6 +41,7 @@ import {
   computeBranchHighlight,
 } from '@/components/maps/AppMap';
 import { DetailPanel } from '@/components/maps/DetailPanel';
+import { MaturityStrip } from '@/components/maps/MaturityStrip';
 import { ShareModal } from '@/components/share/ShareModal';
 import { CommandModal } from '@/components/commands/CommandModal';
 import { ActivityPanel } from '@/components/activity/ActivityPanel';
@@ -887,6 +888,13 @@ export function MapViewPage() {
               <Badge variant={getWeatherVariant(weather)} className="shrink-0">
                 {globalState}
               </Badge>
+              {/* Methodology strip: activation + knowledge coverage +
+                  open annotations + git sync — gives every operator an
+                  instant read on where this app sits in the adoption
+                  ladder before they even pan the map. */}
+              {appId && (
+                <MaturityStrip appId={appId} className="shrink-0" />
+              )}
               {/* If any component in this app currently has a pending manual
                   validation, surface it loudly next to the global state.
                   Otherwise the operator might see a STARTING / DEGRADED app

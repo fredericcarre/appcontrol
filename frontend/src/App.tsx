@@ -24,6 +24,8 @@ import { UsersPage } from '@/pages/UsersPage';
 import { SupervisionPage } from '@/pages/SupervisionPage';
 import { SitesPage } from '@/pages/SitesPage';
 import { HostingsPage } from '@/pages/HostingsPage';
+import { ActivationPage } from '@/pages/ActivationPage';
+import { CaptationPage } from '@/pages/CaptationPage';
 import { useUiStore } from '@/stores/ui';
 import { cn } from '@/lib/utils';
 import { Toaster } from 'sonner';
@@ -73,7 +75,9 @@ export default function App() {
       <Routes>
         <Route path="/" element={<AuthLayout><DashboardPage /></AuthLayout>} />
         <Route path="/discovery" element={<AuthLayout><DiscoveryPage /></AuthLayout>} />
+        <Route path="/captation" element={<AuthLayout><CaptationPage /></AuthLayout>} />
         <Route path="/apps/:appId" element={<AuthLayout><MapViewPage /></AuthLayout>} />
+        <Route path="/apps/:id/activation" element={<AuthLayout><ActivationPage /></AuthLayout>} />
         <Route path="/apps/:appId/print-plan" element={<AuthLayout><PrintExecutionPlanPage /></AuthLayout>} />
         <Route path="/teams" element={<AuthLayout><TeamsPage /></AuthLayout>} />
         <Route path="/users" element={<AuthLayout><UsersPage /></AuthLayout>} />

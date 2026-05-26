@@ -1,0 +1,127 @@
+{
+  "format_version": "4.0",
+  "application": {
+    "name": "Methodology Demo — Webshop",
+    "description": "Small three-tier example showcasing the AppControl methodology end-to-end: source-declared maturity, knowledge ladder, annotations, patterns. Components carry mixed maturity to illustrate the resolution order (row override > request default > DB default).",
+    "tags": ["demo", "methodology", "tier-1"],
+    "components": [
+      {
+        "name": "haproxy-front",
+        "display_name": "HAProxy Frontend",
+        "component_type": "loadbalancer",
+        "host": "lb-01.demo",
+        "knowledge_status": "validated",
+        "confidence_score": 0.95,
+        "commands": {
+          "check": "systemctl is-active haproxy",
+          "start": "systemctl start haproxy",
+          "stop":  "systemctl stop haproxy"
+        }
+      },
+      {
+        "name": "webshop-app-1",
+        "display_name": "Webshop App (node 1)",
+        "component_type": "appserver",
+        "host": "app-01.demo",
+        "knowledge_status": "reviewed",
+        "confidence_score": 0.8,
+        "commands": {
+          "check": "curl -fsS http://localhost:8080/actuator/health",
+          "start": "systemctl start webshop",
+          "stop":  "systemctl stop webshop",
+          "integrity_check": "curl -fsS http://localhost:8080/actuator/health/db",
+          "infra_check":     "df -h /var/log/webshop | awk 'NR==2{exit($5+0<90)?0:1}'"
+        }
+      },
+      {
+        "name": "webshop-app-2",
+        "display_name": "Webshop App (node 2)",
+        "component_type": "appserver",
+        "host": "app-02.demo",
+        "knowledge_status": "reviewed",
+        "confidence_score": 0.8,
+        "commands": {
+          "check": "curl -fsS http://localhost:8080/actuator/health",
+          "start": "systemctl start webshop",
+          "stop":  "systemctl stop webshop"
+        }
+      },
+      {
+        "name": "webshop-db-primary",
+        "display_name": "Postgres Primary",
+        "component_type": "database",
+        "host": "db-01.demo",
+        "knowledge_status": "validated",
+        "confidence_score": 0.95,
+        "commands": {
+          "check": "pg_isready -h localhost -U webshop",
+          "start": "systemctl start postgresql",
+          "stop":  "systemctl stop postgresql",
+          "integrity_check": "/usr/local/bin/pg-replication-lag.sh",
+          "rebuild":         "/usr/local/bin/pg-restore-from-streaming.sh"
+        }
+      },
+      {
+        "name": "webshop-cache",
+        "display_name": "Redis cache",
+        "component_type": "cache",
+        "host": "cache-01.demo",
+        "knowledge_status": "candidate",
+        "confidence_score": 0.3,
+        "commands": {
+          "check": "redis-cli ping"
+        }
+      },
+      {
+        "name": "webshop-worker",
+        "display_name": "Background worker",
+        "component_type": "batch",
+        "host": "app-01.demo",
+        "commands": {
+          "check": "systemctl is-active webshop-worker"
+        }
+      }
+    ],
+    "dependencies": [
+      {
+        "from": "haproxy-front",
+        "to": "webshop-app-1",
+        "knowledge_status": "validated",
+        "confidence_score": 0.95
+      },
+      {
+        "from": "haproxy-front",
+        "to": "webshop-app-2",
+        "knowledge_status": "validated",
+        "confidence_score": 0.95
+      },
+      {
+        "from": "webshop-app-1",
+        "to": "webshop-db-primary",
+        "knowledge_status": "reviewed",
+        "confidence_score": 0.85
+      },
+      {
+        "from": "webshop-app-2",
+        "to": "webshop-db-primary",
+        "knowledge_status": "reviewed",
+        "confidence_score": 0.85
+      },
+      {
+        "from": "webshop-app-1",
+        "to": "webshop-cache",
+        "knowledge_status": "candidate"
+      },
+      {
+        "from": "webshop-app-2",
+        "to": "webshop-cache",
+        "knowledge_status": "candidate"
+      },
+      {
+        "from": "webshop-worker",
+        "to": "webshop-db-primary",
+        "knowledge_status": "draft"
+      }
+    ]
+  }
+}

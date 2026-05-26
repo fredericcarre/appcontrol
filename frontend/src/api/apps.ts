@@ -75,6 +75,9 @@ export interface Component {
   // Cluster fields (aggregate mode: cosmetic; fan_out mode: metadata only)
   cluster_size?: number | null;
   cluster_nodes?: string[] | null;
+  // Knowledge progress (methodology phases 3 & 4)
+  knowledge_status?: 'candidate' | 'draft' | 'reviewed' | 'validated' | 'deprecated';
+  confidence_score?: number;
   // Fan-out cluster configuration (v4.3+)
   cluster_mode?: 'aggregate' | 'fan_out' | null;
   cluster_health_policy?:

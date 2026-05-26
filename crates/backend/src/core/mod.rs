@@ -1,3 +1,4 @@
+pub mod activation;
 pub mod auto_failover;
 pub mod branch;
 pub mod certificate_rotation;

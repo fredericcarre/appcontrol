@@ -658,6 +658,108 @@ Fixes based on production engineer review. All items address identified weakness
 - [x] `cargo clippy --workspace -- -D warnings` — clean (0 warnings)
 - [x] `cargo test --workspace` — 134 unit tests pass (33 agent + 12 backend + 75 common + 14 gateway)
 
+## Phase 13: Activation Levels, Multi-Source Ingestion, AI Scaffolding
+
+This phase closes the gap between what the strategic documents
+(`docs/strategy.html`, `docs/methodology.html`, `docs/vision.html`,
+`docs/pricing.html`) promise and what the codebase actually delivers.
+Each chunk is a self-contained PR with build + clippy green on both
+postgres and sqlite feature sets.
+
+### P13-1: Application Activation Level
+- [x] `migrations/V058__application_activation_level.sql` — `applications.activation_level SMALLINT` with CHECK 0-4 + index
+- [x] `crates/backend/src/core/activation.rs` — `ActivationLevel` enum, helpers, 5 unit tests
+- [x] `crates/backend/src/api/activation.rs` — `GET / PUT /api/v1/apps/:id/activation`
+- [x] Enforcement wired in `start_app`, `stop_app`, `start_branch`, `start_to`, `diagnose`, `rebuild`, `switchover`
+- [x] `frontend/src/api/activation.ts` + `pages/ActivationPage.tsx` + `components/ActivationBadge.tsx`
+- [x] Route `/apps/:id/activation` in `App.tsx`
+
+### P13-2: Multi-Source Ingestion Connectors
+- [x] `migrations/V059__incidents.sql` — incidents table (`source` + `external_id` unique, impacted_components JSON)
+- [x] `crates/backend/src/integrations/cmdb.rs` — generic CMDB upsert
+- [x] `crates/backend/src/integrations/xl.rs` — XL Release / XL Deploy deployables + pipeline deps
+- [x] `crates/backend/src/integrations/flow.rs` — flow ref → dependency edges (resolves by name OR host[:port])
+- [x] `crates/backend/src/integrations/itsm.rs` — ITSM incident upsert with impacted component resolution
+- [x] `crates/backend/src/api/ingestion.rs` — `POST /api/v1/ingestion/{cmdb,xl,flows,incidents}`
+
+### P13-3: AI Scaffolding (Stub Provider, Stable Contracts)
+- [x] `crates/backend/src/ai/provider.rs` — `Provider` trait, `StubProvider`, fingerprint helper, 3 unit tests
+- [x] `crates/backend/src/ai/schema.rs` — architecture diagram validation contract
+- [x] `crates/backend/src/ai/map_gen.rs` — initial map JSON suggestion contract
+- [x] `crates/backend/src/ai/incident.rs` — root-cause analysis contract
+- [x] `crates/backend/src/api/ai.rs` — `POST /api/v1/ai/{schema/validate, map/suggest, incident/analyze}`
+- [x] `AI_PROVIDER` env var selects the provider; defaults to `stub`
+
+### P13-4: Documentation Landing & Publication
+- [x] `docs/index.html` — landing page linking the four strategic docs
+- [x] `docs/implementation-status.html` — live inventory of what is built (livré / stub / à venir)
+- [x] `.github/workflows/pages.yaml` — publishes `docs/` to GitHub Pages on push to main
+
+### P13-5: Transversal capitalisation — pattern library
+- [x] `migrations/V060__pattern_templates.sql` (PG + SQLite) — pattern_templates table with technology, command templates, usage_count, back-reference to incidents
+- [x] `crates/backend/src/api/patterns.rs` — CRUD endpoints + `POST /patterns/:id/applied` to bump usage_count
+- [x] Routes wired: `GET/POST /api/v1/patterns`, `GET/PUT/DELETE /api/v1/patterns/:id`, `POST /api/v1/patterns/:id/applied`
+
+### P13-6: CSV ingestion (in addition to JSON)
+- [x] `csv = "1.3"` added to backend Cargo.toml
+- [x] `POST /api/v1/ingestion/cmdb/csv` — accepts text/csv body with name,component_type,host,description,display_name,tags columns (`;` separator for tags)
+- [x] Reuses existing `cmdb::ingest` path for the actual upsert
+
+### P13-7: Operation events dispatched on completion
+- [x] `start_app` and `stop_app` now emit `NotificationEvent::Operation` with status `completed` or `failed` when the spawned execute returns, so subscribed webhook endpoints get an end-of-operation signal (not just FSM state changes)
+
+### P13-8: Native Git integration (map sync to external repo)
+- [x] `migrations/V061__git_remotes.sql` (PG + SQLite) — git_remotes + application_git_settings tables; token referenced by env-var name, never stored in DB
+- [x] `crates/backend/src/integrations/git.rs` — provider abstraction, GitHub Contents API impl (works on github.com + GHE via base_url), path template renderer with `{app_id}`/`{app_name}`, 2 unit tests
+- [x] `crates/backend/src/api/git.rs` — CRUD on remotes (admin), per-app binding (`PUT /apps/:id/git`), manual push (`POST /apps/:id/git/push`)
+- [x] Git-friendly map JSON projection (components + dependencies, no runtime state)
+- [x] Push success and failure recorded in `application_git_settings` and `git_remotes` for observability
+
+### P13-9: Map annotations + knowledge progress (review funnel)
+- [x] `migrations/V062__map_annotations_and_knowledge.sql` (PG + SQLite) — map_annotations table + `confidence_score` + `knowledge_status` columns on components and dependencies
+- [x] `crates/backend/src/api/annotations.rs` — CRUD + resolve, with target_type ∈ {application, component, dependency} and kind ∈ {note, review, todo, warning}
+- [x] `crates/backend/src/api/knowledge.rs` — `PUT /components/:id/knowledge`, `PUT /dependencies/:id/knowledge`, `GET /apps/:id/knowledge/summary` (returns counts by status + validated coverage ratio)
+
+### P13-10: CSV for the three remaining connectors (XL / flows / incidents)
+- [x] `POST /api/v1/ingestion/xl/csv` — deployables block + optional pipeline_deps block separated by a blank line
+- [x] `POST /api/v1/ingestion/flows/csv` — from,to,port,protocol
+- [x] `POST /api/v1/ingestion/incidents/csv` — external_id,title,opened_at,severity,status,resolved_at,root_cause,impacted_components (semicolon-separated)
+
+### P13-11: GitLab and Gitea Git providers
+- [x] `integrations/git.rs::push_via_gitlab` — Repository Files API, PUT-then-POST fallback, PRIVATE-TOKEN header
+- [x] `integrations/git.rs::push_via_gitea` — Contents API, near-identical to GitHub shape, `token <PAT>` auth
+- [x] Provider dispatch unchanged — existing endpoints already key off the provider name
+
+### P13-12: Real LLM providers (Anthropic + OpenAI) + RAG over runbooks
+- [x] `ai::provider::AnthropicProvider` — Messages API v2023-06-01, env `ANTHROPIC_API_KEY` + optional model / base_url
+- [x] `ai::provider::OpenAiProvider` — Chat Completions, env `OPENAI_API_KEY` + optional model / base_url (works on api.openai.com, Azure OpenAI, and any OpenAI-compatible gateway)
+- [x] `ai::rag` — local markdown RAG with token frequency × IDF ranking, env `RAG_CORPUS_DIR`, 4 unit tests
+- [x] `POST /api/v1/ai/rag/query` and `POST /api/v1/ai/rag/reload` (admin only)
+
+### P13-13: ServiceNow + Jira SM native pull connectors
+- [x] `integrations/servicenow.rs` — Table API (`/api/now/table/incident`), basic or bearer auth via env var, maps sys_id / short_description / priority / state / opened_at / closed_at / close_notes / cmdb_ci
+- [x] `integrations/jira_sm.rs` — JQL search (`/rest/api/3/search`), Atlassian doc-format → plain text, maps summary / description / priority / status / created / resolutiondate / components
+- [x] `POST /api/v1/ingestion/pull/servicenow` and `POST /api/v1/ingestion/pull/jira` — both reuse `itsm::ingest` so all pull and push connectors converge on the same incidents table
+
+### P13-14: Pattern propagation across applications
+- [x] `GET  /api/v1/patterns/:id/candidates` — lists components in the org matching the pattern's technology that don't yet have a check_cmd
+- [x] `POST /api/v1/patterns/:id/propagate { component_ids: [...] }` — fills only NULL command fields, bumps usage_count by the number of updates, audited
+
+### P13-15: Frontend — annotations + knowledge UI
+- [x] `frontend/src/api/annotations.ts` — React Query hooks (useAnnotations, useCreateAnnotation, useResolveAnnotation, useDeleteAnnotation)
+- [x] `frontend/src/api/knowledge.ts` — useUpdateComponentKnowledge, useUpdateDependencyKnowledge, useKnowledgeSummary
+- [x] `frontend/src/components/AnnotationsPanel.tsx` — embeddable panel with kind selector (note / review / todo / warning), resolve and delete, toggle to show resolved
+- [x] `frontend/src/components/KnowledgeBadge.tsx` — compact status pill with confidence percent
+- [x] `frontend/src/components/KnowledgeSummaryCard.tsx` — headline validated-coverage card with stacked status bars
+
+### Build Validation (Phase 13)
+- [x] `cargo build -p appcontrol-backend --features postgres` — clean
+- [x] `cargo build -p appcontrol-backend --no-default-features --features sqlite` — clean
+- [x] `cargo clippy --features postgres --no-deps -- -D warnings` — clean
+- [x] `cargo clippy --no-default-features --features sqlite --no-deps -- -D warnings` — clean
+- [x] Frontend `tsc --noEmit` — clean
+- [x] 5 + 3 = 8 new unit tests, all passing
+
 ## Technical Debt — Database Layer Refactoring
 
 ### Level 1: CI Lint (DONE)

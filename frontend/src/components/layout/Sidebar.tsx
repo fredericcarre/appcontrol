@@ -19,12 +19,14 @@ import {
   Monitor,
   MapPin,
   Warehouse,
+  Library,
 } from 'lucide-react';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/supervision', icon: Monitor, label: 'Supervision' },
   { to: '/discovery', icon: Radar, label: 'Discovery' },
+  { to: '/captation', icon: Library, label: 'Captation' },
   { to: '/teams', icon: Users, label: 'Teams' },
   { to: '/users', icon: UserCog, label: 'Users', adminOnly: true },
   { to: '/sites', icon: MapPin, label: 'Sites', adminOnly: true },
