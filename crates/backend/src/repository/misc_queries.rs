@@ -6,6 +6,58 @@ use serde_json::Value;
 use uuid::Uuid;
 
 // ============================================================================
+// AI decisions (append-only audit — DORA)
+// ============================================================================
+
+/// Insert an append-only AI decision audit record.
+///
+/// AI decisions are NEVER updated or deleted (like action_log). This records how
+/// an AI output was produced: model, routing (local/frontier), data sensitivity,
+/// and a prompt hash for reproducibility.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_ai_decision(
+    pool: &DbPool,
+    id: Uuid,
+    organization_id: Uuid,
+    actor_user_id: Option<Uuid>,
+    kind: &str,
+    model_provider: &str,
+    model_name: &str,
+    sensitivity: &str,
+    routed_to: &str,
+    prompt_hash: &str,
+    context_summary: &Value,
+    confidence: Option<f32>,
+    outcome: &str,
+    created_at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO ai_decisions
+            (id, organization_id, actor_user_id, kind, model_provider, model_name,
+             sensitivity, routed_to, prompt_hash, context_summary, confidence, outcome, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        "#,
+    )
+    .bind(db::bind_id(id))
+    .bind(db::bind_id(organization_id))
+    .bind(actor_user_id.map(db::bind_id))
+    .bind(kind)
+    .bind(model_provider)
+    .bind(model_name)
+    .bind(sensitivity)
+    .bind(routed_to)
+    .bind(prompt_hash)
+    .bind(context_summary)
+    .bind(confidence)
+    .bind(outcome)
+    .bind(created_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+// ============================================================================
 // Component Links
 // ============================================================================
 

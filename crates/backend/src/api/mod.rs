@@ -1,5 +1,6 @@
 pub mod agent_update;
 pub mod agents;
+pub mod ai;
 pub mod api_keys;
 pub mod approvals;
 pub mod apps;
@@ -58,6 +59,8 @@ const AGENT_BINARY_UPLOAD_LIMIT_BYTES: usize = 50 * 1024 * 1024;
 
 pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
+        // AI copilot (read-only)
+        .route("/ai/chat", post(ai::chat))
         // Applications
         .route("/apps", get(apps::list_apps).post(apps::create_app))
         .route(

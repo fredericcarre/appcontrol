@@ -12,6 +12,7 @@ full = ["postgres", "sqlite"]
 
 [dependencies]
 appcontrol-common = { path = "../common" }
+appcontrol-ai = { path = "../ai" }
 axum = { version = "0.7", features = ["ws"] }
 axum-extra = { version = "0.9", features = ["typed-header"] }
 tokio = { version = "1", features = ["full"] }

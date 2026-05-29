@@ -97,6 +97,50 @@ pub struct AppConfig {
     pub read_only: bool,
 }
 
+/// AI layer settings (sovereign inference router).
+///
+/// Read on demand by the AI endpoints. The actual provider wiring lives in the
+/// `appcontrol-ai` crate (`router_from_env`); this struct surfaces the
+/// operational toggles and documents the `AI_*` variables in the configuration
+/// reference. No secrets are stored — only whether a provider is configured.
+#[derive(Debug, Clone)]
+pub struct AiSettings {
+    /// "hybrid" (local for sensitive, frontier for the rest) or "local" (sovereign only).
+    pub mode: String,
+    /// Global kill-switch: when true, all AI features are disabled.
+    pub kill_switch: bool,
+    /// Default autonomy level: "advisory" | "approval" | "policy".
+    pub autonomy_default: String,
+    /// Redact secrets/IPs/hostnames before anything reaches a frontier model.
+    pub redaction_enabled: bool,
+    /// Whether an on-prem (sovereign) model endpoint is configured.
+    pub local_configured: bool,
+    /// Whether a hosted frontier model endpoint is configured.
+    pub frontier_configured: bool,
+}
+
+impl AiSettings {
+    pub fn from_env() -> Self {
+        let truthy = |k: &str, default: bool| {
+            std::env::var(k)
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(default)
+        };
+        let nonempty = |k: &str| std::env::var(k).map(|v| !v.is_empty()).unwrap_or(false);
+        Self {
+            mode: std::env::var("AI_INFERENCE_MODE").unwrap_or_else(|_| "hybrid".to_string()),
+            kill_switch: truthy("AI_KILL_SWITCH", false),
+            autonomy_default: std::env::var("AI_AUTONOMY_DEFAULT")
+                .unwrap_or_else(|_| "approval".to_string()),
+            redaction_enabled: truthy("AI_REDACTION_ENABLED", true),
+            local_configured: nonempty("AI_LOCAL_BASE_URL") && nonempty("AI_LOCAL_MODEL"),
+            frontier_configured: nonempty("AI_FRONTIER_BASE_URL")
+                && nonempty("AI_FRONTIER_MODEL")
+                && nonempty("AI_FRONTIER_API_KEY"),
+        }
+    }
+}
+
 impl AppConfig {
     pub fn from_env() -> Self {
         let app_env = std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());

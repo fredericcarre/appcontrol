@@ -120,6 +120,25 @@ cargo test  -p appcontrol-ai          # 11 tests (router, redaction, architect�
 cargo clippy -p appcontrol-ai -p appcontrol-agent --all-targets -- -D warnings
 ```
 
+## 5. Copilote backend (read-only) — `POST /api/v1/ai/chat`
+
+Le backend expose maintenant un copilote conversationnel **read-only**, branché
+RBAC (utilisateur authentifié requis) et tracé dans la table append-only
+`ai_decisions` (migration `V057`, Postgres + SQLite). L'IA n'a aucun privilège
+propre : elle explique et recommande, mais toute action passe par une opération
+approuvée.
+
+```bash
+curl -s -X POST https://<backend>/api/v1/ai/chat \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"message":"Pourquoi la chaîne paiement est-elle dégradée ?"}'
+# → { "answer": "...", "routed_to": "local", "model": "...", "sensitivity": "internal" }
+```
+
+`routed_to` rend la souveraineté **transparente** : on voit, par requête, si
+l'inférence est restée locale ou est allée vers un modèle frontier (après
+redaction). Le kill-switch global `AI_KILL_SWITCH=true` désactive tout (503).
+
 ## Et après (prochains incréments du plan)
 
 Cet incrément est volontairement **standalone** (pas de backend, pas de DB) pour

@@ -166,6 +166,7 @@ name = "appcontrol-backend"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "appcontrol-ai",
  "appcontrol-common",
  "async-trait",
  "axum 0.7.9",
