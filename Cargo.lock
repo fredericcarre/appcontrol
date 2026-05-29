@@ -142,6 +142,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "appcontrol-ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "appcontrol-common",
+ "async-trait",
+ "chrono",
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "appcontrol-backend"
 version = "0.1.0"
 dependencies = [

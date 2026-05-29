@@ -1,0 +1,20 @@
+# Agentic demo — one command:
+#   docker compose -f demo/agentic/docker-compose.yml up --build
+#
+# Brings up a container running real PostgreSQL + Redis + nginx + an order-api,
+# has the AppControl agent discover them, and renders the AI architecture map in
+# the logs. The container stays up so you can re-run the chain via `docker exec`.
+services:
+  agentic-demo:
+    build:
+      # Build context is the repo root so the Dockerfile can compile the crates.
+      context: ../..
+      dockerfile: demo/agentic/Dockerfile
+    image: appcontrol-agentic-demo
+    container_name: appcontrol-agentic-demo
+    # Optional: point the AI naming pass at a real model. Without these, the
+    # deterministic mock is used and the demo still produces a readable map.
+    environment:
+      AI_INFERENCE_MODE: "${AI_INFERENCE_MODE:-local}"
+      # AI_LOCAL_BASE_URL: "http://host.docker.internal:11434/v1"   # e.g. Ollama
+      # AI_LOCAL_MODEL: "qwen2.5:14b"

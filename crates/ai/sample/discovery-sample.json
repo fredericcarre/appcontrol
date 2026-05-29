@@ -1,0 +1,82 @@
+{
+  "type": "DiscoveryReport",
+  "payload": {
+    "agent_id": "11111111-1111-1111-1111-111111111111",
+    "hostname": "srv-paris-01",
+    "scanned_at": "2026-05-29T10:00:00Z",
+    "scheduled_jobs": [
+      {
+        "name": "nightly-settlement",
+        "schedule": "0 2 * * *",
+        "command": "/opt/order-api/bin/settlement.sh",
+        "user": "appuser",
+        "source": "crontab",
+        "enabled": true
+      }
+    ],
+    "firewall_rules": [],
+    "services": [
+      { "name": "order-api.service", "display_name": "Order API", "status": "running", "pid": 100 },
+      { "name": "postgresql.service", "display_name": "PostgreSQL", "status": "running", "pid": 200 }
+    ],
+    "listeners": [
+      { "port": 8080, "protocol": "tcp", "pid": 100, "process_name": "java", "address": "0.0.0.0" },
+      { "port": 5432, "protocol": "tcp", "pid": 200, "process_name": "postgres", "address": "127.0.0.1" },
+      { "port": 6379, "protocol": "tcp", "pid": 300, "process_name": "redis-server", "address": "127.0.0.1" },
+      { "port": 443, "protocol": "tcp", "pid": 400, "process_name": "nginx", "address": "0.0.0.0" }
+    ],
+    "connections": [
+      { "local_port": 51000, "remote_addr": "127.0.0.1", "remote_port": 8080, "pid": 400, "process_name": "nginx", "state": "ESTABLISHED" }
+    ],
+    "processes": [
+      {
+        "pid": 100, "name": "java", "cmdline": "java -jar /opt/order-api/order-api.jar",
+        "user": "appuser", "memory_bytes": 838860800, "cpu_pct": 2.5,
+        "listening_ports": [8080],
+        "matched_service": "order-api.service",
+        "working_dir": "/opt/order-api",
+        "technology_hint": { "id": "java", "display_name": "Java", "icon": "java", "layer": "Service" },
+        "command_suggestion": {
+          "check_cmd": "systemctl is-active order-api", "start_cmd": "systemctl start order-api",
+          "stop_cmd": "systemctl stop order-api", "confidence": "high", "source": "systemd"
+        },
+        "log_files": [{ "path": "/var/log/order-api/app.log", "size_bytes": 1048576 }],
+        "config_files": [{
+          "path": "/opt/order-api/config/application.yml",
+          "extracted_endpoints": [
+            { "key": "spring.datasource.url", "value": "jdbc:postgresql://localhost:5432/orders", "parsed_host": "localhost", "parsed_port": 5432, "technology": "postgresql" },
+            { "key": "spring.redis.host", "value": "redis://localhost:6379", "parsed_host": "localhost", "parsed_port": 6379, "technology": "redis" }
+          ]
+        }]
+      },
+      {
+        "pid": 200, "name": "postgres", "cmdline": "/usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main",
+        "user": "postgres", "memory_bytes": 268435456, "cpu_pct": 1.1,
+        "listening_ports": [5432],
+        "matched_service": "postgresql.service",
+        "technology_hint": { "id": "postgresql", "display_name": "PostgreSQL", "icon": "postgresql", "layer": "Database" },
+        "command_suggestion": {
+          "check_cmd": "systemctl is-active postgresql", "start_cmd": "systemctl start postgresql",
+          "stop_cmd": "systemctl stop postgresql", "confidence": "high", "source": "systemd"
+        }
+      },
+      {
+        "pid": 300, "name": "redis-server", "cmdline": "redis-server 127.0.0.1:6379",
+        "user": "redis", "memory_bytes": 67108864, "cpu_pct": 0.3,
+        "listening_ports": [6379],
+        "technology_hint": { "id": "redis", "display_name": "Redis", "icon": "redis", "layer": "Cache" }
+      },
+      {
+        "pid": 400, "name": "nginx", "cmdline": "nginx: master process /usr/sbin/nginx",
+        "user": "root", "memory_bytes": 33554432, "cpu_pct": 0.2,
+        "listening_ports": [443, 80],
+        "technology_hint": { "id": "nginx", "display_name": "nginx", "icon": "nginx", "layer": "Web" }
+      },
+      { "pid": 1,   "name": "systemd",      "cmdline": "/sbin/init",            "user": "root", "memory_bytes": 12582912, "cpu_pct": 0.0, "listening_ports": [] },
+      { "pid": 510, "name": "sshd",         "cmdline": "/usr/sbin/sshd -D",     "user": "root", "memory_bytes": 8388608,  "cpu_pct": 0.0, "listening_ports": [22] },
+      { "pid": 620, "name": "cron",         "cmdline": "/usr/sbin/cron -f",     "user": "root", "memory_bytes": 4194304,  "cpu_pct": 0.0, "listening_ports": [] },
+      { "pid": 700, "name": "dbus-daemon",  "cmdline": "dbus-daemon --system",  "user": "messagebus", "memory_bytes": 4194304, "cpu_pct": 0.0, "listening_ports": [] },
+      { "pid": 800, "name": "chronyd",      "cmdline": "/usr/sbin/chronyd",     "user": "chrony", "memory_bytes": 2097152, "cpu_pct": 0.0, "listening_ports": [] }
+    ]
+  }
+}

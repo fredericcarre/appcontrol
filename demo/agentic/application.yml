@@ -1,0 +1,12 @@
+# A Spring-Boot-style configuration for the demo "order-api". The order-api
+# process keeps this file open, so the AppControl agent finds it via /proc/[pid]/fd
+# and extracts the dependency endpoints (PostgreSQL, Redis) from it.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/orders
+    username: orders_app
+  redis:
+    host: localhost
+    port: 6379
+server:
+  port: 8080

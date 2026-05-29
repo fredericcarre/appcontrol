@@ -58,6 +58,16 @@ enum ServiceCommand {
         #[command(subcommand)]
         action: ServiceAction,
     },
+    /// Scan this host and print the discovery report (no backend required).
+    ///
+    /// This is the standalone, agentic discovery primitive. Pipe it into the AI
+    /// layer to get a readable architecture map:
+    ///   appcontrol-agent discover --json | appcontrol-ai architect
+    Discover {
+        /// Emit the discovery report as JSON (recommended; consumable by `appcontrol-ai`).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -97,8 +107,11 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    // Handle service subcommands (Windows only)
+    // Handle subcommands.
     if let Some(command) = args.command {
+        if let ServiceCommand::Discover { json } = command {
+            return run_discovery(args.agent_id.as_deref(), json);
+        }
         return handle_service_command(command);
     }
 
@@ -260,9 +273,44 @@ fn reload_config(config_path: &str) {
     }
 }
 
+/// Run a one-shot local discovery scan and print the report. No gateway, no
+/// backend, no enrollment — this is the standalone agentic discovery primitive.
+fn run_discovery(agent_id: Option<&str>, json: bool) -> anyhow::Result<()> {
+    let agent_id = match agent_id {
+        Some(id) => uuid::Uuid::parse_str(id)?,
+        None => uuid::Uuid::new_v4(),
+    };
+    let hostname = platform::gethostname();
+    let report = discovery::scan(agent_id, &hostname);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    if let appcontrol_common::AgentMessage::DiscoveryReport {
+        processes,
+        listeners,
+        connections,
+        services,
+        ..
+    } = &report
+    {
+        println!("Discovery on {hostname}:");
+        println!("  processes:   {}", processes.len());
+        println!("  listeners:   {}", listeners.len());
+        println!("  connections: {}", connections.len());
+        println!("  services:    {}", services.len());
+        println!("\nFor a readable architecture map, pipe the JSON into the AI layer:");
+        println!("  appcontrol-agent discover --json | appcontrol-ai architect");
+    }
+    Ok(())
+}
+
 #[allow(unreachable_code)]
 fn handle_service_command(command: ServiceCommand) -> anyhow::Result<()> {
     match command {
+        ServiceCommand::Discover { .. } => unreachable!("Discover is handled in main()"),
         ServiceCommand::Service { action } => match action {
             ServiceAction::Install { config } => {
                 #[cfg(windows)]
