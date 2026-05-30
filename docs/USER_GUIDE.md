@@ -260,6 +260,36 @@ A three-level progressive assessment followed by surgical reconstruction:
 
 ---
 
+## Operations Copilot (AI)
+
+The **Copilot** is a read-only conversational assistant for your production
+estate. Open it from the sidebar (**Copilot**) and ask plain-language questions
+such as *"Which applications are degraded, and why?"* or *"Summarize the
+dependencies of the payment platform."*
+
+<!-- SCREENSHOT:copilot -->
+
+The Copilot **explains and recommends — it never acts on its own**. Any
+start/stop/rebuild still goes through an approved AppControl operation, with the
+usual permission checks and audit trail.
+
+### Sovereign inference routing
+
+Every answer shows where it was computed:
+
+- **Local / sovereign** — sensitive context (hostnames, paths, anything that
+  looks like a secret) is processed by an on-prem model and **never leaves your
+  infrastructure**.
+- **Frontier (redacted)** — only abstract, non-sensitive context (technology
+  types, roles, ports) — redacted on the machine first — may use a hosted
+  frontier model to benefit from the latest capabilities.
+
+Each interaction is recorded in the append-only `ai_decisions` audit table
+(model, routing, sensitivity, prompt hash) for full DORA reproducibility. A
+global kill-switch (`AI_KILL_SWITCH`) disables all AI features at once.
+
+---
+
 ## Infrastructure
 
 ### Agents

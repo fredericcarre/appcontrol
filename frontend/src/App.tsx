@@ -24,6 +24,7 @@ import { UsersPage } from '@/pages/UsersPage';
 import { SupervisionPage } from '@/pages/SupervisionPage';
 import { SitesPage } from '@/pages/SitesPage';
 import { HostingsPage } from '@/pages/HostingsPage';
+import AiCopilotPage from '@/pages/AiCopilotPage';
 import { useUiStore } from '@/stores/ui';
 import { cn } from '@/lib/utils';
 import { Toaster } from 'sonner';
@@ -72,6 +73,7 @@ export default function App() {
       <Toaster position="bottom-right" richColors closeButton duration={3000} />
       <Routes>
         <Route path="/" element={<AuthLayout><DashboardPage /></AuthLayout>} />
+        <Route path="/copilot" element={<AuthLayout><AiCopilotPage /></AuthLayout>} />
         <Route path="/discovery" element={<AuthLayout><DiscoveryPage /></AuthLayout>} />
         <Route path="/apps/:appId" element={<AuthLayout><MapViewPage /></AuthLayout>} />
         <Route path="/apps/:appId/print-plan" element={<AuthLayout><PrintExecutionPlanPage /></AuthLayout>} />

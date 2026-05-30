@@ -94,6 +94,12 @@ test.describe('Documentation Screenshots', () => {
     await capture(page, 'dashboard');
   });
 
+  test('copilot', async ({ page }) => {
+    await page.goto('/copilot');
+    await page.waitForTimeout(1500);
+    await capture(page, 'copilot');
+  });
+
   test('map-view', async ({ page }) => {
     await page.goto('/');
     await page.waitForTimeout(1000);

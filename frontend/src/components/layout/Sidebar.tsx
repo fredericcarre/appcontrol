@@ -19,10 +19,12 @@ import {
   Monitor,
   MapPin,
   Warehouse,
+  Bot,
 } from 'lucide-react';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/copilot', icon: Bot, label: 'Copilot' },
   { to: '/supervision', icon: Monitor, label: 'Supervision' },
   { to: '/discovery', icon: Radar, label: 'Discovery' },
   { to: '/teams', icon: Users, label: 'Teams' },
